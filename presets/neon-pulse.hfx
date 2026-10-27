@@ -1,0 +1,469 @@
+{
+  "version": "1.0.0",
+  "effects": [
+    {
+      "id": "en-sway",
+      "effectType": "Camera",
+      "type": "Sway",
+      "name": "Restless Sway",
+      "disabled": false,
+      "config": {
+        "easing": "SineInOut",
+        "x": 0.1,
+        "y": 0.06,
+        "z": 0.06,
+        "zr": 1,
+        "duration": 2
+      },
+      "trigger": {
+        "type": "None",
+        "sensitivity": 1,
+        "threshold": 0,
+        "smoothing": 0.8
+      }
+    },
+    {
+      "id": "en-shake",
+      "effectType": "Camera",
+      "type": "Shake",
+      "name": "Bass Shake",
+      "disabled": false,
+      "config": {
+        "x": 0.03,
+        "y": 0.03,
+        "z": 0.12,
+        "zr": 1
+      },
+      "trigger": {
+        "type": "Lows",
+        "sensitivity": 1.2,
+        "threshold": 0.6,
+        "smoothing": 0.9
+      }
+    },
+    {
+      "id": "en-p-sparks",
+      "effectType": "Particle",
+      "type": "Basic",
+      "name": "Sparks",
+      "disabled": false,
+      "config": {
+        "amount": 260,
+        "minSize": 0,
+        "maxSize": 5,
+        "minOpacity": 0,
+        "maxOpacity": 0.9,
+        "minGradient": 0.8,
+        "maxGradient": 1,
+        "smoothing": 0.4,
+        "color": 16777215,
+        "speed": 0.2,
+        "easing": "SineInOut",
+        "angle": 20,
+        "swayDistance": 0.03,
+        "swayDuration": 1
+      }
+    },
+    {
+      "id": "en-p-bokeh",
+      "effectType": "Particle",
+      "type": "Basic",
+      "name": "Bokeh",
+      "disabled": false,
+      "config": {
+        "amount": 24,
+        "minSize": 90,
+        "maxSize": 140,
+        "minOpacity": 0,
+        "maxOpacity": 0.03,
+        "minGradient": 0,
+        "maxGradient": 0.2,
+        "smoothing": 0.9,
+        "color": 16777215,
+        "speed": 0.15,
+        "easing": "SineInOut",
+        "angle": 25,
+        "swayDistance": 0.03,
+        "swayDuration": 1.2
+      }
+    },
+    {
+      "id": "en-bloom",
+      "effectType": "Filter",
+      "type": "Bloom",
+      "name": "Punch Bloom",
+      "disabled": false,
+      "config": {
+        "opacity": 1,
+        "radius": 1,
+        "passes": 1
+      },
+      "trigger": {
+        "type": "Lows",
+        "sensitivity": 5,
+        "threshold": 0.3,
+        "smoothing": 0.85,
+        "opacity": 1.6,
+        "radius": 1.5
+      }
+    },
+    {
+      "id": "en-rgb",
+      "effectType": "Filter",
+      "type": "RgbShift",
+      "name": "Snare Aberration",
+      "disabled": false,
+      "config": {
+        "amount": 0.003,
+        "angle": 60
+      },
+      "trigger": {
+        "type": "Highs",
+        "sensitivity": 1.5,
+        "threshold": 0.6,
+        "smoothing": 0.8,
+        "amount": 0.06
+      }
+    },
+    {
+      "id": "en-vig",
+      "effectType": "Filter",
+      "type": "Vignette",
+      "name": "Vignette",
+      "disabled": false,
+      "config": {
+        "darkness": 1.1,
+        "offset": 1
+      },
+      "trigger": {
+        "type": "None",
+        "sensitivity": 1,
+        "threshold": 0,
+        "smoothing": 0.9,
+        "darkness": 1,
+        "offset": 1
+      }
+    },
+    {
+      "id": "en-vblur",
+      "effectType": "Filter",
+      "type": "VignetteBlur",
+      "name": "Edge Blur",
+      "disabled": false,
+      "config": {
+        "size": 2,
+        "radius": 2,
+        "passes": 1
+      },
+      "trigger": {
+        "type": "None",
+        "sensitivity": 1,
+        "threshold": 0,
+        "smoothing": 0.8,
+        "size": 1,
+        "radius": 1
+      }
+    },
+    {
+      "id": "en-mblur",
+      "effectType": "Filter",
+      "type": "MotionBlur",
+      "name": "Motion Blur",
+      "disabled": false,
+      "config": {
+        "intensity": 2.5,
+        "samples": 32
+      },
+      "trigger": {
+        "type": "None",
+        "sensitivity": 1,
+        "threshold": 0,
+        "smoothing": 0.8,
+        "intensity": 1
+      }
+    },
+    {
+      "id": "en-pan",
+      "effectType": "Transition",
+      "type": "CameraMove",
+      "name": "Drift",
+      "disabled": false,
+      "config": {
+        "easing": "SineInOut",
+        "speed": 0,
+        "type": "Relative",
+        "xOffset": 0.12,
+        "yOffset": 0.06,
+        "zMin": 0.65,
+        "zMax": 0.85
+      },
+      "trigger": {
+        "type": "Minor",
+        "weight": 1,
+        "threshold": 0
+      }
+    },
+    {
+      "id": "en-switch-h",
+      "effectType": "Transition",
+      "type": "CameraSwitch",
+      "name": "Horizontal Cut",
+      "disabled": false,
+      "config": {
+        "easing": "SineOut",
+        "speed": 0,
+        "type": "Absolute",
+        "yMin": 0.1,
+        "yMax": 0.5,
+        "zMin": 0.65,
+        "zMax": 0.85,
+        "finishType": "Relative",
+        "finishXOffset": 0.25,
+        "finishZOffset": 0.05,
+        "finishZROffset": 1
+      },
+      "trigger": {
+        "type": "Minor",
+        "weight": 10,
+        "threshold": 0.25
+      }
+    },
+    {
+      "id": "en-switch-v",
+      "effectType": "Transition",
+      "type": "CameraSwitch",
+      "name": "Vertical Cut",
+      "disabled": false,
+      "config": {
+        "easing": "SineOut",
+        "speed": 0,
+        "type": "Absolute",
+        "yMin": 0.1,
+        "yMax": 0.5,
+        "zMin": 0.65,
+        "zMax": 0.85,
+        "finishType": "Relative",
+        "finishYOffset": 0.06,
+        "finishZOffset": 0.05,
+        "finishZROffset": 1
+      },
+      "trigger": {
+        "type": "Minor",
+        "weight": 10,
+        "threshold": 0.25
+      }
+    },
+    {
+      "id": "en-blur",
+      "effectType": "Transition",
+      "type": "Blur",
+      "name": "Smear",
+      "disabled": false,
+      "config": {
+        "easing": "ExponentialInOut",
+        "speed": 0.2,
+        "intensity": 2,
+        "samples": 32
+      },
+      "camera": {
+        "speed": 0,
+        "exit": {
+          "type": "None"
+        },
+        "enter": {
+          "xMin": 0,
+          "xMax": 1,
+          "yMin": 0.1,
+          "yMax": 0.5,
+          "zMin": 0.65,
+          "zMax": 0.85
+        },
+        "finish": {
+          "type": "Relative",
+          "easing": "CubicOut",
+          "xOffset": 0.3,
+          "zOffset": 0.1
+        }
+      },
+      "trigger": {
+        "type": "Major",
+        "weight": 1,
+        "threshold": 0
+      }
+    },
+    {
+      "id": "en-slide",
+      "effectType": "Transition",
+      "type": "Slide",
+      "name": "Triple Slide",
+      "disabled": false,
+      "config": {
+        "easing": "ExponentialInOut",
+        "speed": 0,
+        "direction": 0,
+        "slides": 3,
+        "intensity": 5,
+        "samples": 32
+      },
+      "camera": {
+        "speed": 0,
+        "exit": {
+          "type": "Absolute",
+          "easing": "QuarticInOut",
+          "xMin": 0.25,
+          "xMax": 0.75,
+          "yMin": 0.25,
+          "yMax": 0.75,
+          "zMin": 0.2,
+          "zMax": 0.35
+        },
+        "enter": {
+          "xMin": 0.5,
+          "xMax": 0.5,
+          "yMin": 0.5,
+          "yMax": 0.5,
+          "zMin": 0.2,
+          "zMax": 0.2
+        },
+        "finish": {
+          "type": "Absolute",
+          "easing": "QuarticInOut",
+          "xMin": 0,
+          "xMax": 1,
+          "yMin": 0.1,
+          "yMax": 0.5,
+          "zMin": 0.8,
+          "zMax": 1
+        }
+      },
+      "trigger": {
+        "type": "Major",
+        "weight": 100,
+        "threshold": 0.35
+      }
+    },
+    {
+      "id": "en-glitch-t",
+      "effectType": "Transition",
+      "type": "Glitch",
+      "name": "Glitch Cut",
+      "disabled": false,
+      "config": {
+        "easing": "CubicOut",
+        "speed": 0
+      },
+      "camera": {
+        "speed": 0,
+        "exit": {
+          "type": "None"
+        },
+        "enter": {
+          "xMin": 0.5,
+          "xMax": 0.5,
+          "yMin": 0.5,
+          "yMax": 0.5,
+          "zMin": 0.2,
+          "zMax": 0.2,
+          "zrMin": 35,
+          "zrMax": 35
+        },
+        "finish": {
+          "type": "Absolute",
+          "easing": "ExponentialOut",
+          "xMin": 0,
+          "xMax": 1,
+          "yMin": 0.1,
+          "yMax": 0.5,
+          "zMin": 0.8,
+          "zMax": 1
+        }
+      },
+      "trigger": {
+        "type": "Major",
+        "weight": 100,
+        "threshold": 0.35
+      }
+    },
+    {
+      "id": "np-hue",
+      "effectType": "Filter",
+      "type": "HueShift",
+      "name": "Neon Hue",
+      "disabled": false,
+      "config": {
+        "degrees": 0,
+        "speed": 0.15
+      },
+      "trigger": {
+        "type": "Mids",
+        "sensitivity": 1.2,
+        "threshold": 0.1,
+        "smoothing": 0.9,
+        "degrees": 70
+      }
+    },
+    {
+      "id": "np-flash",
+      "effectType": "Filter",
+      "type": "Flash",
+      "name": "Kick Flash",
+      "disabled": false,
+      "config": {
+        "amount": 0,
+        "color": 16735432
+      },
+      "trigger": {
+        "type": "Lows",
+        "sensitivity": 1.0,
+        "threshold": 0.25,
+        "smoothing": 0.75,
+        "amount": 0.3
+      }
+    },
+    {
+      "id": "np-zoom",
+      "effectType": "Filter",
+      "type": "ZoomBlur",
+      "name": "Punch",
+      "disabled": false,
+      "config": {
+        "strength": 0
+      },
+      "trigger": {
+        "type": "Lows",
+        "sensitivity": 1.2,
+        "threshold": 0.2,
+        "smoothing": 0.8,
+        "strength": 0.12
+      }
+    }
+  ],
+  "analysisConfig": {
+    "spectralSmoothing": 4,
+    "spectralSeparation": 3,
+    "chromaSmoothing": 30,
+    "chromaDownSampling": 5,
+    "majorTransitionWindow": 35,
+    "minorTransitionWindow": 5
+  },
+  "noveltyConfigs": {
+    "Low": {
+      "spectrum": "Percussive",
+      "normalization": 10,
+      "startFreq": 0,
+      "endFreq": 300
+    },
+    "Mid": {
+      "spectrum": "Percussive",
+      "normalization": 3,
+      "startFreq": 300,
+      "endFreq": 800
+    },
+    "High": {
+      "spectrum": "Percussive",
+      "normalization": 2,
+      "startFreq": 800,
+      "endFreq": 2000
+    }
+  }
+}

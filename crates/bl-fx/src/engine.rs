@@ -40,6 +40,12 @@ pub enum FilterView {
     Vignette { offset: f32, darkness: f32 },
     VignetteBlur { size: f32, radius: f32, passes: u32 },
     Glitch { amount: f32, seed: f32 },
+    /// Hue rotation in degrees.
+    HueShift { degrees: f32 },
+    Kaleidoscope { amount: f32, segments: u32, angle: f32 },
+    Flash { amount: f32, color: [f32; 3] },
+    ZoomBlur { strength: f32 },
+    Grain { amount: f32, scanlines: f32, time: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -495,6 +501,11 @@ impl Engine {
                 "Vignette" => FilterState { a: e.cfg("darkness"), b: e.cfg("offset"), passes: 0 },
                 "VignetteBlur" => FilterState { a: e.cfg("size"), b: e.cfg("radius"), passes: e.cfg("passes") as u32 },
                 "Glitch" => FilterState { a: e.cfg("amount"), b: 0.0, passes: 0 },
+                "HueShift" => FilterState { a: e.cfg("degrees"), b: 0.0, passes: 0 },
+                "Kaleidoscope" => FilterState { a: e.cfg("amount"), b: 0.0, passes: e.cfg("segments").max(2.0) as u32 },
+                "Flash" => FilterState { a: e.cfg("amount"), b: 0.0, passes: 0 },
+                "ZoomBlur" => FilterState { a: e.cfg("strength"), b: 0.0, passes: 0 },
+                "Grain" => FilterState { a: e.cfg("amount"), b: e.cfg("scanlines"), passes: 0 },
                 "MotionBlur" => FilterState { a: e.cfg("intensity"), b: 0.0, passes: e.cfg("samples") as u32 },
                 _ => continue,
             };
@@ -634,6 +645,11 @@ impl Engine {
         }
     }
 
+    /// Config value of the last enabled filter of type `ty`.
+    fn filter_cfg(&self, ty: &str, key: &str) -> f32 {
+        self.last_enabled("Filter", ty).map(|e| e.cfg(key)).unwrap_or(0.0)
+    }
+
     fn filter_state(&mut self, ty: &str) -> Option<&mut FilterState> {
         self.filters.iter_mut().find(|(t, _)| t == ty).map(|(_, s)| s)
     }
@@ -689,6 +705,11 @@ impl Engine {
                         "Vignette" => ("darkness", "offset"),
                         "VignetteBlur" => ("size", "radius"),
                         "MotionBlur" => ("intensity", ""),
+                        "HueShift" => ("degrees", ""),
+                        "Kaleidoscope" => ("amount", ""),
+                        "Flash" => ("amount", ""),
+                        "ZoomBlur" => ("strength", ""),
+                        "Grain" => ("amount", ""),
                         _ => continue,
                     };
                     let ta = lerp_t(ka);
@@ -844,6 +865,21 @@ impl Engine {
                 "Vignette" => FilterView::Vignette { darkness: st.a, offset: st.b },
                 "VignetteBlur" => FilterView::VignetteBlur { size: st.a, radius: st.b, passes: st.passes },
                 "Glitch" => FilterView::Glitch { amount: st.a, seed: self.glitch_seed },
+                "HueShift" => {
+                    let speed = self.filter_cfg("HueShift", "speed");
+                    FilterView::HueShift { degrees: st.a + (self.now as f32 * speed * 60.0) % 360.0 }
+                }
+                "Kaleidoscope" => {
+                    let rot = self.filter_cfg("Kaleidoscope", "rotation");
+                    FilterView::Kaleidoscope { amount: st.a.clamp(0.0, 1.0), segments: st.passes.max(2), angle: (self.now as f32 * rot) % std::f32::consts::TAU }
+                }
+                "Flash" => {
+                    let c = self.filter_cfg("Flash", "color") as u32;
+                    let rgb = [((c >> 16) & 255) as f32 / 255.0, ((c >> 8) & 255) as f32 / 255.0, (c & 255) as f32 / 255.0];
+                    FilterView::Flash { amount: st.a.clamp(0.0, 0.6), color: rgb }
+                }
+                "ZoomBlur" => FilterView::ZoomBlur { strength: st.a.clamp(0.0, 0.5) },
+                "Grain" => FilterView::Grain { amount: st.a.clamp(0.0, 0.5), scanlines: st.b.clamp(0.0, 1.0), time: (self.now % 1000.0) as f32 },
                 _ => continue,
             });
         }

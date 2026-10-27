@@ -304,6 +304,9 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("Balanced", include_str!("../../../presets/balanced.hfx")),
     ("Energetic", include_str!("../../../presets/energetic.hfx")),
     ("Calm", include_str!("../../../presets/calm.hfx")),
+    ("Neon Pulse", include_str!("../../../presets/neon-pulse.hfx")),
+    ("Kaleido Dream", include_str!("../../../presets/kaleido-dream.hfx")),
+    ("Retro Film", include_str!("../../../presets/retro-film.hfx")),
 ];
 
 pub fn builtin(name: &str, rng: &mut Rng) -> Option<Preset> {

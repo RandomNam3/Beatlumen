@@ -18,6 +18,11 @@ struct Programs {
     blur: Program,
     rgb_shift: Program,
     vignette: Program,
+    hue_shift: Program,
+    kaleidoscope: Program,
+    flash: Program,
+    zoom_blur: Program,
+    grain: Program,
     vignette_blend: Program,
     motion_blur: Program,
     glitch: Program,
@@ -64,6 +69,11 @@ impl Visualizer {
             blur: prog(gl, BLUR_FS)?,
             rgb_shift: prog(gl, RGB_SHIFT_FS)?,
             vignette: prog(gl, VIGNETTE_FS)?,
+            hue_shift: prog(gl, HUE_SHIFT_FS)?,
+            kaleidoscope: prog(gl, KALEIDOSCOPE_FS)?,
+            flash: prog(gl, FLASH_FS)?,
+            zoom_blur: prog(gl, ZOOM_BLUR_FS)?,
+            grain: prog(gl, GRAIN_FS)?,
             vignette_blend: prog(gl, VIGNETTE_BLEND_FS)?,
             motion_blur: prog(gl, MOTION_BLUR_FS)?,
             glitch: prog(gl, &glitch_fs())?,
@@ -332,6 +342,53 @@ impl Visualizer {
                 p.set_texture(gl, "tDiffuse2", 1, self.effect_tmp.texture);
                 p.set_f(gl, "amount", amount);
                 p.set_f(gl, "seed", seed);
+                p.set_2f(gl, "resolution", self.width as f32, self.height as f32);
+                self.fullscreen.draw(gl);
+            }
+            FilterView::HueShift { degrees } => {
+                dst.bind(gl);
+                let p = &self.p.hue_shift;
+                p.use_program(gl);
+                p.set_texture(gl, "tDiffuse", 0, src.texture);
+                p.set_f(gl, "angle", degrees.to_radians());
+                self.fullscreen.draw(gl);
+            }
+            FilterView::Kaleidoscope { amount, segments, angle } => {
+                dst.bind(gl);
+                let p = &self.p.kaleidoscope;
+                p.use_program(gl);
+                p.set_texture(gl, "tDiffuse", 0, src.texture);
+                p.set_f(gl, "amount", amount);
+                p.set_f(gl, "segments", segments as f32);
+                p.set_f(gl, "angle", angle);
+                p.set_2f(gl, "resolution", self.width as f32, self.height as f32);
+                self.fullscreen.draw(gl);
+            }
+            FilterView::Flash { amount, color } => {
+                dst.bind(gl);
+                let p = &self.p.flash;
+                p.use_program(gl);
+                p.set_texture(gl, "tDiffuse", 0, src.texture);
+                p.set_f(gl, "amount", amount);
+                p.set_3f(gl, "color", color[0], color[1], color[2]);
+                self.fullscreen.draw(gl);
+            }
+            FilterView::ZoomBlur { strength } => {
+                dst.bind(gl);
+                let p = &self.p.zoom_blur;
+                p.use_program(gl);
+                p.set_texture(gl, "tDiffuse", 0, src.texture);
+                p.set_f(gl, "strength", strength);
+                self.fullscreen.draw(gl);
+            }
+            FilterView::Grain { amount, scanlines, time } => {
+                dst.bind(gl);
+                let p = &self.p.grain;
+                p.use_program(gl);
+                p.set_texture(gl, "tDiffuse", 0, src.texture);
+                p.set_f(gl, "amount", amount);
+                p.set_f(gl, "scanlines", scanlines);
+                p.set_f(gl, "time", time);
                 p.set_2f(gl, "resolution", self.width as f32, self.height as f32);
                 self.fullscreen.draw(gl);
             }

@@ -494,3 +494,104 @@ void main() {
     fragColor = vec4(c.rgb * c.a, c.a);
 }
 "#;
+
+/// Hue rotation (YIQ space).
+pub const HUE_SHIFT_FS: &str = r#"
+uniform sampler2D tDiffuse;
+uniform float angle;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    vec4 c = texture(tDiffuse, vUv);
+    mat3 toYiq = mat3(0.299, 0.596, 0.211, 0.587, -0.274, -0.523, 0.114, -0.322, 0.312);
+    mat3 toRgb = mat3(1.0, 1.0, 1.0, 0.956, -0.272, -1.106, 0.621, -0.647, 1.703);
+    vec3 yiq = toYiq * c.rgb;
+    float h = atan(yiq.z, yiq.y) + angle;
+    float chroma = length(yiq.yz);
+    yiq.yz = chroma * vec2(cos(h), sin(h));
+    fragColor = vec4(clamp(toRgb * yiq, 0.0, 1.0), c.a);
+}
+"#;
+
+/// Mirrors the image into `segments` wedges around the centre.
+pub const KALEIDOSCOPE_FS: &str = r#"
+uniform sampler2D tDiffuse;
+uniform float amount;
+uniform float segments;
+uniform float angle;
+uniform vec2 resolution;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    vec2 p = vUv - 0.5;
+    float aspect = resolution.x / max(resolution.y, 1.0);
+    p.x *= aspect;
+    float r = length(p);
+    float a = atan(p.y, p.x) + angle;
+    float wedge = 6.28318530718 / segments;
+    a = mod(a, wedge);
+    a = abs(a - wedge * 0.5);
+    vec2 q = r * vec2(cos(a), sin(a));
+    q.x /= aspect;
+    vec2 uv = q + 0.5;
+    vec4 k = texture(tDiffuse, clamp(uv, 0.0, 1.0));
+    fragColor = mix(texture(tDiffuse, vUv), k, amount);
+}
+"#;
+
+/// Additive flash towards a colour (screen blend).
+pub const FLASH_FS: &str = r#"
+uniform sampler2D tDiffuse;
+uniform float amount;
+uniform vec3 color;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    vec4 c = texture(tDiffuse, vUv);
+    vec3 screen = 1.0 - (1.0 - c.rgb) * (1.0 - color * amount);
+    fragColor = vec4(screen, c.a);
+}
+"#;
+
+/// Radial blur towards the centre.
+pub const ZOOM_BLUR_FS: &str = r#"
+uniform sampler2D tDiffuse;
+uniform float strength;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    vec2 dir = vUv - 0.5;
+    vec4 acc = vec4(0.0);
+    const int N = 16;
+    for (int i = 0; i < N; i++) {
+        float t = float(i) / float(N - 1);
+        acc += texture(tDiffuse, 0.5 + dir * (1.0 - strength * t));
+    }
+    fragColor = acc / float(N);
+}
+"#;
+
+/// Animated film grain and scanlines.
+pub const GRAIN_FS: &str = r#"
+uniform sampler2D tDiffuse;
+uniform float amount;
+uniform float scanlines;
+uniform float time;
+uniform vec2 resolution;
+in vec2 vUv;
+out vec4 fragColor;
+float hash(vec2 p) {
+    p = fract(p * vec2(443.897, 441.423));
+    p += dot(p, p.yx + 19.19);
+    return fract((p.x + p.y) * p.x);
+}
+void main() {
+    vec4 c = texture(tDiffuse, vUv);
+    vec2 px = floor(vUv * resolution);
+    float n = hash(px + fract(time * 7.13) * 251.0) - 0.5;
+    vec3 col = c.rgb + n * amount;
+    float line = 0.5 + 0.5 * sin(vUv.y * resolution.y * 3.14159);
+    col *= 1.0 - scanlines * 0.35 * line;
+    fragColor = vec4(clamp(col, 0.0, 1.0), c.a);
+}
+"#;
