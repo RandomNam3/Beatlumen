@@ -323,7 +323,7 @@ impl Core {
                 None => err("unknown playlist"),
             },
             "playlist.create" => {
-                let kind = if s("kind") == "Background" { PlaylistKind::Background } else { PlaylistKind::Track };
+                let kind = if s("kind").eq_ignore_ascii_case("background") { PlaylistKind::Background } else { PlaylistKind::Track };
                 let items = if b("fromQueue") { self.queue.ordered().map(|(_, id)| id.clone()).collect() } else { strs(c.get("items")) };
                 self.create_playlist(host, &s("name"), kind, items, b("server"));
                 ok()

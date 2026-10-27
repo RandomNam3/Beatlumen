@@ -95,6 +95,7 @@ Item {
                             IconButton {
                                 id: m
                                 iconName: "more_vert"
+                                tip: Theme.tr("More")
                                 iconColor: Theme.textDim
                                 onClicked: effectMenu.popup(m)
                                 Menu {

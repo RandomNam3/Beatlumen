@@ -38,6 +38,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: !nav.rail
                 Layout.preferredHeight: nav.rail ? 72 : -1
+                text: modelData.label
                 Accessible.name: modelData.label
                 onClicked: nav.selected(index === 0 ? -1 : index - 1)
                 contentItem: Column {

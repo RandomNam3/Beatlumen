@@ -5,6 +5,7 @@ import Beatlumen.Core
 // Context menu for one or more songs.
 Menu {
     id: menu
+    width: 260
     property var ids: []
     property var extra: []      // [{text, action}] items shown first
     signal addToPlaylist(var ids)

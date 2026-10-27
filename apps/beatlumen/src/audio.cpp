@@ -14,9 +14,24 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <cstdio>
 #include <vector>
 
 namespace {
+
+// Test support: BEATLUMEN_TEST_AUDIO=<file> appends every rendered block
+// (interleaved stereo float) so the output can be checked for glitches.
+void dumpAudio(const float *data, size_t frames)
+{
+    static FILE *f = []() -> FILE * {
+        const QByteArray p = qgetenv("BEATLUMEN_TEST_AUDIO");
+        return p.isEmpty() ? nullptr : fopen(p.constData(), "wb");
+    }();
+    if (f) {
+        fwrite(data, sizeof(float), frames * 2, f);
+        fflush(f);
+    }
+}
 
 // Without an audio device (headless systems) playback still advances: a
 // thread consumes audio in real time so the clock and visuals keep going.
@@ -34,6 +49,7 @@ public:
             auto next = std::chrono::steady_clock::now();
             while (m_run) {
                 bl_audio_render(buf.data(), frames, uint32_t(frames));
+                dumpAudio(buf.data(), frames);
                 next += std::chrono::milliseconds(10);
                 std::this_thread::sleep_until(next);
             }
@@ -72,6 +88,7 @@ protected:
             latency = queued > 0 ? uint32_t(queued / 8) : 0;
         }
         bl_audio_render(reinterpret_cast<float *>(data), size_t(frames), latency);
+        dumpAudio(reinterpret_cast<const float *>(data), size_t(frames));
         return frames * 8;
     }
     qint64 writeData(const char *, qint64) override { return -1; }

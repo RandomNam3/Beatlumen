@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QColor>
+#include <QJSValue>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
@@ -39,7 +40,7 @@ public:
     QString version() const;
 
     // Executes a core command ({"cmd": name, ...args}) and returns the result.
-    Q_INVOKABLE QVariant call(const QString &cmd, const QVariantMap &args = {});
+    Q_INVOKABLE QJSValue call(const QString &cmd, const QVariantMap &args = {});
     // Renders the visualizer underneath the QML scene of `window`.
     Q_INVOKABLE void attachWindow(QQuickWindow *window);
     // Opens files: local paths/URLs, Android content URIs, browser uploads.

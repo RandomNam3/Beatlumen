@@ -52,6 +52,7 @@ Item {
                         model: ["", "#e91e63", "#ff5722", "#ff9800", "#ffc107", "#8bc34a", "#00bfa5", "#00b0ff", "#3d5afe", "#7c4dff", "#d500f9"]
                         delegate: AbstractButton {
                             width: 40; height: 40
+                            readonly property string tip: modelData === "" ? "accent:system" : modelData
                             Accessible.name: modelData === "" ? Theme.tr("System") : modelData
                             onClicked: Core.call("settings.set", { key: "ui.accent", value: modelData })
                             background: Rectangle {

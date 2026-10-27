@@ -17,6 +17,12 @@ int main(int argc, char *argv[])
 {
     // The core and the visualizer live on the GUI thread; render there too.
     qputenv("QSG_RENDER_LOOP", "basic");
+#if defined(Q_OS_ANDROID)
+    // QML is compiled ahead of time; the interpreter covers the rest. This
+    // avoids JIT pages that hardened Android builds (GrapheneOS) report as
+    // dynamic code loading.
+    qputenv("QV4_FORCE_INTERPRETER", "1");
+#endif
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
 #if defined(Q_OS_ANDROID) || defined(Q_OS_WASM) || defined(Q_OS_IOS)

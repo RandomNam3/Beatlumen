@@ -12,14 +12,14 @@ Item {
     onRevChanged: reload()
     Component.onCompleted: reload()
 
-    TrackMenu { id: trackMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
     PlaylistPicker { id: picker }
     TextPrompt {
         id: savePrompt
         title: Theme.tr("Save as playlist")
         placeholder: Theme.tr("Playlist name")
         acceptText: Theme.tr("Save")
-        onSubmitted: (t) => Core.call("playlist.create", { name: t, kind: "Track", fromQueue: true, server: Core.state.server === "connected" })
+        onSubmitted: (t) => Core.call("playlist.create", { name: t, kind: "track", fromQueue: true, server: Core.state.server === "connected" })
     }
 
     ColumnLayout {
@@ -85,7 +85,7 @@ Item {
                     highlighted: modelData.current
                     opacity: list.dragFrom === index ? 0.4 : 1
                     onClicked: Core.call("queue.play", { pos: modelData.pos })
-                    onPressAndHold: trackMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])
+                    onPressAndHold: songMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])
                     Component.onCompleted: if (modelData.local && !modelData.cover) Covers.request(modelData.id)
                     swipe.right: Rectangle {
                         width: parent.width
@@ -148,7 +148,7 @@ Item {
                             iconName: "more_vert"
                             iconColor: Theme.textDim
                             tip: Theme.tr("More")
-                            onClicked: trackMenu.openFor([row.modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: row.modelData.pos }) }])
+                            onClicked: songMenu.openFor([row.modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: row.modelData.pos }) }])
                         }
                     }
                 }

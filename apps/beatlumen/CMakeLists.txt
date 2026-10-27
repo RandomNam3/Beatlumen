@@ -75,11 +75,22 @@ qt_add_executable(beatlumen
     src/bridge.cpp src/bridge.h
     src/audio.cpp src/audio.h
     src/web.cpp src/web.h
+    src/testhooks.cpp src/testhooks.h
     src/core.h
 )
 target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
 
 file(GLOB BL_QML RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS qml/*.qml)
+# File pickers: Qt Quick Dialogs on desktop; the system document picker on
+# Android and in the browser (keeps the other Qt Quick Controls styles out).
+if(ANDROID OR EMSCRIPTEN)
+    list(APPEND BL_QML platform/mobile/PlatformDialogs.qml)
+else()
+    # Kept as .qml.in so that the import scanner of mobile builds, which scans
+    # the whole source directory, does not see the Qt Quick Dialogs import.
+    configure_file(platform/desktop/PlatformDialogs.qml.in "${CMAKE_CURRENT_BINARY_DIR}/qml/PlatformDialogs.qml" COPYONLY)
+    list(APPEND BL_QML "${CMAKE_CURRENT_BINARY_DIR}/qml/PlatformDialogs.qml")
+endif()
 file(GLOB BL_ICONS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS icons/*.svg)
 set_source_files_properties(qml/Theme.qml qml/Covers.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 # Place the QML files at the module root so that they see each other
@@ -88,6 +99,10 @@ foreach(f ${BL_QML})
     get_filename_component(n "${f}" NAME)
     set_source_files_properties(${f} PROPERTIES QT_RESOURCE_ALIAS ${n})
 endforeach()
+# Only scan the QML that is actually built for imports to deploy.
+if(ANDROID OR EMSCRIPTEN)
+    set_target_properties(beatlumen PROPERTIES QT_QML_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/qml;${CMAKE_CURRENT_SOURCE_DIR}/platform/mobile")
+endif()
 qt_add_qml_module(beatlumen
     URI Beatlumen
     VERSION 1.0

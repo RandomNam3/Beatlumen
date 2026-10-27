@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls.Material
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import Beatlumen.Core
 
@@ -43,7 +42,9 @@ ApplicationWindow {
         poke()
     }
 
+    property double lastPoke: 0
     function poke() {
+        lastPoke = Date.now()
         idle = false
         idleTimer.restart()
     }
@@ -126,18 +127,19 @@ ApplicationWindow {
         width: 88
         current: win.page
         onSelected: (i) => win.page = i
+        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
     }
 
     // Tapping the visual toggles the controls (and closes pages on phones).
     TapHandler {
+        // Tapping the visual while the controls are shown hides them; the
+        // MouseArea below brings them back.
         onTapped: {
-            if (win.page >= 0 && win.compact)
-                return
-            win.idle = !win.idle
-            if (!win.idle)
-                idleTimer.restart()
+            // Ignore the tap that just brought the controls back.
+            if (win.page < 0 && win.playing && Date.now() - win.lastPoke > 600)
+                win.idle = true
         }
         onDoubleTapped: if (!Core.mobile) win.toggleFullscreen()
     }
@@ -148,6 +150,7 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.margins: 8
         visible: win.page < 0 || !win.compact
+        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
         IconButton {
@@ -168,9 +171,23 @@ ApplicationWindow {
         anchors.left: win.compact ? parent.left : rail.right
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.bottom: win.compact ? (win.page < 0 ? expanded.top : playerBar.top) : playerBar.top
+        anchors.bottom: parent.bottom
+        // Slides down when the controls fade out.
+        anchors.bottomMargin: !win.chromeVisible ? 8
+                              : win.compact ? expanded.height + nav.height
+                              : playerBar.height
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
         visible: win.page < 0
         showSpectrum: true
+    }
+
+    // While the controls are hidden, a short tap anywhere brings them back
+    // (and is not passed on to the invisible buttons below).
+    MouseArea {
+        anchors.fill: parent
+        z: 90
+        enabled: !win.chromeVisible
+        onPressed: win.poke()
     }
 
     // Phone now-playing controls.
@@ -178,6 +195,7 @@ ApplicationWindow {
         id: expanded
         mode: "expanded"
         visible: win.compact && win.page < 0
+        enabled: win.chromeVisible
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: nav.top
@@ -210,7 +228,7 @@ ApplicationWindow {
                 active: win.page === 0 || item !== null
                 sourceComponent: LibraryPage {
                     onAddFolder: win.addFolder()
-                    onOpenFiles: audioDialog.open()
+                    onOpenFiles: dialogs.openAudio()
                     onConnectServer: win.page = 3
                 }
             }
@@ -222,7 +240,7 @@ ApplicationWindow {
                 id: visuals
                 active: win.page === 2 || item !== null
                 sourceComponent: VisualsPage {
-                    onAddImages: imageDialog.open()
+                    onAddImages: dialogs.openImages()
                     onAddImageFolder: win.addImageFolder()
                 }
             }
@@ -246,6 +264,7 @@ ApplicationWindow {
         height: visible ? implicitHeight : 0
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
+        enabled: win.chromeVisible
         onOpenNowPlaying: win.page = -1
         onOpenQueue: win.page = win.page === 1 ? -1 : 1
     }
@@ -259,6 +278,7 @@ ApplicationWindow {
         height: visible ? implicitHeight : 0
         current: win.page
         onSelected: (i) => win.page = i
+        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
     }
@@ -303,60 +323,9 @@ ApplicationWindow {
     }
 
     // ---- dialogs -------------------------------------------------------------
-    function addFolder() {
-        if (Core.platform === "android")
-            folderPicker.showFor(false)
-        else
-            folderDialog.open()
-    }
-    function addImageFolder() {
-        if (Core.platform === "android")
-            folderPicker.showFor(true)
-        else
-            imageFolderDialog.open()
-    }
-
-    FolderPicker {
-        id: folderPicker
-        property bool forImages: false
-        function showFor(img) { forImages = img; images = img; show() }
-        onChosen: (p) => forImages ? Core.call("backgrounds.addFolder", { path: p }) : Core.call("library.addFolder", { path: p })
-    }
-    FolderDialog {
-        id: folderDialog
-        title: Theme.tr("Add music folder")
-        onAccepted: {
-            const p = Core.localPaths([selectedFolder])
-            if (p.length > 0)
-                Core.call("library.addFolder", { path: p[0] })
-        }
-    }
-    FolderDialog {
-        id: imageFolderDialog
-        title: Theme.tr("Add folder")
-        onAccepted: {
-            const p = Core.localPaths([selectedFolder])
-            if (p.length > 0)
-                Core.call("backgrounds.addFolder", { path: p[0] })
-        }
-    }
-    FileDialog {
-        id: audioDialog
-        title: Theme.tr("Open files")
-        fileMode: FileDialog.OpenFiles
-        nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "Styles (*.hfx)", "* (*)"]
-        onAccepted: Core.openUrls(selectedFiles)
-    }
-    FileDialog {
-        id: imageDialog
-        title: Theme.tr("Add images")
-        fileMode: FileDialog.OpenFiles
-        nameFilters: ["Images (*.jpg *.jpeg *.png *.webp *.gif *.bmp)"]
-        onAccepted: {
-            const paths = Core.localPaths(selectedFiles)
-            Core.call("backgrounds.add", { sources: paths, show: true })
-        }
-    }
+    function addFolder() { dialogs.addMusicFolder() }
+    function addImageFolder() { dialogs.addImageFolder() }
+    PlatformDialogs { id: dialogs }
     TextPrompt {
         id: loginPrompt
         title: Theme.tr("Log in")

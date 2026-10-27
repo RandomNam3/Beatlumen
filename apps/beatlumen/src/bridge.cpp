@@ -1,5 +1,6 @@
 #include "bridge.h"
 #include "audio.h"
+#include "testhooks.h"
 #include "web.h"
 
 #include <QClipboard>
@@ -8,6 +9,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJSEngine>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -189,18 +191,22 @@ QColor Bridge::systemAccent() const
     return c.isValid() ? c : QColor(0xe9, 0x1e, 0x63);
 }
 
-QVariant Bridge::call(const QString &cmd, const QVariantMap &args)
+QJSValue Bridge::call(const QString &cmd, const QVariantMap &args)
 {
     if (!m_core)
-        return {};
+        return QJSValue();
     QJsonObject o = QJsonObject::fromVariantMap(args);
     o.insert(QStringLiteral("cmd"), cmd);
     const QByteArray req = QJsonDocument(o).toJson(QJsonDocument::Compact);
     const QByteArray res = takeString(bl_core_command(m_core, req.constData()));
     // Commands often change state; deliver it without waiting for the timer.
     QMetaObject::invokeMethod(this, &Bridge::tick, Qt::QueuedConnection);
-    const QJsonDocument doc = QJsonDocument::fromJson("[" + res + "]");
-    return doc.array().at(0).toVariant();
+    // Parse in the JS engine so QML gets plain JS arrays and objects.
+    QJSEngine *engine = qjsEngine(this);
+    if (!engine)
+        return QJSValue();
+    QJSValue parse = engine->globalObject().property(QStringLiteral("JSON")).property(QStringLiteral("parse"));
+    return parse.call({QJSValue(QString::fromUtf8(res))});
 }
 
 void Bridge::tick()
@@ -251,6 +257,7 @@ void Bridge::attachWindow(QQuickWindow *window)
         return;
     m_window = window;
     window->setColor(Qt::black);
+    TestHooks::attach(window);
     connect(window, &QQuickWindow::beforeRenderPassRecording, this, &Bridge::renderUnderlay, Qt::DirectConnection);
     connect(window, &QQuickWindow::sceneGraphInvalidated, this, [this]() {
         if (m_core)
@@ -374,12 +381,64 @@ void Bridge::copyText(const QString &text)
     QGuiApplication::clipboard()->setText(text);
 }
 
+#ifdef Q_OS_ANDROID
+namespace {
+
+// Receives the result of the system document picker (ACTION_OPEN_DOCUMENT).
+class PickReceiver : public QAndroidActivityResultReceiver
+{
+public:
+    explicit PickReceiver(Bridge *bridge) : m_bridge(bridge) {}
+
+    void handleActivityResult(int, int resultCode, const QJniObject &data) override
+    {
+        const int resultOk = -1;
+        if (resultCode != resultOk || !data.isValid())
+            return;
+        QList<QUrl> urls;
+        const QJniObject clip = data.callObjectMethod("getClipData", "()Landroid/content/ClipData;");
+        if (clip.isValid()) {
+            const int n = clip.callMethod<jint>("getItemCount");
+            for (int i = 0; i < n; ++i) {
+                const QJniObject item = clip.callObjectMethod("getItemAt", "(I)Landroid/content/ClipData$Item;", i);
+                const QJniObject uri = item.callObjectMethod("getUri", "()Landroid/net/Uri;");
+                if (uri.isValid())
+                    urls << QUrl(uri.toString());
+            }
+        } else {
+            const QJniObject uri = data.callObjectMethod("getData", "()Landroid/net/Uri;");
+            if (uri.isValid())
+                urls << QUrl(uri.toString());
+        }
+        Bridge *bridge = m_bridge;
+        QMetaObject::invokeMethod(bridge, [bridge, urls]() { bridge->openUrls(urls, true); }, Qt::QueuedConnection);
+    }
+
+private:
+    Bridge *m_bridge;
+};
+
+} // namespace
+#endif
+
 void Bridge::pickFiles(const QString &accept, bool multiple)
 {
+#ifdef Q_OS_ANDROID
+    // The system document picker; picked content URIs are copied into the
+    // cache and opened like local files (audio plays, images become
+    // backgrounds, .hfx files are imported).
+    static PickReceiver *receiver = new PickReceiver(this);
+    QJniObject intent("android/content/Intent", "(Ljava/lang/String;)V", QJniObject::fromString(QStringLiteral("android.intent.action.OPEN_DOCUMENT")).object<jstring>());
+    intent.callObjectMethod("addCategory", "(Ljava/lang/String;)Landroid/content/Intent;", QJniObject::fromString(QStringLiteral("android.intent.category.OPENABLE")).object<jstring>());
+    intent.callObjectMethod("setType", "(Ljava/lang/String;)Landroid/content/Intent;", QJniObject::fromString(accept.isEmpty() ? QStringLiteral("*/*") : accept).object<jstring>());
+    intent.callObjectMethod("putExtra", "(Ljava/lang/String;Z)Landroid/content/Intent;", QJniObject::fromString(QStringLiteral("android.intent.extra.ALLOW_MULTIPLE")).object<jstring>(), jboolean(multiple));
+    QtAndroidPrivate::startActivity(intent, 4711, receiver);
+#else
     web::pickFiles(accept, multiple, [this](const QString &name, const QByteArray &data) {
         if (m_core)
             bl_core_open_data(m_core, name.toUtf8().constData(), reinterpret_cast<const uint8_t *>(data.constData()), size_t(data.size()));
     });
+#endif
 }
 
 bool Bridge::moveTaskToBack()

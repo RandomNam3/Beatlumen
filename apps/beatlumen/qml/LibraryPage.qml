@@ -28,7 +28,7 @@ Item {
         loaded = true
     }
     function reloadPlaylists() {
-        playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "Track")
+        playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "track")
     }
     function back() {
         if (stack.depth > 1) {
@@ -43,7 +43,7 @@ Item {
     Component.onCompleted: { reload(); reloadPlaylists() }
     Timer { id: reloadTimer; interval: 400; onTriggered: page.reload() }
 
-    TrackMenu { id: trackMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
     PlaylistPicker { id: picker }
 
     StackView {
@@ -126,7 +126,7 @@ Item {
                     anchors.fill: parent
                     visible: search.text.length > 0
                     tracks: page.results
-                    onTrackMenu: (t, a) => trackMenu.openFor([t.id], a)
+                    onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
                 }
 
                 StackLayout {
@@ -149,7 +149,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             tracks: page.tracks
-                            onTrackMenu: (t, a) => trackMenu.openFor([t.id], a)
+                            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
                         }
                     }
 
@@ -176,8 +176,8 @@ Item {
                                     placeholder: "album"
                                     source: modelData.coverTrack ? Covers.url(modelData.coverTrack, modelData.cover) : modelData.cover
                                 }
-                                Label { Layout.fillWidth: true; text: modelData.title || Theme.tr("Unknown album"); font.weight: Font.DemiBold; elide: Text.ElideRight; color: Theme.text }
-                                Label { Layout.fillWidth: true; text: modelData.artist || Theme.tr("Unknown artist"); elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
+                                Label { Layout.fillWidth: true; text: (!modelData.title || modelData.title === "Unknown Album") ? Theme.tr("Unknown album") : modelData.title; font.weight: Font.DemiBold; elide: Text.ElideRight; color: Theme.text }
+                                Label { Layout.fillWidth: true; text: (!modelData.artist || modelData.artist === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.artist; elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
                             }
                         }
                     }
@@ -201,7 +201,7 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 2
-                                    Label { Layout.fillWidth: true; text: modelData.name || Theme.tr("Unknown artist"); font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
+                                    Label { Layout.fillWidth: true; text: (!modelData.name || modelData.name === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
                                     Label { text: modelData.tracks + " " + Theme.tr("songs") + " · " + modelData.albums + " " + Theme.tr("albums"); color: Theme.textDim; font.pixelSize: 13 }
                                 }
                                 Icon { name: "chevron_right"; color: Theme.textFaint }
@@ -211,7 +211,7 @@ Item {
 
                     // Folders
                     FolderView {
-                        onTrackMenu: (t, a) => trackMenu.openFor([t.id], a)
+                        onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
                     }
 
                     // Playlists
@@ -258,7 +258,7 @@ Item {
                             title: Theme.tr("New playlist")
                             placeholder: Theme.tr("Playlist name")
                             acceptText: Theme.tr("Create")
-                            onSubmitted: (t) => Core.call("playlist.create", { name: t, kind: "Track", server: Core.state.server === "connected" })
+                            onSubmitted: (t) => Core.call("playlist.create", { name: t, kind: "track", server: Core.state.server === "connected" })
                         }
                     }
                 }
@@ -274,7 +274,8 @@ Item {
         property string cover
         property string placeholder: "album"
         property var ids: []
-        default property alias extra: extraRow.data
+        // Additional entries for the ⋮ menu: [{text, action}].
+        property var menuItems: []
         spacing: 12
         PageHeader {
             Layout.fillWidth: true
@@ -311,9 +312,8 @@ Item {
                     IconButton {
                         id: moreButton
                         iconName: "more_vert"; tip: Theme.tr("More")
-                        onClicked: trackMenu.openFor(dh.ids, moreButton)
+                        onClicked: songMenu.openFor(dh.ids, moreButton, dh.menuItems)
                     }
-                    RowLayout { id: extraRow; spacing: 0 }
                 }
             }
         }
@@ -326,7 +326,7 @@ Item {
             property var tracks: Core.call("library.album", { id: album.id }) || []
             DetailHeader {
                 Layout.fillWidth: true
-                title: album.title || Theme.tr("Unknown album")
+                title: (!album.title || album.title === "Unknown Album") ? Theme.tr("Unknown album") : album.title
                 subtitle: [album.artist, album.year, tracks.length + " " + Theme.tr("songs")].filter(x => x).join(" · ")
                 cover: album.coverTrack ? Covers.url(album.coverTrack, album.cover) : (album.cover || "")
                 ids: tracks.map(t => t.id)
@@ -337,7 +337,7 @@ Item {
                 tracks: parent.tracks
                 numbered: true
                 showCovers: false
-                onTrackMenu: (t, a) => trackMenu.openFor([t.id], a)
+                onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
             }
         }
     }
@@ -349,7 +349,7 @@ Item {
             property var tracks: Core.call("library.artist", { name: artist }) || []
             DetailHeader {
                 Layout.fillWidth: true
-                title: artist || Theme.tr("Unknown artist")
+                title: (!artist || artist === "Unknown Artist") ? Theme.tr("Unknown artist") : artist
                 subtitle: tracks.length + " " + Theme.tr("songs")
                 placeholder: "person"
                 cover: tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
@@ -359,7 +359,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 tracks: parent.tracks
-                onTrackMenu: (t, a) => trackMenu.openFor([t.id], a)
+                onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
             }
         }
     }
@@ -370,7 +370,13 @@ Item {
             id: pv
             property var playlist: ({})
             property var tracks: []
-            function reload() { tracks = Core.call("playlist.items", { id: playlist.id }) || [] }
+            function reload() {
+                const r = Core.call("playlist.items", { id: playlist.id })
+                tracks = Array.isArray(r) ? r : []
+                const fresh = (Core.call("playlists.list") || []).find(p => p.id === playlist.id)
+                if (fresh)
+                    playlist = fresh
+            }
             Component.onCompleted: reload()
             Connections { target: page; function onPlaylistsRevChanged() { pv.reload() } }
             DetailHeader {
@@ -380,14 +386,10 @@ Item {
                 placeholder: "queue_music"
                 cover: pv.playlist.cover || ""
                 ids: pv.tracks.map(t => t.id)
-                IconButton {
-                    iconName: "edit"; tip: Theme.tr("Rename")
-                    onClicked: renamePrompt.open()
-                }
-                IconButton {
-                    iconName: "delete"; tip: Theme.tr("Delete")
-                    onClicked: { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() }
-                }
+                menuItems: [
+                    { text: Theme.tr("Rename"), action: () => renamePrompt.open() },
+                    { text: Theme.tr("Delete"), action: () => { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() } }
+                ]
             }
             TrackListView {
                 Layout.fillWidth: true
@@ -395,7 +397,7 @@ Item {
                 tracks: pv.tracks
                 onTrackMenu: (t, a) => {
                     const i = pv.tracks.indexOf(t)
-                    trackMenu.openFor([t.id], a, [{ text: Theme.tr("Remove"), action: () => Core.call("playlist.removeItem", { id: pv.playlist.id, index: i }) }])
+                    songMenu.openFor([t.id], a, [{ text: Theme.tr("Remove"), action: () => Core.call("playlist.removeItem", { id: pv.playlist.id, index: i }) }])
                 }
             }
             TextPrompt {

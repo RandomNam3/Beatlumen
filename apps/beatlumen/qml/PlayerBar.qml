@@ -46,7 +46,8 @@ Item {
             icon.height: parent.big * 0.5
             icon.color: "white"
             Material.background: Theme.accent
-            Accessible.name: bar.playing ? Theme.tr("Pause") : Theme.tr("Play")
+            readonly property string tip: bar.playing ? Theme.tr("Pause") : Theme.tr("Play")
+            Accessible.name: tip
             onClicked: Core.call("toggle")
         }
         IconButton {

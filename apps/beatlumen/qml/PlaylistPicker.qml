@@ -17,7 +17,7 @@ Dialog {
 
     function show(trackIds) {
         ids = trackIds
-        playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "Track")
+        playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "track")
         open()
     }
 
@@ -46,7 +46,7 @@ Dialog {
         placeholder: Theme.tr("Playlist name")
         acceptText: Theme.tr("Create")
         onSubmitted: (t) => {
-            Core.call("playlist.create", { name: t, kind: "Track", items: dlg.ids, server: Core.state.server === "connected" })
+            Core.call("playlist.create", { name: t, kind: "track", items: dlg.ids, server: Core.state.server === "connected" })
             dlg.close()
         }
     }
