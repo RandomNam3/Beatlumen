@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.11.3"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust core and server (tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg (test fixtures)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Test
+        run: cargo test --workspace --release
+      - name: Server binary
+        run: cargo build --release -p beatlumen-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-server-linux-x86_64
+          path: target/release/beatlumen-server
+
+  linux:
+    name: Linux app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtmultimedia qtshadertools qtimageformats
+          cache: true
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev ninja-build
+      - name: Build
+        run: |
+          cmake -S apps/beatlumen -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-linux-x86_64
+          path: build/linux/beatlumen
+
+  windows:
+    name: Windows app
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          modules: qtmultimedia qtshadertools qtimageformats
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S apps/beatlumen -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/windows
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          Copy-Item build/windows/beatlumen.exe dist/windows/
+          windeployqt --release --qmldir apps/beatlumen/qml --no-translations dist/windows/beatlumen.exe
+          cargo build --release -p beatlumen-server
+          Copy-Item target/release/beatlumen-server.exe dist/windows/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-windows-x64
+          path: dist/windows
+
+  web:
+    name: Web app (WebAssembly)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.7
+      - name: Rust target
+        run: rustup target add wasm32-unknown-emscripten
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: wasm
+          arch: wasm_singlethread
+          modules: qtshadertools qtimageformats
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtshadertools
+          cache: true
+          set-env: false
+          dir: ${{ runner.temp }}/qt-host
+      - name: Build
+        run: |
+          sudo apt-get install -y ninja-build
+          QT_WASM="$(dirname "$(dirname "$(find "$RUNNER_WORKSPACE/Qt" -path '*wasm_singlethread/bin/qt-cmake' | head -1)")")" \
+          QT_HOST="$(dirname "$(dirname "$(find "$RUNNER_TEMP/qt-host" -path '*gcc_64/bin/qmake' | head -1)")")" \
+          ./build-web.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-web
+          path: dist/web

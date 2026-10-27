@@ -104,7 +104,7 @@ if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN)
 endif()
 
 if(WIN32)
-    target_link_libraries(beatlumen PRIVATE ws2_32 userenv bcrypt ntdll)
+    target_link_libraries(beatlumen PRIVATE ws2_32 userenv bcrypt ntdll advapi32 synchronization)
     set_target_properties(beatlumen PROPERTIES WIN32_EXECUTABLE ON)
 elseif(ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
