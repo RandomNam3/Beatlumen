@@ -59,7 +59,7 @@ pub fn master(name: &str) -> PathBuf {
     if p.exists() {
         return p;
     }
-    let tmp = dir.join(format!("master_{name}.tmp.wav"));
+    let tmp = dir.join(format!("master_{name}.{}.{:?}.tmp.wav", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
     let ok = match name {
         "stereo44" => ffmpeg(&[
             "-f",
@@ -107,7 +107,7 @@ pub fn master(name: &str) -> PathBuf {
 pub fn cover_png() -> PathBuf {
     let p = fixture_dir().join("cover.png");
     if !p.exists() {
-        let tmp = fixture_dir().join("cover.tmp.png");
+        let tmp = fixture_dir().join(format!("cover.{}.{:?}.tmp.png", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
         assert!(ffmpeg(&["-f", "lavfi", "-i", "color=c=red:s=32x32", "-frames:v", "1", tmp.to_str().unwrap()]));
         std::fs::rename(&tmp, &p).unwrap();
     }
@@ -133,7 +133,7 @@ pub fn make(name: &str, src: &str, args: &[&str]) -> Option<PathBuf> {
         return Some(p);
     }
     let m = master(src);
-    let tmp = fixture_dir().join(format!("tmp_{name}"));
+    let tmp = fixture_dir().join(format!("tmp_{}_{:?}_{name}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
     let mut a: Vec<&str> = vec!["-i", m.to_str().unwrap()];
     a.extend_from_slice(args);
     // Keep the extension so ffmpeg picks the right muxer.
