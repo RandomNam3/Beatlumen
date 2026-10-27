@@ -3,19 +3,6 @@
 version = 4
 
 [[package]]
-name = "beatlumen"
-version = "0.1.0"
-dependencies = [
- "bl-app",
- "bl-gl",
- "bl-media",
-]
-
-[[package]]
-name = "beatlumen-android"
-version = "0.1.0"
-
-[[package]]
 name = "beatlumen-server"
 version = "0.1.0"
 dependencies = [
@@ -28,10 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "beatlumen-web"
-version = "0.1.0"
-
-[[package]]
 name = "bl-aac"
 version = "0.1.0"
 
@@ -40,11 +23,10 @@ name = "bl-analysis"
 version = "0.1.0"
 
 [[package]]
-name = "bl-app"
+name = "bl-core"
 version = "0.1.0"
 dependencies = [
  "bl-analysis",
- "bl-font",
  "bl-fx",
  "bl-gl",
  "bl-image",
@@ -52,15 +34,21 @@ dependencies = [
  "bl-media",
  "bl-net",
  "bl-render",
- "bl-ui",
+]
+
+[[package]]
+name = "bl-ffi"
+version = "0.1.0"
+dependencies = [
+ "bl-core",
+ "bl-gl",
+ "bl-image",
+ "bl-json",
+ "bl-media",
 ]
 
 [[package]]
 name = "bl-flac"
-version = "0.1.0"
-
-[[package]]
-name = "bl-font"
 version = "0.1.0"
 
 [[package]]
@@ -123,15 +111,6 @@ version = "0.1.0"
 dependencies = [
  "bl-fx",
  "bl-gl",
-]
-
-[[package]]
-name = "bl-ui"
-version = "0.1.0"
-dependencies = [
- "bl-font",
- "bl-gl",
- "bl-render",
 ]
 
 [[package]]

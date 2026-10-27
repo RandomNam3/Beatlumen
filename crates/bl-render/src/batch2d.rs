@@ -287,10 +287,15 @@ impl Batch2d {
 
     /// Flushes all queued geometry to the screen (default framebuffer).
     pub fn end(&mut self, gl: &Gl, fb_width: i32, fb_height: i32) {
+        self.end_to(gl, 0, fb_width, fb_height);
+    }
+
+    /// Like [`Batch2d::end`] but draws into framebuffer `fbo`.
+    pub fn end_to(&mut self, gl: &Gl, fbo: u32, fb_width: i32, fb_height: i32) {
         if self.indices.is_empty() {
             return;
         }
-        gl.bind_framebuffer(0);
+        gl.bind_framebuffer(fbo);
         gl.viewport(0, 0, fb_width, fb_height);
         gl.enable(BLEND);
         gl.blend_func_separate(ONE, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA);

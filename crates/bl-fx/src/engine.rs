@@ -99,6 +99,8 @@ pub struct FrameInput<'a> {
     pub analysis: Option<&'a TrackAnalysis>,
     /// Fallback novelty (Lows, Mids, Highs) when no analysis is available.
     pub live_novelty: [f32; 3],
+    /// RMS energy of the audio just played (fallback without analysis).
+    pub live_energy: f32,
     /// Viewport width / height.
     pub view_aspect: f32,
     /// Blur radius requested by the UI (menus open), 0 when hidden.
@@ -258,6 +260,14 @@ pub struct Engine {
     next_scene_id: u64,
     view_aspect: f32,
     particle_key: Vec<ParticleConfig>,
+    /// Global strength multiplier for audio driven effects.
+    intensity: f32,
+    /// Scale effect strength with the loudness of the current section.
+    adaptive: bool,
+    /// Slowly decaying loudness peak used to normalise the energy.
+    energy_peak: f32,
+    /// Smoothed, normalised loudness of the current section (0..1).
+    energy_level: f32,
 }
 
 fn easing_of(v: &Value, key: &str, default: Easing) -> Easing {
@@ -313,9 +323,48 @@ impl Engine {
             next_scene_id: 1,
             view_aspect: 16.0 / 9.0,
             particle_key: Vec::new(),
+            intensity: 1.0,
+            adaptive: false,
+            energy_peak: 0.0,
+            energy_level: 0.5,
         };
         e.scene = e.new_scene(None, CamPos::default());
         e
+    }
+
+    /// Sets the global effect intensity (0 = still, 1 = as designed, 2 = double).
+    pub fn set_intensity(&mut self, intensity: f32) {
+        self.intensity = intensity.clamp(0.0, 2.0);
+    }
+
+    /// Enables adapting the effect strength to the loudness of the current
+    /// section of the track (quiet parts calmer, drops stronger).
+    pub fn set_adaptive(&mut self, on: bool) {
+        self.adaptive = on;
+    }
+
+    /// Smoothed loudness of the current section (0..1), for diagnostics.
+    pub fn energy_level(&self) -> f32 {
+        self.energy_level
+    }
+
+    /// Trigger gain from intensity and (when adaptive) section loudness.
+    fn gain(&self) -> f32 {
+        let adapt = if self.adaptive { 0.45 + 0.85 * self.energy_level } else { 1.0 };
+        self.intensity * adapt
+    }
+
+    fn update_energy(&mut self, input: &FrameInput, dt: f64) {
+        let e = match input.analysis {
+            Some(a) if !a.energy.is_empty() => a.energy.get(a.frame_at(input.position)).copied().unwrap_or(0.0),
+            _ => input.live_energy,
+        };
+        let e = if e.is_finite() { e.max(0.0) } else { 0.0 };
+        // Peak follower with a ~20 s half-life normalises the loudness.
+        self.energy_peak = (self.energy_peak * 0.5f32.powf(dt as f32 / 20.0)).max(e).max(1e-4);
+        let target = (e / self.energy_peak).clamp(0.0, 1.0);
+        let k = 1.0 - (-(dt as f32) / 1.5).exp();
+        self.energy_level += (target - self.energy_level) * k;
     }
 
     pub fn preset(&self) -> Option<&Preset> {
@@ -593,6 +642,7 @@ impl Engine {
         let nov = self.novelty(input);
         let dt = input.dt.clamp(0.0, 0.25);
         let frames = (dt * 60.0) as f32;
+        let gain = self.gain();
         let effects: Vec<Effect> = self.enabled().filter(|e| e.effect_type == "Camera" || e.effect_type == "Filter").cloned().collect();
         for e in &effects {
             let band = match e.trigger_type() {
@@ -603,13 +653,14 @@ impl Engine {
             };
             let v = band.map(|b| nov[b]).unwrap_or(0.0);
             let threshold = e.trig("threshold");
-            let y = ((if v >= threshold { v } else { 0.0 }) * e.trig("sensitivity")).min(1.0);
+            let y = ((if v >= threshold { v } else { 0.0 }) * e.trig("sensitivity") * gain).min(1.0);
             let s = e.trig("smoothing").clamp(0.0, 1.0).powf(frames);
             let smooth = |prev: f32, target: f32| prev * s + target * (1.0 - s);
             let lerp_t = |key: &str| e.cfg(key) + (e.trig(key) - e.cfg(key)) * y;
             match (e.effect_type.as_str(), e.ty.as_str()) {
                 ("Camera", "Shake") if band.is_some() => {
-                    let amp = [e.cfg("x"), e.cfg("y"), e.cfg("z"), e.cfg("zr")];
+                    let k = self.intensity.min(1.5);
+                    let amp = [e.cfg("x") * k, e.cfg("y") * k, e.cfg("z") * k, e.cfg("zr") * k];
                     for (i, a) in amp.iter().enumerate() {
                         let target = if y == 0.0 { 0.0 } else { self.rng.range(-a, *a) * y };
                         self.shake[i] = smooth(self.shake[i], target);
@@ -731,6 +782,7 @@ impl Engine {
             self.view_aspect = input.view_aspect;
         }
         if input.playing {
+            self.update_energy(input, dt);
             self.run_triggers(input);
             self.run_scheduler(input);
         }
@@ -847,6 +899,7 @@ mod tests {
                     position: t,
                     analysis: Some(&a),
                     live_novelty: [0.0; 3],
+                    live_energy: 0.0,
                     view_aspect: 16.0 / 9.0,
                     menu_blur: 0.0,
                 };
@@ -879,7 +932,7 @@ mod tests {
     fn menu_blur_adds_filter() {
         let mut eng = Engine::new(1);
         eng.set_preset(Some(Preset::default()));
-        let input = FrameInput { dt: 0.016, playing: false, position: 0.0, analysis: None, live_novelty: [0.0; 3], view_aspect: 1.0, menu_blur: 2.0 };
+        let input = FrameInput { dt: 0.016, playing: false, position: 0.0, analysis: None, live_novelty: [0.0; 3], live_energy: 0.0, view_aspect: 1.0, menu_blur: 2.0 };
         let v = eng.update(&input);
         assert_eq!(v.filters, vec![FilterView::Blur { radius: 2.0, passes: 1 }]);
     }

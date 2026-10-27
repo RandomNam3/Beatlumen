@@ -1,0 +1,24 @@
+//! Platform independent Beatlumen core: playback, library, queues,
+//! presets, backgrounds, server connection and the visualizer.
+//!
+//! The user interface (Qt/QML, see `apps/beatlumen`) drives [`Core`]
+//! through a JSON command API ([`Core::command`]) and renders the
+//! visualizer with [`Core::render`]. Platform services come in through
+//! [`host::Host`].
+
+mod commands;
+pub mod core;
+pub mod host;
+pub mod jobs;
+pub mod library;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
+pub mod player;
+pub mod queue;
+pub mod server;
+pub mod settings;
+pub mod strings;
+pub mod icon;
+mod visual;
+
+pub use crate::core::{Core, LaunchArgs};

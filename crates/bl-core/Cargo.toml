@@ -1,0 +1,16 @@
+[package]
+name = "bl-core"
+description = "Platform independent Beatlumen core: playback, library, effects and visualizer, driven by a JSON command API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }
+bl-media = { path = "../bl-media" }
+bl-image = { path = "../bl-image" }
+bl-analysis = { path = "../bl-analysis" }
+bl-fx = { path = "../bl-fx" }
+bl-gl = { path = "../bl-gl" }
+bl-render = { path = "../bl-render" }
+bl-net = { path = "../bl-net" }

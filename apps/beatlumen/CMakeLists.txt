@@ -1,0 +1,113 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(beatlumen VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg OpenGL)
+find_package(Qt6 6.5 QUIET COMPONENTS Multimedia)
+
+qt_standard_project_setup(REQUIRES 6.5)
+
+# ---- Rust core (crates/bl-ffi) ----------------------------------------------
+set(BL_WORKSPACE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+set(BL_CARGO "cargo" CACHE STRING "cargo executable")
+set(BL_RUST_TARGET "" CACHE STRING "Rust target triple (empty: derived from the platform)")
+if(NOT BL_RUST_TARGET)
+    if(ANDROID)
+        if(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(BL_RUST_TARGET aarch64-linux-android)
+        elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+            set(BL_RUST_TARGET armv7-linux-androideabi)
+        elseif(ANDROID_ABI STREQUAL "x86_64")
+            set(BL_RUST_TARGET x86_64-linux-android)
+        else()
+            set(BL_RUST_TARGET i686-linux-android)
+        endif()
+    elseif(EMSCRIPTEN)
+        set(BL_RUST_TARGET wasm32-unknown-emscripten)
+    endif()
+endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(BL_CARGO_PROFILE dev)
+    set(BL_CARGO_DIR debug)
+else()
+    set(BL_CARGO_PROFILE release)
+    set(BL_CARGO_DIR release)
+endif()
+set(BL_CARGO_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo")
+if(BL_RUST_TARGET)
+    set(BL_CARGO_TARGET_ARGS --target ${BL_RUST_TARGET})
+    set(BL_CORE_LIB_DIR "${BL_CARGO_TARGET_DIR}/${BL_RUST_TARGET}/${BL_CARGO_DIR}")
+else()
+    set(BL_CARGO_TARGET_ARGS "")
+    set(BL_CORE_LIB_DIR "${BL_CARGO_TARGET_DIR}/${BL_CARGO_DIR}")
+endif()
+if(MSVC)
+    set(BL_CORE_LIB "${BL_CORE_LIB_DIR}/beatlumen_core.lib")
+else()
+    set(BL_CORE_LIB "${BL_CORE_LIB_DIR}/libbeatlumen_core.a")
+endif()
+file(GLOB_RECURSE BL_RUST_SOURCES CONFIGURE_DEPENDS "${BL_WORKSPACE}/crates/*.rs" "${BL_WORKSPACE}/crates/*.toml" "${BL_WORKSPACE}/crates/*.hfx")
+add_custom_command(
+    OUTPUT "${BL_CORE_LIB}"
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${BL_CARGO_TARGET_DIR}
+            ${BL_CARGO} build --profile ${BL_CARGO_PROFILE} -p bl-ffi ${BL_CARGO_TARGET_ARGS}
+    WORKING_DIRECTORY "${BL_WORKSPACE}"
+    DEPENDS ${BL_RUST_SOURCES}
+    COMMENT "Building the Rust core"
+    USES_TERMINAL
+    VERBATIM)
+add_custom_target(beatlumen_core_build DEPENDS "${BL_CORE_LIB}")
+add_library(beatlumen_core STATIC IMPORTED GLOBAL)
+set_target_properties(beatlumen_core PROPERTIES IMPORTED_LOCATION "${BL_CORE_LIB}")
+add_dependencies(beatlumen_core beatlumen_core_build)
+
+# ---- application ----------------------------------------------------------------
+qt_add_executable(beatlumen
+    src/main.cpp
+    src/bridge.cpp src/bridge.h
+    src/audio.cpp src/audio.h
+    src/core.h
+)
+target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
+
+file(GLOB BL_QML RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS qml/*.qml)
+file(GLOB BL_ICONS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS icons/*.svg)
+set_source_files_properties(qml/Theme.qml qml/Covers.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+qt_add_qml_module(beatlumen
+    URI Beatlumen
+    VERSION 1.0
+    QML_FILES ${BL_QML}
+    RESOURCES ${BL_ICONS} assets/Inter-Variable.ttf assets/icon.png
+)
+
+target_link_libraries(beatlumen PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::OpenGL
+    beatlumen_core)
+if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN)
+    target_link_libraries(beatlumen PRIVATE Qt6::Multimedia)
+    target_compile_definitions(beatlumen PRIVATE BL_HAVE_MULTIMEDIA)
+endif()
+
+if(WIN32)
+    target_link_libraries(beatlumen PRIVATE ws2_32 userenv bcrypt ntdll)
+    set_target_properties(beatlumen PROPERTIES WIN32_EXECUTABLE ON)
+elseif(ANDROID)
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
+    target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android)
+    set_target_properties(beatlumen PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
+        QT_ANDROID_TARGET_SDK_VERSION 34
+        QT_ANDROID_MIN_SDK_VERSION 26
+        QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
+        QT_ANDROID_VERSION_CODE 2)
+elseif(EMSCRIPTEN)
+    target_link_options(beatlumen PRIVATE -sGL_ENABLE_GET_PROC_ADDRESS=1 -sALLOW_MEMORY_GROWTH=1 -lidbfs.js)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(beatlumen PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
+endif()
+
+install(TARGETS beatlumen RUNTIME DESTINATION bin BUNDLE DESTINATION .)

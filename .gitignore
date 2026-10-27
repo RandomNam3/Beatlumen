@@ -3,3 +3,4 @@
 *.apk
 *.keystore
 /tests/fixtures/generated
+/build

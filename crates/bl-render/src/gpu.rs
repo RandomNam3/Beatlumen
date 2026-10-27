@@ -118,6 +118,9 @@ impl RenderTarget {
 pub enum Target<'a> {
     /// The default framebuffer (screen) with the given size.
     Screen(u32, u32),
+    /// An externally owned framebuffer object (id, width, height), e.g.
+    /// the window surface of a UI toolkit.
+    Framebuffer(u32, u32, u32),
     Offscreen(&'a RenderTarget),
 }
 
@@ -128,12 +131,16 @@ impl Target<'_> {
                 gl.bind_framebuffer(0);
                 gl.viewport(0, 0, *w as i32, *h as i32);
             }
+            Target::Framebuffer(fbo, w, h) => {
+                gl.bind_framebuffer(*fbo);
+                gl.viewport(0, 0, *w as i32, *h as i32);
+            }
             Target::Offscreen(rt) => rt.bind(gl),
         }
     }
     pub fn size(&self) -> (u32, u32) {
         match self {
-            Target::Screen(w, h) => (*w, *h),
+            Target::Screen(w, h) | Target::Framebuffer(_, w, h) => (*w, *h),
             Target::Offscreen(rt) => (rt.width, rt.height),
         }
     }

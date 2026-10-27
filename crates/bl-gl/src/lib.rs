@@ -1,11 +1,9 @@
 //! Thin binding layer over the common subset of OpenGL ES 3.0, WebGL 2 and
 //! desktop OpenGL 3.3 core.
 //!
-//! * Native targets load function pointers through a platform supplied
-//!   `get_proc_address` closure (EGL, WGL, ...).
-//! * On `wasm32` the same C-style entry points are imported from the
-//!   JavaScript glue (module `"gl"`), which forwards them to WebGL 2 and maps
-//!   WebGL objects to integer names.
+//! Function pointers are loaded through a `get_proc_address` closure
+//! supplied by the UI toolkit (Qt's `QOpenGLContext::getProcAddress`, which
+//! also covers WebGL 2 under Emscripten).
 //!
 //! Shaders are written in GLSL ES 3.00; [`Gl::shader_header`] returns the
 //! correct `#version` line for the current context.
@@ -42,7 +40,6 @@ macro_rules! gl_functions {
             /// # Safety
             /// The returned addresses must be valid GL functions with the C
             /// signatures of the respective GL specification.
-            #[cfg(not(target_arch = "wasm32"))]
             pub unsafe fn load(get: &mut dyn FnMut(&str) -> *const c_void) -> Result<Fns, String> {
                 Ok(Fns {
                     $( $field: {
@@ -53,22 +50,6 @@ macro_rules! gl_functions {
                         std::mem::transmute::<*const c_void, unsafe extern "system" fn($($ty),*) $(-> $ret)?>(p)
                     }, )*
                 })
-            }
-
-            /// Uses the functions imported from the JavaScript glue.
-            #[cfg(target_arch = "wasm32")]
-            pub fn imported() -> Fns {
-                Fns { $( $field: wasm::$field, )* }
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        mod wasm {
-            #[allow(unused_imports)]
-            use super::*;
-            #[link(wasm_import_module = "gl")]
-            extern "system" {
-                $( pub fn $field($($arg: $ty),*) $(-> $ret)?; )*
             }
         }
     };
@@ -168,14 +149,8 @@ pub struct Gl {
 impl Gl {
     /// # Safety
     /// See [`Fns::load`]; a context of the given flavor must be current.
-    #[cfg(not(target_arch = "wasm32"))]
     pub unsafe fn load(flavor: Flavor, get: &mut dyn FnMut(&str) -> *const c_void) -> Result<Gl, String> {
         Ok(Gl { f: Fns::load(get)?, flavor })
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn web() -> Gl {
-        Gl { f: Fns::imported(), flavor: Flavor::WebGl2 }
     }
 
     pub fn flavor(&self) -> Flavor {

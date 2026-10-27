@@ -1,0 +1,19 @@
+[package]
+name = "bl-ffi"
+description = "C interface of the Beatlumen core for the Qt user interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "beatlumen_core"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+bl-core = { path = "../bl-core" }
+bl-gl = { path = "../bl-gl" }
+bl-json = { path = "../bl-json" }
+bl-media = { path = "../bl-media" }
+
+[dev-dependencies]
+bl-image = { path = "../bl-image" }
