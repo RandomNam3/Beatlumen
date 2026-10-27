@@ -76,6 +76,12 @@ target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
 file(GLOB BL_QML RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS qml/*.qml)
 file(GLOB BL_ICONS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS icons/*.svg)
 set_source_files_properties(qml/Theme.qml qml/Covers.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+# Place the QML files at the module root so that they see each other
+# (including the singletons) through the module's qmldir.
+foreach(f ${BL_QML})
+    get_filename_component(n "${f}" NAME)
+    set_source_files_properties(${f} PROPERTIES QT_RESOURCE_ALIAS ${n})
+endforeach()
 qt_add_qml_module(beatlumen
     URI Beatlumen
     VERSION 1.0

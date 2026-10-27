@@ -62,7 +62,7 @@ ItemDelegate {
             }
         }
         Label {
-            text: d.track.duration > 0 ? Theme.time(d.track.duration) : ""
+            text: d.track.duration > 0 ? Theme.fmtTime(d.track.duration) : ""
             color: Theme.textFaint
             font.pixelSize: 13
             font.features: { "tnum": 1 }

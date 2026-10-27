@@ -11,7 +11,45 @@
 #include <QSemaphore>
 #include <QThread>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <vector>
+
 namespace {
+
+// Without an audio device (headless systems) playback still advances: a
+// thread consumes audio in real time so the clock and visuals keep going.
+class NullClock
+{
+public:
+    ~NullClock() { stop(); }
+    void start(uint32_t rate)
+    {
+        stop();
+        m_run = true;
+        m_thread = std::thread([this, rate]() {
+            const size_t frames = rate / 100;
+            std::vector<float> buf(frames * 2);
+            auto next = std::chrono::steady_clock::now();
+            while (m_run) {
+                bl_audio_render(buf.data(), frames, uint32_t(frames));
+                next += std::chrono::milliseconds(10);
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
+    void stop()
+    {
+        m_run = false;
+        if (m_thread.joinable())
+            m_thread.join();
+    }
+
+private:
+    std::atomic<bool> m_run{false};
+    std::thread m_thread;
+};
 
 // Pull device: every read renders audio from the core.
 class PullDevice : public QIODevice
@@ -48,17 +86,24 @@ struct AudioOutput::Impl
     QAudioSink *sink = nullptr;
     PullDevice *device = nullptr;
     QMediaDevices *devices = nullptr;
+    NullClock nullClock;
     uint32_t rate = 0;
 
     // Runs on the audio thread.
     void open()
     {
+        nullClock.stop();
         if (sink) {
             sink->stop();
             delete sink;
             sink = nullptr;
         }
         const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
+        if (dev.isNull()) {
+            rate = rate ? rate : 48000;
+            nullClock.start(rate);
+            return;
+        }
         QAudioFormat fmt;
         fmt.setChannelCount(2);
         fmt.setSampleFormat(QAudioFormat::Float);
@@ -75,6 +120,12 @@ struct AudioOutput::Impl
         }
         device->sink = sink;
         sink->start(device);
+        if (sink->error() != QAudio::NoError) {
+            delete sink;
+            sink = nullptr;
+            device->sink = nullptr;
+            nullClock.start(rate);
+        }
     }
 };
 
@@ -110,6 +161,7 @@ void AudioOutput::stop()
     if (!d)
         return;
     QMetaObject::invokeMethod(d->worker, [this]() {
+        d->nullClock.stop();
         if (d->sink)
             d->sink->stop();
         delete d->sink;

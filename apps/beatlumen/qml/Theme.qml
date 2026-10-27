@@ -36,7 +36,7 @@ QtObject {
         return "qrc:/qt/qml/Beatlumen/icons/" + name + ".svg"
     }
 
-    function time(sec) {
+    function fmtTime(sec) {
         if (!(sec >= 0) || !isFinite(sec))
             sec = 0
         sec = Math.floor(sec)

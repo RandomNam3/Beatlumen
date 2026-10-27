@@ -98,9 +98,9 @@ Item {
                         SwitchRow {
                             Layout.fillWidth: true
                             title: Theme.tr("Adaptive")
-                            text: Theme.tr("Effects follow the energy of the song: calm in quiet parts, strong in drops.")
-                            checked: page.settings.adaptive === true
-                            onToggled: (on) => Core.call("settings.set", { key: "adaptive", value: on })
+                            detail: Theme.tr("Effects follow the energy of the song: calm in quiet parts, strong in drops.")
+                            on: page.settings.adaptive === true
+                            onSwitched: (on) => Core.call("settings.set", { key: "adaptive", value: on })
                         }
 
                         SectionLabel { text: Theme.tr("Overlay") }

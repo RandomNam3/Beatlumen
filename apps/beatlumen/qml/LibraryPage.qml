@@ -103,7 +103,7 @@ Item {
                 background: null
                 Repeater {
                     model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists")]
-                    TabButton { text: modelData; width: Math.max(implicitWidth, tabs.width / 5) }
+                    TabButton { text: modelData }
                 }
             }
             Item {

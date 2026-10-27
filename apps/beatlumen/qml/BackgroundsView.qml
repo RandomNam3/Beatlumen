@@ -108,8 +108,8 @@ ScrollView {
         SwitchRow {
             Layout.fillWidth: true
             title: Theme.tr("Use album cover when empty")
-            checked: view.settings.coverFallback !== false
-            onToggled: (on) => Core.call("settings.set", { key: "coverFallback", value: on })
+            on: view.settings.coverFallback !== false
+            onSwitched: (on) => Core.call("settings.set", { key: "coverFallback", value: on })
         }
 
         SectionLabel { text: Theme.tr("Server images"); visible: view.serverImages.length > 0 }

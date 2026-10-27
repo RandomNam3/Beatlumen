@@ -142,7 +142,7 @@ Item {
                             Label { Layout.fillWidth: true; text: row.modelData.title; elide: Text.ElideRight; color: row.modelData.current ? Theme.accent : Theme.text; font.pixelSize: 15; font.weight: row.modelData.current ? Font.DemiBold : Font.Medium }
                             Label { Layout.fillWidth: true; text: row.modelData.artist || Theme.tr("Unknown artist"); elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
                         }
-                        Label { text: row.modelData.duration > 0 ? Theme.time(row.modelData.duration) : ""; color: Theme.textFaint; font.pixelSize: 13 }
+                        Label { text: row.modelData.duration > 0 ? Theme.fmtTime(row.modelData.duration) : ""; color: Theme.textFaint; font.pixelSize: 13 }
                         IconButton {
                             id: more
                             iconName: "more_vert"

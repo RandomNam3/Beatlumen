@@ -323,3 +323,54 @@ mod tests {
         assert_eq!(Playlist::from_json(&p.to_json()), p);
     }
 }
+
+/// Derives artist and title from a file name without tags, e.g.
+/// "Artist - Title [dQw4w9WgXcQ]", "01. Artist – Title" or "Title".
+pub fn guess_from_file_name(stem: &str) -> (Option<String>, String) {
+    let mut s = stem.trim().to_string();
+    if !s.contains(' ') && s.contains('_') {
+        s = s.replace('_', " ");
+    }
+    // Trailing video id as written by downloaders: " [xxxxxxxxxxx]".
+    if s.ends_with(']') {
+        if let Some(open) = s.rfind('[') {
+            let id = &s[open + 1..s.len() - 1];
+            if id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+                s = s[..open].trim_end().to_string();
+            }
+        }
+    }
+    // Leading track number: "01 ", "01. ", "01 - ".
+    let digits = s.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if (1..=3).contains(&digits) {
+        let rest = s[digits..].trim_start_matches(['.', ' ', '-', '_']).trim_start();
+        if !rest.is_empty() && rest.len() < s.len() - digits {
+            s = rest.to_string();
+        }
+    }
+    for sep in [" - ", " – ", " — "] {
+        if let Some(i) = s.find(sep) {
+            let (a, t) = (s[..i].trim(), s[i + sep.len()..].trim());
+            if !a.is_empty() && !t.is_empty() {
+                return (Some(a.to_string()), t.to_string());
+            }
+        }
+    }
+    let title = if s.is_empty() { stem.to_string() } else { s };
+    (None, title)
+}
+
+#[cfg(test)]
+mod guess_tests {
+    use super::guess_from_file_name as g;
+
+    #[test]
+    fn file_names() {
+        assert_eq!(g("Some Band - Night Drive [abcDEF12345]"), (Some("Some Band".into()), "Night Drive".into()));
+        assert_eq!(g("01. Artist – Title"), (Some("Artist".into()), "Title".into()));
+        assert_eq!(g("07 Title Only"), (None, "Title Only".into()));
+        assert_eq!(g("Alles neu [DmbYRLrU5_0]"), (None, "Alles neu".into()));
+        assert_eq!(g("1999"), (None, "1999".into()));
+        assert_eq!(g("my_song_name"), (None, "my song name".into()));
+    }
+}

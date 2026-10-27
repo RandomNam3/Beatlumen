@@ -167,21 +167,22 @@ impl LibraryState {
     }
 
     pub fn load_local_cache(&mut self, data: &[u8]) {
-        if let Ok(v) = bl_json::parse_bytes(data) {
+        // Version 2: artist/title guessed from file names without tags.
+        if let Some(v) = bl_json::parse_bytes(data).ok().filter(|v| v.get("version").as_u64() == Some(2)) {
             self.local = v.get("tracks").as_array().map(|a| a.iter().map(Track::from_json).collect()).unwrap_or_default();
             self.rebuild();
         }
     }
 
     pub fn local_cache_json(&self) -> String {
-        bl_json::Value::object().with("version", 1u32).with("tracks", bl_json::Value::Array(self.local.iter().map(Track::to_json).collect())).to_json()
+        bl_json::Value::object().with("version", 2u32).with("tracks", bl_json::Value::Array(self.local.iter().map(Track::to_json).collect())).to_json()
     }
 }
 
 /// Builds a [`Track`] for a local file from its media info.
 pub fn local_track(path: &str, size: u64, modified: u64, info: Option<&bl_media::MediaInfo>) -> Track {
     let file_name = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string());
-    let mut t = Track { id: format!("{LOCAL_PREFIX}{path}"), path: path.to_string(), size, modified, title: file_name, ..Default::default() };
+    let mut t = Track { id: format!("{LOCAL_PREFIX}{path}"), path: path.to_string(), size, modified, title: file_name.clone(), ..Default::default() };
     if let Some(i) = info {
         let tags = &i.tags;
         if let Some(title) = tags.title.as_ref().filter(|s| !s.trim().is_empty()) {
@@ -200,6 +201,15 @@ pub fn local_track(path: &str, size: u64, modified: u64, info: Option<&bl_media:
         t.channels = i.channels;
         t.bitrate_kbps = i.bitrate_kbps;
         t.has_cover = true;
+    }
+    if t.artists.is_empty() || t.title == file_name {
+        let (artist, title) = bl_net::api::guess_from_file_name(&file_name);
+        if t.title == file_name {
+            t.title = title;
+        }
+        if t.artists.is_empty() {
+            t.artists = artist.as_deref().map(split_artists).unwrap_or_default();
+        }
     }
     let album_artist = if t.album_artist.is_empty() { t.artists.first().cloned().unwrap_or_default() } else { t.album_artist.clone() };
     let dir = std::path::Path::new(path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();

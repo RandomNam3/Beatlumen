@@ -62,8 +62,8 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.leftMargin: 8
         Layout.rightMargin: 8
-        from: fc.field.min !== null ? fc.field.min : 0
-        to: fc.field.max !== null ? fc.field.max : 1
+        from: (fc.field.min !== null && fc.field.min !== undefined) ? fc.field.min : 0
+        to: (fc.field.max !== null && fc.field.max !== undefined) ? fc.field.max : 1
         stepSize: fc.field.step || 0.01
         value: fc.field.value || 0
         onMoved: fc.changed(fc.field.kind === "int" ? Math.round(value) : value)

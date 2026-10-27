@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Version of the `library.json` cache layout.
-const CACHE_FORMAT: u64 = 1;
+const CACHE_FORMAT: u64 = 2;
 
 /// Folder image base names in order of preference (matched case-insensitively,
 /// `.jpg`, `.jpeg` and `.png`).
@@ -413,7 +413,7 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
     match util::catch("tag reader", || bl_media::read_info(&mut file, Some(&ext), want_pictures)) {
         Ok(Ok(info)) => {
             let t = info.tags;
-            track.title = clean(t.title).unwrap_or(stem);
+            track.title = clean(t.title).unwrap_or_else(|| stem.clone());
             track.artists = t.artist.as_deref().map(split_artists).unwrap_or_default();
             track.album = clean(t.album).unwrap_or_default();
             track.album_artist = clean(t.album_artist).or_else(|| track.artists.first().cloned()).unwrap_or_default();
@@ -435,6 +435,20 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
             failed = true;
         }
         Err(_) => failed = true,
+    }
+    if track.artists.is_empty() || track.title == stem {
+        let (artist, title) = bl_net::api::guess_from_file_name(&stem);
+        if track.title == stem {
+            track.title = title;
+        }
+        if track.artists.is_empty() {
+            if let Some(a) = artist {
+                track.artists = split_artists(&a);
+                if track.album_artist.is_empty() {
+                    track.album_artist = track.artists.first().cloned().unwrap_or_default();
+                }
+            }
+        }
     }
     if want_pictures && embedded.is_none() {
         embedded = Some(false);

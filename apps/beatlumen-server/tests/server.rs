@@ -252,7 +252,7 @@ fn info_library_stream_and_etag() {
     assert!(first.has_cover, "folder Cover.JPG must count as cover");
     let second = by_title("Second Song");
     assert_eq!(second.album_id, first.album_id, "album names group case-insensitively");
-    let untagged = by_title("03 untagged");
+    let untagged = by_title("untagged");
     assert!(untagged.artists.is_empty() && !untagged.has_cover);
     assert!(lib.tracks.iter().all(|t| t.title != "Hidden" && !t.path.ends_with(".txt")));
 
@@ -548,7 +548,7 @@ fn covers_from_folder_and_embedded_pictures() {
     let album = lib.albums.iter().find(|a| a.id == first.album_id).unwrap();
     let r = s.get(&format!("/api/albums/{}/cover?size=100", album.id));
     assert_eq!(r.status, 200);
-    let untagged = lib.tracks.iter().find(|t| t.title == "03 untagged").unwrap();
+    let untagged = lib.tracks.iter().find(|t| t.title == "untagged").unwrap();
     assert_eq!(s.get(&bl_net::api::paths::track_cover(&untagged.id, 100)).status, 404);
     let untagged_album = lib.albums.iter().find(|a| a.id == untagged.album_id).unwrap();
     assert_eq!(untagged_album.cover_track, None);

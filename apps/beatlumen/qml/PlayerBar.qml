@@ -77,9 +77,9 @@ Item {
             Layout.leftMargin: 8
             Layout.rightMargin: 8
             Layout.topMargin: -10
-            Label { text: Theme.time(seek.pressed ? seek.value : Core.position); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
             Item { Layout.fillWidth: true }
-            Label { text: Theme.time(bar.duration); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { text: Theme.fmtTime(bar.duration); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
         }
     }
 
@@ -201,7 +201,7 @@ Item {
                 coverSize: 52
             }
             Label {
-                text: Theme.time(Core.position) + " / " + Theme.time(bar.duration)
+                text: Theme.fmtTime(Core.position) + " / " + Theme.fmtTime(bar.duration)
                 color: Theme.textDim
                 font.pixelSize: 12
                 font.features: { "tnum": 1 }
