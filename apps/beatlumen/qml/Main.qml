@@ -74,7 +74,13 @@ ApplicationWindow {
     }
 
     onClosing: (close) => {
-        if (Core.mobile && goBack())
+        if (Core.mobile && goBack()) {
+            close.accepted = false
+            return
+        }
+        // Android back with nothing open while music plays: keep playing in
+        // the background instead of quitting.
+        if (Core.platform === "android" && (playing || Core.state.play === "loading") && Core.moveTaskToBack())
             close.accepted = false
     }
 

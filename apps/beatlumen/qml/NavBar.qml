@@ -18,12 +18,13 @@ Rectangle {
     ]
 
     color: Theme.surfaceStrong
-    implicitHeight: rail ? 0 : 72
+    implicitHeight: rail ? 0 : 80
     implicitWidth: rail ? 88 : 0
 
     GridLayout {
         anchors.fill: parent
-        anchors.topMargin: nav.rail ? 12 : 0
+        anchors.topMargin: nav.rail ? 12 : 10
+        anchors.bottomMargin: nav.rail ? 0 : 6
         flow: nav.rail ? GridLayout.TopToBottom : GridLayout.LeftToRight
         rows: nav.rail ? nav.items.length + 1 : 1
         columns: nav.rail ? 1 : nav.items.length

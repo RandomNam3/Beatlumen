@@ -19,17 +19,22 @@ Item {
     readonly property real duration: Core.state.duration || 0
     readonly property string repeatMode: Core.state.repeat || "None"
 
+    // The expanded controls float over the visualizer: always light.
+    readonly property bool overVisual: mode === "expanded"
+    readonly property color fg: overVisual ? "white" : Theme.text
+    readonly property color fgDim: overVisual ? Qt.rgba(1, 1, 1, 0.75) : Theme.textDim
+
     implicitHeight: mode === "mini" ? 72 : mode === "expanded" ? 196 : 92
 
     component Transport: RowLayout {
         property int big: 56
         spacing: bar.mode === "expanded" ? 12 : 4
         IconButton {
-            iconName: "shuffle"; tip: Theme.tr("Shuffle"); active: Core.state.shuffle === true
+            iconName: "shuffle"; tip: Theme.tr("Shuffle"); active: Core.state.shuffle === true; iconColor: bar.fg
             onClicked: Core.call("shuffle")
         }
         IconButton {
-            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: 30
+            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: 30; iconColor: bar.fg
             onClicked: Core.call("prev")
         }
         RoundButton {
@@ -46,11 +51,12 @@ Item {
             onClicked: Core.call("toggle")
         }
         IconButton {
-            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: 30
+            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: 30; iconColor: bar.fg
             onClicked: Core.call("next")
         }
         IconButton {
             iconName: bar.repeatMode === "Item" ? "repeat_one" : "repeat"
+            iconColor: bar.fg
             tip: Theme.tr("Repeat")
             active: bar.repeatMode !== "None"
             onClicked: Core.call("repeat")
@@ -77,9 +83,9 @@ Item {
             Layout.leftMargin: 8
             Layout.rightMargin: 8
             Layout.topMargin: -10
-            Label { text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
             Item { Layout.fillWidth: true }
-            Label { text: Theme.fmtTime(bar.duration); color: Theme.textDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { text: Theme.fmtTime(bar.duration); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
         }
     }
 
@@ -159,6 +165,17 @@ Item {
     }
 
     // ---- expanded (phone now playing) ------------------------------------
+    // Scrim for contrast on bright visuals.
+    Rectangle {
+        visible: bar.mode === "expanded"
+        anchors.fill: parent
+        anchors.topMargin: -48
+        gradient: Gradient {
+            GradientStop { position: 0; color: "transparent" }
+            GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, 0.35) }
+            GradientStop { position: 1; color: Qt.rgba(0, 0, 0, 0.55) }
+        }
+    }
     ColumnLayout {
         anchors.fill: parent
         anchors.leftMargin: 16
@@ -171,7 +188,7 @@ Item {
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }
             IconButton {
-                iconName: "queue_music"; tip: Theme.tr("Queue")
+                iconName: "queue_music"; tip: Theme.tr("Queue"); iconColor: bar.fg
                 onClicked: bar.openQueue()
             }
         }
