@@ -101,6 +101,10 @@ step "configure ($abi_list, $BUILD_TYPE)"
 # Gradle downloads its dependencies on the first run; retry on network errors
 # (Maven Central answers 429 when rate limiting).
 step "build native libraries and package the APK"
+# androiddeployqt never removes libraries from earlier builds (e.g. Qt
+# plugins no longer imported) and Gradle packages everything it finds.
+rm -rf "$BUILD_DIR/android-build/libs" "$BUILD_DIR/android-build/assets" "$BUILD_DIR/android-build/build" \
+    "$BUILD_DIR/android-build/beatlumen.apk"
 for attempt in 1 2 3; do
     if cmake --build "$BUILD_DIR" --target apk; then
         break
