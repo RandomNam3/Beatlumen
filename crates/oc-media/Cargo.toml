@@ -4,6 +4,7 @@ description = "Audio container demuxing, tag reading and decoder facade"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 oc-ogg = { path = "../oc-ogg" }
