@@ -184,6 +184,8 @@ pub struct App {
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
+    /// Metadata of files played outside the library.
+    pub(crate) extra_tracks: HashMap<String, Track>,
 }
 
 const DEFAULT_BG: &str = "builtin:default";
@@ -370,6 +372,7 @@ impl App {
             last_dt: 0.0,
             time: 0.0,
             download_progress: None,
+            extra_tracks: HashMap::new(),
         };
         app.refresh_preset_list(host);
         let wanted = app.launch.preset.clone().unwrap_or_else(|| app.settings.preset.clone());
@@ -778,6 +781,9 @@ impl App {
         if let Some(t) = self.library.track(id) {
             return t.clone();
         }
+        if let Some(t) = self.extra_tracks.get(id) {
+            return t.clone();
+        }
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
@@ -803,6 +809,15 @@ impl App {
             self.current = None;
             return;
         };
+        if self.library.track(&id).is_none() && !self.extra_tracks.contains_key(&id) {
+            if let Some(p) = library::local_path(&id) {
+                let ext = extension(p);
+                let meta = host.fs_metadata(p);
+                let info = host.fs_open(p).ok().and_then(|mut src| oc_media::read_info(&mut *src, ext.as_deref(), false).ok());
+                let t = library::local_track(p, meta.as_ref().map(|m| m.size).unwrap_or(0), meta.as_ref().map(|m| m.modified).unwrap_or(0), info.as_ref());
+                self.extra_tracks.insert(id.clone(), t);
+            }
+        }
         let track = self.track_for(&id);
         self.play_generation += 1;
         self.current = Some(track.clone());

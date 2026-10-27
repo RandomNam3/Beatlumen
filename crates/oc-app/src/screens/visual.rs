@@ -44,12 +44,11 @@ fn spectrum(app: &mut App, ui: &mut Ui, r: Rect, alpha: f32) {
         let hi = f0 + (f1 - f0) * (i + 1) as f32 / n as f32;
         let b0 = ((lo / bin_hz) as usize).min(amps.len() - 1);
         let b1 = ((hi / bin_hz).ceil() as usize).clamp(b0 + 1, amps.len());
-        let mut sum = 0.0;
-        for a in &amps[b0..b1] {
-            let db = 20.0 * (a / 2.0).max(1e-9).log10();
-            sum += ((db + 100.0) / 90.0).clamp(0.0, 1.0);
-        }
-        let v = sum / (b1 - b0) as f32;
+        // Peak bin of the band: averaging pulls wide high-frequency bands down
+        // to the noise floor and leaves the bars nearly flat.
+        let peak = amps[b0..b1].iter().cloned().fold(0.0f32, f32::max);
+        let db = 20.0 * (peak / 2.0).max(1e-9).log10();
+        let v = ((db + 100.0) / 90.0).clamp(0.0, 1.0);
         *b = if v > 0.4 { v.powf(v + 0.6) } else { v * (v + 0.6) * 0.25 }.min(1.0);
     }
     // Local mean gate.

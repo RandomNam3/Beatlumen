@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "oc-app",
  "oc-gl",
+ "oc-media",
 ]
 
 [[package]]
