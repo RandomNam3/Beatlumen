@@ -1,7 +1,7 @@
 oc-vorbis
 =========
 
-oc-vorbis is part of OpenChroma and is licensed under the MIT license.
+oc-vorbis is part of OpenChroma and is licensed under the GNU General Public License v3.0 or later.
 
 The decoder was written from the Vorbis I specification
 (https://xiph.org/vorbis/doc/Vorbis_I_spec.html); the floor1 inverse dB

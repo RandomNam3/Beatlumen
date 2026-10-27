@@ -1,7 +1,7 @@
 oc-media
 ========
 
-This crate is part of OpenChroma and is licensed under the MIT license.
+This crate is part of OpenChroma and is licensed under the GNU General Public License v3.0 or later.
 
 src/alac.rs contains a Rust port of Apple's ALAC (Apple Lossless) reference
 decoder (ALACDecoder.cpp, ag_dec.c, dp_dec.c, matrix_dec.c from

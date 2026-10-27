@@ -1,4 +1,4 @@
-oc-image is part of OpenChroma and licensed under the MIT license.
+oc-image is part of OpenChroma and licensed under the GNU General Public License v3.0 or later.
 
 All code in this crate was written from the format specifications; no code
 was copied or ported from other implementations. Constant tables taken from
