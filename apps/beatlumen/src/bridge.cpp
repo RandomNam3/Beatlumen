@@ -3,6 +3,7 @@
 #include "web.h"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -19,6 +20,7 @@
 #include <QStyleHints>
 
 #ifdef Q_OS_ANDROID
+#include "android_media.h"
 #include <QCoreApplication>
 #include <QJniObject>
 #include <QtCore/private/qandroidextras_p.h>
@@ -83,6 +85,15 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
         cb.audio_start = audioStartCallback;
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
 
+    // Files picked through content URIs are copied into the cache; drop
+    // copies older than a week (they are only needed while playing).
+    const QDir picked(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/picked"));
+    const QDateTime weekAgo = QDateTime::currentDateTime().addDays(-7);
+    for (const QFileInfo &fi : picked.entryInfoList(QDir::Files)) {
+        if (fi.lastModified() < weekAgo)
+            QFile::remove(fi.absoluteFilePath());
+    }
+
     connect(&m_timer, &QTimer::timeout, this, &Bridge::tick);
     m_timer.setTimerType(Qt::PreciseTimer);
     m_timer.start(16);
@@ -94,6 +105,15 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
             web::persistStorage();
         }
     });
+#ifdef Q_OS_ANDROID
+    // Background playback: media session, notification, foreground service.
+    new AndroidMedia(this);
+    // With the screen off or the app in the background nothing is drawn;
+    // the core only needs to advance tracks and deliver state.
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
+        m_timer.setInterval(s == Qt::ApplicationActive ? 16 : 50);
+    });
+#endif
     tick();
 }
 
@@ -360,4 +380,20 @@ void Bridge::pickFiles(const QString &accept, bool multiple)
         if (m_core)
             bl_core_open_data(m_core, name.toUtf8().constData(), reinterpret_cast<const uint8_t *>(data.constData()), size_t(data.size()));
     });
+}
+
+bool Bridge::moveTaskToBack()
+{
+#ifdef Q_OS_ANDROID
+    // Back with nothing left to close while music plays: keep running in the
+    // background (like the home button) instead of finishing the activity.
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([]() {
+        QJniObject activity = QtAndroidPrivate::activity();
+        if (activity.isValid())
+            activity.callMethod<jboolean>("moveTaskToBack", "(Z)Z", jboolean(true));
+    });
+    return true;
+#else
+    return false;
+#endif
 }

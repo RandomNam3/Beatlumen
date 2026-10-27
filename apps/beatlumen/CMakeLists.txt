@@ -109,12 +109,30 @@ if(WIN32)
 elseif(ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
     target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android)
+    # Background playback (MediaSession, foreground service): the Java side
+    # lives in android/src.
+    target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h)
+    # Deploy only the plugins the app uses: audio goes through QAudioSink
+    # (no FFmpeg backend), no QML debugging, TLS or network information.
+    qt_import_plugins(beatlumen
+        INCLUDE_BY_TYPE
+            multimedia Qt6::QAndroidMediaPlugin
+            imageformats Qt6::QJpegPlugin Qt6::QWebpPlugin Qt6::QGifPlugin Qt6::QSvgPlugin
+        EXCLUDE Qt6::QOffscreenIntegrationPlugin
+        EXCLUDE_BY_TYPE qmltooling tls networkinformation)
+    set(BL_ANDROID_VERSION_CODE 3 CACHE STRING "android:versionCode")
+    # Compressed native libraries: the APK is sideloaded, so its download
+    # size matters more than the extraction at install time.
+    option(BL_ANDROID_COMPRESS_LIBS "Store the native libraries compressed in the APK" ON)
     set_target_properties(beatlumen PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
-        QT_ANDROID_TARGET_SDK_VERSION 34
+        QT_ANDROID_PACKAGE_NAME "io.github.randomnam3.beatlumen"
+        QT_ANDROID_APP_NAME "Beatlumen"
+        QT_ANDROID_TARGET_SDK_VERSION 35
         QT_ANDROID_MIN_SDK_VERSION 26
         QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
-        QT_ANDROID_VERSION_CODE 2)
+        QT_ANDROID_VERSION_CODE ${BL_ANDROID_VERSION_CODE}
+        QT_ANDROID_LEGACY_PACKAGING ${BL_ANDROID_COMPRESS_LIBS})
 elseif(EMSCRIPTEN)
     find_package(Qt6 REQUIRED COMPONENTS Network)
     target_link_libraries(beatlumen PRIVATE Qt6::Network)
@@ -130,4 +148,4 @@ else()
     target_link_libraries(beatlumen PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
 endif()
 
-install(TARGETS beatlumen RUNTIME DESTINATION bin BUNDLE DESTINATION .)
+install(TARGETS beatlumen RUNTIME DESTINATION bin BUNDLE DESTINATION . LIBRARY DESTINATION lib)

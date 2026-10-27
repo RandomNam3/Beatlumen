@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Material
 import Beatlumen.Core
 
 // Context menu for one or more songs.

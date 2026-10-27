@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <!-- Beatlumen Android manifest. androiddeployqt fills in the "%%INSERT_...%%"
-     placeholders (version, app name, library name). Permissions are listed
+     placeholders (version, app name, library name); the package name comes
+     from QT_ANDROID_PACKAGE_NAME (Gradle namespace). Permissions are listed
      explicitly instead of taking the ones Qt modules would add. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.github.randomnam3.beatlumen"
     android:installLocation="auto"
     android:versionCode="-- %%INSERT_VERSION_CODE%% --"
     android:versionName="-- %%INSERT_VERSION_NAME%% --">

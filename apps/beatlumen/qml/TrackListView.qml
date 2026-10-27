@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Material
 import Beatlumen.Core
 
 // Scrollable song list; tapping a song plays the whole list from there.

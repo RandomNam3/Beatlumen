@@ -50,6 +50,8 @@ public:
     Q_INVOKABLE void setKeepScreenOn(bool on);
     Q_INVOKABLE void requestMediaPermission();
     Q_INVOKABLE void copyText(const QString &text);
+    // Android: sends the app to the background (returns false elsewhere).
+    Q_INVOKABLE bool moveTaskToBack();
     // Browser file picker (WebAssembly): files are handed to the core as bytes.
     Q_INVOKABLE void pickFiles(const QString &accept, bool multiple = true);
 

@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Material
 import Beatlumen.Core
 
 // Round, touch sized icon button with tooltip.
