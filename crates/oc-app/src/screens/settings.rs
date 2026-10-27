@@ -276,7 +276,7 @@ fn about(app: &mut App, ui: &mut Ui, r: Rect) {
     );
     y += ui.paragraph(Rect::new(r.x, y, r.w, 200.0), text, 13.0, Weight::Regular, t.text_dim) + 16.0;
     let licenses = [
-        "OpenChroma: MIT License",
+        "OpenChroma: GNU GPL v3.0 or later",
         "Inter font: SIL Open Font License 1.1 (The Inter Project Authors)",
         "Effect shaders ported from midori (MIT, Benjamin Pang) and three.js (MIT)",
         "Simplex noise: webgl-noise (MIT, Ashima Arts / Stefan Gustavson)",
