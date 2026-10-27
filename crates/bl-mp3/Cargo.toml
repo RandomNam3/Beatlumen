@@ -1,0 +1,8 @@
+[package]
+name = "bl-mp3"
+description = "MPEG-1/2/2.5 Layer I/II/III audio decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

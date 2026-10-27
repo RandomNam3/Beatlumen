@@ -1,0 +1,8 @@
+[package]
+name = "bl-gl"
+description = "Thin OpenGL ES 3.0 / WebGL2 / GL 3.3 binding layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

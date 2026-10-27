@@ -1,8 +1,0 @@
-[package]
-name = "oc-ogg"
-description = "Ogg page/packet demuxer"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]

@@ -1,0 +1,25 @@
+bl-mp3 is part of Beatlumen and is licensed under the GNU General Public License v3.0 or later.
+
+Third-party material
+====================
+
+minimp3 (https://github.com/lieff/minimp3)
+------------------------------------------
+Portions of this crate are ported from minimp3 by lieff and contributors:
+the Huffman code tables in their compact lookup format (src/huffman.rs),
+the Layer I/II bit allocation and dequantization (src/layer12.rs), the
+Layer III scale factor, stereo, alias reduction and IMDCT kernels
+(src/layer3.rs, src/tables.rs) and the polyphase synthesis filterbank
+(src/synth.rs).
+
+minimp3 carries the following statement:
+
+    To the extent possible under law, the author(s) have dedicated all
+    copyright and related and neighboring rights to this software to the
+    public domain worldwide. This software is distributed without any
+    warranty. See <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+Standard tables
+---------------
+Scale factor band, bitrate, sample rate and window tables are those
+published in ISO/IEC 11172-3 and ISO/IEC 13818-3.

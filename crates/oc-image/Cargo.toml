@@ -1,8 +1,0 @@
-[package]
-name = "oc-image"
-description = "PNG/JPEG image decoding and resizing"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]

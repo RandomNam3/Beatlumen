@@ -3,140 +3,140 @@
 version = 4
 
 [[package]]
-name = "oc-aac"
-version = "0.1.0"
-
-[[package]]
-name = "oc-analysis"
-version = "0.1.0"
-
-[[package]]
-name = "oc-app"
+name = "beatlumen"
 version = "0.1.0"
 dependencies = [
- "oc-analysis",
- "oc-font",
- "oc-fx",
- "oc-gl",
- "oc-image",
- "oc-json",
- "oc-media",
- "oc-net",
- "oc-render",
- "oc-ui",
+ "bl-app",
+ "bl-gl",
+ "bl-media",
 ]
 
 [[package]]
-name = "oc-flac"
+name = "beatlumen-android"
 version = "0.1.0"
 
 [[package]]
-name = "oc-font"
-version = "0.1.0"
-
-[[package]]
-name = "oc-fx"
+name = "beatlumen-server"
 version = "0.1.0"
 dependencies = [
- "oc-analysis",
- "oc-json",
+ "bl-analysis",
+ "bl-fx",
+ "bl-image",
+ "bl-json",
+ "bl-media",
+ "bl-net",
 ]
 
 [[package]]
-name = "oc-gl"
+name = "beatlumen-web"
 version = "0.1.0"
 
 [[package]]
-name = "oc-image"
+name = "bl-aac"
 version = "0.1.0"
 
 [[package]]
-name = "oc-json"
+name = "bl-analysis"
 version = "0.1.0"
 
 [[package]]
-name = "oc-media"
+name = "bl-app"
 version = "0.1.0"
 dependencies = [
- "oc-aac",
- "oc-flac",
- "oc-mp3",
- "oc-ogg",
- "oc-opus",
- "oc-vorbis",
+ "bl-analysis",
+ "bl-font",
+ "bl-fx",
+ "bl-gl",
+ "bl-image",
+ "bl-json",
+ "bl-media",
+ "bl-net",
+ "bl-render",
+ "bl-ui",
 ]
 
 [[package]]
-name = "oc-mp3"
+name = "bl-flac"
 version = "0.1.0"
 
 [[package]]
-name = "oc-net"
+name = "bl-font"
+version = "0.1.0"
+
+[[package]]
+name = "bl-fx"
 version = "0.1.0"
 dependencies = [
- "oc-json",
+ "bl-analysis",
+ "bl-json",
 ]
 
 [[package]]
-name = "oc-ogg"
+name = "bl-gl"
 version = "0.1.0"
 
 [[package]]
-name = "oc-opus"
+name = "bl-image"
+version = "0.1.0"
+
+[[package]]
+name = "bl-json"
+version = "0.1.0"
+
+[[package]]
+name = "bl-media"
 version = "0.1.0"
 dependencies = [
- "oc-ogg",
+ "bl-aac",
+ "bl-flac",
+ "bl-mp3",
+ "bl-ogg",
+ "bl-opus",
+ "bl-vorbis",
 ]
 
 [[package]]
-name = "oc-render"
+name = "bl-mp3"
+version = "0.1.0"
+
+[[package]]
+name = "bl-net"
 version = "0.1.0"
 dependencies = [
- "oc-fx",
- "oc-gl",
+ "bl-json",
 ]
 
 [[package]]
-name = "oc-ui"
+name = "bl-ogg"
+version = "0.1.0"
+
+[[package]]
+name = "bl-opus"
 version = "0.1.0"
 dependencies = [
- "oc-font",
- "oc-gl",
- "oc-render",
+ "bl-ogg",
 ]
 
 [[package]]
-name = "oc-vorbis"
+name = "bl-render"
 version = "0.1.0"
 dependencies = [
- "oc-ogg",
+ "bl-fx",
+ "bl-gl",
 ]
 
 [[package]]
-name = "openchroma"
+name = "bl-ui"
 version = "0.1.0"
 dependencies = [
- "oc-app",
- "oc-gl",
- "oc-media",
+ "bl-font",
+ "bl-gl",
+ "bl-render",
 ]
 
 [[package]]
-name = "openchroma-android"
-version = "0.1.0"
-
-[[package]]
-name = "openchroma-server"
+name = "bl-vorbis"
 version = "0.1.0"
 dependencies = [
- "oc-analysis",
- "oc-fx",
- "oc-image",
- "oc-json",
- "oc-media",
- "oc-net",
+ "bl-ogg",
 ]
-
-[[package]]
-name = "openchroma-web"
-version = "0.1.0"

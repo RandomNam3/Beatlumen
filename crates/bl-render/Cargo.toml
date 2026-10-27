@@ -1,0 +1,10 @@
+[package]
+name = "bl-render"
+description = "Visualizer and 2D renderer on top of bl-gl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-gl = { path = "../bl-gl" }
+bl-fx = { path = "../bl-fx" }

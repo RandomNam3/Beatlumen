@@ -1,0 +1,28 @@
+bl-media
+========
+
+This crate is part of Beatlumen and is licensed under the GNU General Public License v3.0 or later.
+
+src/alac.rs contains a Rust port of Apple's ALAC (Apple Lossless) reference
+decoder (ALACDecoder.cpp, ag_dec.c, dp_dec.c, matrix_dec.c from
+https://github.com/macosforge/alac), which carries the following notice:
+
+    Copyright (c) 2011 Apple Inc. All rights reserved.
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+The ported code was modified (rewritten in safe Rust, explicit wrapping
+arithmetic, bounds/overrun checks, f32 output with WAVE channel order).
+
+The ID3v1 genre table and the G.711 A-law/mu-law expansion follow the
+respective public specifications.

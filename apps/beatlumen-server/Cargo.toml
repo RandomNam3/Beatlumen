@@ -1,0 +1,23 @@
+[package]
+name = "beatlumen-server"
+description = "Beatlumen music library server (serves local music folders to Beatlumen clients over HTTP)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+name = "beatlumen_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beatlumen-server"
+path = "src/main.rs"
+
+[dependencies]
+bl-net = { path = "../../crates/bl-net" }
+bl-json = { path = "../../crates/bl-json" }
+bl-media = { path = "../../crates/bl-media" }
+bl-image = { path = "../../crates/bl-image" }
+bl-analysis = { path = "../../crates/bl-analysis" }
+bl-fx = { path = "../../crates/bl-fx" }
