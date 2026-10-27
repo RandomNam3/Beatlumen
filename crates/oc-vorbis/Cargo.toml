@@ -1,0 +1,8 @@
+[package]
+name = "oc-vorbis"
+description = "Vorbis I audio decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

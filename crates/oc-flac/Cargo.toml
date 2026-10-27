@@ -1,0 +1,8 @@
+[package]
+name = "oc-flac"
+description = "FLAC decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
