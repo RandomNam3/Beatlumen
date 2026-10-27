@@ -1,0 +1,126 @@
+oc-opus is part of OpenChroma and is licensed under the MIT license (see the
+workspace license). It is a Rust port of the decoder part of the libopus
+reference implementation (version 1.5.2, https://opus-codec.org/, the
+reference code of RFC 6716), float build, plus the multistream decoder of
+RFC 7845. The ported code remains subject to the libopus BSD-3-Clause license
+reproduced below; the copyright notices of the ported files are also kept in
+the headers of the corresponding Rust source files.
+
+Ported libopus files:
+  celt/entdec.c, celt/entcode.c, celt/laplace.c       -> src/range_dec.rs
+  celt/static_modes_float.h, celt/modes.c             -> src/celt/static_modes.rs, src/celt/mode.rs
+  celt/kiss_fft.c, celt/mdct.c                        -> src/celt/mdct.rs
+  celt/cwrs.c, celt/vq.c                              -> src/celt/vq.rs
+  celt/bands.c                                        -> src/celt/bands.rs
+  celt/quant_bands.c                                  -> src/celt/energy.rs, src/celt/mode.rs
+  celt/rate.c, celt/rate.h                            -> src/celt/rate.rs
+  celt/celt.c, celt/pitch.c, celt/celt_lpc.c          -> src/celt/pitch.rs, src/celt/mode.rs
+  celt/mathops.c, celt/mathops.h, celt/x86/pitch_sse.c -> src/celt/math.rs
+  celt/celt_decoder.c                                 -> src/celt/decoder.rs
+  silk/dec_API.c, silk/stereo_*.c                     -> src/silk/mod.rs
+  silk/decode_*.c, silk/decoder_set_fs.c, silk/init_decoder.c,
+  silk/shell_coder.c, silk/code_signs.c, silk/gain_quant.c -> src/silk/decode.rs
+  silk/NLSF*.c, silk/LPC_*.c, silk/bwexpander*.c, silk/sort.c -> src/silk/lpc.rs
+  silk/PLC.c, silk/CNG.c                              -> src/silk/plc.rs
+  silk/resampler*.c                                   -> src/silk/resampler.rs
+  silk/tables_*.c, silk/table_LSF_cos.c, silk/pitch_est_tables.c,
+  silk/resampler_rom.c                                -> src/silk/tables.rs
+  silk/macros.h, silk/SigProc_FIX.h, silk/Inlines.h,
+  silk/lin2log.c, silk/log2lin.c, silk/sum_sqr_shift.c -> src/silk/macros.rs
+  src/opus.c, src/opus_decoder.c                      -> src/packet.rs, src/opus.rs
+  src/opus_multistream_decoder.c                      -> src/multistream.rs
+
+Copyright notices of the ported files:
+
+  Copyright (c) 2001-2011 Timothy B. Terriberry
+  Copyright (c) 2002-2008 Jean-Marc Valin
+  Copyright (c) 2003-2004, Mark Borgerding
+  Copyright (c) 2005-2007, Xiph.Org Foundation
+  Copyright (c) 2006-2011, Skype Limited. All rights reserved.
+  Copyright (c) 2007-2008 CSIRO
+  Copyright (c) 2007-2010 Xiph.Org Foundation
+  Copyright (c) 2007-2009 Timothy B. Terriberry
+  Copyright (c) 2008, Xiph.Org Foundation, CSIRO
+  Copyright (c) 2008-2009 Gregory Maxwell
+  Copyright (c) 2008-2009 Xiph.Org Foundation
+  Copyright (c) 2009-2010 Xiph.Org Foundation
+  Copyright (c) 2010 Xiph.Org Foundation, Skype Limited
+  Copyright (c) 2011 Xiph.Org Foundation, Skype Limited
+  Copyright (c) 2014, Cisco Systems, INC
+  (Written by Jean-Marc Valin, Gregory Maxwell, Timothy B. Terriberry,
+   Koen Vos, XiangMingZhu, WeiZhou, MinPeng, YanWang)
+
+libopus COPYING file:
+-------------------------------------------------------------------------------
+Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
+                    Jean-Marc Valin, Timothy B. Terriberry,
+                    CSIRO, Gregory Maxwell, Mark Borgerding,
+                    Erik de Castro Lopo, Mozilla, Amazon
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of Internet Society, IETF or IETF Trust, nor the
+names of specific contributors, may be used to endorse or promote
+products derived from this software without specific prior written
+permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Opus is subject to the royalty-free patent licenses which are
+specified at:
+
+Xiph.Org Foundation:
+https://datatracker.ietf.org/ipr/1524/
+
+Microsoft Corporation:
+https://datatracker.ietf.org/ipr/1914/
+
+Broadcom Corporation:
+https://datatracker.ietf.org/ipr/1526/
+-------------------------------------------------------------------------------
+
+The kiss_fft code (celt/kiss_fft.c) additionally carries:
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice,
+       this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright notice,
+       this list of conditions and the following disclaimer in the
+       documentation and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+  POSSIBILITY OF SUCH DAMAGE.*/
+
+/* This code is originally from Mark Borgerding's KISS-FFT but has been
+   heavily modified to better suit Opus */
