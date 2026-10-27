@@ -15,6 +15,8 @@ if [ -z "${EMSDK:-}" ]; then
 fi
 BUILD="$ROOT/build/wasm"
 mkdir -p "$BUILD"
+# Some Qt installers drop the executable bit of the wrapper scripts.
+chmod +x "$QT_WASM/bin/"* 2>/dev/null || true
 "$QT_WASM/bin/qt-cmake" -S "$ROOT/apps/beatlumen" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DQT_HOST_PATH="$QT_HOST"
 cmake --build "$BUILD"
 OUT="$ROOT/dist/web"
