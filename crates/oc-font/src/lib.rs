@@ -465,3 +465,19 @@ impl Font {
         Some(GlyphBitmap { width: w as u32, height: h as u32, left: x0 as i32, top: -(y0 as i32), coverage })
     }
 }
+
+/// Rasterizes line segments `[x0, y0, x1, y1]` given in pixel coordinates
+/// (y down, origin at the top-left of a `width` x `height` bitmap) with the
+/// same exact-area accumulation used for glyphs. Closed contours with
+/// consistent orientation add up (coverage is clamped to 1), which makes it
+/// suitable for icons built from several overlapping shapes.
+pub fn rasterize_lines(width: usize, height: usize, lines: &[[f32; 4]]) -> Vec<u8> {
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return Vec::new();
+    }
+    let mut r = raster::Raster::new(width, height);
+    for l in lines {
+        r.draw_line(&outline::Line { x0: l[0], y0: l[1], x1: l[2], y1: l[3] });
+    }
+    r.coverage()
+}

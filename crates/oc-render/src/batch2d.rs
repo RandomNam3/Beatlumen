@@ -110,6 +110,7 @@ pub struct Batch2d {
     white: Texture,
     pub atlas: Texture,
     screen: (f32, f32),
+    scale: f32,
 }
 
 pub const ATLAS_SIZE: u32 = 2048;
@@ -147,6 +148,7 @@ impl Batch2d {
             white,
             atlas,
             screen: (1.0, 1.0),
+            scale: 1.0,
         })
     }
 
@@ -160,8 +162,11 @@ impl Batch2d {
         gl.tex_sub_image_2d(x as i32, y as i32, w as i32, h as i32, RED, UNSIGNED_BYTE, data);
     }
 
-    pub fn begin(&mut self, width: f32, height: f32) {
+    /// Starts a frame. `width`/`height` are in logical units; `scale` is
+    /// the number of physical pixels per logical unit.
+    pub fn begin(&mut self, width: f32, height: f32, scale: f32) {
         self.screen = (width.max(1.0), height.max(1.0));
+        self.scale = scale.max(0.1);
         self.vertices.clear();
         self.indices.clear();
         self.cmds.clear();
@@ -171,6 +176,10 @@ impl Batch2d {
 
     pub fn screen(&self) -> (f32, f32) {
         self.screen
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
     }
 
     pub fn current_clip(&self) -> Option<Rect> {
@@ -305,6 +314,7 @@ impl Batch2d {
         let p = &self.program;
         p.use_program(gl);
         p.set_2f(gl, "screen", self.screen.0, self.screen.1);
+        p.set_f(gl, "pixelScale", self.scale);
         p.set_texture(gl, "atlas", 0, self.atlas.id);
         let sx = fb_width as f32 / self.screen.0;
         let sy = fb_height as f32 / self.screen.1;

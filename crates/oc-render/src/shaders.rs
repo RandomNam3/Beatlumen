@@ -462,6 +462,7 @@ void main() {
 pub const UI_FS: &str = r#"
 uniform sampler2D atlas;
 uniform sampler2D image;
+uniform float pixelScale;
 in vec2 vUv;
 in vec4 vColor;
 in vec2 vLocal;
@@ -488,7 +489,7 @@ void main() {
         if (mode == 4) {
             d = abs(d + vUv.x * 0.5) - vUv.x * 0.5;
         }
-        c.a *= clamp(0.5 - d, 0.0, 1.0);
+        c.a *= clamp(0.5 - d * pixelScale, 0.0, 1.0);
     }
     fragColor = vec4(c.rgb * c.a, c.a);
 }

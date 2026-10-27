@@ -211,6 +211,9 @@ pub trait Host {
     }
     /// Push based audio (web): drop all queued audio.
     fn audio_clear(&mut self) {}
+    /// Push based audio (web): pause/resume the output without dropping
+    /// queued audio.
+    fn audio_set_paused(&mut self, _paused: bool) {}
     /// Whether audio is pull based ([`Host::audio_start`]) or push based.
     fn audio_is_push(&self) -> bool {
         false
