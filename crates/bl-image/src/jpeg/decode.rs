@@ -168,7 +168,11 @@ pub fn decode_scaled(data: &[u8], scale: u32) -> Result<(Image, f64, f64), Error
     let img = d.output()?;
     let (w, h) = d.frame.as_ref().map_or((1, 1), |f| (f.width, f.height));
     let (ew, eh) = (w as f64 / d.scale as f64, h as f64 / d.scale as f64);
-    let (ew, eh) = if d.orientation >= 5 { (eh, ew) } else { (ew, eh) };
+    let (ew, eh) = if d.orientation >= 5 {
+        (eh, ew)
+    } else {
+        (ew, eh)
+    };
     Ok((exif::apply(img, d.orientation), ew, eh))
 }
 
@@ -202,7 +206,9 @@ impl<'a> Decoder<'a> {
                 }
                 0xc3 => return Err(Error::Unsupported("jpeg: lossless coding")),
                 0xc5..=0xc7 => return Err(Error::Unsupported("jpeg: hierarchical coding")),
-                0xc9..=0xcb | 0xcd..=0xcf => return Err(Error::Unsupported("jpeg: arithmetic coding")),
+                0xc9..=0xcb | 0xcd..=0xcf => {
+                    return Err(Error::Unsupported("jpeg: arithmetic coding"))
+                }
                 0xc4 => self.parse_dht(s)?,
                 0xdb => self.parse_dqt(s)?,
                 0xdd => {
@@ -221,7 +227,9 @@ impl<'a> Decoder<'a> {
                         self.orientation = o;
                     }
                 }
-                0xee if s.len() >= 12 && s.starts_with(b"Adobe") => self.adobe_transform = Some(s[11]),
+                0xee if s.len() >= 12 && s.starts_with(b"Adobe") => {
+                    self.adobe_transform = Some(s[11])
+                }
                 _ => {}
             }
         }
@@ -239,7 +247,9 @@ impl<'a> Decoder<'a> {
             return Err(Error::InvalidData("jpeg: short frame header"));
         }
         if s[0] != 8 {
-            return Err(Error::Unsupported("jpeg: sample precision other than 8 bits"));
+            return Err(Error::Unsupported(
+                "jpeg: sample precision other than 8 bits",
+            ));
         }
         let height = u16::from_be_bytes([s[1], s[2]]) as usize;
         let width = u16::from_be_bytes([s[3], s[4]]) as usize;
@@ -263,7 +273,9 @@ impl<'a> Decoder<'a> {
         // tiny files that claim enormous dimensions before allocating.
         let min_blocks = (width.div_ceil(8) * height.div_ceil(8)) as u64;
         if min_blocks > self.data.len() as u64 * 8 * 64 {
-            return Err(Error::InvalidData("jpeg: file far too short for dimensions"));
+            return Err(Error::InvalidData(
+                "jpeg: file far too short for dimensions",
+            ));
         }
         let mut comps = Vec::with_capacity(n);
         for i in 0..n {
@@ -276,7 +288,13 @@ impl<'a> Decoder<'a> {
                 // A single-component frame is always non-interleaved.
                 (h, v) = (1, 1);
             }
-            comps.push(Component { id: c[0], h, v, tq: c[2] as usize, ..Default::default() });
+            comps.push(Component {
+                id: c[0],
+                h,
+                v,
+                tq: c[2] as usize,
+                ..Default::default()
+            });
         }
         let hmax = comps.iter().map(|c| c.h).max().unwrap_or(1);
         let vmax = comps.iter().map(|c| c.v).max().unwrap_or(1);
@@ -298,7 +316,16 @@ impl<'a> Decoder<'a> {
                 c.coefs = vec![0; c.bw_pad * c.bh_pad * 64];
             }
         }
-        self.frame = Some(Frame { width, height, progressive, comps, hmax, vmax, mcux, mcuy });
+        self.frame = Some(Frame {
+            width,
+            height,
+            progressive,
+            comps,
+            hmax,
+            vmax,
+            mcux,
+            mcuy,
+        });
         Ok(())
     }
 
@@ -339,7 +366,11 @@ impl<'a> Decoder<'a> {
                 return Err(Error::InvalidData("jpeg: short DQT"));
             }
             for k in 0..64 {
-                let v = if pq == 0 { s[1 + k] as u16 } else { u16::from_be_bytes([s[1 + 2 * k], s[2 + 2 * k]]) };
+                let v = if pq == 0 {
+                    s[1 + k] as u16
+                } else {
+                    u16::from_be_bytes([s[1 + 2 * k], s[2 + 2 * k]])
+                };
                 self.qt[tq][ZIGZAG_EXT[k]] = v;
             }
             s = &s[1 + n..];
@@ -348,7 +379,10 @@ impl<'a> Decoder<'a> {
     }
 
     fn parse_sos(&mut self, s: &[u8]) -> Result<Scan, Error> {
-        let frame = self.frame.as_mut().ok_or(Error::InvalidData("jpeg: scan before frame"))?;
+        let frame = self
+            .frame
+            .as_mut()
+            .ok_or(Error::InvalidData("jpeg: scan before frame"))?;
         let n = *s.first().ok_or(Error::InvalidData("jpeg: short SOS"))? as usize;
         if n == 0 || n > 4 || s.len() < 4 + 2 * n {
             return Err(Error::InvalidData("jpeg: bad SOS"));
@@ -361,7 +395,9 @@ impl<'a> Decoder<'a> {
                 .comps
                 .iter()
                 .position(|c| c.id == id)
-                .ok_or(Error::InvalidData("jpeg: scan references unknown component"))?;
+                .ok_or(Error::InvalidData(
+                    "jpeg: scan references unknown component",
+                ))?;
             if comps.contains(&ci) {
                 return Err(Error::InvalidData("jpeg: duplicate scan component"));
             }
@@ -370,14 +406,37 @@ impl<'a> Decoder<'a> {
             comps.push(ci);
         }
         let p = 1 + 2 * n;
-        let (ss, se, ah, al) = (s[p] as usize, s[p + 1] as usize, (s[p + 2] >> 4) as u32, (s[p + 2] & 15) as u32);
+        let (ss, se, ah, al) = (
+            s[p] as usize,
+            s[p + 1] as usize,
+            (s[p + 2] >> 4) as u32,
+            (s[p + 2] & 15) as u32,
+        );
         if frame.progressive {
-            if ss > se || se > 63 || (ss == 0 && se != 0) || (ss > 0 && n != 1) || al > 13 || ah > 13 {
+            if ss > se
+                || se > 63
+                || (ss == 0 && se != 0)
+                || (ss > 0 && n != 1)
+                || al > 13
+                || ah > 13
+            {
                 return Err(Error::InvalidData("jpeg: bad progressive scan parameters"));
             }
-            Ok(Scan { comps, ss, se, ah, al })
+            Ok(Scan {
+                comps,
+                ss,
+                se,
+                ah,
+                al,
+            })
         } else {
-            Ok(Scan { comps, ss: 0, se: 63, ah: 0, al: 0 })
+            Ok(Scan {
+                comps,
+                ss: 0,
+                se: 63,
+                ah: 0,
+                al: 0,
+            })
         }
     }
 
@@ -390,7 +449,17 @@ impl<'a> Decoder<'a> {
     }
 
     fn decode_scan_inner(&mut self, r: &mut BitReader, scan: &Scan) -> Result<(), Error> {
-        let Decoder { frame, dc, ac, qt, restart_interval, eobrun, scale, basis, .. } = self;
+        let Decoder {
+            frame,
+            dc,
+            ac,
+            qt,
+            restart_interval,
+            eobrun,
+            scale,
+            basis,
+            ..
+        } = self;
         let frame = frame.as_mut().ok_or(Error::InvalidData("jpeg: no frame"))?;
         let _ = scale;
         // Check that the needed tables exist.
@@ -402,7 +471,11 @@ impl<'a> Decoder<'a> {
                 return Err(Error::InvalidData("jpeg: missing huffman table"));
             }
         }
-        let dequant: Vec<Dequant> = scan.comps.iter().map(|&ci| Dequant::new(&qt[frame.comps[ci].tq])).collect();
+        let dequant: Vec<Dequant> = scan
+            .comps
+            .iter()
+            .map(|&ci| Dequant::new(&qt[frame.comps[ci].tq]))
+            .collect();
         for c in frame.comps.iter_mut() {
             c.dc_pred = 0;
         }
@@ -440,22 +513,39 @@ impl<'a> Decoder<'a> {
                     for bx in 0..nh {
                         let (x, y) = (mx * nh + bx, my * nv + by);
                         if !progressive {
-                            let dct = dc[c.td].as_ref().ok_or(Error::InvalidData("jpeg: missing table"))?;
-                            let act = ac[c.ta].as_ref().ok_or(Error::InvalidData("jpeg: missing table"))?;
+                            let dct = dc[c.td]
+                                .as_ref()
+                                .ok_or(Error::InvalidData("jpeg: missing table"))?;
+                            let act = ac[c.ta]
+                                .as_ref()
+                                .ok_or(Error::InvalidData("jpeg: missing table"))?;
                             decode_block(r, dct, act, &mut c.dc_pred, &mut block)?;
                             let off = y * c.bs * c.stride + x * c.bs;
                             if c.bs == 8 {
                                 idct::idct8(&block, &dequant[si], &mut c.plane, off, c.stride);
                             } else {
-                                idct::idct_reduced(c.bs, &block, &dequant[si], basis, &mut c.plane, off, c.stride);
+                                idct::idct_reduced(
+                                    c.bs,
+                                    &block,
+                                    &dequant[si],
+                                    basis,
+                                    &mut c.plane,
+                                    off,
+                                    c.stride,
+                                );
                             }
                         } else {
                             let bi = (y * c.bw_pad + x) * 64;
-                            let Some(coefs) = c.coefs.get_mut(bi..bi + 64) else { continue };
-                            let coefs: &mut [i16; 64] = coefs.try_into().map_err(|_| Error::InvalidData("jpeg"))?;
+                            let Some(coefs) = c.coefs.get_mut(bi..bi + 64) else {
+                                continue;
+                            };
+                            let coefs: &mut [i16; 64] =
+                                coefs.try_into().map_err(|_| Error::InvalidData("jpeg"))?;
                             if scan.ss == 0 {
                                 if scan.ah == 0 {
-                                    let dct = dc[c.td].as_ref().ok_or(Error::InvalidData("jpeg: missing table"))?;
+                                    let dct = dc[c.td]
+                                        .as_ref()
+                                        .ok_or(Error::InvalidData("jpeg: missing table"))?;
                                     r.refill();
                                     let s = r.decode(dct)? as u32;
                                     if s > 15 {
@@ -467,7 +557,9 @@ impl<'a> Decoder<'a> {
                                     coefs[0] |= 1 << scan.al;
                                 }
                             } else {
-                                let act = ac[c.ta].as_ref().ok_or(Error::InvalidData("jpeg: missing table"))?;
+                                let act = ac[c.ta]
+                                    .as_ref()
+                                    .ok_or(Error::InvalidData("jpeg: missing table"))?;
                                 if scan.ah == 0 {
                                     decode_ac_first(r, act, coefs, scan, eobrun)?;
                                 } else {
@@ -486,7 +578,10 @@ impl<'a> Decoder<'a> {
     fn output(&mut self) -> Result<Image, Error> {
         let scale = self.scale;
         let adobe = self.adobe_transform;
-        let frame = self.frame.as_mut().ok_or(Error::InvalidData("jpeg: no frame"))?;
+        let frame = self
+            .frame
+            .as_mut()
+            .ok_or(Error::InvalidData("jpeg: no frame"))?;
         if frame.progressive {
             for c in frame.comps.iter_mut() {
                 let dq = Dequant::new(&self.qt[c.tq]);
@@ -501,7 +596,15 @@ impl<'a> Decoder<'a> {
                         if c.bs == 8 {
                             idct::idct8(blk, &dq, &mut c.plane, off, c.stride);
                         } else {
-                            idct::idct_reduced(c.bs, blk, &dq, &self.basis, &mut c.plane, off, c.stride);
+                            idct::idct_reduced(
+                                c.bs,
+                                blk,
+                                &dq,
+                                &self.basis,
+                                &mut c.plane,
+                                off,
+                                c.stride,
+                            );
                         }
                     }
                 }
@@ -535,8 +638,12 @@ impl<'a> Decoder<'a> {
             .map(|c| color::Plane {
                 data: &c.plane,
                 stride: c.stride,
-                width: (frame.width * c.h).div_ceil(frame.hmax * c.cs).clamp(1, c.stride),
-                height: (frame.height * c.v).div_ceil(frame.vmax * c.cs).clamp(1, c.bh_pad * c.bs),
+                width: (frame.width * c.h)
+                    .div_ceil(frame.hmax * c.cs)
+                    .clamp(1, c.stride),
+                height: (frame.height * c.v)
+                    .div_ceil(frame.vmax * c.cs)
+                    .clamp(1, c.bh_pad * c.bs),
                 hn: c.h * scale,
                 hd: frame.hmax * c.cs,
                 vn: c.v * scale,
@@ -643,7 +750,11 @@ fn decode_ac_refine(
     // Refines a non-zero coefficient with one correction bit.
     let refine = |r: &mut BitReader, c: &mut i16| {
         if r.bit() && (*c & p1) == 0 {
-            *c = if *c >= 0 { c.wrapping_add(p1) } else { c.wrapping_add(m1) };
+            *c = if *c >= 0 {
+                c.wrapping_add(p1)
+            } else {
+                c.wrapping_add(m1)
+            };
         }
     };
     if *eobrun == 0 {

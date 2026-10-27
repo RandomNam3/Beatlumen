@@ -9,13 +9,17 @@ pub struct Mailbox<T> {
 
 impl<T> Clone for Mailbox<T> {
     fn clone(&self) -> Self {
-        Mailbox { inner: self.inner.clone() }
+        Mailbox {
+            inner: self.inner.clone(),
+        }
     }
 }
 
 impl<T> Default for Mailbox<T> {
     fn default() -> Self {
-        Mailbox { inner: Arc::new(Mutex::new(Vec::new())) }
+        Mailbox {
+            inner: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 }
 
@@ -26,12 +30,18 @@ impl<T> Mailbox<T> {
         }
     }
     pub fn take(&self) -> Vec<T> {
-        self.inner.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
+        self.inner
+            .lock()
+            .map(|mut g| std::mem::take(&mut *g))
+            .unwrap_or_default()
     }
 }
 
 /// Decodes a whole track to mono for analysis.
-pub fn decode_mono(src: Box<dyn bl_media::Source>, ext: Option<&str>) -> Result<(Vec<f32>, u32), String> {
+pub fn decode_mono(
+    src: Box<dyn bl_media::Source>,
+    ext: Option<&str>,
+) -> Result<(Vec<f32>, u32), String> {
     let mut dec = bl_media::open(src, ext).map_err(|e| e.to_string())?;
     let spec = dec.spec();
     let channels = spec.channels.max(1) as usize;
@@ -56,15 +66,23 @@ pub fn decode_mono(src: Box<dyn bl_media::Source>, ext: Option<&str>) -> Result<
 pub fn extension(path: &str) -> Option<String> {
     let name = path.rsplit(['/', '\\']).next()?;
     let name = name.split(['?', '#']).next()?;
-    name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).filter(|e| !e.is_empty() && e.len() <= 5)
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .filter(|e| !e.is_empty() && e.len() <= 5)
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn ext() {
-        assert_eq!(super::extension("/a/b.c/song.FLAC").as_deref(), Some("flac"));
-        assert_eq!(super::extension("http://x/api/tracks/1/stream?token=a.b").as_deref(), None);
+        assert_eq!(
+            super::extension("/a/b.c/song.FLAC").as_deref(),
+            Some("flac")
+        );
+        assert_eq!(
+            super::extension("http://x/api/tracks/1/stream?token=a.b").as_deref(),
+            None
+        );
         assert_eq!(super::extension("C:\\Music\\a.mp3").as_deref(), Some("mp3"));
     }
 }

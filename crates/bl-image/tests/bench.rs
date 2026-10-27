@@ -27,21 +27,68 @@ fn bench_12mp() {
     let dir = fixture_dir("bench");
     // Photo-like content: blurred test pattern plus grain, encoded like a
     // camera JPEG (quality 92, 4:2:0) when ImageMagick is available.
-    let src = "testsrc2=s=4000x3000,format=yuv444p,gblur=sigma=1.5,noise=alls=20:allf=u,format=rgb24";
+    let src =
+        "testsrc2=s=4000x3000,format=yuv444p,gblur=sigma=1.5,noise=alls=20:allf=u,format=rgb24";
     let jpg = dir.join("12mp.jpg");
     let png = dir.join("12mp.png");
     let prog = dir.join("12mp_progressive.jpg");
-    assert!(ffmpeg(&["-f", "lavfi", "-i", src, "-frames:v", "1", png.to_str().unwrap()]));
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        src,
+        "-frames:v",
+        "1",
+        png.to_str().unwrap()
+    ]));
     let im = have_convert();
-    if !(im && convert(&[png.to_str().unwrap(), "-quality", "92", "-sampling-factor", "2x2", jpg.to_str().unwrap()])) {
-        assert!(ffmpeg(&["-i", png.to_str().unwrap(), "-pix_fmt", "yuvj420p", "-q:v", "2", "-qmin", "1", jpg.to_str().unwrap()]));
+    if !(im
+        && convert(&[
+            png.to_str().unwrap(),
+            "-quality",
+            "92",
+            "-sampling-factor",
+            "2x2",
+            jpg.to_str().unwrap(),
+        ]))
+    {
+        assert!(ffmpeg(&[
+            "-i",
+            png.to_str().unwrap(),
+            "-pix_fmt",
+            "yuvj420p",
+            "-q:v",
+            "2",
+            "-qmin",
+            "1",
+            jpg.to_str().unwrap()
+        ]));
     }
-    let have_prog = im && convert(&[png.to_str().unwrap(), "-quality", "92", "-sampling-factor", "2x2", "-interlace", "JPEG", prog.to_str().unwrap()]);
+    let have_prog = im
+        && convert(&[
+            png.to_str().unwrap(),
+            "-quality",
+            "92",
+            "-sampling-factor",
+            "2x2",
+            "-interlace",
+            "JPEG",
+            prog.to_str().unwrap(),
+        ]);
     let mp = 12.0;
     let report = |name: &str, bytes: usize, secs: f64| {
-        println!("{name:34} {:6.1} ms  {:6.1} MP/s  ({:.1} MB file)", secs * 1e3, mp / secs, bytes as f64 / 1e6);
+        println!(
+            "{name:34} {:6.1} ms  {:6.1} MP/s  ({:.1} MB file)",
+            secs * 1e3,
+            mp / secs,
+            bytes as f64 / 1e6
+        );
     };
-    for (name, path) in [("JPEG baseline 4:2:0 q92", &jpg), ("PNG RGB8", &png), ("JPEG progressive 4:2:0 q92", &prog)] {
+    for (name, path) in [
+        ("JPEG baseline 4:2:0 q92", &jpg),
+        ("PNG RGB8", &png),
+        ("JPEG progressive 4:2:0 q92", &prog),
+    ] {
         if name.contains("progressive") && !have_prog {
             continue;
         }
@@ -65,11 +112,25 @@ fn bench_12mp() {
     let (t, small) = best_of(3, || bl_image::resize(&img, 1024, 768));
     report("resize 4000x3000 -> 1024x768", 0, t);
     let (t, j) = best_of(3, || bl_image::encode_jpeg(&small, 85));
-    println!("encode_jpeg 1024x768 q85          {:6.1} ms  ({} bytes)", t * 1e3, j.len());
+    println!(
+        "encode_jpeg 1024x768 q85          {:6.1} ms  ({} bytes)",
+        t * 1e3,
+        j.len()
+    );
     let (t, p) = best_of(3, || bl_image::encode_png(&small));
-    println!("encode_png 1024x768               {:6.1} ms  ({} bytes)", t * 1e3, p.len());
+    println!(
+        "encode_png 1024x768               {:6.1} ms  ({} bytes)",
+        t * 1e3,
+        p.len()
+    );
     let raw: Vec<u8> = img.pixels.iter().step_by(2).copied().collect();
     let z = bl_image::deflate::zlib_compress(&raw, 6);
     let (t, _) = best_of(3, || bl_image::inflate::zlib_decompress(&z).unwrap());
-    println!("inflate {:.1} MB -> {:.1} MB         {:6.1} ms  {:6.0} MB/s output", z.len() as f64 / 1e6, raw.len() as f64 / 1e6, t * 1e3, raw.len() as f64 / 1e6 / t);
+    println!(
+        "inflate {:.1} MB -> {:.1} MB         {:6.1} ms  {:6.0} MB/s output",
+        z.len() as f64 / 1e6,
+        raw.len() as f64 / 1e6,
+        t * 1e3,
+        raw.len() as f64 / 1e6 / t
+    );
 }

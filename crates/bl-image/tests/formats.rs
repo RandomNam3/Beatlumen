@@ -2,8 +2,8 @@
 
 mod common;
 
-use common::*;
 use bl_image::{decode, decode_max, encode_jpeg, encode_png, probe_format, Format, Image};
+use common::*;
 use std::path::Path;
 
 /// Sharp synthetic test pattern (odd dimensions, true RGB).
@@ -22,8 +22,19 @@ fn check_exact(path: &Path, tolerance: u8) {
     let (w, h, reference) = ffmpeg_rgba(path).expect("ffmpeg reference decode");
     assert_eq!((img.width, img.height), (w, h), "{}", path.display());
     let d = diff(&img.pixels, &reference);
-    println!("{}: mean {:.4} max {}", path.file_name().unwrap().to_string_lossy(), d.mean, d.max);
-    assert!(d.max <= tolerance, "{}: max error {} (mean {:.4})", path.display(), d.max, d.mean);
+    println!(
+        "{}: mean {:.4} max {}",
+        path.file_name().unwrap().to_string_lossy(),
+        d.mean,
+        d.max
+    );
+    assert!(
+        d.max <= tolerance,
+        "{}: max error {} (mean {:.4})",
+        path.display(),
+        d.max,
+        d.mean
+    );
 }
 
 #[test]
@@ -32,14 +43,31 @@ fn png_color_types_and_depths() {
         return;
     }
     let dir = fixture_dir("png");
-    for fmt in ["rgba", "rgb24", "gray", "pal8", "rgb48be", "gray16be", "monob", "ya8", "rgba64be", "ya16be"] {
+    for fmt in [
+        "rgba", "rgb24", "gray", "pal8", "rgb48be", "gray16be", "monob", "ya8", "rgba64be",
+        "ya16be",
+    ] {
         let p = dir.join(format!("{fmt}.png"));
-        if !ffmpeg(&["-f", "lavfi", "-i", SRC, "-frames:v", "1", "-pix_fmt", fmt, p.to_str().unwrap()]) {
+        if !ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            SRC,
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            fmt,
+            p.to_str().unwrap(),
+        ]) {
             continue;
         }
         // ffmpeg's 16 -> 8 bit conversion rounds differently (ImageMagick's
         // matches exactly, see png_imagemagick_variants).
-        let tol = if fmt.contains("16") || fmt.contains("48") || fmt.contains("64") { 2 } else { 0 };
+        let tol = if fmt.contains("16") || fmt.contains("48") || fmt.contains("64") {
+            2
+        } else {
+            0
+        };
         check_exact(&p, tol);
     }
     // Alpha gradient (exercises tRNS-free RGBA and premultiplication-free path).
@@ -76,16 +104,69 @@ fn png_imagemagick_variants() {
     ]));
     let s = src.to_str().unwrap();
     let cases: Vec<(&str, Vec<&str>)> = vec![
-        ("interlaced_rgba.png", vec![s, "-interlace", "PNG", "PNG32:"]),
-        ("interlaced_rgb.png", vec![s, "-alpha", "off", "-interlace", "PNG", "PNG24:"]),
-        ("interlaced_rgb16.png", vec![s, "-alpha", "off", "-interlace", "PNG", "PNG48:"]),
+        (
+            "interlaced_rgba.png",
+            vec![s, "-interlace", "PNG", "PNG32:"],
+        ),
+        (
+            "interlaced_rgb.png",
+            vec![s, "-alpha", "off", "-interlace", "PNG", "PNG24:"],
+        ),
+        (
+            "interlaced_rgb16.png",
+            vec![s, "-alpha", "off", "-interlace", "PNG", "PNG48:"],
+        ),
         ("rgba16.png", vec![s, "PNG64:"]),
-        ("gray4.png", vec![s, "-alpha", "off", "-colorspace", "gray", "-depth", "4", "PNG:"]),
-        ("gray2.png", vec![s, "-alpha", "off", "-colorspace", "gray", "-depth", "2", "PNG:"]),
-        ("gray1_interlaced.png", vec![s, "-alpha", "off", "-colorspace", "gray", "-depth", "1", "-interlace", "PNG", "PNG:"]),
+        (
+            "gray4.png",
+            vec![
+                s,
+                "-alpha",
+                "off",
+                "-colorspace",
+                "gray",
+                "-depth",
+                "4",
+                "PNG:",
+            ],
+        ),
+        (
+            "gray2.png",
+            vec![
+                s,
+                "-alpha",
+                "off",
+                "-colorspace",
+                "gray",
+                "-depth",
+                "2",
+                "PNG:",
+            ],
+        ),
+        (
+            "gray1_interlaced.png",
+            vec![
+                s,
+                "-alpha",
+                "off",
+                "-colorspace",
+                "gray",
+                "-depth",
+                "1",
+                "-interlace",
+                "PNG",
+                "PNG:",
+            ],
+        ),
         ("pal_trns.png", vec![s, "-colors", "64", "PNG8:"]),
-        ("pal_4bit.png", vec![s, "-alpha", "off", "-colors", "12", "PNG8:"]),
-        ("pal_interlaced.png", vec![s, "-colors", "200", "-interlace", "PNG", "PNG8:"]),
+        (
+            "pal_4bit.png",
+            vec![s, "-alpha", "off", "-colors", "12", "PNG8:"],
+        ),
+        (
+            "pal_interlaced.png",
+            vec![s, "-colors", "200", "-interlace", "PNG", "PNG8:"],
+        ),
     ];
     for (name, mut args) in cases {
         let out = dir.join(name);
@@ -113,7 +194,19 @@ fn apng_first_frame() {
     }
     let dir = fixture_dir("apng");
     let p = dir.join("anim.png");
-    if !ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=64x48:r=10", "-frames:v", "3", "-plays", "0", "-f", "apng", p.to_str().unwrap()]) {
+    if !ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=64x48:r=10",
+        "-frames:v",
+        "3",
+        "-plays",
+        "0",
+        "-f",
+        "apng",
+        p.to_str().unwrap(),
+    ]) {
         return;
     }
     check_exact(&p, 0);
@@ -125,9 +218,25 @@ fn png_encode_round_trip() {
         return;
     }
     let dir = fixture_dir("png_enc");
-    for (name, filter) in [("opaque", SRC.to_string()), ("alpha", format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='X'"))] {
+    for (name, filter) in [
+        ("opaque", SRC.to_string()),
+        (
+            "alpha",
+            format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='X'"),
+        ),
+    ] {
         let src = dir.join(format!("{name}_src.png"));
-        assert!(ffmpeg(&["-f", "lavfi", "-i", &filter, "-frames:v", "1", "-pix_fmt", "rgba", src.to_str().unwrap()]));
+        assert!(ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            &filter,
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "rgba",
+            src.to_str().unwrap()
+        ]));
         let img = decode(&load(&src)).unwrap();
         let png = encode_png(&img);
         let back = decode(&png).unwrap();
@@ -136,7 +245,12 @@ fn png_encode_round_trip() {
         std::fs::write(&out, &png).unwrap();
         let (_, _, reference) = ffmpeg_rgba(&out).expect("ffmpeg decodes our PNG");
         assert_eq!(reference, img.pixels);
-        println!("{name}: raw {} bytes, ffmpeg png {} bytes, ours {} bytes", img.pixels.len(), load(&src).len(), png.len());
+        println!(
+            "{name}: raw {} bytes, ffmpeg png {} bytes, ours {} bytes",
+            img.pixels.len(),
+            load(&src).len(),
+            png.len()
+        );
     }
 }
 
@@ -151,14 +265,25 @@ fn check_jpeg(path: &Path, extra: &[&str], max_mean: f64, max_err: u8) {
         let (w, h, reference) = convert_rgba(path, extra).expect("convert reference");
         assert_eq!((img.width, img.height), (w, h), "{name}");
         let d = diff(&img.pixels, &reference);
-        println!("{name}: vs libjpeg-turbo mean {:.4} max {} psnr {:.1} dB", d.mean, d.max, d.psnr);
-        assert!(d.mean < max_mean && d.max <= max_err, "{name}: mean {:.3} max {}", d.mean, d.max);
+        println!(
+            "{name}: vs libjpeg-turbo mean {:.4} max {} psnr {:.1} dB",
+            d.mean, d.max, d.psnr
+        );
+        assert!(
+            d.mean < max_mean && d.max <= max_err,
+            "{name}: mean {:.3} max {}",
+            d.mean,
+            d.max
+        );
     }
     if extra.is_empty() {
         if let Some((w, h, reference)) = ffmpeg_rgba(path) {
             assert_eq!((img.width, img.height), (w, h), "{name}");
             let d = diff(&img.pixels, &reference);
-            println!("{name}: vs ffmpeg mean {:.4} max {} psnr {:.1} dB", d.mean, d.max, d.psnr);
+            println!(
+                "{name}: vs ffmpeg mean {:.4} max {} psnr {:.1} dB",
+                d.mean, d.max, d.psnr
+            );
             // ffmpeg's swscale upsamples chroma differently (it differs from
             // libjpeg-turbo by ~1.7 on the sharp test pattern itself).
             assert!(d.mean < 2.5, "{name}: mean {:.3} vs ffmpeg", d.mean);
@@ -177,7 +302,19 @@ fn jpeg_ffmpeg_variants() {
     for fmt in ["yuvj420p", "yuvj422p", "yuvj444p"] {
         for q in [2, 10, 31] {
             let p = dir.join(format!("{fmt}_q{q}.jpg"));
-            if !ffmpeg(&["-f", "lavfi", "-i", SRC, "-frames:v", "1", "-pix_fmt", fmt, "-q:v", &q.to_string(), p.to_str().unwrap()]) {
+            if !ffmpeg(&[
+                "-f",
+                "lavfi",
+                "-i",
+                SRC,
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                fmt,
+                "-q:v",
+                &q.to_string(),
+                p.to_str().unwrap(),
+            ]) {
                 continue;
             }
             check_jpeg(&p, &[], 0.25, 6);
@@ -195,18 +332,90 @@ fn jpeg_imagemagick_variants() {
     let src = dir.join("src.png");
     // Smooth content: libjpeg-turbo replicates (instead of interpolating)
     // chroma for 4:1:1, which only matters at sharp chroma edges.
-    assert!(ffmpeg(&["-f", "lavfi", "-i", SMOOTH, "-frames:v", "1", src.to_str().unwrap()]));
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        SMOOTH,
+        "-frames:v",
+        "1",
+        src.to_str().unwrap()
+    ]));
     let s = src.to_str().unwrap();
     let cases: Vec<(&str, Vec<&str>)> = vec![
-        ("baseline_gray.jpg", vec![s, "-colorspace", "gray", "-quality", "90"]),
-        ("progressive_420.jpg", vec![s, "-quality", "85", "-interlace", "JPEG", "-sampling-factor", "2x2"]),
-        ("progressive_444.jpg", vec![s, "-quality", "95", "-interlace", "JPEG", "-sampling-factor", "1x1"]),
-        ("progressive_gray.jpg", vec![s, "-colorspace", "gray", "-quality", "80", "-interlace", "JPEG"]),
-        ("baseline_411.jpg", vec![s, "-quality", "90", "-sampling-factor", "4x1"]),
-        ("baseline_440.jpg", vec![s, "-quality", "90", "-sampling-factor", "1x2"]),
-        ("progressive_411.jpg", vec![s, "-quality", "90", "-interlace", "JPEG", "-sampling-factor", "4x1"]),
+        (
+            "baseline_gray.jpg",
+            vec![s, "-colorspace", "gray", "-quality", "90"],
+        ),
+        (
+            "progressive_420.jpg",
+            vec![
+                s,
+                "-quality",
+                "85",
+                "-interlace",
+                "JPEG",
+                "-sampling-factor",
+                "2x2",
+            ],
+        ),
+        (
+            "progressive_444.jpg",
+            vec![
+                s,
+                "-quality",
+                "95",
+                "-interlace",
+                "JPEG",
+                "-sampling-factor",
+                "1x1",
+            ],
+        ),
+        (
+            "progressive_gray.jpg",
+            vec![
+                s,
+                "-colorspace",
+                "gray",
+                "-quality",
+                "80",
+                "-interlace",
+                "JPEG",
+            ],
+        ),
+        (
+            "baseline_411.jpg",
+            vec![s, "-quality", "90", "-sampling-factor", "4x1"],
+        ),
+        (
+            "baseline_440.jpg",
+            vec![s, "-quality", "90", "-sampling-factor", "1x2"],
+        ),
+        (
+            "progressive_411.jpg",
+            vec![
+                s,
+                "-quality",
+                "90",
+                "-interlace",
+                "JPEG",
+                "-sampling-factor",
+                "4x1",
+            ],
+        ),
         ("cmyk.jpg", vec![s, "-colorspace", "CMYK", "-quality", "92"]),
-        ("cmyk_progressive.jpg", vec![s, "-colorspace", "CMYK", "-quality", "92", "-interlace", "JPEG"]),
+        (
+            "cmyk_progressive.jpg",
+            vec![
+                s,
+                "-colorspace",
+                "CMYK",
+                "-quality",
+                "92",
+                "-interlace",
+                "JPEG",
+            ],
+        ),
         ("q100.jpg", vec![s, "-quality", "100"]),
         ("q5.jpg", vec![s, "-quality", "5"]),
     ];
@@ -217,7 +426,11 @@ fn jpeg_imagemagick_variants() {
         if !convert(&args) {
             continue;
         }
-        let extra: &[&str] = if name.starts_with("cmyk") { &["-colorspace", "sRGB"] } else { &[] };
+        let extra: &[&str] = if name.starts_with("cmyk") {
+            &["-colorspace", "sRGB"]
+        } else {
+            &[]
+        };
         if name.contains("411") {
             // libjpeg-turbo replicates chroma for 4:1:1 (no fancy upsampling)
             // while we interpolate, so compare both against the source.
@@ -225,7 +438,10 @@ fn jpeg_imagemagick_variants() {
             let (_, _, lj) = convert_rgba(&out, &[]).unwrap();
             let orig = decode(&load(&src)).unwrap();
             let (d_ours, d_lj) = (diff(&ours.pixels, &orig.pixels), diff(&lj, &orig.pixels));
-            println!("{name}: psnr vs source: ours {:.2} dB, libjpeg-turbo {:.2} dB", d_ours.psnr, d_lj.psnr);
+            println!(
+                "{name}: psnr vs source: ours {:.2} dB, libjpeg-turbo {:.2} dB",
+                d_ours.psnr, d_lj.psnr
+            );
             assert!(d_ours.psnr > d_lj.psnr - 0.3, "{name}");
             continue;
         }
@@ -240,18 +456,49 @@ fn jpeg_exif_orientation() {
     }
     let dir = fixture_dir("jpeg_exif");
     let src = dir.join("src.png");
-    assert!(ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=96x64", "-frames:v", "1", src.to_str().unwrap()]));
-    let orients = ["top-left", "top-right", "bottom-right", "bottom-left", "left-top", "right-top", "right-bottom", "left-bottom"];
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=96x64",
+        "-frames:v",
+        "1",
+        src.to_str().unwrap()
+    ]));
+    let orients = [
+        "top-left",
+        "top-right",
+        "bottom-right",
+        "bottom-left",
+        "left-top",
+        "right-top",
+        "right-bottom",
+        "left-bottom",
+    ];
     for (i, o) in orients.iter().enumerate() {
         let out = dir.join(format!("orient{}.jpg", i + 1));
-        if !convert(&[src.to_str().unwrap(), "-quality", "95", "-orient", o, out.to_str().unwrap()]) {
+        if !convert(&[
+            src.to_str().unwrap(),
+            "-quality",
+            "95",
+            "-orient",
+            o,
+            out.to_str().unwrap(),
+        ]) {
             continue;
         }
         let img = decode(&load(&out)).unwrap();
         let (w, h, reference) = convert_rgba(&out, &["-auto-orient"]).unwrap();
         assert_eq!((img.width, img.height), (w, h), "orientation {}", i + 1);
         let d = diff(&img.pixels, &reference);
-        println!("orientation {}: {}x{} mean {:.3} max {}", i + 1, w, h, d.mean, d.max);
+        println!(
+            "orientation {}: {}x{} mean {:.3} max {}",
+            i + 1,
+            w,
+            h,
+            d.mean,
+            d.max
+        );
         assert!(d.mean < 1.0, "orientation {}", i + 1);
     }
 }
@@ -266,7 +513,19 @@ fn jpeg_decode_max_scaling() {
     for fmt in ["yuvj420p", "yuvj444p", "yuvj422p"] {
         let p = dir.join(format!("big_{fmt}.jpg"));
         let src = "testsrc2=s=1203x799,format=rgb24,gblur=sigma=1.5";
-        if !ffmpeg(&["-f", "lavfi", "-i", src, "-frames:v", "1", "-pix_fmt", fmt, "-q:v", "3", p.to_str().unwrap()]) {
+        if !ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            src,
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            fmt,
+            "-q:v",
+            "3",
+            p.to_str().unwrap(),
+        ]) {
             continue;
         }
         let data = load(&p);
@@ -276,7 +535,10 @@ fn jpeg_decode_max_scaling() {
             assert!(fast.width.max(fast.height) <= max_dim);
             let slow = bl_image::resize(&full, fast.width, fast.height);
             let d = diff(&fast.pixels, &slow.pixels);
-            println!("{fmt} max_dim {max_dim}: {}x{} vs full decode+resize: mean {:.3} psnr {:.1} dB", fast.width, fast.height, d.mean, d.psnr);
+            println!(
+                "{fmt} max_dim {max_dim}: {}x{} vs full decode+resize: mean {:.3} psnr {:.1} dB",
+                fast.width, fast.height, d.mean, d.psnr
+            );
             worst = worst.min(d.psnr);
         }
     }
@@ -290,7 +552,15 @@ fn jpeg_encode_quality() {
     }
     let dir = fixture_dir("jpeg_enc");
     let src = dir.join("src.png");
-    assert!(ffmpeg(&["-f", "lavfi", "-i", SMOOTH, "-frames:v", "1", src.to_str().unwrap()]));
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        SMOOTH,
+        "-frames:v",
+        "1",
+        src.to_str().unwrap()
+    ]));
     let img = decode(&load(&src)).unwrap();
     for q in [50u8, 75, 90, 100] {
         let jpg = encode_jpeg(&img, q);
@@ -301,7 +571,12 @@ fn jpeg_encode_quality() {
         let d_ff = diff(&reference, &img.pixels);
         let ours = decode(&jpg).unwrap();
         let d_ours = diff(&ours.pixels, &img.pixels);
-        println!("q{q}: {} bytes, psnr (ffmpeg decode) {:.2} dB, psnr (our decode) {:.2} dB", jpg.len(), d_ff.psnr, d_ours.psnr);
+        println!(
+            "q{q}: {} bytes, psnr (ffmpeg decode) {:.2} dB, psnr (our decode) {:.2} dB",
+            jpg.len(),
+            d_ff.psnr,
+            d_ours.psnr
+        );
         if q >= 90 {
             assert!(d_ff.psnr > 30.0 && d_ours.psnr > 30.0);
         }
@@ -327,9 +602,30 @@ fn bmp_variants() {
         return;
     }
     let dir = fixture_dir("bmp");
-    for fmt in ["bgr24", "bgra", "rgb565le", "rgb555le", "rgb444le", "pal8", "gray", "monob", "rgb8", "rgb4_byte"] {
+    for fmt in [
+        "bgr24",
+        "bgra",
+        "rgb565le",
+        "rgb555le",
+        "rgb444le",
+        "pal8",
+        "gray",
+        "monob",
+        "rgb8",
+        "rgb4_byte",
+    ] {
         let p = dir.join(format!("{fmt}.bmp"));
-        if !ffmpeg(&["-f", "lavfi", "-i", SRC, "-frames:v", "1", "-pix_fmt", fmt, p.to_str().unwrap()]) {
+        if !ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            SRC,
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            fmt,
+            p.to_str().unwrap(),
+        ]) {
             continue;
         }
         // ffmpeg expands 4-bit channels as v << 4; we replicate bits
@@ -338,14 +634,39 @@ fn bmp_variants() {
     }
     if have_convert() {
         let src = dir.join("src.png");
-        assert!(ffmpeg(&["-f", "lavfi", "-i", SRC, "-frames:v", "1", src.to_str().unwrap()]));
+        assert!(ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            SRC,
+            "-frames:v",
+            "1",
+            src.to_str().unwrap()
+        ]));
         let s = src.to_str().unwrap();
         let cases: Vec<(&str, Vec<&str>)> = vec![
-            ("rle8.bmp", vec![s, "-colors", "200", "-compress", "RLE", "BMP3:"]),
+            (
+                "rle8.bmp",
+                vec![s, "-colors", "200", "-compress", "RLE", "BMP3:"],
+            ),
             ("v3_24.bmp", vec![s, "BMP3:"]),
             ("v2_os2.bmp", vec![s, "BMP2:"]),
             ("pal4.bmp", vec![s, "-colors", "16", "BMP3:"]),
-            ("v5_32.bmp", vec![s, "-alpha", "set", "-channel", "A", "-evaluate", "set", "60%", "+channel", "BMP:"]),
+            (
+                "v5_32.bmp",
+                vec![
+                    s,
+                    "-alpha",
+                    "set",
+                    "-channel",
+                    "A",
+                    "-evaluate",
+                    "set",
+                    "60%",
+                    "+channel",
+                    "BMP:",
+                ],
+            ),
         ];
         for (name, mut args) in cases {
             let out = dir.join(name);
@@ -372,11 +693,27 @@ fn gif_variants() {
     }
     let dir = fixture_dir("gif");
     let p = dir.join("ffmpeg.gif");
-    if ffmpeg(&["-f", "lavfi", "-i", SRC, "-frames:v", "1", p.to_str().unwrap()]) {
+    if ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        SRC,
+        "-frames:v",
+        "1",
+        p.to_str().unwrap(),
+    ]) {
         check_exact(&p, 0);
     }
     let p = dir.join("anim.gif");
-    if ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=80x60:r=5", "-frames:v", "4", p.to_str().unwrap()]) {
+    if ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=80x60:r=5",
+        "-frames:v",
+        "4",
+        p.to_str().unwrap(),
+    ]) {
         check_exact(&p, 0);
     }
     if have_convert() {
@@ -385,16 +722,24 @@ fn gif_variants() {
             "-f",
             "lavfi",
             "-i",
-            &format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(gt(X,100),255,0)'"),
+            &format!(
+                "{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(gt(X,100),255,0)'"
+            ),
             "-frames:v",
             "1",
             src.to_str().unwrap(),
         ]));
         let s = src.to_str().unwrap();
         for (name, args) in [
-            ("interlaced.gif", vec![s, "-alpha", "off", "-interlace", "GIF"]),
+            (
+                "interlaced.gif",
+                vec![s, "-alpha", "off", "-interlace", "GIF"],
+            ),
             ("transparent.gif", vec![s, "-colors", "100"]),
-            ("small_palette.gif", vec![s, "-alpha", "off", "-colors", "4"]),
+            (
+                "small_palette.gif",
+                vec![s, "-alpha", "off", "-colors", "4"],
+            ),
         ] {
             let out = dir.join(name);
             let mut args = args.clone();
@@ -427,12 +772,34 @@ fn webp_variants() {
     let dir = fixture_dir("webp");
     let lossless = [
         ("lossless_rgb.webp", SRC.to_string(), "rgb24"),
-        ("lossless_rgba.webp", format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='mod(X+Y,256)'"), "rgba"),
-        ("lossless_small_palette.webp", "testsrc2=s=64x64,format=gray,lut=y='val/64*64'".to_string(), "rgb24"),
+        (
+            "lossless_rgba.webp",
+            format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='mod(X+Y,256)'"),
+            "rgba",
+        ),
+        (
+            "lossless_small_palette.webp",
+            "testsrc2=s=64x64,format=gray,lut=y='val/64*64'".to_string(),
+            "rgb24",
+        ),
     ];
     for (name, filter, pix) in lossless {
         let p = dir.join(name);
-        if !ffmpeg(&["-f", "lavfi", "-i", &filter, "-frames:v", "1", "-pix_fmt", if pix == "rgba" { "bgra" } else { "yuv420p" }, "-c:v", "libwebp", "-lossless", "1", p.to_str().unwrap()]) {
+        if !ffmpeg(&[
+            "-f",
+            "lavfi",
+            "-i",
+            &filter,
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            if pix == "rgba" { "bgra" } else { "yuv420p" },
+            "-c:v",
+            "libwebp",
+            "-lossless",
+            "1",
+            p.to_str().unwrap(),
+        ]) {
             eprintln!("note: libwebp encoder unavailable");
             return;
         }
@@ -448,10 +815,23 @@ fn webp_variants() {
         ("lossy_q75.webp", SRC.to_string(), vec!["-quality", "75"]),
         ("lossy_q95.webp", SRC.to_string(), vec!["-quality", "95"]),
         ("lossy_q20.webp", SRC.to_string(), vec!["-quality", "20"]),
-        ("lossy_alpha.webp", format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='mod(X*2,256)'"), vec!["-quality", "80"]),
+        (
+            "lossy_alpha.webp",
+            format!("{SRC},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='mod(X*2,256)'"),
+            vec!["-quality", "80"],
+        ),
     ] {
         let p = dir.join(name);
-        let mut args = vec!["-f", "lavfi", "-i", filter.as_str(), "-frames:v", "1", "-c:v", "libwebp"];
+        let mut args = vec![
+            "-f",
+            "lavfi",
+            "-i",
+            filter.as_str(),
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libwebp",
+        ];
         if name.contains("alpha") {
             args.extend(["-pix_fmt", "yuva420p"]);
         }
@@ -467,11 +847,18 @@ fn webp_variants() {
         };
         // ImageMagick uses libwebp (bit-exact reference); ffmpeg's native
         // decoder upsamples chroma differently, so allow more deviation.
-        let (reference, limit) = if have_convert() { (convert_rgba(&p, &[]), 1.5) } else { (ffmpeg_rgba(&p), 2.5) };
+        let (reference, limit) = if have_convert() {
+            (convert_rgba(&p, &[]), 1.5)
+        } else {
+            (ffmpeg_rgba(&p), 2.5)
+        };
         let (w, h, reference) = reference.unwrap();
         assert_eq!((img.width, img.height), (w, h));
         let d = diff(&img.pixels, &reference);
-        println!("{name}: mean {:.4} max {} psnr {:.1} dB", d.mean, d.max, d.psnr);
+        println!(
+            "{name}: mean {:.4} max {} psnr {:.1} dB",
+            d.mean, d.max, d.psnr
+        );
         assert!(d.mean < limit, "{name}: mean {:.3}", d.mean);
     }
 }
@@ -494,16 +881,85 @@ fn webp_imagemagick_variants() {
     ]));
     let s = src.to_str().unwrap();
     let cases: Vec<(&str, Vec<&str>)> = vec![
-        ("simple_filter.webp", vec!["-alpha", "off", "-quality", "60", "-define", "webp:filter-type=0", "-define", "webp:filter-strength=60"]),
-        ("sharp_partitions.webp", vec!["-alpha", "off", "-quality", "70", "-define", "webp:filter-sharpness=6", "-define", "webp:partitions=3"]),
-        ("segments1.webp", vec!["-alpha", "off", "-quality", "50", "-define", "webp:segments=1", "-define", "webp:sns-strength=0"]),
-        ("strong_filter.webp", vec!["-alpha", "off", "-quality", "10", "-define", "webp:filter-strength=100"]),
-        ("alpha_raw.webp", vec!["-quality", "80", "-define", "webp:alpha-compression=0"]),
-        ("alpha_filtered.webp", vec!["-quality", "80", "-define", "webp:alpha-filter=best"]),
-        ("alpha_lossy_quality.webp", vec!["-quality", "80", "-define", "webp:alpha-quality=50"]),
-        ("lossless_m0.webp", vec!["-define", "webp:lossless=true", "-define", "webp:method=0"]),
-        ("lossless_m6.webp", vec!["-define", "webp:lossless=true", "-define", "webp:method=6"]),
-        ("lossless_exact.webp", vec!["-define", "webp:lossless=true", "-define", "webp:exact=true"]),
+        (
+            "simple_filter.webp",
+            vec![
+                "-alpha",
+                "off",
+                "-quality",
+                "60",
+                "-define",
+                "webp:filter-type=0",
+                "-define",
+                "webp:filter-strength=60",
+            ],
+        ),
+        (
+            "sharp_partitions.webp",
+            vec![
+                "-alpha",
+                "off",
+                "-quality",
+                "70",
+                "-define",
+                "webp:filter-sharpness=6",
+                "-define",
+                "webp:partitions=3",
+            ],
+        ),
+        (
+            "segments1.webp",
+            vec![
+                "-alpha",
+                "off",
+                "-quality",
+                "50",
+                "-define",
+                "webp:segments=1",
+                "-define",
+                "webp:sns-strength=0",
+            ],
+        ),
+        (
+            "strong_filter.webp",
+            vec![
+                "-alpha",
+                "off",
+                "-quality",
+                "10",
+                "-define",
+                "webp:filter-strength=100",
+            ],
+        ),
+        (
+            "alpha_raw.webp",
+            vec!["-quality", "80", "-define", "webp:alpha-compression=0"],
+        ),
+        (
+            "alpha_filtered.webp",
+            vec!["-quality", "80", "-define", "webp:alpha-filter=best"],
+        ),
+        (
+            "alpha_lossy_quality.webp",
+            vec!["-quality", "80", "-define", "webp:alpha-quality=50"],
+        ),
+        (
+            "lossless_m0.webp",
+            vec!["-define", "webp:lossless=true", "-define", "webp:method=0"],
+        ),
+        (
+            "lossless_m6.webp",
+            vec!["-define", "webp:lossless=true", "-define", "webp:method=6"],
+        ),
+        (
+            "lossless_exact.webp",
+            vec![
+                "-define",
+                "webp:lossless=true",
+                "-define",
+                "webp:exact=true",
+            ],
+        ),
     ];
     for (name, opts) in cases {
         let out = dir.join(name);
@@ -522,12 +978,29 @@ fn webp_imagemagick_variants() {
         if name.starts_with("lossless") {
             assert_eq!(d.max, 0, "{name}");
         } else {
-            assert!(d.mean < 0.05 && d.max <= 2, "{name}: mean {:.4} max {}", d.mean, d.max);
+            assert!(
+                d.mean < 0.05 && d.max <= 2,
+                "{name}: mean {:.4} max {}",
+                d.mean,
+                d.max
+            );
         }
     }
     // Animated WebP: first frame.
     let anim = dir.join("anim.webp");
-    if ffmpeg(&["-f", "lavfi", "-i", "testsrc2=s=96x64:r=5", "-frames:v", "3", "-c:v", "libwebp_anim", "-lossless", "1", anim.to_str().unwrap()]) {
+    if ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=96x64:r=5",
+        "-frames:v",
+        "3",
+        "-c:v",
+        "libwebp_anim",
+        "-lossless",
+        "1",
+        anim.to_str().unwrap(),
+    ]) {
         let img = decode(&load(&anim)).unwrap();
         let (w, h, reference) = convert_rgba(&anim, &[]).unwrap();
         assert_eq!((img.width, img.height), (w, h));

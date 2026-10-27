@@ -9,6 +9,7 @@
 mod commands;
 pub mod core;
 pub mod host;
+pub mod icon;
 pub mod jobs;
 pub mod library;
 #[cfg(not(target_arch = "wasm32"))]
@@ -18,7 +19,6 @@ pub mod queue;
 pub mod server;
 pub mod settings;
 pub mod strings;
-pub mod icon;
 mod visual;
 
 pub use crate::core::{Core, LaunchArgs};

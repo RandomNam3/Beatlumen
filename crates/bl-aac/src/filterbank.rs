@@ -48,7 +48,9 @@ fn kbd_window(n: usize, alpha: f64) -> Vec<f32> {
 
 /// Rising half (length n/2) of a sine window of length n.
 fn sine_window(n: usize) -> Vec<f32> {
-    (0..n / 2).map(|i| (std::f64::consts::PI / n as f64 * (i as f64 + 0.5)).sin() as f32).collect()
+    (0..n / 2)
+        .map(|i| (std::f64::consts::PI / n as f64 * (i as f64 + 0.5)).sin() as f32)
+        .collect()
 }
 
 /// Per-channel filterbank state.
@@ -60,7 +62,10 @@ pub(crate) struct ChannelState {
 
 impl ChannelState {
     pub fn new() -> Self {
-        ChannelState { overlap: vec![0.0; 1024], prev_shape: 0 }
+        ChannelState {
+            overlap: vec![0.0; 1024],
+            prev_shape: 0,
+        }
     }
     pub fn reset(&mut self) {
         self.overlap.iter_mut().for_each(|v| *v = 0.0);
@@ -92,7 +97,14 @@ impl Filterbank {
 
     /// Inverse transform of one frame of 1024 spectral coefficients (or
     /// 8 x 128 for short windows), producing 1024 output samples.
-    pub fn synthesize(&mut self, spec: &[f32], seq: u8, shape: u8, st: &mut ChannelState, out: &mut [f32]) {
+    pub fn synthesize(
+        &mut self,
+        spec: &[f32],
+        seq: u8,
+        shape: u8,
+        st: &mut ChannelState,
+        out: &mut [f32],
+    ) {
         let prev = (st.prev_shape & 1) as usize;
         let cur = (shape & 1) as usize;
         let out = &mut out[..1024];
@@ -102,7 +114,11 @@ impl Filterbank {
             for w in 0..8 {
                 let buf = &mut self.buf[..256];
                 self.short.transform(&spec[w * 128..w * 128 + 128], buf);
-                let wl = if w == 0 { &self.short_win[prev] } else { &self.short_win[cur] };
+                let wl = if w == 0 {
+                    &self.short_win[prev]
+                } else {
+                    &self.short_win[cur]
+                };
                 let wr = &self.short_win[cur];
                 let base = 448 + 128 * w;
                 for n in 0..128 {
@@ -160,7 +176,12 @@ mod tests {
 
     #[test]
     fn windows_are_power_complementary() {
-        for w in [sine_window(2048), kbd_window(2048, 4.0), sine_window(256), kbd_window(256, 6.0)] {
+        for w in [
+            sine_window(2048),
+            kbd_window(2048, 4.0),
+            sine_window(256),
+            kbd_window(256, 6.0),
+        ] {
             let h = w.len();
             for n in 0..h {
                 let s = w[n] * w[n] + w[h - 1 - n] * w[h - 1 - n];

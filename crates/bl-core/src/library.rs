@@ -29,9 +29,16 @@ pub fn fnv(s: &str) -> u64 {
 pub fn split_artists(s: &str) -> Vec<String> {
     let mut parts: Vec<String> = vec![s.to_string()];
     for sep in ["\u{0}", ";", " / ", " feat. ", " ft. ", " Feat. "] {
-        parts = parts.iter().flat_map(|p| p.split(sep).map(str::to_string).collect::<Vec<_>>()).collect();
+        parts = parts
+            .iter()
+            .flat_map(|p| p.split(sep).map(str::to_string).collect::<Vec<_>>())
+            .collect();
     }
-    parts.into_iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+    parts
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -66,8 +73,18 @@ pub struct LibraryState {
 }
 
 fn sort_key(t: &Track) -> (String, String, u32, u32, String) {
-    let artist = if t.album_artist.is_empty() { t.artists.first().cloned().unwrap_or_default() } else { t.album_artist.clone() };
-    (artist.to_lowercase(), t.album.to_lowercase(), t.disc.unwrap_or(0), t.track.unwrap_or(0), t.title.to_lowercase())
+    let artist = if t.album_artist.is_empty() {
+        t.artists.first().cloned().unwrap_or_default()
+    } else {
+        t.album_artist.clone()
+    };
+    (
+        artist.to_lowercase(),
+        t.album.to_lowercase(),
+        t.disc.unwrap_or(0),
+        t.track.unwrap_or(0),
+        t.title.to_lowercase(),
+    )
 }
 
 impl LibraryState {
@@ -80,14 +97,30 @@ impl LibraryState {
     }
 
     pub fn album_tracks(&self, album_id: &str) -> Vec<&Track> {
-        let mut v: Vec<&Track> = self.tracks.iter().filter(|t| t.album_id == album_id).collect();
-        v.sort_by_key(|t| (t.disc.unwrap_or(0), t.track.unwrap_or(0), t.title.to_lowercase()));
+        let mut v: Vec<&Track> = self
+            .tracks
+            .iter()
+            .filter(|t| t.album_id == album_id)
+            .collect();
+        v.sort_by_key(|t| {
+            (
+                t.disc.unwrap_or(0),
+                t.track.unwrap_or(0),
+                t.title.to_lowercase(),
+            )
+        });
         v
     }
 
     pub fn artist_tracks(&self, name: &str) -> Vec<&Track> {
         let n = name.to_lowercase();
-        self.tracks.iter().filter(|t| t.artists.iter().any(|a| a.to_lowercase() == n) || t.album_artist.to_lowercase() == n).collect()
+        self.tracks
+            .iter()
+            .filter(|t| {
+                t.artists.iter().any(|a| a.to_lowercase() == n)
+                    || t.album_artist.to_lowercase() == n
+            })
+            .collect()
     }
 
     pub fn set_remote(&mut self, lib: Library) {
@@ -102,22 +135,44 @@ impl LibraryState {
 
     /// Rebuilds the combined view, albums and artists.
     pub fn rebuild(&mut self) {
-        let mut tracks: Vec<Track> = self.local.iter().cloned().chain(self.remote.tracks.iter().cloned()).collect();
+        let mut tracks: Vec<Track> = self
+            .local
+            .iter()
+            .cloned()
+            .chain(self.remote.tracks.iter().cloned())
+            .collect();
         tracks.sort_by_cached_key(sort_key);
-        self.index = tracks.iter().enumerate().map(|(i, t)| (t.id.clone(), i)).collect();
+        self.index = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.clone(), i))
+            .collect();
         // Albums: remote albums as delivered, local albums computed.
         let mut albums: Vec<Album> = self.remote.albums.clone();
         let mut local_albums: HashMap<String, Album> = HashMap::new();
         for t in &self.local {
-            let a = local_albums.entry(t.album_id.clone()).or_insert_with(|| Album {
-                id: t.album_id.clone(),
-                name: if t.album.is_empty() { "Unknown Album".into() } else { t.album.clone() },
-                artist: if t.album_artist.is_empty() { t.artists.first().cloned().unwrap_or_else(|| "Unknown Artist".into()) } else { t.album_artist.clone() },
-                year: t.year,
-                track_count: 0,
-                duration_ms: 0,
-                cover_track: None,
-            });
+            let a = local_albums
+                .entry(t.album_id.clone())
+                .or_insert_with(|| Album {
+                    id: t.album_id.clone(),
+                    name: if t.album.is_empty() {
+                        "Unknown Album".into()
+                    } else {
+                        t.album.clone()
+                    },
+                    artist: if t.album_artist.is_empty() {
+                        t.artists
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown Artist".into())
+                    } else {
+                        t.album_artist.clone()
+                    },
+                    year: t.year,
+                    track_count: 0,
+                    duration_ms: 0,
+                    cover_track: None,
+                });
             a.track_count += 1;
             a.duration_ms += t.duration_ms;
             if a.year.is_none() {
@@ -128,19 +183,43 @@ impl LibraryState {
             }
         }
         albums.extend(local_albums.into_values());
-        albums.sort_by_cached_key(|a| (a.artist.to_lowercase(), a.year.unwrap_or(0), a.name.to_lowercase()));
-        self.album_index = albums.iter().enumerate().map(|(i, a)| (a.id.clone(), i)).collect();
+        albums.sort_by_cached_key(|a| {
+            (
+                a.artist.to_lowercase(),
+                a.year.unwrap_or(0),
+                a.name.to_lowercase(),
+            )
+        });
+        self.album_index = albums
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.id.clone(), i))
+            .collect();
         // Artists.
-        let mut artists: HashMap<String, (String, usize, std::collections::HashSet<String>)> = HashMap::new();
+        let mut artists: HashMap<String, (String, usize, std::collections::HashSet<String>)> =
+            HashMap::new();
         for t in &tracks {
-            let names: Vec<String> = if t.artists.is_empty() { vec!["Unknown Artist".into()] } else { t.artists.clone() };
+            let names: Vec<String> = if t.artists.is_empty() {
+                vec!["Unknown Artist".into()]
+            } else {
+                t.artists.clone()
+            };
             for n in names {
-                let e = artists.entry(n.to_lowercase()).or_insert_with(|| (n.clone(), 0, Default::default()));
+                let e = artists
+                    .entry(n.to_lowercase())
+                    .or_insert_with(|| (n.clone(), 0, Default::default()));
                 e.1 += 1;
                 e.2.insert(t.album_id.clone());
             }
         }
-        let mut artists: Vec<ArtistEntry> = artists.into_values().map(|(name, tracks, albums)| ArtistEntry { name, tracks, albums: albums.len() }).collect();
+        let mut artists: Vec<ArtistEntry> = artists
+            .into_values()
+            .map(|(name, tracks, albums)| ArtistEntry {
+                name,
+                tracks,
+                albums: albums.len(),
+            })
+            .collect();
         artists.sort_by_cached_key(|a| a.name.to_lowercase());
         self.tracks = tracks;
         self.albums = albums;
@@ -159,7 +238,15 @@ impl LibraryState {
             .iter()
             .enumerate()
             .filter(|(_, t)| {
-                let hay = format!("{} {} {} {} {}", t.title, t.artists.join(" "), t.album, t.album_artist, t.genre).to_lowercase();
+                let hay = format!(
+                    "{} {} {} {} {}",
+                    t.title,
+                    t.artists.join(" "),
+                    t.album,
+                    t.album_artist,
+                    t.genre
+                )
+                .to_lowercase();
                 terms.iter().all(|term| hay.contains(term))
             })
             .map(|(i, _)| i)
@@ -168,27 +255,59 @@ impl LibraryState {
 
     pub fn load_local_cache(&mut self, data: &[u8]) {
         // Version 2: artist/title guessed from file names without tags.
-        if let Some(v) = bl_json::parse_bytes(data).ok().filter(|v| v.get("version").as_u64() == Some(2)) {
-            self.local = v.get("tracks").as_array().map(|a| a.iter().map(Track::from_json).collect()).unwrap_or_default();
+        if let Some(v) = bl_json::parse_bytes(data)
+            .ok()
+            .filter(|v| v.get("version").as_u64() == Some(2))
+        {
+            self.local = v
+                .get("tracks")
+                .as_array()
+                .map(|a| a.iter().map(Track::from_json).collect())
+                .unwrap_or_default();
             self.rebuild();
         }
     }
 
     pub fn local_cache_json(&self) -> String {
-        bl_json::Value::object().with("version", 2u32).with("tracks", bl_json::Value::Array(self.local.iter().map(Track::to_json).collect())).to_json()
+        bl_json::Value::object()
+            .with("version", 2u32)
+            .with(
+                "tracks",
+                bl_json::Value::Array(self.local.iter().map(Track::to_json).collect()),
+            )
+            .to_json()
     }
 }
 
 /// Builds a [`Track`] for a local file from its media info.
-pub fn local_track(path: &str, size: u64, modified: u64, info: Option<&bl_media::MediaInfo>) -> Track {
-    let file_name = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string());
-    let mut t = Track { id: format!("{LOCAL_PREFIX}{path}"), path: path.to_string(), size, modified, title: file_name.clone(), ..Default::default() };
+pub fn local_track(
+    path: &str,
+    size: u64,
+    modified: u64,
+    info: Option<&bl_media::MediaInfo>,
+) -> Track {
+    let file_name = std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string());
+    let mut t = Track {
+        id: format!("{LOCAL_PREFIX}{path}"),
+        path: path.to_string(),
+        size,
+        modified,
+        title: file_name.clone(),
+        ..Default::default()
+    };
     if let Some(i) = info {
         let tags = &i.tags;
         if let Some(title) = tags.title.as_ref().filter(|s| !s.trim().is_empty()) {
             t.title = title.trim().to_string();
         }
-        t.artists = tags.artist.as_deref().map(split_artists).unwrap_or_default();
+        t.artists = tags
+            .artist
+            .as_deref()
+            .map(split_artists)
+            .unwrap_or_default();
         t.album = tags.album.clone().unwrap_or_default();
         t.album_artist = tags.album_artist.clone().unwrap_or_default();
         t.genre = tags.genre.clone().unwrap_or_default();
@@ -211,9 +330,24 @@ pub fn local_track(path: &str, size: u64, modified: u64, info: Option<&bl_media:
             t.artists = artist.as_deref().map(split_artists).unwrap_or_default();
         }
     }
-    let album_artist = if t.album_artist.is_empty() { t.artists.first().cloned().unwrap_or_default() } else { t.album_artist.clone() };
-    let dir = std::path::Path::new(path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    let key = if t.album.is_empty() { format!("dir:{dir}") } else { format!("{}\u{1}{}", album_artist.to_lowercase(), t.album.to_lowercase()) };
+    let album_artist = if t.album_artist.is_empty() {
+        t.artists.first().cloned().unwrap_or_default()
+    } else {
+        t.album_artist.clone()
+    };
+    let dir = std::path::Path::new(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let key = if t.album.is_empty() {
+        format!("dir:{dir}")
+    } else {
+        format!(
+            "{}\u{1}{}",
+            album_artist.to_lowercase(),
+            t.album.to_lowercase()
+        )
+    };
     t.album_id = format!("la:{:016x}", fnv(&key));
     t
 }
@@ -221,17 +355,25 @@ pub fn local_track(path: &str, size: u64, modified: u64, info: Option<&bl_media:
 /// Scans local folders on a background thread (native only). Previously
 /// known tracks with unchanged size and modification time are reused.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn start_local_scan(folders: Vec<String>, known: Vec<Track>, progress: Arc<Mutex<ScanProgress>>) {
+pub fn start_local_scan(
+    folders: Vec<String>,
+    known: Vec<Track>,
+    progress: Arc<Mutex<ScanProgress>>,
+) {
     if let Ok(mut p) = progress.lock() {
         if p.running {
             return;
         }
-        *p = ScanProgress { running: true, ..Default::default() };
+        *p = ScanProgress {
+            running: true,
+            ..Default::default()
+        };
     }
     std::thread::Builder::new()
         .name("bl-scan".into())
         .spawn(move || {
-            let known: HashMap<String, Track> = known.into_iter().map(|t| (t.path.clone(), t)).collect();
+            let known: HashMap<String, Track> =
+                known.into_iter().map(|t| (t.path.clone(), t)).collect();
             let mut files = Vec::new();
             for f in &folders {
                 walk(std::path::Path::new(f), &mut files, 0);
@@ -249,7 +391,9 @@ pub fn start_local_scan(folders: Vec<String>, known: Vec<Track>, progress: Arc<M
                 }
                 let info = std::fs::File::open(path).ok().and_then(|f| {
                     let mut r = std::io::BufReader::new(f);
-                    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase());
+                    let ext = std::path::Path::new(path)
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_lowercase());
                     bl_media::read_info(&mut r, ext.as_deref(), false).ok()
                 });
                 out.push(local_track(path, *size, *mtime, info.as_ref()));
@@ -274,7 +418,9 @@ fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64, u64)>, depth: usize) 
     if depth > 32 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
@@ -287,10 +433,18 @@ fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64, u64)>, depth: usize) 
         if ft.is_dir() {
             walk(&path, out, depth + 1);
         } else if ft.is_file() {
-            let ext = path.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let ext = path
+                .extension()
+                .map(|x| x.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
             if bl_media::is_supported_extension(&ext) {
                 if let Ok(md) = e.metadata() {
-                    let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                    let mtime = md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
                     out.push((path.to_string_lossy().into_owned(), md.len(), mtime));
                 }
             }
@@ -300,7 +454,10 @@ fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64, u64)>, depth: usize) 
 
 /// Image file extensions accepted as backgrounds.
 pub fn is_image_extension(ext: &str) -> bool {
-    matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png" | "bmp" | "gif" | "webp")
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "jpg" | "jpeg" | "png" | "bmp" | "gif" | "webp"
+    )
 }
 
 /// Recursively lists image files below `dir` (native).
@@ -317,7 +474,10 @@ pub fn list_images(dir: &str) -> Vec<String> {
             let p = e.path();
             if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 rec(&p, out, depth + 1);
-            } else if p.extension().is_some_and(|x| is_image_extension(&x.to_string_lossy())) {
+            } else if p
+                .extension()
+                .is_some_and(|x| is_image_extension(&x.to_string_lossy()))
+            {
                 out.push(p.to_string_lossy().into_owned());
             }
         }

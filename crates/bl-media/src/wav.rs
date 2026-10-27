@@ -9,7 +9,10 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use crate::pcm::{PcmDecoder, PcmStream, SampleFormat};
 use crate::tags::{id3, riff};
-use crate::util::{bitrate_kbps, frames_to_ms, invalid, le16, le32, le64, read_up_to, read_vec, stream_len, unsupported};
+use crate::util::{
+    bitrate_kbps, frames_to_ms, invalid, le16, le32, le64, read_up_to, read_vec, stream_len,
+    unsupported,
+};
 use crate::{Decoder, Error, MediaInfo, Picture, Source, Tags};
 
 pub(crate) struct WavFile {
@@ -24,7 +27,11 @@ fn plausible_id(id: &[u8]) -> bool {
 
 /// Parses the chunk structure. When `want_tags` is false, parsing stops at
 /// the data chunk once the format is known.
-pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures: bool) -> Result<WavFile, Error> {
+pub(crate) fn parse<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    want_tags: bool,
+    want_pictures: bool,
+) -> Result<WavFile, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let mut hdr = [0u8; 12];
@@ -57,7 +64,10 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
                 prev_odd = false;
                 r.seek(SeekFrom::Start(pos - 1))?;
                 let mut ch2 = [0u8; 8];
-                if read_up_to(r, &mut ch2)? == 8 && plausible_id(&ch2[0..4]) && ch2[0..4] != [b' '; 4] {
+                if read_up_to(r, &mut ch2)? == 8
+                    && plausible_id(&ch2[0..4])
+                    && ch2[0..4] != [b' '; 4]
+                {
                     pos -= 1;
                     continue;
                 }
@@ -107,8 +117,12 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
             break;
         }
     }
-    let Some((fmt, channels, rate, block)) = fmt else { return invalid("missing fmt chunk") };
-    let Some((data_start, data_len)) = data else { return invalid("missing data chunk") };
+    let Some((fmt, channels, rate, block)) = fmt else {
+        return invalid("missing fmt chunk");
+    };
+    let Some((data_start, data_len)) = data else {
+        return invalid("missing data chunk");
+    };
     let stream = PcmStream {
         fmt,
         channels,
@@ -118,7 +132,11 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
         total_frames: data_len / block.max(1) as u64,
     };
     stream.validate()?;
-    Ok(WavFile { stream, tags, pictures })
+    Ok(WavFile {
+        stream,
+        tags,
+        pictures,
+    })
 }
 
 /// Parses a `fmt ` chunk: (format, channels, rate, block align).
@@ -135,7 +153,11 @@ fn parse_fmt(d: &[u8]) -> Result<(SampleFormat, u16, u32, usize), Error> {
     if channels == 0 {
         return invalid("zero channels");
     }
-    let block = if block == 0 { channels as usize * (bits as usize).div_ceil(8) } else { block as usize };
+    let block = if block == 0 {
+        channels as usize * (bits as usize).div_ceil(8)
+    } else {
+        block as usize
+    };
     let bytes = block / channels as usize;
     let fmt = match tag {
         1 => SampleFormat::int(bytes, true, true),
@@ -160,7 +182,10 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     Ok(Box::new(PcmDecoder::new(r, wav.stream)?))
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let w = parse(r, true, with_pictures)?;
     let s = &w.stream;
     Ok(MediaInfo {
@@ -169,7 +194,11 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
         sample_rate: s.sample_rate,
         channels: s.channels,
         duration_ms: Some(frames_to_ms(s.total_frames, s.sample_rate)),
-        bitrate_kbps: bitrate_kbps(s.total_frames * s.frame_bytes as u64, s.total_frames, s.sample_rate),
+        bitrate_kbps: bitrate_kbps(
+            s.total_frames * s.frame_bytes as u64,
+            s.total_frames,
+            s.sample_rate,
+        ),
         tags: w.tags,
         pictures: w.pictures,
     })

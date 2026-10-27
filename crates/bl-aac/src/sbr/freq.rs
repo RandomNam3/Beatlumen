@@ -72,7 +72,8 @@ pub(crate) fn compute(h: &SbrHeader, fs: u32) -> Option<FreqTables> {
         s => {
             let mut dk: Vec<i64> = (0..13)
                 .map(|i| {
-                    let a = (stop_min as f64) * (64.0 / stop_min as f64).powf((i + 1) as f64 / 13.0);
+                    let a =
+                        (stop_min as f64) * (64.0 / stop_min as f64).powf((i + 1) as f64 / 13.0);
                     let b = (stop_min as f64) * (64.0 / stop_min as f64).powf(i as f64 / 13.0);
                     round(a) - round(b)
                 })
@@ -128,14 +129,29 @@ pub(crate) fn compute(h: &SbrHeader, fs: u32) -> Option<FreqTables> {
     }
     let patches = make_patches(&f_master, k0, kx, m, fs)?;
     let f_lim = limiter_table(h.limiter_bands, &f_low, &patches, kx);
-    Some(FreqTables { k0, k2, kx, m, f_master, f_high, f_low, f_noise, patches, f_lim })
+    Some(FreqTables {
+        k0,
+        k2,
+        kx,
+        m,
+        f_master,
+        f_high,
+        f_low,
+        f_noise,
+        patches,
+        f_lim,
+    })
 }
 
 fn master_table(h: &SbrHeader, k0: usize, k2: usize) -> Option<Vec<usize>> {
     let mut f = vec![k0];
     if h.freq_scale == 0 {
         let dk = if h.alter_scale { 2 } else { 1 };
-        let num_bands = if dk == 1 { 2 * ((k2 - k0) / 2) } else { 2 * ((k2 - k0 + 2) / 4) };
+        let num_bands = if dk == 1 {
+            2 * ((k2 - k0) / 2)
+        } else {
+            2 * ((k2 - k0 + 2) / 4)
+        };
         if num_bands == 0 {
             return None;
         }
@@ -229,7 +245,13 @@ fn geometric_bands(start: usize, stop: usize, n: usize) -> Vec<i64> {
         .collect()
 }
 
-fn make_patches(f_master: &[usize], k0: usize, kx: usize, m: usize, fs: u32) -> Option<Vec<(usize, usize)>> {
+fn make_patches(
+    f_master: &[usize],
+    k0: usize,
+    kx: usize,
+    m: usize,
+    fs: u32,
+) -> Option<Vec<(usize, usize)>> {
     let n_master = f_master.len() - 1;
     let goal_sb = round(2.048e6 / fs as f64) as usize;
     let mut k = if goal_sb < kx + m {
@@ -293,7 +315,12 @@ fn make_patches(f_master: &[usize], k0: usize, kx: usize, m: usize, fs: u32) -> 
     Some(patches)
 }
 
-fn limiter_table(limiter_bands: u8, f_low: &[usize], patches: &[(usize, usize)], kx: usize) -> Vec<usize> {
+fn limiter_table(
+    limiter_bands: u8,
+    f_low: &[usize],
+    patches: &[(usize, usize)],
+    kx: usize,
+) -> Vec<usize> {
     let n_low = f_low.len() - 1;
     if limiter_bands == 0 {
         return vec![f_low[0], f_low[n_low]];

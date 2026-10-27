@@ -26,7 +26,14 @@ impl Texture {
         let id = gl.create_texture();
         gl.bind_texture(TEXTURE_2D, id);
         gl.pixel_store(UNPACK_ALIGNMENT, 1);
-        gl.tex_image_2d(RGBA8, width as i32, height as i32, RGBA, UNSIGNED_BYTE, Some(&flipped));
+        gl.tex_image_2d(
+            RGBA8,
+            width as i32,
+            height as i32,
+            RGBA,
+            UNSIGNED_BYTE,
+            Some(&flipped),
+        );
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
@@ -45,7 +52,14 @@ impl Texture {
         gl.bind_texture(TEXTURE_2D, id);
         gl.pixel_store(UNPACK_ALIGNMENT, 1);
         let zeros = vec![0u8; (width * height) as usize];
-        gl.tex_image_2d(R8, width as i32, height as i32, RED, UNSIGNED_BYTE, Some(&zeros));
+        gl.tex_image_2d(
+            R8,
+            width as i32,
+            height as i32,
+            RED,
+            UNSIGNED_BYTE,
+            Some(&zeros),
+        );
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
@@ -77,7 +91,14 @@ impl RenderTarget {
         let height = height.max(1);
         let texture = gl.create_texture();
         gl.bind_texture(TEXTURE_2D, texture);
-        gl.tex_image_2d(RGBA8, width as i32, height as i32, RGBA, UNSIGNED_BYTE, None);
+        gl.tex_image_2d(
+            RGBA8,
+            width as i32,
+            height as i32,
+            RGBA,
+            UNSIGNED_BYTE,
+            None,
+        );
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
         gl.tex_parameter(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
@@ -86,7 +107,12 @@ impl RenderTarget {
         gl.bind_framebuffer(fbo);
         gl.framebuffer_texture(texture);
         gl.bind_framebuffer(0);
-        RenderTarget { fbo, texture, width, height }
+        RenderTarget {
+            fbo,
+            texture,
+            width,
+            height,
+        }
     }
 
     pub fn resize(&mut self, gl: &Gl, width: u32, height: u32) {
@@ -96,7 +122,14 @@ impl RenderTarget {
             return;
         }
         gl.bind_texture(TEXTURE_2D, self.texture);
-        gl.tex_image_2d(RGBA8, width as i32, height as i32, RGBA, UNSIGNED_BYTE, None);
+        gl.tex_image_2d(
+            RGBA8,
+            width as i32,
+            height as i32,
+            RGBA,
+            UNSIGNED_BYTE,
+            None,
+        );
         self.width = width;
         self.height = height;
     }
@@ -154,7 +187,10 @@ pub struct Program {
 
 impl Program {
     pub fn new(gl: &Gl, vs: &str, fs: &str, attribs: &[(u32, &str)]) -> Result<Program, String> {
-        Ok(Program { id: gl.create_program(vs, fs, attribs)?, locations: RefCell::new(HashMap::new()) })
+        Ok(Program {
+            id: gl.create_program(vs, fs, attribs)?,
+            locations: RefCell::new(HashMap::new()),
+        })
     }
 
     pub fn loc(&self, gl: &Gl, name: &'static str) -> GLint {
@@ -218,7 +254,9 @@ pub struct Fullscreen {
 
 impl Fullscreen {
     pub fn new(gl: &Gl) -> Fullscreen {
-        Fullscreen { vao: gl.create_vertex_array() }
+        Fullscreen {
+            vao: gl.create_vertex_array(),
+        }
     }
 
     pub fn draw(&self, gl: &Gl) {

@@ -22,7 +22,9 @@ pub struct Url {
 impl Url {
     pub fn parse(s: &str) -> Result<Url, String> {
         let s = s.trim();
-        let (scheme, rest) = s.split_once("://").ok_or_else(|| format!("invalid URL (missing scheme): {s}"))?;
+        let (scheme, rest) = s
+            .split_once("://")
+            .ok_or_else(|| format!("invalid URL (missing scheme): {s}"))?;
         let scheme = scheme.to_ascii_lowercase();
         let default_port = match scheme.as_str() {
             "http" => 80,
@@ -33,27 +35,51 @@ impl Url {
             Some(i) => (&rest[..i], &rest[i..]),
             None => (rest, "/"),
         };
-        let authority = authority.rsplit_once('@').map(|(_, a)| a).unwrap_or(authority);
+        let authority = authority
+            .rsplit_once('@')
+            .map(|(_, a)| a)
+            .unwrap_or(authority);
         let (host, port) = if let Some(stripped) = authority.strip_prefix('[') {
             // IPv6 literal.
             let (h, rest) = stripped.split_once(']').ok_or("invalid IPv6 host")?;
-            let port = rest.strip_prefix(':').map(|p| p.parse::<u16>().map_err(|_| "invalid port")).transpose()?.unwrap_or(default_port);
+            let port = rest
+                .strip_prefix(':')
+                .map(|p| p.parse::<u16>().map_err(|_| "invalid port"))
+                .transpose()?
+                .unwrap_or(default_port);
             (h.to_string(), port)
         } else {
             match authority.rsplit_once(':') {
-                Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| format!("invalid port in {s}"))?),
+                Some((h, p)) => (
+                    h.to_string(),
+                    p.parse::<u16>()
+                        .map_err(|_| format!("invalid port in {s}"))?,
+                ),
                 None => (authority.to_string(), default_port),
             }
         };
         if host.is_empty() {
             return Err(format!("invalid URL (empty host): {s}"));
         }
-        Ok(Url { scheme, host, port, path: if path.is_empty() { "/".into() } else { path.to_string() } })
+        Ok(Url {
+            scheme,
+            host,
+            port,
+            path: if path.is_empty() {
+                "/".into()
+            } else {
+                path.to_string()
+            },
+        })
     }
 
     pub fn host_header(&self) -> String {
         let default = if self.scheme == "https" { 443 } else { 80 };
-        let host = if self.host.contains(':') { format!("[{}]", self.host) } else { self.host.clone() };
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
         if self.port == default {
             host
         } else {
@@ -93,13 +119,21 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { connect_timeout: Duration::from_secs(8), io_timeout: Duration::from_secs(30), max_body: 1 << 30, max_redirects: 3 }
+        Options {
+            connect_timeout: Duration::from_secs(8),
+            io_timeout: Duration::from_secs(30),
+            max_body: 1 << 30,
+            max_redirects: 3,
+        }
     }
 }
 
 fn connect(url: &Url, opts: &Options) -> io::Result<TcpStream> {
     if url.scheme != "http" {
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "HTTPS is not supported by the built-in client"));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "HTTPS is not supported by the built-in client",
+        ));
     }
     let mut last = io::Error::new(io::ErrorKind::NotFound, "host not found");
     for addr in (url.host.as_str(), url.port).to_socket_addrs()? {
@@ -116,11 +150,24 @@ fn connect(url: &Url, opts: &Options) -> io::Result<TcpStream> {
     Err(last)
 }
 
-fn write_request(stream: &mut TcpStream, method: &str, url: &Url, headers: &[(String, String)], body: &[u8]) -> io::Result<()> {
-    let mut head = format!("{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Beatlumen/0.1\r\nConnection: close\r\n", url.path, url.host_header());
+fn write_request(
+    stream: &mut TcpStream,
+    method: &str,
+    url: &Url,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> io::Result<()> {
+    let mut head = format!(
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Beatlumen/0.1\r\nConnection: close\r\n",
+        url.path,
+        url.host_header()
+    );
     for (k, v) in headers {
         if k.contains(['\r', '\n']) || v.contains(['\r', '\n']) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid header",
+            ));
         }
         head.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -136,13 +183,20 @@ fn write_request(stream: &mut TcpStream, method: &str, url: &Url, headers: &[(St
 /// Reads the status line and headers.
 fn read_head<R: BufRead>(r: &mut R) -> io::Result<(u16, Headers)> {
     let mut limit = MAX_HEAD;
-    let line = read_line(r, &mut limit)?.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "empty response"))?;
+    let line = read_line(r, &mut limit)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "empty response"))?;
     let mut parts = line.splitn(3, ' ');
     let proto = parts.next().unwrap_or("");
     if !proto.starts_with("HTTP/1.") {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("bad status line: {line}")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("bad status line: {line}"),
+        ));
     }
-    let status = parts.next().and_then(|s| s.parse::<u16>().ok()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status code"))?;
+    let status = parts
+        .next()
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status code"))?;
     let headers = read_headers(r, &mut limit)?;
     Ok((status, headers))
 }
@@ -178,11 +232,18 @@ fn body_reader<R: BufRead>(r: R, method: &str, status: u16, headers: &Headers) -
 }
 
 /// Performs a blocking request and reads the whole body.
-pub fn request(method: &str, url: &str, headers: &[(String, String)], body: &[u8], opts: &Options) -> Result<Response, String> {
+pub fn request(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    opts: &Options,
+) -> Result<Response, String> {
     let mut url_s = url.to_string();
     for _ in 0..=opts.max_redirects {
         let u = Url::parse(&url_s)?;
-        let mut stream = connect(&u, opts).map_err(|e| format!("connect {}:{}: {e}", u.host, u.port))?;
+        let mut stream =
+            connect(&u, opts).map_err(|e| format!("connect {}:{}: {e}", u.host, u.port))?;
         write_request(&mut stream, method, &u, headers, body).map_err(|e| format!("send: {e}"))?;
         let mut r = BufReader::with_capacity(64 * 1024, stream);
         let (status, h) = read_head(&mut r).map_err(|e| format!("receive: {e}"))?;
@@ -196,7 +257,9 @@ pub fn request(method: &str, url: &str, headers: &[(String, String)], body: &[u8
         let mut out = Vec::new();
         let mut chunk = [0u8; 64 * 1024];
         loop {
-            let n = reader.read(&mut chunk).map_err(|e| format!("receive body: {e}"))?;
+            let n = reader
+                .read(&mut chunk)
+                .map_err(|e| format!("receive body: {e}"))?;
             if n == 0 {
                 break;
             }
@@ -205,7 +268,11 @@ pub fn request(method: &str, url: &str, headers: &[(String, String)], body: &[u8
             }
             out.extend_from_slice(&chunk[..n]);
         }
-        return Ok(Response { status, headers: h, body: out });
+        return Ok(Response {
+            status,
+            headers: h,
+            body: out,
+        });
     }
     Err("too many redirects".into())
 }
@@ -225,7 +292,14 @@ impl HttpStream {
     /// Opens the resource (issues the first request to learn its length).
     pub fn open(url: &str, headers: &[(String, String)]) -> Result<HttpStream, String> {
         let url = Url::parse(url)?;
-        let mut s = HttpStream { url, headers: headers.to_vec(), opts: Options::default(), len: 0, pos: 0, conn: None };
+        let mut s = HttpStream {
+            url,
+            headers: headers.to_vec(),
+            opts: Options::default(),
+            len: 0,
+            pos: 0,
+            conn: None,
+        };
         s.reconnect(0).map_err(|e| e.to_string())?;
         Ok(s)
     }
@@ -253,7 +327,9 @@ impl HttpStream {
                     .get("content-range")
                     .and_then(|v| v.rsplit('/').next())
                     .and_then(|t| t.trim().parse::<u64>().ok())
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing content-range"))?;
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "missing content-range")
+                    })?;
                 self.len = total;
                 self.conn = Some((body_reader(r, "GET", status, &h), at));
             }
@@ -283,7 +359,9 @@ impl Read for HttpStream {
             if !reuse {
                 self.reconnect(self.pos)?;
             }
-            let Some((body, p)) = self.conn.as_mut() else { return Ok(0) };
+            let Some((body, p)) = self.conn.as_mut() else {
+                return Ok(0);
+            };
             match body.read(buf) {
                 Ok(0) if attempt < 2 => {
                     self.conn = None;
@@ -314,7 +392,10 @@ impl Seek for HttpStream {
             SeekFrom::Current(d) => self.pos as i64 + d,
         };
         if new < 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before start"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
         }
         let new = new as u64;
         // Small forward seeks on the open connection are cheaper to skip.
@@ -337,7 +418,10 @@ mod tests {
     #[test]
     fn url_parsing() {
         let u = Url::parse("http://example.com:8080/a/b?x=1").unwrap();
-        assert_eq!((u.host.as_str(), u.port, u.path.as_str()), ("example.com", 8080, "/a/b?x=1"));
+        assert_eq!(
+            (u.host.as_str(), u.port, u.path.as_str()),
+            ("example.com", 8080, "/a/b?x=1")
+        );
         let u = Url::parse("http://[::1]/").unwrap();
         assert_eq!((u.host.as_str(), u.port), ("::1", 80));
         assert_eq!(u.host_header(), "[::1]");

@@ -32,7 +32,11 @@ pub(crate) fn read_up_to<R: Read + ?Sized>(r: &mut R, buf: &mut [u8]) -> io::Res
 /// Reads `len` bytes into a new vector without trusting `len` for the
 /// allocation (the vector grows as data arrives), so corrupted size fields
 /// cannot trigger huge allocations. Fails if `len > limit` or on EOF.
-pub(crate) fn read_vec<R: Read + ?Sized>(r: &mut R, len: u64, limit: u64) -> Result<Vec<u8>, Error> {
+pub(crate) fn read_vec<R: Read + ?Sized>(
+    r: &mut R,
+    len: u64,
+    limit: u64,
+) -> Result<Vec<u8>, Error> {
     if len > limit {
         return invalid("element too large");
     }
@@ -56,7 +60,11 @@ pub(crate) fn stream_len<R: Seek + ?Sized>(r: &mut R) -> io::Result<u64> {
 
 /// Positions a buffered reader at `target` without discarding its buffer
 /// when the target is close to the current position (`cur`).
-pub(crate) fn seek_buffered<R: Read + Seek>(r: &mut std::io::BufReader<R>, cur: &mut u64, target: u64) -> io::Result<()> {
+pub(crate) fn seek_buffered<R: Read + Seek>(
+    r: &mut std::io::BufReader<R>,
+    cur: &mut u64,
+    target: u64,
+) -> io::Result<()> {
     if *cur != target {
         let delta = target as i128 - *cur as i128;
         if delta.abs() < (1 << 20) {
@@ -184,7 +192,11 @@ pub(crate) fn bitrate_kbps(bytes: u64, frames: u64, rate: u32) -> Option<u32> {
     if frames == 0 || rate == 0 {
         return None;
     }
-    let kbps = mul_div(bytes.saturating_mul(8), rate as u64, frames.saturating_mul(1000));
+    let kbps = mul_div(
+        bytes.saturating_mul(8),
+        rate as u64,
+        frames.saturating_mul(1000),
+    );
     u32::try_from(kbps).ok()
 }
 

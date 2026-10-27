@@ -1,7 +1,9 @@
 //! Small threaded HTTP/1.1 server with keep-alive, request bodies
 //! (content-length and chunked) and file responses with byte ranges.
 
-use crate::http::{percent_decode, read_headers, read_line, status_text, ChunkedReader, Headers, MAX_HEAD};
+use crate::http::{
+    percent_decode, read_headers, read_line, status_text, ChunkedReader, Headers, MAX_HEAD,
+};
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,7 +25,10 @@ pub struct Request {
 
 impl Request {
     pub fn query(&self, key: &str) -> Option<&str> {
-        self.query.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name)
@@ -38,7 +43,11 @@ pub enum Body {
     Empty,
     Bytes(Vec<u8>),
     /// A slice of a file (`start`, `len`).
-    File { file: std::fs::File, start: u64, len: u64 },
+    File {
+        file: std::fs::File,
+        start: u64,
+        len: u64,
+    },
 }
 
 pub struct Response {
@@ -49,7 +58,11 @@ pub struct Response {
 
 impl Response {
     pub fn new(status: u16) -> Response {
-        Response { status, headers: Headers::default(), body: Body::Empty }
+        Response {
+            status,
+            headers: Headers::default(),
+            body: Body::Empty,
+        }
     }
     pub fn bytes(status: u16, content_type: &str, data: Vec<u8>) -> Response {
         let mut r = Response::new(status);
@@ -58,7 +71,11 @@ impl Response {
         r
     }
     pub fn text(status: u16, text: &str) -> Response {
-        Response::bytes(status, "text/plain; charset=utf-8", text.as_bytes().to_vec())
+        Response::bytes(
+            status,
+            "text/plain; charset=utf-8",
+            text.as_bytes().to_vec(),
+        )
     }
     pub fn json(status: u16, v: &bl_json::Value) -> Response {
         Response::bytes(status, "application/json", v.to_json().into_bytes())
@@ -73,7 +90,11 @@ impl Response {
     }
 
     /// Serves a file honouring a `Range` header.
-    pub fn file(path: &std::path::Path, content_type: &str, range_header: Option<&str>) -> Response {
+    pub fn file(
+        path: &std::path::Path,
+        content_type: &str,
+        range_header: Option<&str>,
+    ) -> Response {
         let file = match std::fs::File::open(path) {
             Ok(f) => f,
             Err(_) => return Response::error(404, "not found"),
@@ -88,10 +109,21 @@ impl Response {
         match crate::http::parse_range(range_header, len) {
             Ok(Some((a, b))) => {
                 r.status = 206;
-                r.headers.set("Content-Range", format!("bytes {a}-{b}/{len}"));
-                r.body = Body::File { file, start: a, len: b - a + 1 };
+                r.headers
+                    .set("Content-Range", format!("bytes {a}-{b}/{len}"));
+                r.body = Body::File {
+                    file,
+                    start: a,
+                    len: b - a + 1,
+                };
             }
-            Ok(None) => r.body = Body::File { file, start: 0, len },
+            Ok(None) => {
+                r.body = Body::File {
+                    file,
+                    start: 0,
+                    len,
+                }
+            }
             Err(()) => {
                 let mut e = Response::new(416);
                 e.headers.set("Content-Range", format!("bytes */{len}"));
@@ -112,7 +144,11 @@ pub struct ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        ServerConfig { max_connections: 256, max_body: 256 * 1024 * 1024, keep_alive: Duration::from_secs(30) }
+        ServerConfig {
+            max_connections: 256,
+            max_body: 256 * 1024 * 1024,
+            keep_alive: Duration::from_secs(30),
+        }
     }
 }
 
@@ -134,10 +170,12 @@ pub fn serve(listener: TcpListener, handler: Arc<Handler>, config: ServerConfig)
         let handler = handler.clone();
         let active2 = active.clone();
         let config = config.clone();
-        let spawned = std::thread::Builder::new().name("http-conn".into()).spawn(move || {
-            let _ = handle_connection(stream, &*handler, &config);
-            active2.fetch_sub(1, Ordering::Relaxed);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("http-conn".into())
+            .spawn(move || {
+                let _ = handle_connection(stream, &*handler, &config);
+                active2.fetch_sub(1, Ordering::Relaxed);
+            });
         if spawned.is_err() {
             active.fetch_sub(1, Ordering::Relaxed);
         }
@@ -145,7 +183,11 @@ pub fn serve(listener: TcpListener, handler: Arc<Handler>, config: ServerConfig)
     Ok(())
 }
 
-fn handle_connection(stream: TcpStream, handler: &Handler, config: &ServerConfig) -> io::Result<()> {
+fn handle_connection(
+    stream: TcpStream,
+    handler: &Handler,
+    config: &ServerConfig,
+) -> io::Result<()> {
     let remote = stream.peer_addr().ok();
     stream.set_read_timeout(Some(config.keep_alive))?;
     stream.set_write_timeout(Some(Duration::from_secs(60)))?;
@@ -178,19 +220,41 @@ fn handle_connection(stream: TcpStream, handler: &Handler, config: &ServerConfig
             }
         };
         let http10 = proto == "HTTP/1.0";
-        let conn_hdr = headers.get("connection").map(|v| v.to_ascii_lowercase()).unwrap_or_default();
-        let keep_alive = if http10 { conn_hdr.contains("keep-alive") } else { !conn_hdr.contains("close") };
+        let conn_hdr = headers
+            .get("connection")
+            .map(|v| v.to_ascii_lowercase())
+            .unwrap_or_default();
+        let keep_alive = if http10 {
+            conn_hdr.contains("keep-alive")
+        } else {
+            !conn_hdr.contains("close")
+        };
         // Body.
         let mut body = Vec::new();
         if headers.is_chunked() {
             let mut r = ChunkedReader::new(&mut reader);
-            if (&mut r).take(config.max_body as u64 + 1).read_to_end(&mut body).is_err() || body.len() > config.max_body {
-                write_response(&mut writer, Response::text(413, "body too large"), false, true)?;
+            if (&mut r)
+                .take(config.max_body as u64 + 1)
+                .read_to_end(&mut body)
+                .is_err()
+                || body.len() > config.max_body
+            {
+                write_response(
+                    &mut writer,
+                    Response::text(413, "body too large"),
+                    false,
+                    true,
+                )?;
                 return Ok(());
             }
         } else if let Some(n) = headers.content_length() {
             if n as usize > config.max_body {
-                write_response(&mut writer, Response::text(413, "body too large"), false, true)?;
+                write_response(
+                    &mut writer,
+                    Response::text(413, "body too large"),
+                    false,
+                    true,
+                )?;
                 return Ok(());
             }
             body.resize(n as usize, 0);
@@ -198,7 +262,10 @@ fn handle_connection(stream: TcpStream, handler: &Handler, config: &ServerConfig
                 return Ok(());
             }
         }
-        if headers.get("expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue")) {
+        if headers
+            .get("expect")
+            .is_some_and(|v| v.eq_ignore_ascii_case("100-continue"))
+        {
             // Bodies were already read; clients that wait for 100 continue
             // after a timeout anyway.
         }
@@ -223,7 +290,12 @@ fn handle_connection(stream: TcpStream, handler: &Handler, config: &ServerConfig
     }
 }
 
-fn write_response(w: &mut TcpStream, mut resp: Response, head_only: bool, close: bool) -> io::Result<()> {
+fn write_response(
+    w: &mut TcpStream,
+    mut resp: Response,
+    head_only: bool,
+    close: bool,
+) -> io::Result<()> {
     let len = match &resp.body {
         Body::Empty => 0,
         Body::Bytes(b) => b.len() as u64,
@@ -233,7 +305,11 @@ fn write_response(w: &mut TcpStream, mut resp: Response, head_only: bool, close:
     if close {
         resp.headers.set("Connection", "close");
     }
-    let mut head = format!("HTTP/1.1 {} {}\r\nServer: Beatlumen\r\n", resp.status, status_text(resp.status));
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nServer: Beatlumen\r\n",
+        resp.status,
+        status_text(resp.status)
+    );
     for (k, v) in resp.headers.iter() {
         head.push_str(k);
         head.push_str(": ");
@@ -248,7 +324,11 @@ fn write_response(w: &mut TcpStream, mut resp: Response, head_only: bool, close:
     match resp.body {
         Body::Empty => {}
         Body::Bytes(b) => w.write_all(&b)?,
-        Body::File { mut file, start, len } => {
+        Body::File {
+            mut file,
+            start,
+            len,
+        } => {
             file.seek(SeekFrom::Start(start))?;
             let mut remaining = len;
             let mut buf = vec![0u8; 256 * 1024];

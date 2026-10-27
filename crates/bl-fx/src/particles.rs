@@ -86,7 +86,12 @@ impl Particles {
     /// `width`/`height`: box size (1.1 × plane size); `max_depth`: camera
     /// distance at full zoom-out (particles occupy the first quarter).
     pub fn new(width: f32, height: f32, max_depth: f32) -> Particles {
-        Particles { width, height, max_depth, ..Default::default() }
+        Particles {
+            width,
+            height,
+            max_depth,
+            ..Default::default()
+        }
     }
 
     pub fn configs(&self) -> Vec<ParticleConfig> {
@@ -123,16 +128,34 @@ impl Particles {
                 self.opacity.push(0.0);
             }
             let c = cfg.color;
-            let color = [((c >> 16) & 255) as f32 / 255.0, ((c >> 8) & 255) as f32 / 255.0, (c & 255) as f32 / 255.0];
+            let color = [
+                ((c >> 16) & 255) as f32 / 255.0,
+                ((c >> 8) & 255) as f32 / 255.0,
+                (c & 255) as f32 / 255.0,
+            ];
             let sway = Self::sway_tween(now, rng, [0.0, 0.0], &cfg);
-            self.groups.push(Group { cfg, start, color, sway_offset: [0.0, 0.0], sway });
+            self.groups.push(Group {
+                cfg,
+                start,
+                color,
+                sway_offset: [0.0, 0.0],
+                sway,
+            });
         }
-        self.instances.resize(self.base.len(), ParticleInstance::default());
+        self.instances
+            .resize(self.base.len(), ParticleInstance::default());
     }
 
     fn sway_tween(now: f64, rng: &mut Rng, from: [f32; 2], cfg: &ParticleConfig) -> Tween<2> {
         let d = cfg.sway_distance;
-        Tween::new(from, [rng.range(-d, d), rng.range(-d, d)], now, 0.0, cfg.sway_duration.max(0.05) as f64, cfg.easing)
+        Tween::new(
+            from,
+            [rng.range(-d, d), rng.range(-d, d)],
+            now,
+            0.0,
+            cfg.sway_duration.max(0.05) as f64,
+            cfg.easing,
+        )
     }
 
     pub fn clear(&mut self) {
@@ -163,7 +186,10 @@ impl Particles {
         for g in &mut self.groups {
             // Linear drift: `speed` normalised units per second along `angle`.
             let a = g.cfg.angle_deg.to_radians();
-            let (vx, vy) = (g.cfg.speed * a.cos() * dt as f32, g.cfg.speed * a.sin() * dt as f32);
+            let (vx, vy) = (
+                g.cfg.speed * a.cos() * dt as f32,
+                g.cfg.speed * a.sin() * dt as f32,
+            );
             for p in &mut self.base[g.start..g.start + g.cfg.amount.min(100_000)] {
                 p[0] = wrap(p[0] + vx, self.width);
                 p[1] = wrap(p[1] + vy, self.height);
@@ -175,15 +201,37 @@ impl Particles {
             let end = g.start + g.cfg.amount.min(100_000);
             for _ in 0..steps {
                 for i in g.start..end {
-                    self.size[i] = random_averaged(rng, self.size[i], g.cfg.min_size, g.cfg.max_size, g.cfg.smoothing);
-                    self.gradient[i] = random_averaged(rng, self.gradient[i], g.cfg.min_gradient, g.cfg.max_gradient, g.cfg.smoothing);
-                    self.opacity[i] = random_averaged(rng, self.opacity[i], g.cfg.min_opacity, g.cfg.max_opacity, g.cfg.smoothing);
+                    self.size[i] = random_averaged(
+                        rng,
+                        self.size[i],
+                        g.cfg.min_size,
+                        g.cfg.max_size,
+                        g.cfg.smoothing,
+                    );
+                    self.gradient[i] = random_averaged(
+                        rng,
+                        self.gradient[i],
+                        g.cfg.min_gradient,
+                        g.cfg.max_gradient,
+                        g.cfg.smoothing,
+                    );
+                    self.opacity[i] = random_averaged(
+                        rng,
+                        self.opacity[i],
+                        g.cfg.min_opacity,
+                        g.cfg.max_opacity,
+                        g.cfg.smoothing,
+                    );
                 }
             }
             for i in g.start..end {
                 let b = self.base[i];
                 self.instances[i] = ParticleInstance {
-                    position: [wrap(b[0] + g.sway_offset[0], self.width), wrap(b[1] + g.sway_offset[1], self.height), b[2]],
+                    position: [
+                        wrap(b[0] + g.sway_offset[0], self.width),
+                        wrap(b[1] + g.sway_offset[1], self.height),
+                        b[2],
+                    ],
                     size: self.size[i],
                     gradient: self.gradient[i],
                     opacity: self.opacity[i],

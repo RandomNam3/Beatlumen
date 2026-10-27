@@ -8,7 +8,10 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-use super::{apply_common, id3v1_genre, make_picture, parse_number_pair, parse_year, resolve_id3_genre, set_str};
+use super::{
+    apply_common, id3v1_genre, make_picture, parse_number_pair, parse_year, resolve_id3_genre,
+    set_str,
+};
 use crate::util::{read_up_to, read_vec, utf8_or_latin1};
 use crate::{Error, Picture, Tags};
 
@@ -27,7 +30,8 @@ pub(crate) struct Id3Header {
 }
 
 fn syncsafe(b: &[u8]) -> u32 {
-    b.iter().fold(0u32, |acc, &v| (acc << 7) | (v & 0x7f) as u32)
+    b.iter()
+        .fold(0u32, |acc, &v| (acc << 7) | (v & 0x7f) as u32)
 }
 
 /// Parses a 10-byte ID3v2 header.
@@ -40,7 +44,12 @@ pub(crate) fn parse_header(h: &[u8]) -> Option<Id3Header> {
     }
     let size = syncsafe(&h[6..10]);
     let footer = h[3] >= 4 && h[5] & 0x10 != 0;
-    Some(Id3Header { major: h[3], flags: h[5], size, total: 10 + size as u64 + if footer { 10 } else { 0 } })
+    Some(Id3Header {
+        major: h[3],
+        flags: h[5],
+        size,
+        total: 10 + size as u64 + if footer { 10 } else { 0 },
+    })
 }
 
 /// Skips all consecutive ID3v2 tags at the current position. Returns the
@@ -115,7 +124,15 @@ fn read_tag_body<R: Read + Seek + ?Sized>(
         let mut c = Cursor::new(body);
         parse_frames(&mut c, h.major, h.flags, 0, len, tags, pictures)
     } else {
-        parse_frames(r, h.major, h.flags, start + 10, start + 10 + h.size as u64, tags, pictures)
+        parse_frames(
+            r,
+            h.major,
+            h.flags,
+            start + 10,
+            start + 10 + h.size as u64,
+            tags,
+            pictures,
+        )
     }
 }
 
@@ -134,7 +151,8 @@ fn resync(data: &[u8]) -> Vec<u8> {
 }
 
 fn valid_id(id: &[u8]) -> bool {
-    id.iter().all(|&c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    id.iter()
+        .all(|&c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 /// Checks whether a plausible frame header (or padding / end of tag) starts
@@ -173,7 +191,11 @@ fn parse_frames<R: Read + Seek + ?Sized>(
         if read_up_to(r, &mut b)? < 4 {
             return Ok(());
         }
-        pos += if major == 3 { 4 + u32::from_be_bytes(b) as u64 } else { syncsafe(&b) as u64 };
+        pos += if major == 3 {
+            4 + u32::from_be_bytes(b) as u64
+        } else {
+            syncsafe(&b) as u64
+        };
     }
     let header_len: u64 = if major == 2 { 6 } else { 10 };
     let mut found = Found::default();
@@ -189,14 +211,22 @@ fn parse_frames<R: Read + Seek + ?Sized>(
             break;
         }
         let (size, flags) = match major {
-            2 => (((fh[3] as u64) << 16) | ((fh[4] as u64) << 8) | fh[5] as u64, [0u8, 0u8]),
-            3 => (u32::from_be_bytes([fh[4], fh[5], fh[6], fh[7]]) as u64, [fh[8], fh[9]]),
+            2 => (
+                ((fh[3] as u64) << 16) | ((fh[4] as u64) << 8) | fh[5] as u64,
+                [0u8, 0u8],
+            ),
+            3 => (
+                u32::from_be_bytes([fh[4], fh[5], fh[6], fh[7]]) as u64,
+                [fh[8], fh[9]],
+            ),
             _ => {
                 let plain = u32::from_be_bytes([fh[4], fh[5], fh[6], fh[7]]) as u64;
                 let ss = syncsafe(&fh[4..8]) as u64;
                 let not_syncsafe = fh[4..8].iter().any(|&b| b & 0x80 != 0);
                 let size = if not_syncsafe
-                    || (ss != plain && !plausible_next(r, pos + 10 + ss, body_end)? && plausible_next(r, pos + 10 + plain, body_end)?)
+                    || (ss != plain
+                        && !plausible_next(r, pos + 10 + ss, body_end)?
+                        && plausible_next(r, pos + 10 + plain, body_end)?)
                 {
                     plain
                 } else {
@@ -354,8 +384,16 @@ fn decode_utf16(enc: u8, mut data: &[u8]) -> String {
             data = &data[2..];
         }
     }
-    let units = data.chunks_exact(2).map(|c| if big_endian { u16::from_be_bytes([c[0], c[1]]) } else { u16::from_le_bytes([c[0], c[1]]) });
-    char::decode_utf16(units).map(|c| c.unwrap_or('\u{fffd}')).collect()
+    let units = data.chunks_exact(2).map(|c| {
+        if big_endian {
+            u16::from_be_bytes([c[0], c[1]])
+        } else {
+            u16::from_le_bytes([c[0], c[1]])
+        }
+    });
+    char::decode_utf16(units)
+        .map(|c| c.unwrap_or('\u{fffd}'))
+        .collect()
 }
 
 /// All (NUL-separated) values of a text frame.
@@ -366,7 +404,9 @@ fn text_values(data: &[u8]) -> Vec<String> {
     let mut values = Vec::new();
     while !rest.is_empty() {
         let (s, r) = split_text(enc, rest);
-        let t = s.trim_matches(|c: char| c == '\0' || c.is_whitespace()).to_string();
+        let t = s
+            .trim_matches(|c: char| c == '\0' || c.is_whitespace())
+            .to_string();
         if !t.is_empty() {
             values.push(t);
         }
@@ -375,9 +415,16 @@ fn text_values(data: &[u8]) -> Vec<String> {
     values
 }
 
-fn handle_frame(id: &str, data: &[u8], tags: &mut Tags, pictures: Option<&mut Vec<Picture>>, found: &mut Found) {
+fn handle_frame(
+    id: &str,
+    data: &[u8],
+    tags: &mut Tags,
+    pictures: Option<&mut Vec<Picture>>,
+    found: &mut Found,
+) {
     match id {
-        "TIT2" | "TPE1" | "TPE2" | "TALB" | "TCOM" | "TCON" | "TYER" | "TDRC" | "TDRL" | "TORY" | "TDOR" | "TRCK" | "TPOS" => {
+        "TIT2" | "TPE1" | "TPE2" | "TALB" | "TCOM" | "TCON" | "TYER" | "TDRC" | "TDRL" | "TORY"
+        | "TDOR" | "TRCK" | "TPOS" => {
             let values = text_values(data);
             let Some(first) = values.first() else { return };
             match id {
@@ -396,7 +443,9 @@ fn handle_frame(id: &str, data: &[u8], tags: &mut Tags, pictures: Option<&mut Ve
                     }
                 }
                 "TYER" => found.tyer = found.tyer.or(parse_year(first)),
-                "TDRL" | "TORY" | "TDOR" => found.other_year = found.other_year.or(parse_year(first)),
+                "TDRL" | "TORY" | "TDOR" => {
+                    found.other_year = found.other_year.or(parse_year(first))
+                }
                 "TRCK" => {
                     let (n, t) = parse_number_pair(first);
                     if tags.track.is_none() {
@@ -419,18 +468,30 @@ fn handle_frame(id: &str, data: &[u8], tags: &mut Tags, pictures: Option<&mut Ve
             }
         }
         "TXXX" => {
-            let Some((&enc, rest)) = data.split_first() else { return };
+            let Some((&enc, rest)) = data.split_first() else {
+                return;
+            };
             let (desc, value) = split_text(enc, rest);
             let (value, _) = split_text(enc, value);
             let key = desc.trim().to_ascii_uppercase();
             if key.starts_with("REPLAYGAIN_")
-                || matches!(key.as_str(), "ALBUM ARTIST" | "ALBUMARTIST" | "TOTALTRACKS" | "TOTALDISCS" | "TRACKTOTAL" | "DISCTOTAL")
+                || matches!(
+                    key.as_str(),
+                    "ALBUM ARTIST"
+                        | "ALBUMARTIST"
+                        | "TOTALTRACKS"
+                        | "TOTALDISCS"
+                        | "TRACKTOTAL"
+                        | "DISCTOTAL"
+                )
             {
                 apply_common(tags, &key, &value);
             }
         }
         "COMM" => {
-            let Some((&enc, rest)) = data.split_first() else { return };
+            let Some((&enc, rest)) = data.split_first() else {
+                return;
+            };
             if rest.len() < 3 {
                 return;
             }
@@ -443,7 +504,9 @@ fn handle_frame(id: &str, data: &[u8], tags: &mut Tags, pictures: Option<&mut Ve
         }
         "APIC" | "PIC" => {
             let Some(pics) = pictures else { return };
-            let Some((&enc, rest)) = data.split_first() else { return };
+            let Some((&enc, rest)) = data.split_first() else {
+                return;
+            };
             let (mime, rest) = if id == "PIC" {
                 if rest.len() < 3 {
                     return;
@@ -452,7 +515,9 @@ fn handle_frame(id: &str, data: &[u8], tags: &mut Tags, pictures: Option<&mut Ve
             } else {
                 split_text(0, rest)
             };
-            let Some((&kind, rest)) = rest.split_first() else { return };
+            let Some((&kind, rest)) = rest.split_first() else {
+                return;
+            };
             let (desc, img) = split_text(enc, rest);
             if mime == "-->" || img.is_empty() {
                 return; // linked picture or empty
@@ -495,7 +560,12 @@ pub(crate) mod tests {
     use super::*;
 
     fn syncsafe_bytes(v: u32) -> [u8; 4] {
-        [(v >> 21) as u8 & 0x7f, (v >> 14) as u8 & 0x7f, (v >> 7) as u8 & 0x7f, v as u8 & 0x7f]
+        [
+            (v >> 21) as u8 & 0x7f,
+            (v >> 14) as u8 & 0x7f,
+            (v >> 7) as u8 & 0x7f,
+            v as u8 & 0x7f,
+        ]
     }
 
     /// Builds an ID3v2.3/2.4 tag from (id, payload) frames.
@@ -593,7 +663,11 @@ pub(crate) mod tests {
         let mut body = Vec::new();
         for (i, &b) in tag[10..].iter().enumerate() {
             body.push(b);
-            if b == 0xff && tag.get(10 + i + 1).map_or(true, |&n| n & 0xe0 == 0xe0 || n == 0) {
+            if b == 0xff
+                && tag
+                    .get(10 + i + 1)
+                    .map_or(true, |&n| n & 0xe0 == 0xe0 || n == 0)
+            {
                 body.push(0);
             }
         }
@@ -609,7 +683,11 @@ pub(crate) mod tests {
     fn v22_and_extended_header() {
         // ID3v2.2: 3-char IDs, 3-byte sizes, PIC with image format.
         let mut body = Vec::new();
-        for (id, data) in [(&b"TT2"[..], &b"\0Old title"[..]), (b"TCO", b"\0(17)"), (b"PIC", b"\0PNG\x03desc\0\x89PNGxx")] {
+        for (id, data) in [
+            (&b"TT2"[..], &b"\0Old title"[..]),
+            (b"TCO", b"\0(17)"),
+            (b"PIC", b"\0PNG\x03desc\0\x89PNGxx"),
+        ] {
             body.extend_from_slice(id);
             body.extend_from_slice(&(data.len() as u32).to_be_bytes()[1..]);
             body.extend_from_slice(data);
@@ -623,7 +701,14 @@ pub(crate) mod tests {
         assert_eq!(tags.title.as_deref(), Some("Old title"));
         assert_eq!(tags.genre.as_deref(), Some("Rock"));
         assert_eq!(pics.len(), 1);
-        assert_eq!((pics[0].mime.as_str(), pics[0].kind, pics[0].description.as_str()), ("image/png", 3, "desc"));
+        assert_eq!(
+            (
+                pics[0].mime.as_str(),
+                pics[0].kind,
+                pics[0].description.as_str()
+            ),
+            ("image/png", 3, "desc")
+        );
 
         // ID3v2.3 with an extended header (10 bytes after the size field).
         let plain = build_tag(3, &[("TIT2", b"\0Ext".to_vec())]);

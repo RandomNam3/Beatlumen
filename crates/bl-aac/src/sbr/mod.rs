@@ -90,7 +90,15 @@ impl SbrHeader {
 
     /// Fields whose change requires recomputing the frequency tables.
     fn table_key(&self) -> (u8, u8, u8, u8, bool, u8, u8) {
-        (self.start_freq, self.stop_freq, self.xover_band, self.freq_scale, self.alter_scale, self.noise_bands, self.limiter_bands)
+        (
+            self.start_freq,
+            self.stop_freq,
+            self.xover_band,
+            self.freq_scale,
+            self.alter_scale,
+            self.noise_bands,
+            self.limiter_bands,
+        )
     }
 }
 
@@ -254,7 +262,9 @@ fn books() -> &'static SbrBooks {
 
 #[inline]
 fn huff(r: &mut BitReader, t: &HuffTable, offset: i32) -> Result<i32, Error> {
-    t.decode(r).map(|v| v as i32 - offset).ok_or(Error::InvalidData("invalid SBR huffman code"))
+    t.decode(r)
+        .map(|v| v as i32 - offset)
+        .ok_or(Error::InvalidData("invalid SBR huffman code"))
 }
 
 /// SBR state of one SCE/CPE element.
@@ -326,7 +336,9 @@ impl SbrElement {
         if r.read_bit() {
             let h = SbrHeader::parse(r);
             r.check()?;
-            let changed = self.header.map_or(true, |old| old.table_key() != h.table_key());
+            let changed = self
+                .header
+                .map_or(true, |old| old.table_key() != h.table_key());
             self.header = Some(h);
             if changed || self.freq.is_none() {
                 self.freq = freq::compute(&h, self.rate);
@@ -339,7 +351,11 @@ impl SbrElement {
         let (Some(h), Some(ft)) = (self.header, self.freq.clone()) else {
             return Ok(());
         };
-        let res = if self.channels.len() == 2 { self.parse_cpe(r, &h, &ft) } else { self.parse_sce(r, &h, &ft, with_ps) };
+        let res = if self.channels.len() == 2 {
+            self.parse_cpe(r, &h, &ft)
+        } else {
+            self.parse_sce(r, &h, &ft, with_ps)
+        };
         res?;
         r.check()?;
         self.decode_envelopes(&ft);
@@ -347,7 +363,13 @@ impl SbrElement {
         Ok(())
     }
 
-    fn parse_sce(&mut self, r: &mut BitReader, h: &SbrHeader, ft: &FreqTables, with_ps: bool) -> Result<(), Error> {
+    fn parse_sce(
+        &mut self,
+        r: &mut BitReader,
+        h: &SbrHeader,
+        ft: &FreqTables,
+        with_ps: bool,
+    ) -> Result<(), Error> {
         if r.read_bit() {
             r.skip(4);
         }
@@ -363,7 +385,12 @@ impl SbrElement {
         self.parse_extended(r, with_ps)
     }
 
-    fn parse_cpe(&mut self, r: &mut BitReader, h: &SbrHeader, ft: &FreqTables) -> Result<(), Error> {
+    fn parse_cpe(
+        &mut self,
+        r: &mut BitReader,
+        h: &SbrHeader,
+        ft: &FreqTables,
+    ) -> Result<(), Error> {
         if r.read_bit() {
             r.skip(8);
         }
@@ -459,7 +486,8 @@ impl SbrElement {
         let reset = self.reset;
         let chan = &mut self.channels[ch];
         for s in 0..SLOTS {
-            chan.ana.process(qt, &core[s * 32..s * 32 + 32], &mut chan.x_low[T_HFGEN + s]);
+            chan.ana
+                .process(qt, &core[s * 32..s * 32 + 32], &mut chan.x_low[T_HFGEN + s]);
         }
         process::process(chan, ft.filter(|_| active), &h, reset, x);
     }
@@ -499,7 +527,8 @@ impl SbrElement {
         let qt = qmf::tables();
         for (s, slot) in x.iter().enumerate().take(SLOTS) {
             if self.downsampled {
-                self.ps_syn_ds.process(qt, slot, &mut out[s * 32..s * 32 + 32]);
+                self.ps_syn_ds
+                    .process(qt, slot, &mut out[s * 32..s * 32 + 32]);
             } else {
                 self.ps_syn.process(qt, slot, &mut out[s * 64..s * 64 + 64]);
             }
@@ -597,7 +626,9 @@ fn parse_grid(r: &mut BitReader, f: &mut ChannelFrame, h: &SbrHeader) -> Result<
     }
     let mut i = l - 1;
     while i > n_rel0 {
-        g.t_e[i] = g.t_e[i + 1].checked_sub(rel1[l - 1 - i]).ok_or(Error::InvalidData("SBR: bad borders"))?;
+        g.t_e[i] = g.t_e[i + 1]
+            .checked_sub(rel1[l - 1 - i])
+            .ok_or(Error::InvalidData("SBR: bad borders"))?;
         i -= 1;
     }
     for i in 0..l {
@@ -653,7 +684,11 @@ fn parse_grid(r: &mut BitReader, f: &mut ChannelFrame, h: &SbrHeader) -> Result<
         g.t_q[1] = g.t_e[idx];
     }
     // Amplitude resolution (forced to 1.5 dB for FIXFIX with one envelope).
-    f.amp_res = if g.class == FIXFIX && l == 1 { false } else { h.amp_res };
+    f.amp_res = if g.class == FIXFIX && l == 1 {
+        false
+    } else {
+        h.amp_res
+    };
     r.check()
 }
 
@@ -681,13 +716,42 @@ fn parse_invf(r: &mut BitReader, f: &mut ChannelFrame, ft: &FreqTables) {
     }
 }
 
-fn parse_envelope(r: &mut BitReader, f: &mut ChannelFrame, ft: &FreqTables, balance: bool) -> Result<(), Error> {
+fn parse_envelope(
+    r: &mut BitReader,
+    f: &mut ChannelFrame,
+    ft: &FreqTables,
+    balance: bool,
+) -> Result<(), Error> {
     let b = books();
     let (t_book, f_book, t_off, f_off, start_bits) = match (balance, f.amp_res) {
-        (false, false) => (&b.env_1_5_t, &b.env_1_5_f, SBR_ENV_1_5DB_T_OFFSET, SBR_ENV_1_5DB_F_OFFSET, 7),
-        (false, true) => (&b.env_3_0_t, &b.env_3_0_f, SBR_ENV_3_0DB_T_OFFSET, SBR_ENV_3_0DB_F_OFFSET, 6),
-        (true, false) => (&b.bal_1_5_t, &b.bal_1_5_f, SBR_ENV_BAL_1_5DB_T_OFFSET, SBR_ENV_BAL_1_5DB_F_OFFSET, 6),
-        (true, true) => (&b.bal_3_0_t, &b.bal_3_0_f, SBR_ENV_BAL_3_0DB_T_OFFSET, SBR_ENV_BAL_3_0DB_F_OFFSET, 5),
+        (false, false) => (
+            &b.env_1_5_t,
+            &b.env_1_5_f,
+            SBR_ENV_1_5DB_T_OFFSET,
+            SBR_ENV_1_5DB_F_OFFSET,
+            7,
+        ),
+        (false, true) => (
+            &b.env_3_0_t,
+            &b.env_3_0_f,
+            SBR_ENV_3_0DB_T_OFFSET,
+            SBR_ENV_3_0DB_F_OFFSET,
+            6,
+        ),
+        (true, false) => (
+            &b.bal_1_5_t,
+            &b.bal_1_5_f,
+            SBR_ENV_BAL_1_5DB_T_OFFSET,
+            SBR_ENV_BAL_1_5DB_F_OFFSET,
+            6,
+        ),
+        (true, true) => (
+            &b.bal_3_0_t,
+            &b.bal_3_0_f,
+            SBR_ENV_BAL_3_0DB_T_OFFSET,
+            SBR_ENV_BAL_3_0DB_F_OFFSET,
+            5,
+        ),
     };
     let shift = balance as u32;
     for e in 0..f.grid.num_env {
@@ -706,12 +770,27 @@ fn parse_envelope(r: &mut BitReader, f: &mut ChannelFrame, ft: &FreqTables, bala
     r.check()
 }
 
-fn parse_noise(r: &mut BitReader, f: &mut ChannelFrame, ft: &FreqTables, balance: bool) -> Result<(), Error> {
+fn parse_noise(
+    r: &mut BitReader,
+    f: &mut ChannelFrame,
+    ft: &FreqTables,
+    balance: bool,
+) -> Result<(), Error> {
     let b = books();
     let (t_book, f_book, t_off, f_off) = if balance {
-        (&b.noise_bal_t, &b.bal_3_0_f, SBR_NOISE_BAL_3_0DB_T_OFFSET, SBR_ENV_BAL_3_0DB_F_OFFSET)
+        (
+            &b.noise_bal_t,
+            &b.bal_3_0_f,
+            SBR_NOISE_BAL_3_0DB_T_OFFSET,
+            SBR_ENV_BAL_3_0DB_F_OFFSET,
+        )
     } else {
-        (&b.noise_t, &b.env_3_0_f, SBR_NOISE_3_0DB_T_OFFSET, SBR_ENV_3_0DB_F_OFFSET)
+        (
+            &b.noise_t,
+            &b.env_3_0_f,
+            SBR_NOISE_3_0DB_T_OFFSET,
+            SBR_ENV_3_0DB_F_OFFSET,
+        )
     };
     let shift = balance as u32;
     let n = ft.n_q();
@@ -756,7 +835,11 @@ fn delta_decode(ch: &mut SbrChannel, ft: &FreqTables) {
             }
         } else {
             for k in 0..n {
-                let i = if res != 0 { k } else { ft.f_high.iter().position(|&b| b == table[k]).unwrap_or(0) };
+                let i = if res != 0 {
+                    k
+                } else {
+                    ft.f_high.iter().position(|&b| b == table[k]).unwrap_or(0)
+                };
                 vals[k] = ch.prev_env[i] + f.env[e][k];
             }
         }

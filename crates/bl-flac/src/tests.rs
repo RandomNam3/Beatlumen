@@ -9,7 +9,10 @@ fn hex(s: &str) -> Vec<u8> {
         .flat_map(|l| {
             let l = l.trim();
             let l = l.split_once(':').map_or(l, |(_, r)| r);
-            l.chars().filter(|c| c.is_ascii_hexdigit()).map(|c| c.to_digit(16).unwrap() as u8).collect::<Vec<_>>()
+            l.chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .map(|c| c.to_digit(16).unwrap() as u8)
+                .collect::<Vec<_>>()
         })
         .collect();
     digits.chunks(2).map(|p| p[0] << 4 | p[1]).collect()
@@ -50,7 +53,9 @@ fn example2_samples() -> Vec<i32> {
                   723f 1E25 9D46 4929 B841 7026 5747 B829 8F43 8127 AEC7 14DF
                   9FC4 41DD 54C7 E4DE A5C4 40DD 1EC6 33DE 82C3 90DC 0BC4 02DD
                   4AC1 3EDB");
-    le.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as i32).collect()
+    le.chunks(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]) as i32)
+        .collect()
 }
 
 fn example3() -> Vec<u8> {
@@ -63,8 +68,10 @@ fn example3() -> Vec<u8> {
          00000048: a3")
 }
 
-const EXAMPLE3_SAMPLES: [i32; 24] =
-    [0, 79, 111, 78, 8, -61, -90, -68, -13, 42, 67, 53, 13, -27, -46, -38, -12, 14, 24, 19, 6, -4, -5, 0];
+const EXAMPLE3_SAMPLES: [i32; 24] = [
+    0, 79, 111, 78, 8, -61, -90, -68, -13, 42, 67, 53, 13, -27, -46, -38, -12, 14, 24, 19, 6, -4,
+    -5, 0,
+];
 
 fn decode_all_i32(data: &[u8]) -> Vec<i32> {
     let mut dec = FlacDecoder::new(Cursor::new(data)).expect("open");
@@ -90,14 +97,24 @@ fn rfc_example_2() {
     let data = example2();
     let dec = FlacDecoder::new(Cursor::new(&data)).unwrap();
     let types: Vec<u8> = dec.metadata_blocks().iter().map(|b| b.block_type).collect();
-    assert_eq!(types, vec![MetadataBlock::STREAMINFO, MetadataBlock::SEEKTABLE, MetadataBlock::VORBIS_COMMENT]);
+    assert_eq!(
+        types,
+        vec![
+            MetadataBlock::STREAMINFO,
+            MetadataBlock::SEEKTABLE,
+            MetadataBlock::VORBIS_COMMENT
+        ]
+    );
     assert_eq!(dec.total_frames(), Some(19));
     assert_eq!(decode_all_i32(&data), example2_samples());
     // f32 output is the integer output scaled by 2^-15.
     let mut dec = FlacDecoder::new(Cursor::new(&data)).unwrap();
     let mut out = Vec::new();
     while dec.next_chunk(&mut out).unwrap() {}
-    let expect: Vec<f32> = example2_samples().iter().map(|&s| s as f32 / 32768.0).collect();
+    let expect: Vec<f32> = example2_samples()
+        .iter()
+        .map(|&s| s as f32 / 32768.0)
+        .collect();
     assert_eq!(out, expect);
 }
 

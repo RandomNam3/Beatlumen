@@ -48,7 +48,9 @@ impl Drop for FixtureDir {
 }
 
 pub fn fixture_dir(test: &str) -> FixtureDir {
-    let d = std::env::temp_dir().join(format!("bl-image-tests-{}", std::process::id())).join(test);
+    let d = std::env::temp_dir()
+        .join(format!("bl-image-tests-{}", std::process::id()))
+        .join(test);
     std::fs::create_dir_all(&d).expect("create fixture dir");
     FixtureDir(d)
 }
@@ -56,11 +58,17 @@ pub fn fixture_dir(test: &str) -> FixtureDir {
 /// Runs ffmpeg with the given arguments (quiet, overwrite). Returns success.
 pub fn ffmpeg(args: &[&str]) -> bool {
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-v", "error", "-y"]).args(args).stdout(Stdio::null());
+    cmd.args(["-v", "error", "-y"])
+        .args(args)
+        .stdout(Stdio::null());
     match cmd.output() {
         Ok(o) if o.status.success() => true,
         Ok(o) => {
-            eprintln!("ffmpeg {:?} failed: {}", args, String::from_utf8_lossy(&o.stderr));
+            eprintln!(
+                "ffmpeg {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&o.stderr)
+            );
             false
         }
         Err(_) => false,
@@ -71,7 +79,11 @@ pub fn convert(args: &[&str]) -> bool {
     match Command::new("convert").args(args).output() {
         Ok(o) if o.status.success() => true,
         Ok(o) => {
-            eprintln!("convert {:?} failed: {}", args, String::from_utf8_lossy(&o.stderr));
+            eprintln!(
+                "convert {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&o.stderr)
+            );
             false
         }
         Err(_) => false,
@@ -82,7 +94,17 @@ pub fn convert(args: &[&str]) -> bool {
 pub fn ffmpeg_rgba(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let p = path.to_str()?;
     let probe = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", p])
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
+            p,
+        ])
         .output()
         .ok()?;
     let s = String::from_utf8_lossy(&probe.stdout);
@@ -90,7 +112,19 @@ pub fn ffmpeg_rgba(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let w: u32 = it.next()?.trim().parse().ok()?;
     let h: u32 = it.next()?.trim().parse().ok()?;
     let out = Command::new("ffmpeg")
-        .args(["-v", "error", "-i", p, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .args([
+            "-v",
+            "error",
+            "-i",
+            p,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-",
+        ])
         .output()
         .ok()?;
     if !out.status.success() || out.stdout.len() != (w * h * 4) as usize {
@@ -105,12 +139,20 @@ pub fn convert_rgba(path: &Path, extra: &[&str]) -> Option<(u32, u32, Vec<u8>)> 
     let p = format!("{}[0]", path.to_str()?);
     let mut args: Vec<&str> = vec![p.as_str()];
     args.extend_from_slice(extra);
-    let info = Command::new("convert").args(&args).args(["-format", "%w %h", "info:"]).output().ok()?;
+    let info = Command::new("convert")
+        .args(&args)
+        .args(["-format", "%w %h", "info:"])
+        .output()
+        .ok()?;
     let s = String::from_utf8_lossy(&info.stdout);
     let mut it = s.split_whitespace();
     let w: u32 = it.next()?.parse().ok()?;
     let h: u32 = it.next()?.parse().ok()?;
-    let out = Command::new("convert").args(&args).args(["-depth", "8", "rgba:-"]).output().ok()?;
+    let out = Command::new("convert")
+        .args(&args)
+        .args(["-depth", "8", "rgba:-"])
+        .output()
+        .ok()?;
     if !out.status.success() || out.stdout.len() != (w * h * 4) as usize {
         return None;
     }
@@ -136,8 +178,16 @@ pub fn diff(a: &[u8], b: &[u8]) -> Diff {
     }
     let n = a.len().max(1) as f64;
     let mse = sq as f64 / n;
-    let psnr = if mse == 0.0 { f64::INFINITY } else { 10.0 * (255.0 * 255.0 / mse).log10() };
-    Diff { mean: sum as f64 / n, max, psnr }
+    let psnr = if mse == 0.0 {
+        f64::INFINITY
+    } else {
+        10.0 * (255.0 * 255.0 / mse).log10()
+    };
+    Diff {
+        mean: sum as f64 / n,
+        max,
+        psnr,
+    }
 }
 
 /// Deterministic xorshift PRNG.

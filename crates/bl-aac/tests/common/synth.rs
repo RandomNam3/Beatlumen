@@ -12,7 +12,10 @@ pub struct BitWriter {
 
 impl BitWriter {
     pub fn new() -> Self {
-        BitWriter { bytes: Vec::new(), bits: 0 }
+        BitWriter {
+            bytes: Vec::new(),
+            bits: 0,
+        }
     }
     pub fn put(&mut self, v: u32, n: u32) {
         for i in (0..n).rev() {
@@ -74,8 +77,25 @@ const PS_ICC_F: [(u32, u8); 7] = [(126, 7), (30, 5), (6, 3), (0, 1), (2, 2), (14
 /// SBR header variants with their band counts at 44.1 kHz output:
 /// (amp_res, start, stop, xover, freq_scale, alter, noise_bands,
 /// limiter_bands, limiter_gains, interpol, smoothing, n_high, n_low, n_q).
-const HEADERS: [(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, usize, usize, usize); 2] =
-    [(0, 5, 9, 0, 2, 1, 2, 2, 2, 1, 1, 16, 8, 3), (1, 8, 14, 1, 1, 0, 1, 3, 1, 0, 0, 11, 6, 1)];
+const HEADERS: [(
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    usize,
+    usize,
+    usize,
+); 2] = [
+    (0, 5, 9, 0, 2, 1, 2, 2, 2, 1, 1, 16, 8, 3),
+    (1, 8, 14, 1, 1, 0, 1, 3, 1, 0, 0, 11, 6, 1),
+];
 
 pub struct Synth {
     pub stereo: bool,
@@ -91,7 +111,7 @@ const LINES: usize = 600;
 
 fn write_ics(w: &mut BitWriter, rng: &mut Rng, frame: usize, ch: usize) {
     w.put(140, 8); // global_gain
-    // ics_info: reserved, ONLY_LONG, sine, max_sfb, no predictor.
+                   // ics_info: reserved, ONLY_LONG, sine, max_sfb, no predictor.
     w.put(0, 1);
     w.put(0, 2);
     w.put(((frame / 7) & 1) as u32, 1);
@@ -108,14 +128,25 @@ fn write_ics(w: &mut BitWriter, rng: &mut Rng, frame: usize, ch: usize) {
     w.put(0, 1); // pulse
     w.put(0, 1); // tns
     w.put(0, 1); // gain control
-    // Spectral data: a few tonal peaks drifting with the frame + noise.
-    let peaks = [40 + (frame * 3 + ch * 17) % 60, 150 + (frame * 5) % 90, 300 + (frame * 2 + ch * 31) % 200, 480];
+                 // Spectral data: a few tonal peaks drifting with the frame + noise.
+    let peaks = [
+        40 + (frame * 3 + ch * 17) % 60,
+        150 + (frame * 5) % 90,
+        300 + (frame * 2 + ch * 31) % 200,
+        480,
+    ];
     let mut k = 0;
     while k < LINES {
         let mut v = [0i32; 2];
         for (j, x) in v.iter_mut().enumerate() {
             let line = k + j;
-            *x = if peaks.contains(&line) { 4 } else if rng.next() % 5 == 0 { rng.range(1, 2) } else { 0 };
+            *x = if peaks.contains(&line) {
+                4
+            } else if rng.next() % 5 == 0 {
+                rng.range(1, 2)
+            } else {
+                0
+            };
             if *x != 0 && rng.next() & 1 == 1 {
                 *x = -*x;
             }
@@ -157,8 +188,19 @@ fn bounded_delta(rng: &mut Rng, acc: i32, lo: i32, hi: i32) -> i32 {
     (acc + rng.range(-2, 2)).clamp(lo, hi) - acc
 }
 
-fn write_env(w: &mut BitWriter, rng: &mut Rng, c: &SbrFrameChoice, amp_res: u32, nb: [usize; 2], balance: bool) {
-    let eff_amp = if !c.class_fixvar && c.num_env == 1 { 0 } else { amp_res };
+fn write_env(
+    w: &mut BitWriter,
+    rng: &mut Rng,
+    c: &SbrFrameChoice,
+    amp_res: u32,
+    nb: [usize; 2],
+    balance: bool,
+) {
+    let eff_amp = if !c.class_fixvar && c.num_env == 1 {
+        0
+    } else {
+        amp_res
+    };
     for e in 0..c.num_env {
         let n = nb[c.freq_res[e] as usize];
         let (start_bits, lo, hi, book) = match (balance, eff_amp) {
@@ -208,7 +250,11 @@ fn write_ps(w: &mut BitWriter, rng: &mut Rng, frame: usize, type_b: bool) {
         w.put(0, 1); // iid df
         let mut acc = 0;
         for b in 0..20 {
-            let d = if b == 0 { rng.range(-3, 3) } else { rng.range(-1, 1) };
+            let d = if b == 0 {
+                rng.range(-3, 3)
+            } else {
+                rng.range(-1, 1)
+            };
             let d = (acc + d).clamp(-6, 6) - acc;
             acc += d;
             w.code(PS_IID_F[(d + 3) as usize]);
@@ -218,7 +264,11 @@ fn write_ps(w: &mut BitWriter, rng: &mut Rng, frame: usize, type_b: bool) {
         w.put(0, 1); // icc df
         let mut acc = 0;
         for b in 0..20 {
-            let d = if b == 0 { rng.range(0, 3) } else { rng.range(-1, 1) };
+            let d = if b == 0 {
+                rng.range(0, 3)
+            } else {
+                rng.range(-1, 1)
+            };
             let d = (acc + d).clamp(0, 7) - acc;
             acc += d;
             w.code(PS_ICC_F[(d + 3) as usize]);
@@ -252,9 +302,21 @@ fn write_sbr(rng: &mut Rng, s: &Synth, frame: usize) -> BitWriter {
     let (n_high, n_low, n_q) = (h.11, h.12, h.13);
     let nb = [n_low, n_high];
     let choice = match frame % 3 {
-        0 => SbrFrameChoice { num_env: 1, freq_res: [1, 1], class_fixvar: false },
-        1 => SbrFrameChoice { num_env: 2, freq_res: [0, 0], class_fixvar: false },
-        _ => SbrFrameChoice { num_env: 2, freq_res: [1, 0], class_fixvar: true },
+        0 => SbrFrameChoice {
+            num_env: 1,
+            freq_res: [1, 1],
+            class_fixvar: false,
+        },
+        1 => SbrFrameChoice {
+            num_env: 2,
+            freq_res: [0, 0],
+            class_fixvar: false,
+        },
+        _ => SbrFrameChoice {
+            num_env: 2,
+            freq_res: [1, 0],
+            class_fixvar: true,
+        },
     };
     let num_noise = if choice.num_env > 1 { 2 } else { 1 };
     let nch = if s.stereo { 2 } else { 1 };

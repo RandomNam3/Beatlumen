@@ -13,7 +13,9 @@ pub(crate) fn parse_list_info(data: &[u8], tags: &mut Tags) {
     let mut pos = 4usize;
     while pos + 8 <= data.len() {
         let id = &data[pos..pos + 4];
-        let Some(size) = le32(data, pos + 4) else { break };
+        let Some(size) = le32(data, pos + 4) else {
+            break;
+        };
         let size = size as usize;
         let start = pos + 8;
         let end = start.saturating_add(size).min(data.len());
@@ -55,7 +57,11 @@ mod tests {
     #[test]
     fn info_list() {
         let mut d = b"INFO".to_vec();
-        for (id, v) in [(b"INAM", &b"Song\0"[..]), (b"IART", b"Me\0\0"), (b"ITRK", b"7\0")] {
+        for (id, v) in [
+            (b"INAM", &b"Song\0"[..]),
+            (b"IART", b"Me\0\0"),
+            (b"ITRK", b"7\0"),
+        ] {
             d.extend_from_slice(id);
             d.extend_from_slice(&(v.len() as u32).to_le_bytes());
             d.extend_from_slice(v);

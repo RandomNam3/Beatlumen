@@ -20,14 +20,23 @@ impl Imdct {
     /// `n0 = m/2 + 1/2`.
     pub fn new(m: usize, scale: f64) -> Imdct {
         let q = m / 2;
-        let pre = (0..q).map(|n| Complex::expi(-PI * (4 * n + 1) as f64 / (4 * m) as f64)).collect();
+        let pre = (0..q)
+            .map(|n| Complex::expi(-PI * (4 * n + 1) as f64 / (4 * m) as f64))
+            .collect();
         let post = (0..q)
             .map(|k| {
                 let c = Complex::expi(-PI * k as f64 / m as f64);
                 Complex::new((c.re as f64 * scale) as f32, (c.im as f64 * scale) as f32)
             })
             .collect();
-        Imdct { m, fft: Fft::new(q), pre, post, buf: vec![Complex::default(); q], dct: vec![0.0; m] }
+        Imdct {
+            m,
+            fft: Fft::new(q),
+            pre,
+            post,
+            buf: vec![Complex::default(); q],
+            dct: vec![0.0; m],
+        }
     }
 
     /// DCT-IV of `input` (length m) into `self.dct` (scaled).
@@ -73,7 +82,9 @@ mod tests {
     fn imdct_matches_direct() {
         for m in [16usize, 128, 1024] {
             let mut t = Imdct::new(m, 1.0);
-            let input: Vec<f32> = (0..m).map(|i| (((i * 37 + 11) % 23) as f32 - 11.0) / 7.0).collect();
+            let input: Vec<f32> = (0..m)
+                .map(|i| (((i * 37 + 11) % 23) as f32 - 11.0) / 7.0)
+                .collect();
             let mut out = vec![0.0; 2 * m];
             t.transform(&input, &mut out);
             let n0 = m as f64 / 2.0 + 0.5;
@@ -82,7 +93,11 @@ mod tests {
                 for (k, &x) in input.iter().enumerate() {
                     acc += x as f64 * (PI / m as f64 * (n as f64 + n0) * (k as f64 + 0.5)).cos();
                 }
-                assert!((acc - out[n] as f64).abs() < 2e-3 * (m as f64).sqrt(), "m={m} n={n} {acc} {}", out[n]);
+                assert!(
+                    (acc - out[n] as f64).abs() < 2e-3 * (m as f64).sqrt(),
+                    "m={m} n={n} {acc} {}",
+                    out[n]
+                );
             }
         }
     }

@@ -24,7 +24,9 @@ pub fn id_of(key: &str) -> String {
 
 /// True for ids as produced by [`id_of`] / random 16 hex ids.
 pub fn is_id(s: &str) -> bool {
-    s.len() == 16 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 16
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub fn hex(data: &[u8]) -> String {
@@ -39,7 +41,10 @@ pub fn unhex(s: &str) -> Option<Vec<u8>> {
     if s.len() & 1 == 1 {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| s.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok())).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| s.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()))
+        .collect()
 }
 
 /// Constant-time equality (for equally long secrets/digests).
@@ -55,12 +60,19 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Modification time in nanoseconds since the Unix epoch (0 if unknown).
 pub fn mtime_ns(meta: &std::fs::Metadata) -> u64 {
-    meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_nanos().min(u64::MAX as u128) as u64).unwrap_or(0)
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 /// Writes a file atomically (temporary file in the same directory, fsync,
@@ -69,8 +81,15 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = dir.join(format!(".{name}.{}.{}.tmp", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed)));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     let result = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(data)?;
@@ -97,7 +116,9 @@ pub fn make_private(path: &Path) {
 
 /// Lower case extension of a file name / path ("" if none).
 pub fn ext_lower(path: &Path) -> String {
-    path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+    path.extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// Content type of an audio file by extension.
@@ -182,7 +203,12 @@ pub fn rel_string(rel: &Path) -> Option<String> {
 pub fn join_rel(root: &Path, rel: &str) -> Option<PathBuf> {
     let mut p = root.to_path_buf();
     for seg in rel.split('/') {
-        if seg.is_empty() || seg == "." || seg == ".." || seg.contains(['\\', '\0']) || (cfg!(windows) && seg.contains(':')) {
+        if seg.is_empty()
+            || seg == "."
+            || seg == ".."
+            || seg.contains(['\\', '\0'])
+            || (cfg!(windows) && seg.contains(':'))
+        {
             return None;
         }
         p.push(seg);
@@ -191,12 +217,17 @@ pub fn join_rel(root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 const WINDOWS_RESERVED: &[&str] = &[
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6",
-    "lpt7", "lpt8", "lpt9",
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
 fn is_windows_reserved(stem: &str) -> bool {
-    let base = stem.split('.').next().unwrap_or("").trim().to_ascii_lowercase();
+    let base = stem
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     WINDOWS_RESERVED.contains(&base.as_str())
 }
 
@@ -213,10 +244,13 @@ pub fn validate_name(name: &str) -> Result<&str, &'static str> {
     if name.contains("..") {
         return Err("name must not contain '..'");
     }
-    if name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+    if name.chars().any(|c| {
+        c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+    }) {
         return Err("name contains invalid characters");
     }
-    if name.starts_with('.') || name.ends_with('.') || name.starts_with(' ') || name.ends_with(' ') {
+    if name.starts_with('.') || name.ends_with('.') || name.starts_with(' ') || name.ends_with(' ')
+    {
         return Err("name must not start or end with '.' or a space");
     }
     if is_windows_reserved(name) {
@@ -234,11 +268,19 @@ pub fn sanitize_stem(raw: &str) -> String {
         Some(i) if i > 0 => &base[..i],
         _ => base,
     };
-    let mut s: String = stem.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')).take(80).collect();
+    let mut s: String = stem
+        .chars()
+        .filter(|c| {
+            !c.is_control() && !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+        .take(80)
+        .collect();
     while s.contains("..") {
         s = s.replace("..", ".");
     }
-    let s = s.trim_matches(|c: char| c == '.' || c.is_whitespace()).to_string();
+    let s = s
+        .trim_matches(|c: char| c == '.' || c.is_whitespace())
+        .to_string();
     if s.is_empty() {
         "image".to_string()
     } else if is_windows_reserved(&s) {
@@ -258,7 +300,10 @@ pub struct Permit<'a>(&'a Semaphore);
 
 impl Semaphore {
     pub fn new(n: usize) -> Semaphore {
-        Semaphore { available: Mutex::new(n.max(1)), cv: Condvar::new() }
+        Semaphore {
+            available: Mutex::new(n.max(1)),
+            cv: Condvar::new(),
+        }
     }
     pub fn acquire(&self) -> Permit<'_> {
         let mut a = self.available.lock().unwrap_or_else(|e| e.into_inner());
@@ -292,7 +337,11 @@ pub fn etag_matches(header: Option<&str>, tag: &str) -> bool {
 /// in decoder crates never take down a connection thread silently).
 pub fn catch<T>(what: &str, f: impl FnOnce() -> T) -> Result<T, String> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|p| {
-        let msg = p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "unknown panic".into());
+        let msg = p
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| p.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".into());
         crate::error!("{what} panicked: {msg}");
         format!("{what} failed (internal error)")
     })
@@ -310,7 +359,10 @@ mod tests {
         assert!(is_id(&id));
         assert!(!is_id("../../etc/passwd"));
         assert!(!is_id("ABCDEF0123456789"));
-        assert_eq!(unhex(&hex(&[0, 1, 0xab, 0xff])).unwrap(), vec![0, 1, 0xab, 0xff]);
+        assert_eq!(
+            unhex(&hex(&[0, 1, 0xab, 0xff])).unwrap(),
+            vec![0, 1, 0xab, 0xff]
+        );
         assert!(unhex("zz").is_none());
         assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"ab"));
     }
@@ -318,7 +370,20 @@ mod tests {
     #[test]
     fn names() {
         assert!(validate_name("My Preset (2)").is_ok());
-        for bad in ["", "../x", "a/b", "a\\b", "..", ".hidden", "x.", "con", "NUL.txt", "a\u{0}b", "a:b", &"x".repeat(101)] {
+        for bad in [
+            "",
+            "../x",
+            "a/b",
+            "a\\b",
+            "..",
+            ".hidden",
+            "x.",
+            "con",
+            "NUL.txt",
+            "a\u{0}b",
+            "a:b",
+            &"x".repeat(101),
+        ] {
             assert!(validate_name(bad).is_err(), "{bad:?}");
         }
         assert_eq!(sanitize_stem("../../etc/passwd.png"), "passwd");
@@ -333,7 +398,10 @@ mod tests {
     #[test]
     fn rel_paths() {
         let root = Path::new("/music");
-        assert_eq!(join_rel(root, "a/b.mp3").unwrap(), Path::new("/music/a/b.mp3"));
+        assert_eq!(
+            join_rel(root, "a/b.mp3").unwrap(),
+            Path::new("/music/a/b.mp3")
+        );
         assert!(join_rel(root, "a/../b").is_none());
         assert!(join_rel(root, "/abs").is_none());
         assert_eq!(rel_string(Path::new("a/b/c.mp3")).unwrap(), "a/b/c.mp3");

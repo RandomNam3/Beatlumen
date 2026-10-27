@@ -9,7 +9,9 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use crate::pcm::{PcmDecoder, PcmStream, SampleFormat};
 use crate::tags::{id3, riff};
-use crate::util::{be16, be32, bitrate_kbps, frames_to_ms, invalid, read_up_to, read_vec, stream_len, unsupported};
+use crate::util::{
+    be16, be32, bitrate_kbps, frames_to_ms, invalid, read_up_to, read_vec, stream_len, unsupported,
+};
 use crate::{Decoder, Error, MediaInfo, Picture, Source, Tags};
 
 pub(crate) struct AiffFile {
@@ -36,7 +38,11 @@ pub(crate) fn extended_to_f64(b: &[u8; 10]) -> f64 {
     }
 }
 
-pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures: bool) -> Result<AiffFile, Error> {
+pub(crate) fn parse<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    want_tags: bool,
+    want_pictures: bool,
+) -> Result<AiffFile, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let mut hdr = [0u8; 12];
@@ -65,12 +71,23 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
         match &id {
             b"COMM" => {
                 let d = read_vec(r, size.min(4096), 4096)?;
-                let (Some(ch), Some(frames), Some(bits)) = (be16(&d, 0), be32(&d, 2), be16(&d, 6)) else {
+                let (Some(ch), Some(frames), Some(bits)) = (be16(&d, 0), be32(&d, 2), be16(&d, 6))
+                else {
                     return invalid("short COMM chunk");
                 };
-                let ext: [u8; 10] = d.get(8..18).ok_or_else(|| Error::InvalidData("short COMM chunk".into()))?.try_into().unwrap();
+                let ext: [u8; 10] = d
+                    .get(8..18)
+                    .ok_or_else(|| Error::InvalidData("short COMM chunk".into()))?
+                    .try_into()
+                    .unwrap();
                 let rate = extended_to_f64(&ext);
-                let comp = if aifc { d.get(18..22).map(|c| c.try_into().unwrap()).unwrap_or(*b"NONE") } else { *b"NONE" };
+                let comp = if aifc {
+                    d.get(18..22)
+                        .map(|c| c.try_into().unwrap())
+                        .unwrap_or(*b"NONE")
+                } else {
+                    *b"NONE"
+                };
                 comm = Some((ch, frames, bits, rate, comp));
             }
             b"SSND" => {
@@ -103,8 +120,12 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
         }
         pos = body + size + (size & 1);
     }
-    let Some((channels, frames, bits, rate, comp)) = comm else { return invalid("missing COMM chunk") };
-    let Some((data_start, data_len)) = ssnd else { return invalid("missing SSND chunk") };
+    let Some((channels, frames, bits, rate, comp)) = comm else {
+        return invalid("missing COMM chunk");
+    };
+    let Some((data_start, data_len)) = ssnd else {
+        return invalid("missing SSND chunk");
+    };
     let bytes = (bits as usize).div_ceil(8);
     let fmt = match &comp {
         b"NONE" | b"twos" | b"TWOS" => SampleFormat::int(bytes, false, false),
@@ -118,9 +139,16 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
         b"fl64" | b"FL64" => Some(SampleFormat::F64Be),
         b"ulaw" | b"ULAW" => Some(SampleFormat::MuLaw),
         b"alaw" | b"ALAW" => Some(SampleFormat::ALaw),
-        _ => return unsupported(format!("AIFC compression '{}'", String::from_utf8_lossy(&comp))),
+        _ => {
+            return unsupported(format!(
+                "AIFC compression '{}'",
+                String::from_utf8_lossy(&comp)
+            ))
+        }
     };
-    let Some(fmt) = fmt else { return unsupported(format!("{bits}-bit AIFF samples")) };
+    let Some(fmt) = fmt else {
+        return unsupported(format!("{bits}-bit AIFF samples"));
+    };
     if !(rate.is_finite() && (1.0..4.0e9).contains(&rate)) {
         return invalid("bad AIFF sample rate");
     }
@@ -134,7 +162,11 @@ pub(crate) fn parse<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pi
         total_frames: (frames as u64).min(data_len / frame_bytes.max(1) as u64),
     };
     stream.validate()?;
-    Ok(AiffFile { stream, tags, pictures })
+    Ok(AiffFile {
+        stream,
+        tags,
+        pictures,
+    })
 }
 
 pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
@@ -143,7 +175,10 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     Ok(Box::new(PcmDecoder::new(r, a.stream)?))
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let a = parse(r, true, with_pictures)?;
     let s = &a.stream;
     Ok(MediaInfo {
@@ -152,7 +187,11 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
         sample_rate: s.sample_rate,
         channels: s.channels,
         duration_ms: Some(frames_to_ms(s.total_frames, s.sample_rate)),
-        bitrate_kbps: bitrate_kbps(s.total_frames * s.frame_bytes as u64, s.total_frames, s.sample_rate),
+        bitrate_kbps: bitrate_kbps(
+            s.total_frames * s.frame_bytes as u64,
+            s.total_frames,
+            s.sample_rate,
+        ),
         tags: a.tags,
         pictures: a.pictures,
     })

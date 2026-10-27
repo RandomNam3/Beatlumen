@@ -36,7 +36,12 @@ impl Taps {
     /// `extent` (<= n_in) is the part of the input in pixels that maps onto
     /// the output; the last input pixel may be partially covered.
     fn new(n_in: usize, extent: f64, n_out: usize) -> Taps {
-        let mut t = Taps { first: Vec::with_capacity(n_out), count: Vec::new(), offs: Vec::new(), w: Vec::new() };
+        let mut t = Taps {
+            first: Vec::with_capacity(n_out),
+            count: Vec::new(),
+            offs: Vec::new(),
+            w: Vec::new(),
+        };
         let extent = extent.clamp(f64::MIN_POSITIVE, n_in as f64);
         let scale = extent / n_out as f64;
         let mut fw: Vec<f64> = Vec::new();
@@ -76,7 +81,10 @@ impl Taps {
                 t.w.push(q as u32);
                 sum += q;
             }
-            let (imax, _) = fw.iter().enumerate().fold((0, -1.0), |m, (i, &x)| if x > m.1 { (i, x) } else { m });
+            let (imax, _) = fw
+                .iter()
+                .enumerate()
+                .fold((0, -1.0), |m, (i, &x)| if x > m.1 { (i, x) } else { m });
             let adj = t.w[start + imax] as i64 + (ONE - sum);
             t.w[start + imax] = adj.max(0) as u32;
             t.first.push(first);
@@ -103,14 +111,22 @@ pub(crate) fn resize_extent(img: &Image, ext_w: f64, ext_h: f64, width: u32, hei
     let (iw, ih) = (img.width as usize, img.height as usize);
     let (ow, oh) = (width as usize, height as usize);
     if ow == 0 || oh == 0 {
-        return Image { width, height, pixels: Vec::new() };
+        return Image {
+            width,
+            height,
+            pixels: Vec::new(),
+        };
     }
     if iw == 0 || ih == 0 {
         return Image::new(width, height);
     }
     let src = checked_pixels(img);
     if iw == ow && ih == oh && ext_w == iw as f64 && ext_h == ih as f64 {
-        return Image { width, height, pixels: src.into_owned() };
+        return Image {
+            width,
+            height,
+            pixels: src.into_owned(),
+        };
     }
     let tx = Taps::new(iw, ext_w, ow);
     let ty = Taps::new(ih, ext_h, oh);
@@ -164,7 +180,11 @@ pub(crate) fn resize_extent(img: &Image, ext_w: f64, ext_h: f64, width: u32, hei
             }
         }
     }
-    Image { width, height, pixels: out }
+    Image {
+        width,
+        height,
+        pixels: out,
+    }
 }
 
 fn resample_row(src: &[u16], dst: &mut [u16], tx: &Taps) {
@@ -202,14 +222,22 @@ mod tests {
     #[test]
     fn premultiplied_alpha() {
         // Transparent red next to opaque blue: the result must not be purple.
-        let img = Image { width: 2, height: 1, pixels: vec![255, 0, 0, 0, 0, 0, 255, 255] };
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![255, 0, 0, 0, 0, 0, 255, 255],
+        };
         let r = resize(&img, 1, 1);
         assert_eq!(r.pixels, vec![0, 0, 255, 128]);
     }
 
     #[test]
     fn upscale_and_identity() {
-        let img = Image { width: 2, height: 1, pixels: vec![0, 0, 0, 255, 255, 255, 255, 255] };
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![0, 0, 0, 255, 255, 255, 255, 255],
+        };
         let r = resize(&img, 4, 1);
         let g: Vec<u8> = r.pixels.chunks(4).map(|p| p[0]).collect();
         assert_eq!(g, vec![0, 64, 191, 255]);

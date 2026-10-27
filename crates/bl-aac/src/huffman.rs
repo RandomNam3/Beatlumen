@@ -132,7 +132,12 @@ fn spectral_book(codes: &[(u32, u8)], cb: usize) -> SpectralBook {
             v
         })
         .collect();
-    SpectralBook { table: HuffTable::new(codes, 9), dim, signed, values }
+    SpectralBook {
+        table: HuffTable::new(codes, 9),
+        dim,
+        signed,
+        values,
+    }
 }
 
 pub(crate) fn books() -> &'static Books {
@@ -153,7 +158,11 @@ pub(crate) fn books() -> &'static Books {
         ];
         Books {
             scalefactor: HuffTable::new(&SCALEFACTOR_CB, 9),
-            spectral: lists.iter().enumerate().map(|(i, l)| spectral_book(l, i + 1)).collect(),
+            spectral: lists
+                .iter()
+                .enumerate()
+                .map(|(i, l)| spectral_book(l, i + 1))
+                .collect(),
         }
     })
 }

@@ -74,7 +74,10 @@ pub const ALL: &[(Easing, &str)] = &[
 
 impl Easing {
     pub fn name(self) -> &'static str {
-        ALL.iter().find(|(e, _)| *e == self).map(|(_, n)| *n).unwrap_or("Linear")
+        ALL.iter()
+            .find(|(e, _)| *e == self)
+            .map(|(_, n)| *n)
+            .unwrap_or("Linear")
     }
 
     /// Parses a preset easing name. Accepts the misspelled "BouceIn" used by

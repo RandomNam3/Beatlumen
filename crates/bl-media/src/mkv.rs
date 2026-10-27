@@ -16,8 +16,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::alac::AlacDecoder;
 use crate::pcm::SampleFormat;
-use crate::tags::{apply_common, make_picture, parse_number_pair, set_str, vorbis_comment::parse_vorbis_comment};
-use crate::util::{bitrate_kbps, emit_window, invalid, mul_div, read_up_to, read_vec, stream_len, unsupported};
+use crate::tags::{
+    apply_common, make_picture, parse_number_pair, set_str, vorbis_comment::parse_vorbis_comment,
+};
+use crate::util::{
+    bitrate_kbps, emit_window, invalid, mul_div, read_up_to, read_vec, stream_len, unsupported,
+};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Picture, Source, Tags};
 
 const ID_EBML: u32 = 0x1A45_DFA3;
@@ -76,7 +80,16 @@ const ID_FILEDESC: u32 = 0x467E;
 
 /// Top-level (Segment child) element IDs; seeing one ends an
 /// unknown-sized cluster.
-const LEVEL1: [u32; 8] = [ID_SEEKHEAD, ID_INFO, ID_TRACKS, ID_CLUSTER, ID_CUES, ID_TAGS, ID_ATTACHMENTS, 0x1043_A770];
+const LEVEL1: [u32; 8] = [
+    ID_SEEKHEAD,
+    ID_INFO,
+    ID_TRACKS,
+    ID_CLUSTER,
+    ID_CUES,
+    ID_TAGS,
+    ID_ATTACHMENTS,
+    0x1043_A770,
+];
 
 const MAX_ELEMENT: u64 = 64 << 20;
 
@@ -92,23 +105,33 @@ struct Header {
 
 fn read_byte<R: Read + ?Sized>(r: &mut R) -> Result<Option<u8>, Error> {
     let mut b = [0u8; 1];
-    Ok(if read_up_to(r, &mut b)? == 1 { Some(b[0]) } else { None })
+    Ok(if read_up_to(r, &mut b)? == 1 {
+        Some(b[0])
+    } else {
+        None
+    })
 }
 
 /// Reads an element header at the current position; `Ok(None)` at EOF.
 fn read_header<R: Read + Seek + ?Sized>(r: &mut R) -> Result<Option<Header>, Error> {
     let pos = r.stream_position()?;
-    let Some(b0) = read_byte(r)? else { return Ok(None) };
+    let Some(b0) = read_byte(r)? else {
+        return Ok(None);
+    };
     let len = b0.leading_zeros() as usize + 1;
     if len > 4 {
         return invalid("bad EBML element ID");
     }
     let mut id = b0 as u32;
     for _ in 1..len {
-        let Some(b) = read_byte(r)? else { return Ok(None) };
+        let Some(b) = read_byte(r)? else {
+            return Ok(None);
+        };
         id = (id << 8) | b as u32;
     }
-    let Some(s0) = read_byte(r)? else { return Ok(None) };
+    let Some(s0) = read_byte(r)? else {
+        return Ok(None);
+    };
     let slen = s0.leading_zeros() as usize + 1;
     if slen > 8 {
         return invalid("bad EBML size");
@@ -116,12 +139,19 @@ fn read_header<R: Read + Seek + ?Sized>(r: &mut R) -> Result<Option<Header>, Err
     let mut size = (s0 as u64) & (0xff >> slen);
     let mut all_ones = size == (0xff >> slen) as u64;
     for _ in 1..slen {
-        let Some(b) = read_byte(r)? else { return Ok(None) };
+        let Some(b) = read_byte(r)? else {
+            return Ok(None);
+        };
         size = (size << 8) | b as u64;
         all_ones &= b == 0xff;
     }
     let data = pos + len as u64 + slen as u64;
-    Ok(Some(Header { id, size: (!all_ones).then_some(size), pos, data }))
+    Ok(Some(Header {
+        id,
+        size: (!all_ones).then_some(size),
+        pos,
+        data,
+    }))
 }
 
 /// Iterates over child elements of an in-memory master element.
@@ -159,11 +189,17 @@ impl<'a> Iterator for Children<'a> {
             self.pos = d.len();
             return None;
         }
-        let id = d[self.pos..self.pos + ilen].iter().fold(0u32, |a, &b| (a << 8) | b as u32);
+        let id = d[self.pos..self.pos + ilen]
+            .iter()
+            .fold(0u32, |a, &b| (a << 8) | b as u32);
         let mut p = self.pos + ilen;
         let (size, slen) = vint(d, &mut p)?;
         let unknown = size == (1u64 << (7 * slen)) - 1;
-        let end = if unknown { d.len() } else { p.checked_add(size as usize).filter(|&e| e <= d.len())? };
+        let end = if unknown {
+            d.len()
+        } else {
+            p.checked_add(size as usize).filter(|&e| e <= d.len())?
+        };
         self.pos = end;
         Some((id, &d[p..end]))
     }
@@ -213,7 +249,11 @@ struct Track {
 }
 
 fn parse_track(d: &[u8]) -> Track {
-    let mut t = Track { channels: 1, rate: 8000.0, ..Default::default() };
+    let mut t = Track {
+        channels: 1,
+        rate: 8000.0,
+        ..Default::default()
+    };
     for (id, b) in children(d) {
         match id {
             ID_TRACKNUMBER => t.number = uint(b),
@@ -319,7 +359,11 @@ struct Segment {
     pictures: Vec<Picture>,
 }
 
-fn parse_segment<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures: bool) -> Result<Segment, Error> {
+fn parse_segment<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    want_tags: bool,
+    want_pictures: bool,
+) -> Result<Segment, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let ebml = read_header(r)?.ok_or_else(|| Error::InvalidData("empty file".into()))?;
@@ -330,7 +374,9 @@ fn parse_segment<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictu
     // Find the Segment.
     let seg = loop {
         r.seek(SeekFrom::Start(pos))?;
-        let Some(h) = read_header(r)? else { return invalid("no Segment") };
+        let Some(h) = read_header(r)? else {
+            return invalid("no Segment");
+        };
         if h.id == ID_SEGMENT {
             break h;
         }
@@ -384,7 +430,8 @@ fn parse_segment<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictu
         if let Ok(Some(h)) = read_header(r) {
             if h.id == id {
                 if let Some(size) = h.size {
-                    let _ = handle_level1(r, &h, size, &mut s, &mut seek_map, want_tags, want_pictures);
+                    let _ =
+                        handle_level1(r, &h, size, &mut s, &mut seek_map, want_tags, want_pictures);
                     seen.push(id);
                 }
             }
@@ -432,7 +479,9 @@ fn handle_level1<R: Read + Seek + ?Sized>(
             for (id, v) in children(&d) {
                 match id {
                     ID_TIMECODESCALE => s.timecode_scale = uint(v).max(1),
-                    ID_DURATION => s.duration = Some(float(v)).filter(|d| d.is_finite() && *d >= 0.0),
+                    ID_DURATION => {
+                        s.duration = Some(float(v)).filter(|d| d.is_finite() && *d >= 0.0)
+                    }
                     ID_TITLE => s.title = Some(string(v)),
                     _ => {}
                 }
@@ -440,7 +489,10 @@ fn handle_level1<R: Read + Seek + ?Sized>(
         }
         ID_TRACKS => {
             let d = read(r)?;
-            s.tracks = children(&d).filter(|(id, _)| *id == ID_TRACKENTRY).map(|(_, b)| parse_track(b)).collect();
+            s.tracks = children(&d)
+                .filter(|(id, _)| *id == ID_TRACKENTRY)
+                .map(|(_, b)| parse_track(b))
+                .collect();
         }
         ID_CUES => {
             let d = read(r)?;
@@ -474,7 +526,8 @@ fn handle_level1<R: Read + Seek + ?Sized>(
         ID_ATTACHMENTS if want_pictures => {
             let d = read(r)?;
             for (_, f) in children(&d).filter(|(id, _)| *id == ID_ATTACHEDFILE) {
-                let (mut name, mut mime, mut desc, mut data) = (String::new(), String::new(), String::new(), None);
+                let (mut name, mut mime, mut desc, mut data) =
+                    (String::new(), String::new(), String::new(), None);
                 for (id, v) in children(f) {
                     match id {
                         ID_FILENAME => name = string(v),
@@ -486,9 +539,14 @@ fn handle_level1<R: Read + Seek + ?Sized>(
                 }
                 if let Some(data) = data {
                     if mime.starts_with("image/") {
-                        let kind = if name.to_ascii_lowercase().starts_with("cover") { 3 } else { 0 };
+                        let kind = if name.to_ascii_lowercase().starts_with("cover") {
+                            3
+                        } else {
+                            0
+                        };
                         let d = if desc.is_empty() { name } else { desc };
-                        s.pictures.push(make_picture(&mime, kind, &d, data.to_vec()));
+                        s.pictures
+                            .push(make_picture(&mime, kind, &d, data.to_vec()));
                     }
                 }
             }
@@ -539,7 +597,9 @@ fn parse_tags(d: &[u8], tags: &mut Tags) {
                         tags.track = tags.track.or(n);
                         tags.track_total = tags.track_total.or(t);
                     }
-                    "TOTAL_PARTS" => tags.track_total = tags.track_total.or(parse_number_pair(&value).0),
+                    "TOTAL_PARTS" => {
+                        tags.track_total = tags.track_total.or(parse_number_pair(&value).0)
+                    }
                     _ => {
                         apply_common(tags, &name, &value);
                     }
@@ -553,8 +613,14 @@ fn parse_tags(d: &[u8], tags: &mut Tags) {
 /// Picks the first audio track with a supported codec (or the first audio
 /// track at all).
 fn pick_track(s: &Segment) -> Option<&Track> {
-    let audio = || s.tracks.iter().filter(|t| t.kind == 2 || (t.kind == 0 && t.codec_id.starts_with("A_")));
-    audio().find(|t| codec_name(&t.codec_id) != "unknown").or_else(|| audio().next())
+    let audio = || {
+        s.tracks
+            .iter()
+            .filter(|t| t.kind == 2 || (t.kind == 0 && t.codec_id.starts_with("A_")))
+    };
+    audio()
+        .find(|t| codec_name(&t.codec_id) != "unknown")
+        .or_else(|| audio().next())
 }
 
 fn track_rate(t: &Track) -> u32 {
@@ -571,10 +637,15 @@ fn track_rate(t: &Track) -> u32 {
     }
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let file_len = stream_len(r)?;
     let mut s = parse_segment(r, true, with_pictures)?;
-    let t = pick_track(&s).ok_or_else(|| Error::Unsupported("no audio track".into()))?.clone();
+    let t = pick_track(&s)
+        .ok_or_else(|| Error::Unsupported("no audio track".into()))?
+        .clone();
     if let Some(title) = s.title.take() {
         set_str(&mut s.tags.title, &title);
     }
@@ -584,8 +655,13 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
     if t.codec_id == "A_VORBIS" || (t.codec_id == "A_FLAC" && tags == Tags::default()) {
         read_private_comments(&t, &mut tags, with_pictures.then_some(&mut pictures));
     }
-    let duration_ms = s.duration.map(|d| (d * s.timecode_scale as f64 / 1e6).round() as u64);
-    let audio_bytes = s.seg_end.min(file_len).saturating_sub(s.first_cluster.unwrap_or(s.seg_data));
+    let duration_ms = s
+        .duration
+        .map(|d| (d * s.timecode_scale as f64 / 1e6).round() as u64);
+    let audio_bytes = s
+        .seg_end
+        .min(file_len)
+        .saturating_sub(s.first_cluster.unwrap_or(s.seg_data));
     let mut channels = t.channels;
     if codec == "opus" {
         if let Ok(h) = bl_opus::OpusHead::parse(&t.private) {
@@ -598,7 +674,9 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
         sample_rate: track_rate(&t),
         channels,
         duration_ms,
-        bitrate_kbps: duration_ms.filter(|&d| d > 0).and_then(|d| bitrate_kbps(audio_bytes, d, 1000)),
+        bitrate_kbps: duration_ms
+            .filter(|&d| d > 0)
+            .and_then(|d| bitrate_kbps(audio_bytes, d, 1000)),
         tags,
         pictures,
     })
@@ -661,7 +739,9 @@ impl Demuxer {
             if pos >= self.seg_end {
                 return Ok(None);
             }
-            let Some(h) = read_header(&mut self.r)? else { return Ok(None) };
+            let Some(h) = read_header(&mut self.r)? else {
+                return Ok(None);
+            };
             match h.id {
                 ID_CLUSTER => {
                     self.cluster_tc = 0;
@@ -672,7 +752,9 @@ impl Demuxer {
                     self.cluster_tc = uint(&d);
                 }
                 ID_SIMPLEBLOCK | ID_BLOCKGROUP => {
-                    let Some(size) = h.size else { return invalid("unknown-sized block") };
+                    let Some(size) = h.size else {
+                        return invalid("unknown-sized block");
+                    };
                     // Peek at the track number before reading large blocks.
                     let d = read_vec(&mut self.r, size, MAX_ELEMENT)?;
                     if h.id == ID_SIMPLEBLOCK {
@@ -692,32 +774,36 @@ impl Demuxer {
                         }
                     }
                 }
-                id => {
-                    match h.size {
-                        Some(size) if !LEVEL1.contains(&id) || id != ID_CLUSTER => {
-                            self.r.seek(SeekFrom::Start(h.data.saturating_add(size)))?;
-                        }
-                        _ => return invalid("unknown-sized element inside cluster"),
+                id => match h.size {
+                    Some(size) if !LEVEL1.contains(&id) || id != ID_CLUSTER => {
+                        self.r.seek(SeekFrom::Start(h.data.saturating_add(size)))?;
                     }
-                }
+                    _ => return invalid("unknown-sized element inside cluster"),
+                },
             }
         }
     }
 
     fn parse_block(&mut self, d: &[u8], discard_ns: i64) -> Result<(), Error> {
         let mut p = 0usize;
-        let Some((track, _)) = vint(d, &mut p) else { return Ok(()) };
+        let Some((track, _)) = vint(d, &mut p) else {
+            return Ok(());
+        };
         if track != self.track || d.len() < p + 3 {
             return Ok(());
         }
         let rel = i16::from_be_bytes([d[p], d[p + 1]]) as i64;
         let flags = d[p + 2];
         p += 3;
-        let ts = (self.cluster_tc as i64).saturating_add(rel).saturating_mul(self.timecode_scale as i64);
+        let ts = (self.cluster_tc as i64)
+            .saturating_add(rel)
+            .saturating_mul(self.timecode_scale as i64);
         let lacing = (flags >> 1) & 3;
         let mut sizes: Vec<usize> = Vec::new();
         if lacing != 0 {
-            let Some(&n) = d.get(p) else { return invalid("truncated lace header") };
+            let Some(&n) = d.get(p) else {
+                return invalid("truncated lace header");
+            };
             p += 1;
             let count = n as usize + 1;
             match lacing {
@@ -725,7 +811,9 @@ impl Demuxer {
                     for _ in 0..count - 1 {
                         let mut s = 0usize;
                         loop {
-                            let Some(&b) = d.get(p) else { return invalid("truncated Xiph lacing") };
+                            let Some(&b) = d.get(p) else {
+                                return invalid("truncated Xiph lacing");
+                            };
                             p += 1;
                             s += b as usize;
                             if b != 255 {
@@ -736,11 +824,15 @@ impl Demuxer {
                     }
                 }
                 3 => {
-                    let Some((first, _)) = vint(d, &mut p) else { return invalid("bad EBML lacing") };
+                    let Some((first, _)) = vint(d, &mut p) else {
+                        return invalid("bad EBML lacing");
+                    };
                     let mut prev = first as i64;
                     sizes.push(first as usize);
                     for _ in 1..count - 1 {
-                        let Some((raw, len)) = vint(d, &mut p) else { return invalid("bad EBML lacing") };
+                        let Some((raw, len)) = vint(d, &mut p) else {
+                            return invalid("bad EBML lacing");
+                        };
                         let bias = (1i64 << (7 * len - 1)) - 1;
                         prev += raw as i64 - bias;
                         if prev < 0 {
@@ -771,7 +863,11 @@ impl Demuxer {
             data.extend_from_slice(&self.strip);
             data.extend_from_slice(&d[p..p + s]);
             p += s;
-            self.queue.push_back(MkvFrame { data, ts: (i == 0).then_some(ts), discard_ns: if i + 1 == n { discard_ns } else { 0 } });
+            self.queue.push_back(MkvFrame {
+                data,
+                ts: (i == 0).then_some(ts),
+                discard_ns: if i + 1 == n { discard_ns } else { 0 },
+            });
         }
         Ok(())
     }
@@ -871,7 +967,12 @@ struct Interval {
 }
 
 impl Interval {
-    const EMPTY: Interval = Interval { lo: i64::MIN, hi: i64::MAX, count: 0, last: 0 };
+    const EMPTY: Interval = Interval {
+        lo: i64::MIN,
+        hi: i64::MAX,
+        count: 0,
+        last: 0,
+    };
 
     fn add(&mut self, lo: i64, hi: i64) {
         self.lo = self.lo.max(lo);
@@ -898,7 +999,9 @@ impl Interval {
 pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     let mut r = BufReader::with_capacity(64 * 1024, src);
     let s = parse_segment(&mut r, false, false)?;
-    let t = pick_track(&s).ok_or_else(|| Error::Unsupported("no audio track".into()))?.clone();
+    let t = pick_track(&s)
+        .ok_or_else(|| Error::Unsupported("no audio track".into()))?
+        .clone();
     if t.unsupported_encoding {
         return unsupported("compressed or encrypted Matroska track");
     }
@@ -919,14 +1022,20 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
             PacketDecoder::Opus(bl_opus::OpusDecoder::new(&head, 48000)?)
         }
         "A_VORBIS" => {
-            let h = xiph_split(&t.private).filter(|h| h.len() == 3).ok_or_else(|| Error::InvalidData("bad Vorbis CodecPrivate".into()))?;
+            let h = xiph_split(&t.private)
+                .filter(|h| h.len() == 3)
+                .ok_or_else(|| Error::InvalidData("bad Vorbis CodecPrivate".into()))?;
             preroll_ns = preroll_ns.max(250_000_000);
             PacketDecoder::Vorbis(Box::new(bl_vorbis::VorbisDecoder::new(h[0], h[1], h[2])?))
         }
         "A_FLAC" => PacketDecoder::Flac(bl_flac::FlacFrameDecoder::new(&t.private)?),
         "A_ALAC" => PacketDecoder::Alac(AlacDecoder::new(&t.private)?),
         id if id.starts_with("A_AAC") => {
-            let asc = if t.private.len() >= 2 { t.private.clone() } else { synth_asc(&t).ok_or_else(|| Error::InvalidData("cannot build AAC config".into()))? };
+            let asc = if t.private.len() >= 2 {
+                t.private.clone()
+            } else {
+                synth_asc(&t).ok_or_else(|| Error::InvalidData("cannot build AAC config".into()))?
+            };
             PacketDecoder::Aac(Box::new(bl_aac::AacDecoder::new(&asc)?))
         }
         "A_PCM/INT/LIT" | "A_PCM/INT/BIG" | "A_PCM/FLOAT/IEEE" => {
@@ -943,12 +1052,30 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
         other => return unsupported(format!("Matroska codec {other}")),
     };
     let spec = match &dec {
-        PacketDecoder::Opus(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Vorbis(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Aac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Flac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Alac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Pcm(_) => AudioSpec { sample_rate: rate, channels: t.channels },
+        PacketDecoder::Opus(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Vorbis(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Aac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Flac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Alac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Pcm(_) => AudioSpec {
+            sample_rate: rate,
+            channels: t.channels,
+        },
     };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("decoder reported an empty stream format");
@@ -958,14 +1085,27 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
         (ns * spec.sample_rate as f64 / 1e9).round().max(0.0) as u64
     });
     let first_cluster = s.first_cluster.unwrap_or(s.seg_end);
-    let mut cues: Vec<(u64, u64)> = s.cues.iter().filter(|c| c.2 == t.number || c.2 == 0).map(|c| (c.0, c.1)).collect();
+    let mut cues: Vec<(u64, u64)> = s
+        .cues
+        .iter()
+        .filter(|c| c.2 == t.number || c.2 == 0)
+        .map(|c| (c.0, c.1))
+        .collect();
     if cues.is_empty() {
         cues = s.cues.iter().map(|c| (c.0, c.1)).collect();
     }
     cues.sort_unstable();
     let clusters_scanned = !cues.is_empty();
     r.seek(SeekFrom::Start(first_cluster))?;
-    let dmx = Demuxer { r, seg_end: s.seg_end, track: t.number, strip: t.strip.clone(), timecode_scale: s.timecode_scale, cluster_tc: 0, queue: VecDeque::new() };
+    let dmx = Demuxer {
+        r,
+        seg_end: s.seg_end,
+        track: t.number,
+        strip: t.strip.clone(),
+        timecode_scale: s.timecode_scale,
+        cluster_tc: 0,
+        queue: VecDeque::new(),
+    };
     Ok(Box::new(MkvDecoder {
         dmx,
         dec,
@@ -1005,7 +1145,13 @@ impl MkvDecoder {
     fn resolve_pending(&mut self) {
         let start = if self.cons.count > 0 {
             let half_tick = ts_range(0, self.spec.sample_rate, self.dmx.timecode_scale).1;
-            snap_to_grid(self.cons.value(), &self.cons, self.grid_origin, self.grid_gcd, half_tick)
+            snap_to_grid(
+                self.cons.value(),
+                &self.cons,
+                self.grid_origin,
+                self.grid_gcd,
+                half_tick,
+            )
         } else {
             self.discard_before as i64
         };
@@ -1029,7 +1175,11 @@ impl MkvDecoder {
         let mut n = self.dec.decode(&f.data, ch, &mut self.tmp)?;
         self.tmp.truncate(n * ch);
         if f.discard_ns > 0 {
-            let cut = mul_div(f.discard_ns as u64, self.spec.sample_rate as u64, 1_000_000_000) as usize;
+            let cut = mul_div(
+                f.discard_ns as u64,
+                self.spec.sample_rate as u64,
+                1_000_000_000,
+            ) as usize;
             n = n.saturating_sub(cut);
             self.tmp.truncate(n * ch);
         }
@@ -1057,7 +1207,8 @@ impl MkvDecoder {
                 }
                 self.pending.extend_from_slice(&self.tmp);
                 self.pending_frames += n as i64;
-                if self.cons.resolved(16) || self.pending_frames > 2 * self.spec.sample_rate as i64 {
+                if self.cons.resolved(16) || self.pending_frames > 2 * self.spec.sample_rate as i64
+                {
                     self.resolve_pending();
                 }
             }
@@ -1088,7 +1239,11 @@ impl MkvDecoder {
             guard += 1;
         }
         if self.ts_offset.is_none() {
-            self.ts_offset = Some(if self.calib.count > 0 { self.calib.value() } else { self.delay });
+            self.ts_offset = Some(if self.calib.count > 0 {
+                self.calib.value()
+            } else {
+                self.delay
+            });
         }
         Ok(())
     }
@@ -1102,7 +1257,11 @@ impl MkvDecoder {
 }
 
 /// Builds a cluster index `(timecode, position)` by walking cluster headers.
-fn scan_cluster_index<R: Read + Seek + ?Sized>(r: &mut R, first_cluster: u64, seg_end: u64) -> Result<Vec<(u64, u64)>, Error> {
+fn scan_cluster_index<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    first_cluster: u64,
+    seg_end: u64,
+) -> Result<Vec<(u64, u64)>, Error> {
     let mut pos = first_cluster;
     let mut index = Vec::new();
     while pos < seg_end {
@@ -1197,9 +1356,18 @@ impl Decoder for MkvDecoder {
             self.calibrate()?;
         }
         let off = self.ts_offset.unwrap_or(self.delay);
-        let target_ns = mul_div((frame as i64 + off).max(0) as u64, 1_000_000_000, self.spec.sample_rate as u64);
+        let target_ns = mul_div(
+            (frame as i64 + off).max(0) as u64,
+            1_000_000_000,
+            self.spec.sample_rate as u64,
+        );
         let start_ns = target_ns.saturating_sub(self.preroll_ns);
-        let (cluster_pos, from_start) = pick_cluster(&self.cues, self.first_cluster, start_ns, self.dmx.timecode_scale);
+        let (cluster_pos, from_start) = pick_cluster(
+            &self.cues,
+            self.first_cluster,
+            start_ns,
+            self.dmx.timecode_scale,
+        );
         self.restart_at(cluster_pos, from_start)?;
         self.discard_before = frame;
         // Establish the position now so the actual frame is known.
@@ -1311,10 +1479,18 @@ impl Seek for ElementaryStream {
         let t = match to {
             SeekFrom::Start(n) => n as i128,
             SeekFrom::Current(k) => self.pos as i128 + k as i128,
-            SeekFrom::End(_) => return Err(io::Error::new(io::ErrorKind::Unsupported, "stream length unknown")),
+            SeekFrom::End(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "stream length unknown",
+                ))
+            }
         };
         if t < self.base as i128 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before retained data"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before retained data",
+            ));
         }
         self.pos = t.min(u64::MAX as i128) as u64;
         Ok(self.pos)
@@ -1350,16 +1526,30 @@ impl MkvMpegDecoder {
     fn end(&self) -> Option<u64> {
         let notes = self.stamps.lock().unwrap_or_else(|e| e.into_inner());
         notes.discard.map(|(k, ns)| {
-            let cut = ((ns as i128 * self.spec.sample_rate as i128 + 500_000_000) / 1_000_000_000) as i64;
+            let cut =
+                ((ns as i128 * self.spec.sample_rate as i128 + 500_000_000) / 1_000_000_000) as i64;
             (self.origin + (k as i64 + 1) * self.spf - cut).max(0) as u64
         })
     }
 }
 
-fn open_mpeg(mut r: BufReader<Box<dyn Source>>, s: &Segment, t: &Track, delay: i64) -> Result<Box<dyn Decoder>, Error> {
+fn open_mpeg(
+    mut r: BufReader<Box<dyn Source>>,
+    s: &Segment,
+    t: &Track,
+    delay: i64,
+) -> Result<Box<dyn Decoder>, Error> {
     let first_cluster = s.first_cluster.unwrap_or(s.seg_end);
     r.seek(SeekFrom::Start(first_cluster))?;
-    let mut dmx = Demuxer { r, seg_end: s.seg_end, track: t.number, strip: t.strip.clone(), timecode_scale: s.timecode_scale, cluster_tc: 0, queue: VecDeque::new() };
+    let mut dmx = Demuxer {
+        r,
+        seg_end: s.seg_end,
+        track: t.number,
+        strip: t.strip.clone(),
+        timecode_scale: s.timecode_scale,
+        cluster_tc: 0,
+        queue: VecDeque::new(),
+    };
     // Calibrate timestamps against the frame grid from the first frames.
     let mut header = None;
     let mut calib = Interval::EMPTY;
@@ -1384,17 +1574,37 @@ fn open_mpeg(mut r: BufReader<Box<dyn Source>>, s: &Segment, t: &Track, delay: i
         k += 1;
     }
     let h = header.ok_or_else(|| Error::InvalidData("no MPEG audio frame in track".into()))?;
-    let ts_offset = if calib.count > 0 { calib.value() } else { delay };
+    let ts_offset = if calib.count > 0 {
+        calib.value()
+    } else {
+        delay
+    };
     dmx.r.seek(SeekFrom::Start(first_cluster))?;
     dmx.queue.clear();
     let stamps: Stamps = Arc::new(Mutex::new(StreamNotes::default()));
-    let stream = ElementaryStream { dmx, buf: Vec::new(), base: 0, pos: 0, eof: false, frames: 0, stamps: stamps.clone() };
+    let stream = ElementaryStream {
+        dmx,
+        buf: Vec::new(),
+        base: 0,
+        pos: 0,
+        eof: false,
+        frames: 0,
+        stamps: stamps.clone(),
+    };
     let dec = bl_mp3::Mp3Decoder::new(stream)?;
-    let spec = AudioSpec { sample_rate: dec.sample_rate(), channels: dec.channels() };
+    let spec = AudioSpec {
+        sample_rate: dec.sample_rate(),
+        channels: dec.channels(),
+    };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("decoder reported an empty stream format");
     }
-    let total = s.duration.map(|d| ((d * s.timecode_scale as f64 * spec.sample_rate as f64 / 1e9).round().max(0.0) as u64).saturating_sub(delay.max(0) as u64));
+    let total = s.duration.map(|d| {
+        ((d * s.timecode_scale as f64 * spec.sample_rate as f64 / 1e9)
+            .round()
+            .max(0.0) as u64)
+            .saturating_sub(delay.max(0) as u64)
+    });
     let mut cues: Vec<(u64, u64)> = s.cues.iter().map(|c| (c.0, c.1)).collect();
     cues.sort_unstable();
     Ok(Box::new(MkvMpegDecoder {
@@ -1438,7 +1648,9 @@ impl Decoder for MkvMpegDecoder {
             }
         }
         loop {
-            let Some(dec) = self.dec.as_mut() else { return Ok(false) };
+            let Some(dec) = self.dec.as_mut() else {
+                return Ok(false);
+            };
             self.tmp.clear();
             let more = dec.next_chunk(&mut self.tmp)?;
             let n = self.tmp.len() / ch;
@@ -1454,16 +1666,24 @@ impl Decoder for MkvMpegDecoder {
         }
     }
     fn seek(&mut self, frame: u64) -> Result<u64, Error> {
-        let Some(dec) = self.dec.take() else { return invalid("decoder unavailable after an earlier error") };
+        let Some(dec) = self.dec.take() else {
+            return invalid("decoder unavailable after an earlier error");
+        };
         let mut stream = dec.into_inner();
         if !self.clusters_scanned {
             self.clusters_scanned = true;
-            self.cues = scan_cluster_index(&mut stream.dmx.r, self.first_cluster, stream.dmx.seg_end)?;
+            self.cues =
+                scan_cluster_index(&mut stream.dmx.r, self.first_cluster, stream.dmx.seg_end)?;
         }
         let rate = self.spec.sample_rate as u64;
-        let target_ns = mul_div((frame as i64 + self.ts_offset).max(0) as u64, 1_000_000_000, rate);
+        let target_ns = mul_div(
+            (frame as i64 + self.ts_offset).max(0) as u64,
+            1_000_000_000,
+            rate,
+        );
         let start_ns = target_ns.saturating_sub(300_000_000);
-        let (cluster, from_start) = pick_cluster(&self.cues, self.first_cluster, start_ns, self.tick);
+        let (cluster, from_start) =
+            pick_cluster(&self.cues, self.first_cluster, start_ns, self.tick);
         stream.restart(cluster)?;
         let mut dec = bl_mp3::Mp3Decoder::new(stream)?;
         self.pending.clear();
@@ -1475,7 +1695,12 @@ impl Decoder for MkvMpegDecoder {
         } else {
             // Decode ahead until enough timestamps constrain the position.
             loop {
-                let have = self.stamps.lock().unwrap_or_else(|e| e.into_inner()).stamps.len();
+                let have = self
+                    .stamps
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .stamps
+                    .len();
                 if have >= 16 || self.pending.len() / ch > 2 * rate as usize {
                     break;
                 }
@@ -1484,13 +1709,23 @@ impl Decoder for MkvMpegDecoder {
                 }
             }
             let mut iv = Interval::EMPTY;
-            for &(k, ts) in self.stamps.lock().unwrap_or_else(|e| e.into_inner()).stamps.iter() {
+            for &(k, ts) in self
+                .stamps
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .stamps
+                .iter()
+            {
                 let (lo, hi) = ts_range(ts, self.spec.sample_rate, self.tick);
                 let off = self.ts_offset + k as i64 * self.spf;
                 iv.add(lo - off, hi - off);
             }
             let half_tick = ts_range(0, self.spec.sample_rate, self.tick).1;
-            let start = if iv.count > 0 { snap_to_grid(iv.value(), &iv, Some(-self.delay), self.spf, half_tick) } else { frame as i64 };
+            let start = if iv.count > 0 {
+                snap_to_grid(iv.value(), &iv, Some(-self.delay), self.spf, half_tick)
+            } else {
+                frame as i64
+            };
             self.origin = start;
             self.pos = start + (self.pending.len() / ch) as i64;
         }
@@ -1508,7 +1743,15 @@ mod tests {
 
     fn demuxer(track: u64) -> Demuxer {
         let src: Box<dyn Source> = Box::new(std::io::Cursor::new(Vec::new()));
-        Demuxer { r: BufReader::new(src), seg_end: 0, track, strip: Vec::new(), timecode_scale: 1_000_000, cluster_tc: 100, queue: VecDeque::new() }
+        Demuxer {
+            r: BufReader::new(src),
+            seg_end: 0,
+            track,
+            strip: Vec::new(),
+            timecode_scale: 1_000_000,
+            cluster_tc: 100,
+            queue: VecDeque::new(),
+        }
     }
 
     #[test]
@@ -1543,7 +1786,9 @@ mod tests {
         assert!(d.queue.is_empty());
         // Corrupt lace sizes are errors, not panics.
         let mut d = demuxer(1);
-        assert!(d.parse_block(&[0x81, 0, 0, 0x02, 0x01, 255, 255, 255], 0).is_err());
+        assert!(d
+            .parse_block(&[0x81, 0, 0, 0x02, 0x01, 255, 255, 255], 0)
+            .is_err());
     }
 
     #[test]
@@ -1562,7 +1807,9 @@ mod tests {
     #[test]
     fn element_iteration() {
         // TimecodeScale = 1000000, Duration float32
-        let d = [0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40, 0x44, 0x89, 0x84, 0x45, 0x9C, 0x40, 0x00];
+        let d = [
+            0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40, 0x44, 0x89, 0x84, 0x45, 0x9C, 0x40, 0x00,
+        ];
         let v: Vec<_> = children(&d).collect();
         assert_eq!(v[0].0, ID_TIMECODESCALE);
         assert_eq!(uint(v[0].1), 1_000_000);

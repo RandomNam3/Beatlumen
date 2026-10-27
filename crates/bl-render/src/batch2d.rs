@@ -32,10 +32,20 @@ impl Rect {
         let y = self.y.max(o.y);
         let r = self.right().min(o.right());
         let b = self.bottom().min(o.bottom());
-        Rect { x, y, w: (r - x).max(0.0), h: (b - y).max(0.0) }
+        Rect {
+            x,
+            y,
+            w: (r - x).max(0.0),
+            h: (b - y).max(0.0),
+        }
     }
     pub fn shrink(&self, d: f32) -> Rect {
-        Rect { x: self.x + d, y: self.y + d, w: (self.w - 2.0 * d).max(0.0), h: (self.h - 2.0 * d).max(0.0) }
+        Rect {
+            x: self.x + d,
+            y: self.y + d,
+            w: (self.w - 2.0 * d).max(0.0),
+            h: (self.h - 2.0 * d).max(0.0),
+        }
     }
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
@@ -63,7 +73,12 @@ impl Color {
         Color(self.0, self.1, self.2, self.3 * a)
     }
     pub fn lerp(self, o: Color, t: f32) -> Color {
-        Color(self.0 + (o.0 - self.0) * t, self.1 + (o.1 - self.1) * t, self.2 + (o.2 - self.2) * t, self.3 + (o.3 - self.3) * t)
+        Color(
+            self.0 + (o.0 - self.0) * t,
+            self.1 + (o.1 - self.1) * t,
+            self.2 + (o.2 - self.2) * t,
+            self.3 + (o.3 - self.3) * t,
+        )
     }
     fn to_u8(self) -> [u8; 4] {
         let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
@@ -117,7 +132,18 @@ pub const ATLAS_SIZE: u32 = 2048;
 
 impl Batch2d {
     pub fn new(gl: &Gl) -> Result<Batch2d, String> {
-        let program = Program::new(gl, UI_VS, UI_FS, &[(0, "position"), (1, "uv"), (2, "color"), (3, "local"), (4, "shape")])?;
+        let program = Program::new(
+            gl,
+            UI_VS,
+            UI_FS,
+            &[
+                (0, "position"),
+                (1, "uv"),
+                (2, "color"),
+                (3, "local"),
+                (4, "shape"),
+            ],
+        )?;
         let vao = gl.create_vertex_array();
         gl.bind_vertex_array(vao);
         let vbo = gl.create_buffer();
@@ -159,7 +185,15 @@ impl Batch2d {
         }
         gl.bind_texture(TEXTURE_2D, self.atlas.id);
         gl.pixel_store(UNPACK_ALIGNMENT, 1);
-        gl.tex_sub_image_2d(x as i32, y as i32, w as i32, h as i32, RED, UNSIGNED_BYTE, data);
+        gl.tex_sub_image_2d(
+            x as i32,
+            y as i32,
+            w as i32,
+            h as i32,
+            RED,
+            UNSIGNED_BYTE,
+            data,
+        );
     }
 
     /// Starts a frame. `width`/`height` are in logical units; `scale` is
@@ -203,13 +237,30 @@ impl Batch2d {
         let start = self.indices.len() as u32;
         match self.cmds.last_mut() {
             Some(c) if c.image == image && c.clip == clip => {}
-            _ => self.cmds.push(Cmd { start, count: 0, image, clip }),
+            _ => self.cmds.push(Cmd {
+                start,
+                count: 0,
+                image,
+                clip,
+            }),
         }
     }
 
-    fn quad(&mut self, r: Rect, pad: f32, uv: [f32; 4], color: Color, shape: [f32; 4], image: GLuint) {
+    fn quad(
+        &mut self,
+        r: Rect,
+        pad: f32,
+        uv: [f32; 4],
+        color: Color,
+        shape: [f32; 4],
+        image: GLuint,
+    ) {
         if let Some(c) = self.clip_stack.last() {
-            if r.x - pad >= c.right() || r.y - pad >= c.bottom() || r.right() + pad <= c.x || r.bottom() + pad <= c.y {
+            if r.x - pad >= c.right()
+                || r.y - pad >= c.bottom()
+                || r.right() + pad <= c.x
+                || r.bottom() + pad <= c.y
+            {
                 return;
             }
         }
@@ -223,13 +274,33 @@ impl Batch2d {
         let col = color.to_u8();
         // UVs are interpolated over the padded quad for images/glyphs.
         let (u0, v0, u1, v1) = (uv[0], uv[1], uv[2], uv[3]);
-        let du = if r.w > 0.0 { (u1 - u0) / r.w * pad } else { 0.0 };
-        let dv = if r.h > 0.0 { (v1 - v0) / r.h * pad } else { 0.0 };
-        let corners = [(x0, y0, u0 - du, v0 - dv), (x1, y0, u1 + du, v0 - dv), (x1, y1, u1 + du, v1 + dv), (x0, y1, u0 - du, v1 + dv)];
+        let du = if r.w > 0.0 {
+            (u1 - u0) / r.w * pad
+        } else {
+            0.0
+        };
+        let dv = if r.h > 0.0 {
+            (v1 - v0) / r.h * pad
+        } else {
+            0.0
+        };
+        let corners = [
+            (x0, y0, u0 - du, v0 - dv),
+            (x1, y0, u1 + du, v0 - dv),
+            (x1, y1, u1 + du, v1 + dv),
+            (x0, y1, u0 - du, v1 + dv),
+        ];
         for (x, y, u, v) in corners {
-            self.vertices.push(Vertex { pos: [x, y], uv: [u, v], color: col, local: [x - cx, y - cy], shape });
+            self.vertices.push(Vertex {
+                pos: [x, y],
+                uv: [u, v],
+                color: col,
+                local: [x - cx, y - cy],
+                shape,
+            });
         }
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         if let Some(c) = self.cmds.last_mut() {
             c.count += 6;
         }
@@ -242,7 +313,14 @@ impl Batch2d {
         }
         let rad = radius.min(r.w / 2.0).min(r.h / 2.0).max(0.0);
         let img = self.white.id;
-        self.quad(r, 1.0, [0.0; 4], color, [r.w / 2.0, r.h / 2.0, rad, MODE_SOLID], img);
+        self.quad(
+            r,
+            1.0,
+            [0.0; 4],
+            color,
+            [r.w / 2.0, r.h / 2.0, rad, MODE_SOLID],
+            img,
+        );
     }
 
     /// Rectangle outline of `width` pixels inside the rectangle bounds.
@@ -252,7 +330,14 @@ impl Batch2d {
         }
         let rad = radius.min(r.w / 2.0).min(r.h / 2.0).max(0.0);
         let img = self.white.id;
-        self.quad(r, 1.0, [width, 0.0, width, 0.0], color, [r.w / 2.0, r.h / 2.0, rad, MODE_OUTLINE], img);
+        self.quad(
+            r,
+            1.0,
+            [width, 0.0, width, 0.0],
+            color,
+            [r.w / 2.0, r.h / 2.0, rad, MODE_OUTLINE],
+            img,
+        );
     }
 
     /// Soft drop shadow around `r` with blur radius `blur`.
@@ -260,7 +345,14 @@ impl Batch2d {
         let b = blur.max(1.0);
         let outer = Rect::new(r.x - b, r.y - b, r.w + 2.0 * b, r.h + 2.0 * b);
         let img = self.white.id;
-        self.quad(outer, 0.0, [0.0; 4], color, [outer.w / 2.0, outer.h / 2.0, b, MODE_SHADOW], img);
+        self.quad(
+            outer,
+            0.0,
+            [0.0; 4],
+            color,
+            [outer.w / 2.0, outer.h / 2.0, b, MODE_SHADOW],
+            img,
+        );
     }
 
     /// Draws a texture (straight alpha RGBA). `uv` = (u0, v0, u1, v1) with
@@ -268,15 +360,34 @@ impl Batch2d {
     /// (which flips rows), i.e. pass (0, 1, 1, 0) for the full image.
     pub fn image(&mut self, r: Rect, texture: GLuint, uv: [f32; 4], tint: Color, radius: f32) {
         let rad = radius.min(r.w / 2.0).min(r.h / 2.0).max(0.0);
-        self.quad(r, 0.0, uv, tint, [r.w / 2.0, r.h / 2.0, rad, MODE_IMAGE], texture);
+        self.quad(
+            r,
+            0.0,
+            uv,
+            tint,
+            [r.w / 2.0, r.h / 2.0, rad, MODE_IMAGE],
+            texture,
+        );
     }
 
     /// Draws a glyph/icon from the atlas (pixel coordinates in the atlas).
     pub fn glyph(&mut self, r: Rect, atlas_rect: Rect, color: Color) {
         let s = ATLAS_SIZE as f32;
-        let uv = [atlas_rect.x / s, atlas_rect.y / s, atlas_rect.right() / s, atlas_rect.bottom() / s];
+        let uv = [
+            atlas_rect.x / s,
+            atlas_rect.y / s,
+            atlas_rect.right() / s,
+            atlas_rect.bottom() / s,
+        ];
         let img = self.image_for_glyph();
-        self.quad(r, 0.0, uv, color, [r.w / 2.0, r.h / 2.0, 0.0, MODE_GLYPH], img);
+        self.quad(
+            r,
+            0.0,
+            uv,
+            color,
+            [r.w / 2.0, r.h / 2.0, 0.0, MODE_GLYPH],
+            img,
+        );
     }
 
     fn image_for_glyph(&self) -> GLuint {
@@ -367,7 +478,8 @@ impl Batch2d {
 
 fn vertex_bytes(v: &Vertex) -> [u8; 44] {
     let mut b = [0u8; 44];
-    let f = |b: &mut [u8; 44], off: usize, x: f32| b[off..off + 4].copy_from_slice(&x.to_le_bytes());
+    let f =
+        |b: &mut [u8; 44], off: usize, x: f32| b[off..off + 4].copy_from_slice(&x.to_le_bytes());
     f(&mut b, 0, v.pos[0]);
     f(&mut b, 4, v.pos[1]);
     f(&mut b, 8, v.uv[0]);

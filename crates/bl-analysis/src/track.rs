@@ -83,9 +83,24 @@ impl Default for AnalysisConfig {
             major_transition_window: 30,
             minor_transition_window: 5,
             novelty: vec![
-                NoveltyConfig { spectrum: Spectrum::Percussive, normalization: 10.0, start_freq: 0.0, end_freq: 300.0 },
-                NoveltyConfig { spectrum: Spectrum::Percussive, normalization: 3.0, start_freq: 300.0, end_freq: 800.0 },
-                NoveltyConfig { spectrum: Spectrum::Percussive, normalization: 2.0, start_freq: 800.0, end_freq: 2000.0 },
+                NoveltyConfig {
+                    spectrum: Spectrum::Percussive,
+                    normalization: 10.0,
+                    start_freq: 0.0,
+                    end_freq: 300.0,
+                },
+                NoveltyConfig {
+                    spectrum: Spectrum::Percussive,
+                    normalization: 3.0,
+                    start_freq: 300.0,
+                    end_freq: 800.0,
+                },
+                NoveltyConfig {
+                    spectrum: Spectrum::Percussive,
+                    normalization: 2.0,
+                    start_freq: 800.0,
+                    end_freq: 2000.0,
+                },
             ],
         }
     }
@@ -166,16 +181,29 @@ impl TrackAnalysis {
         if n == 0 {
             return 0;
         }
-        ((seconds.max(0.0) * self.frame_rate() / self.transition_down_sampling as f64) as usize).min(n - 1)
+        ((seconds.max(0.0) * self.frame_rate() / self.transition_down_sampling as f64) as usize)
+            .min(n - 1)
     }
 }
 
 /// Analyses mono samples. Progress (0..1) is reported through `progress`
 /// (return `false` from it to cancel; `None` is returned then).
-pub fn analyze(samples: &[f32], sample_rate: u32, config: &AnalysisConfig, progress: &mut dyn FnMut(f32) -> bool) -> Option<TrackAnalysis> {
+pub fn analyze(
+    samples: &[f32],
+    sample_rate: u32,
+    config: &AnalysisConfig,
+    progress: &mut dyn FnMut(f32) -> bool,
+) -> Option<TrackAnalysis> {
     let fft_size = config.fft_size.max(64).next_power_of_two();
     let hop = ((fft_size as f64) * 0.5).round() as usize;
-    let spec = spectral_analysis(samples, fft_size, hop, config.spectral_smoothing, config.spectral_separation, progress)?;
+    let spec = spectral_analysis(
+        samples,
+        fft_size,
+        hop,
+        config.spectral_smoothing,
+        config.spectral_separation,
+        progress,
+    )?;
     let frames = spec.frames;
     let bins = spec.bins;
     let energy = energy_curve(samples, frames);
@@ -197,24 +225,73 @@ pub fn analyze(samples: &[f32], sample_rate: u32, config: &AnalysisConfig, progr
     if !progress(0.7) {
         return None;
     }
-    let chroma_raw = chroma(&spec.raw, frames, bins, sample_rate, config.chroma_smoothing, config.chroma_down_sampling);
-    let chroma_harm = chroma(&spec.harmonic, frames, bins, sample_rate, config.chroma_smoothing, config.chroma_down_sampling);
-    let chroma_perc = chroma(&spec.percussive, frames, bins, sample_rate, config.chroma_smoothing, config.chroma_down_sampling);
+    let chroma_raw = chroma(
+        &spec.raw,
+        frames,
+        bins,
+        sample_rate,
+        config.chroma_smoothing,
+        config.chroma_down_sampling,
+    );
+    let chroma_harm = chroma(
+        &spec.harmonic,
+        frames,
+        bins,
+        sample_rate,
+        config.chroma_smoothing,
+        config.chroma_down_sampling,
+    );
+    let chroma_perc = chroma(
+        &spec.percussive,
+        frames,
+        bins,
+        sample_rate,
+        config.chroma_smoothing,
+        config.chroma_down_sampling,
+    );
     if !progress(0.8) {
         return None;
     }
-    let sims = [similarity(&chroma_raw), similarity(&chroma_harm), similarity(&chroma_perc)];
+    let sims = [
+        similarity(&chroma_raw),
+        similarity(&chroma_harm),
+        similarity(&chroma_perc),
+    ];
     let n = chroma_raw.len() / 12;
     let major_kernel = checkerboard_kernel(config.major_transition_window, 0.5);
     let minor_kernel = checkerboard_kernel(config.minor_transition_window, 0.5);
-    let major: Vec<Vec<f32>> = sims.iter().map(|s| kernel_novelty(s, n, &major_kernel, config.major_transition_window)).collect();
-    let minor: Vec<Vec<f32>> = sims.iter().map(|s| kernel_novelty(s, n, &minor_kernel, config.minor_transition_window)).collect();
+    let major: Vec<Vec<f32>> = sims
+        .iter()
+        .map(|s| kernel_novelty(s, n, &major_kernel, config.major_transition_window))
+        .collect();
+    let minor: Vec<Vec<f32>> = sims
+        .iter()
+        .map(|s| kernel_novelty(s, n, &minor_kernel, config.minor_transition_window))
+        .collect();
     if !progress(0.95) {
         return None;
     }
     let sens = [1.0, 0.5, 1.0];
-    let major_peaks = resolve_peaks(&[(&major[0], sens[0]), (&major[1], sens[1]), (&major[2], sens[2])], 5, 15, 1.5);
-    let minor_peaks = resolve_peaks(&[(&minor[0], sens[0]), (&minor[1], sens[1]), (&minor[2], sens[2])], 5, 15, 0.5);
+    let major_peaks = resolve_peaks(
+        &[
+            (&major[0], sens[0]),
+            (&major[1], sens[1]),
+            (&major[2], sens[2]),
+        ],
+        5,
+        15,
+        1.5,
+    );
+    let minor_peaks = resolve_peaks(
+        &[
+            (&minor[0], sens[0]),
+            (&minor[1], sens[1]),
+            (&minor[2], sens[2]),
+        ],
+        5,
+        15,
+        0.5,
+    );
     let transitions = merge_peaks(&major_peaks, &minor_peaks);
     progress(1.0);
     Some(TrackAnalysis {
@@ -241,7 +318,11 @@ const DB_RANGE: f32 = 70.0;
 /// Maps an amplitude to the normalised spectrum value used throughout.
 fn normalize_amplitude(a: f32) -> f32 {
     let db = if a <= 0.0 { 0.0 } else { 20.0 * a.log10() };
-    let lin = if db == 0.0 { 0.0 } else { ((db - DB_FLOOR).max(0.0) / DB_RANGE).min(1.0) };
+    let lin = if db == 0.0 {
+        0.0
+    } else {
+        ((db - DB_FLOOR).max(0.0) / DB_RANGE).min(1.0)
+    };
     (lin - 0.5).max(0.0) / 0.5
 }
 
@@ -295,11 +376,19 @@ fn spectral_analysis(
         for b in 0..bins {
             for (t, slot) in wt.iter_mut().enumerate() {
                 let ff = f as isize + t as isize - r as isize;
-                *slot = if ff >= 0 && (ff as usize) < frames { raw[ff as usize * bins + b] } else { 0.0 };
+                *slot = if ff >= 0 && (ff as usize) < frames {
+                    raw[ff as usize * bins + b]
+                } else {
+                    0.0
+                };
             }
             for (t, slot) in wf.iter_mut().enumerate() {
                 let bb = b as isize + t as isize - r as isize;
-                *slot = if bb >= 0 && (bb as usize) < bins { raw[base + bb as usize] } else { 0.0 };
+                *slot = if bb >= 0 && (bb as usize) < bins {
+                    raw[base + bb as usize]
+                } else {
+                    0.0
+                };
             }
             let h = *wt.select_nth_unstable_by(mid, f32::total_cmp).1;
             let p = *wf.select_nth_unstable_by(mid, f32::total_cmp).1;
@@ -315,7 +404,13 @@ fn spectral_analysis(
             return None;
         }
     }
-    Some(Spectrogram { frames, bins, raw, harmonic, percussive })
+    Some(Spectrogram {
+        frames,
+        bins,
+        raw,
+        harmonic,
+        percussive,
+    })
 }
 
 fn energy_curve(samples: &[f32], frames: usize) -> Vec<f32> {
@@ -335,7 +430,13 @@ fn energy_curve(samples: &[f32], frames: usize) -> Vec<f32> {
     out
 }
 
-fn novelty_curve(spec: &[f32], frames: usize, bins: usize, sample_rate: u32, cfg: &NoveltyConfig) -> Vec<f32> {
+fn novelty_curve(
+    spec: &[f32],
+    frames: usize,
+    bins: usize,
+    sample_rate: u32,
+    cfg: &NoveltyConfig,
+) -> Vec<f32> {
     let bin_hz = sample_rate as f32 / 2.0 / bins as f32;
     let start = ((cfg.start_freq / bin_hz).floor().max(0.0) as usize).min(bins);
     let end = ((cfg.end_freq / bin_hz).ceil().max(0.0) as usize).min(bins);
@@ -364,7 +465,11 @@ fn novelty_curve(spec: &[f32], frames: usize, bins: usize, sample_rate: u32, cfg
     // replaced by their normalised values when later frames are processed.
     let radius = 5usize;
     let d = (2 * radius + 1) as f32;
-    let norm = if cfg.normalization == 0.0 { 1.0 } else { cfg.normalization };
+    let norm = if cfg.normalization == 0.0 {
+        1.0
+    } else {
+        cfg.normalization
+    };
     for m in 0..frames {
         let mut g = 0.0f32;
         for w in 0..2 * radius + 1 {
@@ -385,14 +490,24 @@ fn midi_to_hz(note: f32) -> f32 {
 
 /// Computes smoothed and down-sampled 12-bin chroma vectors (row major,
 /// 12 values per chroma frame).
-fn chroma(spec: &[f32], frames: usize, bins: usize, sample_rate: u32, smoothing: usize, down: usize) -> Vec<f32> {
+fn chroma(
+    spec: &[f32],
+    frames: usize,
+    bins: usize,
+    sample_rate: u32,
+    smoothing: usize,
+    down: usize,
+) -> Vec<f32> {
     let bin_hz = sample_rate as f32 / 2.0 / bins as f32;
     // Precompute bin ranges per MIDI note.
     let ranges: Vec<(usize, usize)> = (0..128)
         .map(|c| {
             let lo = midi_to_hz((c as f32 - 0.5).max(0.0));
             let hi = midi_to_hz((c as f32 + 0.5).min(127.0));
-            (((lo / bin_hz).floor() as usize).min(bins), ((hi / bin_hz).floor() as usize).min(bins))
+            (
+                ((lo / bin_hz).floor() as usize).min(bins),
+                ((hi / bin_hz).floor() as usize).min(bins),
+            )
         })
         .collect();
     let mut c = vec![0.0f32; frames * 12];
@@ -419,7 +534,11 @@ fn chroma(spec: &[f32], frames: usize, bins: usize, sample_rate: u32, smoothing:
         for k in 0..12 {
             for (j, slot) in w.iter_mut().enumerate() {
                 let ff = f as isize + j as isize - smoothing as isize;
-                *slot = if ff >= 0 && (ff as usize) < frames { c[ff as usize * 12 + k] } else { 0.0 };
+                *slot = if ff >= 0 && (ff as usize) < frames {
+                    c[ff as usize * 12 + k]
+                } else {
+                    0.0
+                };
             }
             smoothed[f * 12 + k] = *w.select_nth_unstable_by(len / 2, f32::total_cmp).1;
         }
@@ -518,7 +637,12 @@ fn is_peak(a: &[f32], i: usize) -> bool {
 /// stronger peak follows within `window` frames, otherwise those following
 /// weaker peaks are suppressed and the candidate is accepted if it exceeds
 /// `threshold` times the local average of its curve.
-fn resolve_peaks(curves: &[(&Vec<f32>, f32)], window: usize, avg_radius: usize, threshold: f32) -> Vec<f32> {
+fn resolve_peaks(
+    curves: &[(&Vec<f32>, f32)],
+    window: usize,
+    avg_radius: usize,
+    threshold: f32,
+) -> Vec<f32> {
     let n = curves.first().map(|c| c.0.len()).unwrap_or(0);
     let mut out = vec![0.0f32; n];
     let mut suppressed = vec![false; n];
@@ -547,7 +671,11 @@ fn resolve_peaks(curves: &[(&Vec<f32>, f32)], window: usize, avg_radius: usize, 
             let idx = (e + m).min(n - 1);
             let mut o = -1.0f32;
             for (curve, sens) in curves {
-                let v = if is_peak(curve, idx) { curve[idx] * sens } else { -1.0 };
+                let v = if is_peak(curve, idx) {
+                    curve[idx] * sens
+                } else {
+                    -1.0
+                };
                 if v > o {
                     o = v;
                 }
@@ -569,11 +697,16 @@ fn resolve_peaks(curves: &[(&Vec<f32>, f32)], window: usize, avg_radius: usize, 
             let count = 2 * avg_radius;
             let mut avg = 0.0;
             for b in 0..count {
-                let idx = (e as isize - avg_radius as isize + b as isize).clamp(0, n as isize - 1) as usize;
+                let idx = (e as isize - avg_radius as isize + b as isize).clamp(0, n as isize - 1)
+                    as usize;
                 avg += curve[idx] * sens;
             }
             avg /= count as f32;
-            out[e] = if curve[e] * sens > avg * threshold { TRANSITION_MAJOR } else { TRANSITION_NONE };
+            out[e] = if curve[e] * sens > avg * threshold {
+                TRANSITION_MAJOR
+            } else {
+                TRANSITION_NONE
+            };
         }
     }
     out
@@ -589,7 +722,11 @@ fn merge_peaks(major: &[f32], minor: &[f32]) -> Vec<f32> {
             let lo = a.saturating_sub(10);
             let hi = (a + 10).min(n);
             let near_major = (lo..hi).any(|o| major[o] != TRANSITION_NONE);
-            out[a] = if near_major { TRANSITION_NONE } else { TRANSITION_MINOR };
+            out[a] = if near_major {
+                TRANSITION_NONE
+            } else {
+                TRANSITION_MINOR
+            };
         }
     }
     out
@@ -608,7 +745,11 @@ mod tests {
         for (i, o) in out.iter_mut().enumerate() {
             let t = i as f32 / sr as f32;
             let first = t < secs / 2.0;
-            let freqs: [f32; 3] = if first { [261.6, 329.6, 392.0] } else { [293.7, 370.0, 440.0] };
+            let freqs: [f32; 3] = if first {
+                [261.6, 329.6, 392.0]
+            } else {
+                [293.7, 370.0, 440.0]
+            };
             let mut v = 0.0;
             for f in freqs {
                 v += (std::f32::consts::TAU * f * t).sin() * 0.15;
@@ -638,11 +779,27 @@ mod tests {
         let low = &a.novelty[0];
         let half = a.frame_count() / 2;
         let active = low[..half].iter().filter(|&&v| v > 0.0).count();
-        assert!(active > 10, "low novelty should fire on kicks, got {active}");
+        assert!(
+            active > 10,
+            "low novelty should fire on kicks, got {active}"
+        );
         // A major transition should be detected near the middle.
         let mid_t = 20.0;
-        let found = a.transitions.iter().enumerate().any(|(i, &v)| v == TRANSITION_MAJOR && (a.transition_time(i) - mid_t).abs() < 3.0);
-        assert!(found, "expected a major transition around {mid_t}s: {:?}", a.transitions.iter().enumerate().filter(|(_, &v)| v > 0.0).map(|(i, &v)| (a.transition_time(i), v)).collect::<Vec<_>>());
+        let found = a
+            .transitions
+            .iter()
+            .enumerate()
+            .any(|(i, &v)| v == TRANSITION_MAJOR && (a.transition_time(i) - mid_t).abs() < 3.0);
+        assert!(
+            found,
+            "expected a major transition around {mid_t}s: {:?}",
+            a.transitions
+                .iter()
+                .enumerate()
+                .filter(|(_, &v)| v > 0.0)
+                .map(|(i, &v)| (a.transition_time(i), v))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -26,10 +26,15 @@ pub(crate) struct QmfTables {
 pub(crate) fn tables() -> &'static QmfTables {
     static T: OnceLock<QmfTables> = OnceLock::new();
     T.get_or_init(|| QmfTables {
-        c: QMF_C_Q31.iter().map(|&v| (v as f64 / 2147483648.0) as f32).collect(),
+        c: QMF_C_Q31
+            .iter()
+            .map(|&v| (v as f64 / 2147483648.0) as f32)
+            .collect(),
         fft64: Fft::new(64),
         fft128: Fft::new(128),
-        ana_pre: (0..64).map(|n| Complex::expi(-PI * n as f64 / 64.0)).collect(),
+        ana_pre: (0..64)
+            .map(|n| Complex::expi(-PI * n as f64 / 64.0))
+            .collect(),
         ana_post: (0..32)
             .map(|k| {
                 let c = Complex::expi(-PI * (k as f64 + 0.5) / 128.0);
@@ -44,7 +49,9 @@ pub(crate) fn tables() -> &'static QmfTables {
                 Complex::new((c.re as f64 * s) as f32, (c.im as f64 * s) as f32)
             })
             .collect(),
-        syn_post: (0..128).map(|n| Complex::expi(PI * n as f64 / 128.0)).collect(),
+        syn_post: (0..128)
+            .map(|n| Complex::expi(PI * n as f64 / 128.0))
+            .collect(),
         ds_pre: (0..32)
             .map(|k| {
                 let c = Complex::expi(PI * 127.5 * (k as f64 + 0.5) / 64.0);
@@ -52,7 +59,9 @@ pub(crate) fn tables() -> &'static QmfTables {
                 Complex::new((c.re as f64 * s) as f32, (c.im as f64 * s) as f32)
             })
             .collect(),
-        ds_post: (0..64).map(|n| Complex::expi(PI * n as f64 / 64.0)).collect(),
+        ds_post: (0..64)
+            .map(|n| Complex::expi(PI * n as f64 / 64.0))
+            .collect(),
     })
 }
 
@@ -65,7 +74,10 @@ pub(crate) struct Analysis {
 
 impl Analysis {
     pub fn new() -> Self {
-        Analysis { x: vec![0.0; 320], buf: vec![Complex::default(); 64] }
+        Analysis {
+            x: vec![0.0; 320],
+            buf: vec![Complex::default(); 64],
+        }
     }
 
     pub fn reset(&mut self) {
@@ -104,7 +116,10 @@ pub(crate) struct Synthesis {
 
 impl Synthesis {
     pub fn new() -> Self {
-        Synthesis { v: vec![0.0; 1280], buf: vec![Complex::default(); 128] }
+        Synthesis {
+            v: vec![0.0; 1280],
+            buf: vec![Complex::default(); 128],
+        }
     }
 
     pub fn reset(&mut self) {
@@ -150,7 +165,10 @@ pub(crate) struct SynthesisDs {
 
 impl SynthesisDs {
     pub fn new() -> Self {
-        SynthesisDs { v: vec![0.0; 640], buf: vec![Complex::default(); 64] }
+        SynthesisDs {
+            v: vec![0.0; 640],
+            buf: vec![Complex::default(); 64],
+        }
     }
 
     pub fn reset(&mut self) {
@@ -198,7 +216,9 @@ mod tests {
         let mut syn = Synthesis::new();
         let n = 32 * 300;
         let f = 0.013; // cycles per input sample
-        let input: Vec<f32> = (0..n).map(|i| (0.5 * (2.0 * PI * f * i as f64).sin()) as f32).collect();
+        let input: Vec<f32> = (0..n)
+            .map(|i| (0.5 * (2.0 * PI * f * i as f64).sin()) as f32)
+            .collect();
         let mut out = Vec::new();
         let mut sub = vec![Complex::default(); 32];
         let mut full = vec![Complex::default(); 64];
@@ -234,7 +254,9 @@ mod tests {
         let mut syn = SynthesisDs::new();
         let n = 32 * 300;
         let f = 0.0227;
-        let input: Vec<f32> = (0..n).map(|i| (0.5 * (2.0 * PI * f * i as f64).sin()) as f32).collect();
+        let input: Vec<f32> = (0..n)
+            .map(|i| (0.5 * (2.0 * PI * f * i as f64).sin()) as f32)
+            .collect();
         let mut out = Vec::new();
         let mut sub = vec![Complex::default(); 32];
         let mut o = vec![0.0; 32];
@@ -246,7 +268,10 @@ mod tests {
         // Least-squares fit of a sine at the input frequency.
         let (mut ss, mut sc, mut cc, mut ys, mut yc) = (0.0, 0.0, 0.0, 0.0, 0.0);
         for i in 2000..8000 {
-            let (s_, c_) = ((2.0 * PI * f * i as f64).sin(), (2.0 * PI * f * i as f64).cos());
+            let (s_, c_) = (
+                (2.0 * PI * f * i as f64).sin(),
+                (2.0 * PI * f * i as f64).cos(),
+            );
             ss += s_ * s_;
             sc += s_ * c_;
             cc += c_ * c_;

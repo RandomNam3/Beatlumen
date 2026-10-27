@@ -6,7 +6,9 @@
 use crate::{alloc_image, Error, Image};
 
 fn u16_at(d: &[u8], p: usize) -> Result<u16, Error> {
-    d.get(p..p + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or(Error::InvalidData("bmp: truncated header"))
+    d.get(p..p + 2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .ok_or(Error::InvalidData("bmp: truncated header"))
 }
 
 fn u32_at(d: &[u8], p: usize) -> Result<u32, Error> {
@@ -26,7 +28,11 @@ struct Channel {
 impl Channel {
     fn new(mask: u32) -> Channel {
         if mask == 0 {
-            return Channel { mask: 0, shift: 0, bits: 0 };
+            return Channel {
+                mask: 0,
+                shift: 0,
+                bits: 0,
+            };
         }
         let shift = mask.trailing_zeros();
         let bits = (mask >> shift).trailing_ones();
@@ -78,10 +84,16 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     }
     if matches!(compression, 4 | 5) {
         // Embedded JPEG / PNG.
-        let body = data.get(off_bits..).ok_or(Error::InvalidData("bmp: bad data offset"))?;
+        let body = data
+            .get(off_bits..)
+            .ok_or(Error::InvalidData("bmp: bad data offset"))?;
         return crate::decode(body);
     }
-    if width <= 0 || height == 0 || width > i32::MAX as i64 || height.unsigned_abs() > i32::MAX as u64 {
+    if width <= 0
+        || height == 0
+        || width > i32::MAX as i64
+        || height.unsigned_abs() > i32::MAX as u64
+    {
         return Err(Error::InvalidData("bmp: invalid dimensions"));
     }
     let top_down = height < 0;
@@ -119,14 +131,23 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
             }
         }
     }
-    let (cr, cg, cb, ca) = (Channel::new(r), Channel::new(g), Channel::new(b), Channel::new(a));
+    let (cr, cg, cb, ca) = (
+        Channel::new(r),
+        Channel::new(g),
+        Channel::new(b),
+        Channel::new(a),
+    );
 
     // Palette.
     let mut palette = [[0u8, 0, 0, 255]; 256];
     if bpp <= 8 {
         let entry = if core { 3 } else { 4 };
         let max = 1usize << bpp;
-        let n = if clr_used == 0 || clr_used > max { max } else { clr_used };
+        let n = if clr_used == 0 || clr_used > max {
+            max
+        } else {
+            clr_used
+        };
         for (i, p) in palette.iter_mut().enumerate().take(n) {
             let o = masks_end + i * entry;
             if let Some(e) = data.get(o..o + 3) {
@@ -139,7 +160,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     // RLE packs at most 255 pixels into 2 bytes; reject tiny files that
     // claim huge dimensions before allocating.
     if (pix.len() as u64 + 1) * 128 * 64 < w as u64 * h as u64 {
-        return Err(Error::InvalidData("bmp: pixel data far too short for dimensions"));
+        return Err(Error::InvalidData(
+            "bmp: pixel data far too short for dimensions",
+        ));
     }
     let mut img = alloc_image(w as u32, h as u32)?;
     if compression == 1 || compression == 2 {
@@ -211,7 +234,15 @@ fn decode_rle(src: &[u8], four: bool, pal: &[[u8; 4]; 256], top_down: bool, img:
         i += 2;
         if n > 0 {
             for k in 0..n {
-                let idx = if four { if k % 2 == 0 { v >> 4 } else { v & 15 } } else { v };
+                let idx = if four {
+                    if k % 2 == 0 {
+                        v >> 4
+                    } else {
+                        v & 15
+                    }
+                } else {
+                    v
+                };
                 put(x, row, idx, img);
                 x += 1;
             }
@@ -235,8 +266,18 @@ fn decode_rle(src: &[u8], four: bool, pal: &[[u8; 4]; 256], top_down: bool, img:
                 let n = n as usize;
                 let bytes = if four { n.div_ceil(2) } else { n };
                 for k in 0..n {
-                    let Some(&b) = src.get(i + if four { k / 2 } else { k }) else { break };
-                    let idx = if four { if k % 2 == 0 { b >> 4 } else { b & 15 } } else { b };
+                    let Some(&b) = src.get(i + if four { k / 2 } else { k }) else {
+                        break;
+                    };
+                    let idx = if four {
+                        if k % 2 == 0 {
+                            b >> 4
+                        } else {
+                            b & 15
+                        }
+                    } else {
+                        b
+                    };
                     put(x, row, idx, img);
                     x += 1;
                 }

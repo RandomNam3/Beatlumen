@@ -54,7 +54,11 @@ pub struct ProgramConfig {
 
 impl ProgramConfig {
     pub fn num_channels(&self) -> usize {
-        let count = |v: &Vec<(bool, u8)>| v.iter().map(|&(cpe, _)| if cpe { 2 } else { 1 }).sum::<usize>();
+        let count = |v: &Vec<(bool, u8)>| {
+            v.iter()
+                .map(|&(cpe, _)| if cpe { 2 } else { 1 })
+                .sum::<usize>()
+        };
         count(&self.front) + count(&self.side) + count(&self.back) + self.lfe.len()
     }
 
@@ -77,7 +81,9 @@ impl ProgramConfig {
         if r.read_bit() {
             r.skip(3); // matrix mixdown idx + pseudo surround
         }
-        let mut list = |n: u32| -> Vec<(bool, u8)> { (0..n).map(|_| (r.read_bit(), r.read(4) as u8)).collect() };
+        let mut list = |n: u32| -> Vec<(bool, u8)> {
+            (0..n).map(|_| (r.read_bit(), r.read(4) as u8)).collect()
+        };
         let front = list(nfront);
         let side = list(nside);
         let back = list(nback);
@@ -88,7 +94,14 @@ impl ProgramConfig {
         let comment_bytes = r.read(8) as usize;
         r.skip(8 * comment_bytes);
         r.check()?;
-        Ok(ProgramConfig { object_type, sf_index, front, side, back, lfe })
+        Ok(ProgramConfig {
+            object_type,
+            sf_index,
+            front,
+            side,
+            back,
+            lfe,
+        })
     }
 }
 
@@ -249,7 +262,16 @@ pub(crate) fn config_roles(channel_config: u8) -> Option<Vec<Role>> {
         4 => vec![FrontCenter, FrontLeft, FrontRight, BackCenter],
         5 => vec![FrontCenter, FrontLeft, FrontRight, BackLeft, BackRight],
         6 => vec![FrontCenter, FrontLeft, FrontRight, BackLeft, BackRight, Lfe],
-        7 => vec![FrontCenter, FrontLeft, FrontRight, SideLeft, SideRight, BackLeft, BackRight, Lfe],
+        7 => vec![
+            FrontCenter,
+            FrontLeft,
+            FrontRight,
+            SideLeft,
+            SideRight,
+            BackLeft,
+            BackRight,
+            Lfe,
+        ],
         _ => return None,
     })
 }
@@ -323,7 +345,10 @@ mod tests {
     #[test]
     fn parse_lc_stereo_44k() {
         let c = AudioSpecificConfig::parse(&[0x12, 0x10]).unwrap();
-        assert_eq!((c.object_type, c.sample_rate, c.channel_config), (2, 44100, 2));
+        assert_eq!(
+            (c.object_type, c.sample_rate, c.channel_config),
+            (2, 44100, 2)
+        );
         assert_eq!(c.sbr, None);
     }
 

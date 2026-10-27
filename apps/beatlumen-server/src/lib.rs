@@ -76,7 +76,14 @@ impl DataPaths {
     }
 
     fn create(&self) -> std::io::Result<()> {
-        for d in [&self.root, &self.presets, &self.uploads, &self.covers, &self.analysis, &self.image_cache] {
+        for d in [
+            &self.root,
+            &self.presets,
+            &self.uploads,
+            &self.covers,
+            &self.analysis,
+            &self.image_cache,
+        ] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())
@@ -112,7 +119,10 @@ pub struct State {
 impl State {
     /// The current library snapshot.
     pub fn library(&self) -> Arc<Index> {
-        self.library.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.library
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// True while a scan runs or is pending.
@@ -123,14 +133,22 @@ impl State {
 
     /// Asks the scanner thread for a rescan (coalesced).
     pub fn request_scan(&self) {
-        self.scan.lock().unwrap_or_else(|e| e.into_inner()).requested = true;
+        self.scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .requested = true;
         self.scan_cv.notify_all();
     }
 
     /// Called when a library file vanished: rescans unless a scan finished
     /// within the last minute.
     pub fn file_missing(&self) {
-        let recent = self.scan.lock().unwrap_or_else(|e| e.into_inner()).last_finished.is_some_and(|t| t.elapsed() < Duration::from_secs(60));
+        let recent = self
+            .scan
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_finished
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(60));
         if !recent {
             self.request_scan();
         }
@@ -165,7 +183,10 @@ impl State {
     fn save_cache(&self) {
         if self.cache_dirty.swap(false, Ordering::Relaxed) {
             if let Err(e) = library::save_cache(&self.data.library, &self.library()) {
-                warn!("cannot write library cache {}: {e}", self.data.library.display());
+                warn!(
+                    "cannot write library cache {}: {e}",
+                    self.data.library.display()
+                );
                 self.cache_dirty.store(true, Ordering::Relaxed);
             }
         }
@@ -175,11 +196,16 @@ impl State {
         let t0 = Instant::now();
         let old = self.library();
         let old_rev = old.revision;
-        let (entries, stats) = library::scan(&self.roots, &old, self.config.scan_threads, &mut |partial| {
-            if self.publish(partial) {
-                debug!("published intermediate scan results");
-            }
-        });
+        let (entries, stats) = library::scan(
+            &self.roots,
+            &old,
+            self.config.scan_threads,
+            &mut |partial| {
+                if self.publish(partial) {
+                    debug!("published intermediate scan results");
+                }
+            },
+        );
         drop(old);
         self.publish(entries);
         self.save_cache();
@@ -203,14 +229,25 @@ impl State {
     fn prune_caches(&self, idx: &Index) {
         let mut removed = 0usize;
         let list = |dir: &PathBuf| -> Vec<(String, PathBuf)> {
-            std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| Some((e.file_name().into_string().ok()?, e.path()))).collect()
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|e| Some((e.file_name().into_string().ok()?, e.path())))
+                .collect()
         };
         let stale_tmp = |p: &PathBuf| {
-            std::fs::metadata(p).ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(3600))
+            std::fs::metadata(p)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > Duration::from_secs(3600))
         };
         for (name, path) in list(&self.data.covers) {
             let keep = match covers::parse_cache_name(&name) {
-                Some((id, _, stamp)) => idx.track(id).is_some_and(|e| covers::cover_stamp(idx, e) == stamp),
+                Some((id, _, stamp)) => idx
+                    .track(id)
+                    .is_some_and(|e| covers::cover_stamp(idx, e) == stamp),
                 None => name.ends_with(".tmp") && !stale_tmp(&path),
             };
             if !keep && std::fs::remove_file(&path).is_ok() {
@@ -220,7 +257,9 @@ impl State {
         for (name, path) in list(&self.data.analysis) {
             let keep = match name.strip_suffix(".ocan").and_then(|b| b.split_once('_')) {
                 Some((id, _)) => idx.track(id).is_some_and(|e| {
-                    std::fs::metadata(&path).map(|m| util::mtime_ns(&m) >= e.mtime_ns).unwrap_or(false)
+                    std::fs::metadata(&path)
+                        .map(|m| util::mtime_ns(&m) >= e.mtime_ns)
+                        .unwrap_or(false)
                 }),
                 None => name.ends_with(".tmp") && !stale_tmp(&path),
             };
@@ -229,10 +268,16 @@ impl State {
             }
         }
         let images = self.images.index();
-        let current: std::collections::HashMap<&str, &images::ImageItem> = images.items.iter().map(|i| (i.entry.id.as_str(), i)).collect();
+        let current: std::collections::HashMap<&str, &images::ImageItem> = images
+            .items
+            .iter()
+            .map(|i| (i.entry.id.as_str(), i))
+            .collect();
         for (name, path) in list(&self.data.image_cache) {
             let keep = match covers::parse_cache_name(&name) {
-                Some((id, size, _)) => current.get(id).is_some_and(|it| self.images.scaled_path(it, size) == path),
+                Some((id, size, _)) => current
+                    .get(id)
+                    .is_some_and(|it| self.images.scaled_path(it, size) == path),
                 None => name.ends_with(".tmp") && !stale_tmp(&path),
             };
             if !keep && std::fs::remove_file(&path).is_ok() {
@@ -260,7 +305,11 @@ impl State {
                         f.requested = true;
                         break;
                     }
-                    f = self.scan_cv.wait_timeout(f, iv - since).unwrap_or_else(|e| e.into_inner()).0;
+                    f = self
+                        .scan_cv
+                        .wait_timeout(f, iv - since)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
                 }
                 f.requested = false;
                 f.running = true;
@@ -308,14 +357,19 @@ fn absolute(p: &std::path::Path) -> PathBuf {
 pub fn start(config: Config) -> Result<Server, String> {
     log::set_verbose(config.verbose);
     let data = DataPaths::new(absolute(&config.data_dir));
-    data.create().map_err(|e| format!("cannot create data folder {}: {e}", data.root.display()))?;
+    data.create()
+        .map_err(|e| format!("cannot create data folder {}: {e}", data.root.display()))?;
     let roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
     let image_dirs: Vec<PathBuf> = config.image_dirs.iter().map(|p| absolute(p)).collect();
 
     let index = match library::load_cache(&data.library, &roots) {
         Some((rev, entries)) => {
             let idx = Index::new(rev, roots.clone(), entries);
-            info!("loaded cached library: {} tracks, revision {}", idx.entries.len(), idx.revision);
+            info!(
+                "loaded cached library: {} tracks, revision {}",
+                idx.entries.len(),
+                idx.revision
+            );
             idx
         }
         // Seed fresh revisions with the clock so that clients never confuse
@@ -323,7 +377,8 @@ pub fn start(config: Config) -> Result<Server, String> {
         None => Index::new(util::now_secs(), roots.clone(), Vec::new()),
     };
 
-    let listener = TcpListener::bind(&config.bind).map_err(|e| format!("cannot listen on {}: {e}", config.bind))?;
+    let listener = TcpListener::bind(&config.bind)
+        .map_err(|e| format!("cannot listen on {}: {e}", config.bind))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
 
     let web = web::WebSource::resolve(config.web_dir.as_deref());
@@ -331,12 +386,19 @@ pub fn start(config: Config) -> Result<Server, String> {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),
         playlists: playlists::Playlists::load(data.playlists.clone()),
         presets: presets::Presets::new(data.presets.clone()),
-        images: images::Images::new(image_dirs.clone(), data.uploads.clone(), data.image_cache.clone()),
+        images: images::Images::new(
+            image_dirs.clone(),
+            data.uploads.clone(),
+            data.image_cache.clone(),
+        ),
         analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),
         cache_dirty: AtomicBool::new(false),
-        scan: Mutex::new(ScanFlags { requested: true, ..Default::default() }),
+        scan: Mutex::new(ScanFlags {
+            requested: true,
+            ..Default::default()
+        }),
         scan_cv: Condvar::new(),
         roots,
         data,
@@ -344,7 +406,10 @@ pub fn start(config: Config) -> Result<Server, String> {
         config,
     });
 
-    info!("Beatlumen server {} listening on http://{addr}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Beatlumen server {} listening on http://{addr}",
+        env!("CARGO_PKG_VERSION")
+    );
     for r in &state.roots {
         info!("music folder: {}", r.display());
     }
@@ -359,15 +424,26 @@ pub fn start(config: Config) -> Result<Server, String> {
     if state.auth.required() {
         info!("password protection enabled");
     } else if !addr.ip().is_loopback() {
-        warn!("no password set: anyone who can reach port {} can access the library (use --password)", addr.port());
+        warn!(
+            "no password set: anyone who can reach port {} can access the library (use --password)",
+            addr.port()
+        );
     }
 
     let scanner = state.clone();
-    std::thread::Builder::new().name("scanner".into()).spawn(move || scanner.scanner_loop()).map_err(|e| format!("cannot start scanner: {e}"))?;
+    std::thread::Builder::new()
+        .name("scanner".into())
+        .spawn(move || scanner.scanner_loop())
+        .map_err(|e| format!("cannot start scanner: {e}"))?;
 
     let handler_state = state.clone();
-    let handler: Arc<bl_net::server::Handler> = Arc::new(move |req| routes::handle(&handler_state, req));
-    let server_config = bl_net::server::ServerConfig { max_connections: 256, max_body: images::MAX_UPLOAD + 1024 * 1024, keep_alive: Duration::from_secs(30) };
+    let handler: Arc<bl_net::server::Handler> =
+        Arc::new(move |req| routes::handle(&handler_state, req));
+    let server_config = bl_net::server::ServerConfig {
+        max_connections: 256,
+        max_body: images::MAX_UPLOAD + 1024 * 1024,
+        keep_alive: Duration::from_secs(30),
+    };
     let http = std::thread::Builder::new()
         .name("http".into())
         .spawn(move || {

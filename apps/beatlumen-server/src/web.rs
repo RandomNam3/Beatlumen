@@ -50,11 +50,20 @@ impl WebSource {
             }
             return WebSource::Dir(d.to_path_buf());
         }
-        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("web"))).filter(|d| d.is_dir()) {
+        if let Some(d) = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.join("web")))
+            .filter(|d| d.is_dir())
+        {
             return WebSource::Dir(d);
         }
         if !EMBEDDED_WEB.is_empty() {
-            return WebSource::Embedded(EMBEDDED_WEB.iter().map(|(p, d)| (*p, (*d, format!("{:016x}", util::fnv1a64(d))))).collect());
+            return WebSource::Embedded(
+                EMBEDDED_WEB
+                    .iter()
+                    .map(|(p, d)| (*p, (*d, format!("{:016x}", util::fnv1a64(d)))))
+                    .collect(),
+            );
         }
         WebSource::Placeholder
     }
@@ -73,7 +82,12 @@ impl WebSource {
             return Response::error(405, "method not allowed").with_header("Allow", "GET, HEAD");
         }
         for s in segs {
-            if *s == "." || *s == ".." || s.starts_with('.') || s.contains(['\\', ':', '\0']) || s.chars().any(char::is_control) {
+            if *s == "."
+                || *s == ".."
+                || s.starts_with('.')
+                || s.contains(['\\', ':', '\0'])
+                || s.chars().any(char::is_control)
+            {
                 return Response::error(400, "invalid path");
             }
         }
@@ -82,32 +96,62 @@ impl WebSource {
         match self {
             WebSource::Placeholder => {
                 if rel.is_empty() || rel == "index.html" || !has_ext {
-                    Response::bytes(200, "text/html; charset=utf-8", PLACEHOLDER.as_bytes().to_vec()).with_header("Cache-Control", "no-cache")
+                    Response::bytes(
+                        200,
+                        "text/html; charset=utf-8",
+                        PLACEHOLDER.as_bytes().to_vec(),
+                    )
+                    .with_header("Cache-Control", "no-cache")
                 } else {
                     Response::error(404, "not found")
                 }
             }
             WebSource::Embedded(files) => {
-                let key = if rel.is_empty() { "index.html".to_string() } else { rel.clone() };
-                let found = files.get(key.as_str()).map(|f| (key.clone(), f)).or_else(|| {
-                    let idx = if rel.is_empty() { "index.html".to_string() } else { format!("{rel}/index.html") };
-                    files.get(idx.as_str()).map(|f| (idx.clone(), f))
-                });
+                let key = if rel.is_empty() {
+                    "index.html".to_string()
+                } else {
+                    rel.clone()
+                };
+                let found = files
+                    .get(key.as_str())
+                    .map(|f| (key.clone(), f))
+                    .or_else(|| {
+                        let idx = if rel.is_empty() {
+                            "index.html".to_string()
+                        } else {
+                            format!("{rel}/index.html")
+                        };
+                        files.get(idx.as_str()).map(|f| (idx.clone(), f))
+                    });
                 // Client side routes fall back to the main page.
-                let found = found.or_else(|| (!has_ext).then(|| files.get("index.html").map(|f| ("index.html".to_string(), f))).flatten());
+                let found = found.or_else(|| {
+                    (!has_ext)
+                        .then(|| {
+                            files
+                                .get("index.html")
+                                .map(|f| ("index.html".to_string(), f))
+                        })
+                        .flatten()
+                });
                 match found {
                     Some((path, (data, etag))) => {
                         if util::etag_matches(req.header("if-none-match"), etag) {
                             return Response::new(304).with_header("ETag", format!("\"{etag}\""));
                         }
                         let ext = util::ext_lower(Path::new(&path));
-                        Response::bytes(200, util::static_mime(&ext), data.to_vec()).with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "no-cache")
+                        Response::bytes(200, util::static_mime(&ext), data.to_vec())
+                            .with_header("ETag", format!("\"{etag}\""))
+                            .with_header("Cache-Control", "no-cache")
                     }
                     None => Response::error(404, "not found"),
                 }
             }
             WebSource::Dir(root) => {
-                let Some(mut path) = (if rel.is_empty() { Some(root.clone()) } else { util::join_rel(root, &rel) }) else {
+                let Some(mut path) = (if rel.is_empty() {
+                    Some(root.clone())
+                } else {
+                    util::join_rel(root, &rel)
+                }) else {
                     return Response::error(400, "invalid path");
                 };
                 if path.is_dir() {
@@ -116,16 +160,23 @@ impl WebSource {
                 if !path.is_file() && !has_ext {
                     path = root.join("index.html");
                 }
-                let Ok(meta) = std::fs::metadata(&path) else { return Response::error(404, "not found") };
+                let Ok(meta) = std::fs::metadata(&path) else {
+                    return Response::error(404, "not found");
+                };
                 if !meta.is_file() {
                     return Response::error(404, "not found");
                 }
-                let etag = format!("{:016x}", util::fnv1a64(format!("{}:{}", util::mtime_ns(&meta), meta.len()).as_bytes()));
+                let etag = format!(
+                    "{:016x}",
+                    util::fnv1a64(format!("{}:{}", util::mtime_ns(&meta), meta.len()).as_bytes())
+                );
                 if util::etag_matches(req.header("if-none-match"), &etag) {
                     return Response::new(304).with_header("ETag", format!("\"{etag}\""));
                 }
                 let ext = util::ext_lower(&path);
-                Response::file(&path, util::static_mime(&ext), req.header("range")).with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "no-cache")
+                Response::file(&path, util::static_mime(&ext), req.header("range"))
+                    .with_header("ETag", format!("\"{etag}\""))
+                    .with_header("Cache-Control", "no-cache")
             }
         }
     }

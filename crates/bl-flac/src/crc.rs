@@ -12,7 +12,11 @@ const fn build_crc8() -> [u8; 256] {
         let mut c = i as u8;
         let mut b = 0;
         while b < 8 {
-            c = if c & 0x80 != 0 { (c << 1) ^ 0x07 } else { c << 1 };
+            c = if c & 0x80 != 0 {
+                (c << 1) ^ 0x07
+            } else {
+                c << 1
+            };
             b += 1;
         }
         t[i] = c;
@@ -30,7 +34,11 @@ const fn build_crc16() -> [[u16; 256]; 4] {
         let mut c = (i as u16) << 8;
         let mut b = 0;
         while b < 8 {
-            c = if c & 0x8000 != 0 { (c << 1) ^ 0x8005 } else { c << 1 };
+            c = if c & 0x8000 != 0 {
+                (c << 1) ^ 0x8005
+            } else {
+                c << 1
+            };
             b += 1;
         }
         t[0][i] = c;
@@ -82,7 +90,11 @@ mod tests {
         for &b in data {
             crc ^= (b as u16) << 8;
             for _ in 0..8 {
-                crc = if crc & 0x8000 != 0 { (crc << 1) ^ 0x8005 } else { crc << 1 };
+                crc = if crc & 0x8000 != 0 {
+                    (crc << 1) ^ 0x8005
+                } else {
+                    crc << 1
+                };
             }
         }
         crc
@@ -90,7 +102,9 @@ mod tests {
 
     #[test]
     fn crc16_slicing_matches_bitwise() {
-        let data: Vec<u8> = (0..1000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let data: Vec<u8> = (0..1000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
         for len in 0..40 {
             assert_eq!(crc16(&data[..len]), crc16_bitwise(&data[..len]));
         }

@@ -2,8 +2,8 @@
 //! output rates and decoding speed.
 
 mod common;
-use common::*;
 use bl_opus::{OpusDecoder, OpusHead};
+use common::*;
 use std::time::Instant;
 
 struct Rng(u64);

@@ -7,7 +7,11 @@ const fn make_tables() -> [[u32; 256]; 4] {
         let mut c = i as u32;
         let mut k = 0;
         while k < 8 {
-            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
             k += 1;
         }
         t[0][i] = c;
@@ -50,6 +54,9 @@ mod tests {
     #[test]
     fn known_value() {
         assert_eq!(super::update(0, b"123456789"), 0xCBF4_3926);
-        assert_eq!(super::update(super::update(0, b"1234"), b"56789"), 0xCBF4_3926);
+        assert_eq!(
+            super::update(super::update(0, b"1234"), b"56789"),
+            0xCBF4_3926
+        );
     }
 }

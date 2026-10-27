@@ -2,8 +2,8 @@
 
 mod common;
 
-use common::*;
 use bl_vorbis::VorbisDecoder;
+use common::*;
 use std::time::Instant;
 
 #[test]

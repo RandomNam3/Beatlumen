@@ -95,21 +95,35 @@ impl AdtsHeader {
             return None;
         }
         let channel_config = ((data[2] & 1) << 2) | (data[3] >> 6);
-        let frame_length = (((data[3] & 3) as usize) << 11) | ((data[4] as usize) << 3) | ((data[5] >> 5) as usize);
+        let frame_length = (((data[3] & 3) as usize) << 11)
+            | ((data[4] as usize) << 3)
+            | ((data[5] >> 5) as usize);
         let header_length = if protection_absent { 7 } else { 9 };
         if frame_length < header_length {
             return None;
         }
-        Some(AdtsHeader { object_type, sample_rate_index, channel_config, frame_length, header_length, raw_blocks: data[6] & 3 })
+        Some(AdtsHeader {
+            object_type,
+            sample_rate_index,
+            channel_config,
+            frame_length,
+            header_length,
+            raw_blocks: data[6] & 3,
+        })
     }
 
     /// Builds the equivalent 2-byte AudioSpecificConfig.
     pub fn audio_specific_config(&self) -> [u8; 2] {
-        [(self.object_type << 3) | (self.sample_rate_index >> 1), ((self.sample_rate_index & 1) << 7) | (self.channel_config << 3)]
+        [
+            (self.object_type << 3) | (self.sample_rate_index >> 1),
+            ((self.sample_rate_index & 1) << 7) | (self.channel_config << 3),
+        ]
     }
 }
 
-pub const SAMPLE_RATES: [u32; 13] = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+pub const SAMPLE_RATES: [u32; 13] = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+];
 
 const ID_SCE: u32 = 0;
 const ID_CPE: u32 = 1;
@@ -148,7 +162,10 @@ struct ElementSlot {
 
 impl ElementSlot {
     fn new(kind: ElementKind) -> Self {
-        ElementSlot { channels: (0..kind.channels()).map(|_| ChannelState::new()).collect(), sbr: None }
+        ElementSlot {
+            channels: (0..kind.channels()).map(|_| ChannelState::new()).collect(),
+            sbr: None,
+        }
     }
 }
 
@@ -181,14 +198,23 @@ impl Layout {
         let mut elements = Vec::new();
         let mut ch = 0;
         for &(kind, tag) in kinds {
-            elements.push(LayoutElement { kind, tag, first_channel: ch });
+            elements.push(LayoutElement {
+                kind,
+                tag,
+                first_channel: ch,
+            });
             ch += kind.channels();
         }
         let perm = match roles {
             Some(r) if r.len() == ch && !r.contains(&Role::Other) => config::output_permutation(&r),
             _ => (0..ch).collect(),
         };
-        Layout { elements, by_tag, decoded: ch, perm }
+        Layout {
+            elements,
+            by_tag,
+            decoded: ch,
+            perm,
+        }
     }
 
     fn from_config(channel_config: u8) -> Option<Layout> {
@@ -204,13 +230,24 @@ impl Layout {
             _ => return None,
         };
         let kinds: Vec<(ElementKind, u8)> = kinds.iter().map(|&k| (k, 0)).collect();
-        Some(Layout::new(&kinds, false, config::config_roles(channel_config)))
+        Some(Layout::new(
+            &kinds,
+            false,
+            config::config_roles(channel_config),
+        ))
     }
 
     fn from_pce(p: &ProgramConfig) -> Layout {
         let mut kinds = Vec::new();
         for &(cpe, tag) in p.front.iter().chain(&p.side).chain(&p.back) {
-            kinds.push((if cpe { ElementKind::Cpe } else { ElementKind::Sce }, tag));
+            kinds.push((
+                if cpe {
+                    ElementKind::Cpe
+                } else {
+                    ElementKind::Sce
+                },
+                tag,
+            ));
         }
         for &tag in &p.lfe {
             kinds.push((ElementKind::Lfe, tag));
@@ -225,10 +262,16 @@ impl Layout {
 
     /// Finds the layout element for an element of the given kind and tag.
     fn find(&self, kind: ElementKind, tag: u8, used: &[bool]) -> Option<usize> {
-        let mut candidates = self.elements.iter().enumerate().filter(|(i, e)| e.kind == kind && !used[*i]);
+        let mut candidates = self
+            .elements
+            .iter()
+            .enumerate()
+            .filter(|(i, e)| e.kind == kind && !used[*i]);
         if self.by_tag {
             let mut c2 = candidates.clone();
-            c2.find(|(_, e)| e.tag == tag).or_else(|| candidates.next()).map(|(i, _)| i)
+            c2.find(|(_, e)| e.tag == tag)
+                .or_else(|| candidates.next())
+                .map(|(i, _)| i)
         } else {
             candidates.next().map(|(i, _)| i)
         }
@@ -323,7 +366,8 @@ impl AacDecoder {
             qmf: std::array::from_fn(|_| vec![[fft::Complex::default(); 64]; SLOTS + 6]),
         };
         dec.sbr_allowed = dec.cfg.sbr != Some(false) && dec.cfg.sample_rate <= 48000;
-        dec.sbr_downsampled = dec.cfg.sbr == Some(true) && dec.cfg.ext_sample_rate == Some(dec.cfg.sample_rate);
+        dec.sbr_downsampled =
+            dec.cfg.sbr == Some(true) && dec.cfg.ext_sample_rate == Some(dec.cfg.sample_rate);
         if let Some(l) = layout {
             dec.set_layout(l);
         }
@@ -337,7 +381,11 @@ impl AacDecoder {
         if self.layout.as_ref() == Some(&l) {
             return;
         }
-        self.slots = l.elements.iter().map(|e| ElementSlot::new(e.kind)).collect();
+        self.slots = l
+            .elements
+            .iter()
+            .map(|e| ElementSlot::new(e.kind))
+            .collect();
         self.core_out = (0..l.decoded).map(|_| vec![0.0; 1024]).collect();
         self.used = vec![false; l.elements.len()];
         self.layout = Some(l);
@@ -354,7 +402,9 @@ impl AacDecoder {
     fn update_ps_out(&mut self) {
         self.ps_out = self.sbr_active
             && self.cfg.ps != Some(false)
-            && self.layout.as_ref().map_or(false, |l| l.decoded == 1 && l.elements[0].kind == ElementKind::Sce);
+            && self.layout.as_ref().map_or(false, |l| {
+                l.decoded == 1 && l.elements[0].kind == ElementKind::Sce
+            });
     }
 
     /// The parsed AudioSpecificConfig.
@@ -427,7 +477,11 @@ impl AacDecoder {
             }
             for b in 0..nblocks {
                 let s = starts[b].min(end);
-                let e = if b + 1 < nblocks { starts[b + 1].clamp(s, end) } else { end };
+                let e = if b + 1 < nblocks {
+                    starts[b + 1].clamp(s, end)
+                } else {
+                    end
+                };
                 total += self.decode_frame(&frame[s..e], out)?;
             }
         } else {
@@ -457,12 +511,17 @@ impl AacDecoder {
                 let l = Layout::from_elements(&self.seen);
                 self.set_layout(l);
                 self.inferred = true;
-                self.decode_block_inner(data, out)?.ok_or(Error::InvalidData("inconsistent element structure"))
+                self.decode_block_inner(data, out)?
+                    .ok_or(Error::InvalidData("inconsistent element structure"))
             }
         }
     }
 
-    fn decode_block_inner(&mut self, data: &[u8], out: &mut Vec<f32>) -> Result<Option<(usize, usize)>, Error> {
+    fn decode_block_inner(
+        &mut self,
+        data: &[u8],
+        out: &mut Vec<f32>,
+    ) -> Result<Option<(usize, usize)>, Error> {
         let mut r = BitReader::new(data);
         self.used.iter_mut().for_each(|u| *u = false);
         self.seen.clear();
@@ -516,7 +575,10 @@ impl AacDecoder {
                 }
                 ID_PCE => {
                     let pce = ProgramConfig::parse(&mut r)?;
-                    if self.cfg.channel_config == 0 && pce.num_channels() > 0 && self.seen.is_empty() {
+                    if self.cfg.channel_config == 0
+                        && pce.num_channels() > 0
+                        && self.seen.is_empty()
+                    {
                         self.set_layout(Layout::from_pce(&pce));
                         self.inferred = false;
                         self.cfg.pce = Some(pce);
@@ -549,18 +611,25 @@ impl AacDecoder {
         if self.seen.is_empty() {
             return Err(Error::InvalidData("frame without audio channels"));
         }
-        if self.frames_decoded == 0 && !self.inferred && self.used.iter().filter(|&&u| u).count() != self.seen.len() {
+        if self.frames_decoded == 0
+            && !self.inferred
+            && self.used.iter().filter(|&&u| u).count() != self.seen.len()
+        {
             return Ok(None);
         }
         if decoded_channels == 0 {
-            return Err(Error::InvalidData("elements do not match the channel configuration"));
+            return Err(Error::InvalidData(
+                "elements do not match the channel configuration",
+            ));
         }
         let layout = self.layout.as_ref().unwrap();
         // Channels of elements missing from this frame are silent.
         for (i, e) in layout.elements.iter().enumerate() {
             if !self.used[i] {
                 for c in 0..e.kind.channels() {
-                    self.core_out[e.first_channel + c].iter_mut().for_each(|v| *v = 0.0);
+                    self.core_out[e.first_channel + c]
+                        .iter_mut()
+                        .for_each(|v| *v = 0.0);
                 }
             }
         }
@@ -575,7 +644,11 @@ impl AacDecoder {
             1024
         };
         let layout = self.layout.as_ref().unwrap();
-        let src: &Vec<Vec<f32>> = if self.sbr_active { &self.sbr_out } else { &self.core_out };
+        let src: &Vec<Vec<f32>> = if self.sbr_active {
+            &self.sbr_out
+        } else {
+            &self.core_out
+        };
         let mut order: Vec<usize> = layout.perm.clone();
         if self.ps_out {
             order.push(1);
@@ -645,7 +718,9 @@ impl AacDecoder {
         let rate = self.cfg.sample_rate * 2;
         let with_ps = self.ps_out;
         let ds = self.sbr_downsampled;
-        let sbr = self.slots[slot].sbr.get_or_insert_with(|| Box::new(SbrElement::new(rate, kind.channels())));
+        let sbr = self.slots[slot]
+            .sbr
+            .get_or_insert_with(|| Box::new(SbrElement::new(rate, kind.channels())));
         sbr.downsampled = ds;
         // Errors leave the element without SBR data for this frame.
         let _ = sbr.parse(r, crc, with_ps);
@@ -662,7 +737,9 @@ impl AacDecoder {
         let [x, left, right] = &mut self.qmf;
         for (i, e) in layout.elements.iter().enumerate() {
             let slot = &mut self.slots[i];
-            let sbr = slot.sbr.get_or_insert_with(|| Box::new(SbrElement::new(rate, e.kind.channels())));
+            let sbr = slot
+                .sbr
+                .get_or_insert_with(|| Box::new(SbrElement::new(rate, e.kind.channels())));
             sbr.downsampled = self.sbr_downsampled;
             for c in 0..e.kind.channels() {
                 let dst = e.first_channel + c;
@@ -679,7 +756,12 @@ impl AacDecoder {
         }
     }
 
-    fn decode_sce(&mut self, r: &mut BitReader, target: Option<usize>, kind: ElementKind) -> Result<(), Error> {
+    fn decode_sce(
+        &mut self,
+        r: &mut BitReader,
+        target: Option<usize>,
+        kind: ElementKind,
+    ) -> Result<(), Error> {
         let sf_index = self.sf_index;
         ics::parse_ics(r, &mut self.ch[0], sf_index, None)?;
         if kind == ElementKind::Lfe && self.ch[0].info.is_short() {
@@ -691,7 +773,13 @@ impl AacDecoder {
         let first = self.layout.as_ref().unwrap().elements[slot].first_channel;
         let ch = &self.ch[0];
         let (seq, shape) = (ch.info.window_sequence, ch.info.window_shape);
-        self.fb.synthesize(&ch.spec, seq, shape, &mut self.slots[slot].channels[0], &mut self.core_out[first]);
+        self.fb.synthesize(
+            &ch.spec,
+            seq,
+            shape,
+            &mut self.slots[slot].channels[0],
+            &mut self.core_out[first],
+        );
         Ok(())
     }
 
@@ -754,8 +842,20 @@ impl AacDecoder {
         let states = &mut self.slots[slot].channels;
         let (s0, s1) = states.split_at_mut(1);
         let [ch0, ch1] = &self.ch;
-        self.fb.synthesize(&ch0.spec, ch0.info.window_sequence, ch0.info.window_shape, &mut s0[0], out0);
-        self.fb.synthesize(&ch1.spec, ch1.info.window_sequence, ch1.info.window_shape, &mut s1[0], out1);
+        self.fb.synthesize(
+            &ch0.spec,
+            ch0.info.window_sequence,
+            ch0.info.window_shape,
+            &mut s0[0],
+            out0,
+        );
+        self.fb.synthesize(
+            &ch1.spec,
+            ch1.info.window_sequence,
+            ch1.info.window_shape,
+            &mut s1[0],
+            out1,
+        );
         Ok(())
     }
 
@@ -785,12 +885,18 @@ impl AacDecoder {
         for _ in 1..num_gain_lists {
             let cge = if ind_sw { true } else { r.read_bit() };
             if cge {
-                books.scalefactor.decode(r).ok_or(Error::InvalidData("bad CCE gain code"))?;
+                books
+                    .scalefactor
+                    .decode(r)
+                    .ok_or(Error::InvalidData("bad CCE gain code"))?;
             } else {
                 for g in 0..ch.info.num_groups {
                     for sfb in 0..ch.info.max_sfb {
                         if ch.band_type[g * MAX_SFB + sfb] != ics::ZERO_HCB {
-                            books.scalefactor.decode(r).ok_or(Error::InvalidData("bad CCE gain code"))?;
+                            books
+                                .scalefactor
+                                .decode(r)
+                                .ok_or(Error::InvalidData("bad CCE gain code"))?;
                         }
                     }
                 }

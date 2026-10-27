@@ -15,7 +15,9 @@ use bl_ogg::{read_page, PacketReader};
 
 use crate::flac::parse_streaminfo;
 use crate::tags::vorbis_comment::{parse_flac_picture, parse_vorbis_comment};
-use crate::util::{be16, bitrate_kbps, emit_window, frames_to_ms, invalid, le32, stream_len, unsupported};
+use crate::util::{
+    be16, bitrate_kbps, emit_window, frames_to_ms, invalid, le32, stream_len, unsupported,
+};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Source, Tags};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +51,11 @@ fn find_stream<R: Read + Seek + ?Sized>(r: &mut R) -> Result<(u32, OggCodec), Er
             break;
         }
         let len: usize = page.lacing.iter().take_while(|&&l| l == 255).count() * 255
-            + page.lacing.iter().find(|&&l| l < 255).map_or(0, |&l| l as usize);
+            + page
+                .lacing
+                .iter()
+                .find(|&&l| l < 255)
+                .map_or(0, |&l| l as usize);
         if let Some(c) = identify(&page.data[..len.min(page.data.len())]) {
             return Ok((page.serial, c));
         }
@@ -59,7 +65,10 @@ fn find_stream<R: Read + Seek + ?Sized>(r: &mut R) -> Result<(u32, OggCodec), Er
 
 /// Reads the header packets of the selected stream. Leaves the reader at
 /// the first audio page and returns (headers, data_start).
-fn read_headers<R: Read + Seek>(pr: &mut PacketReader<R>, codec: OggCodec) -> Result<(Vec<Vec<u8>>, u64), Error> {
+fn read_headers<R: Read + Seek>(
+    pr: &mut PacketReader<R>,
+    codec: OggCodec,
+) -> Result<(Vec<Vec<u8>>, u64), Error> {
     let mut headers: Vec<Vec<u8>> = Vec::new();
     let mut needed = match codec {
         OggCodec::Vorbis => 3,
@@ -67,7 +76,9 @@ fn read_headers<R: Read + Seek>(pr: &mut PacketReader<R>, codec: OggCodec) -> Re
         OggCodec::Flac => 1,
     };
     while headers.len() < needed {
-        let Some(p) = pr.next_packet()? else { return invalid("truncated Ogg headers") };
+        let Some(p) = pr.next_packet()? else {
+            return invalid("truncated Ogg headers");
+        };
         if headers.is_empty() && codec == OggCodec::Flac {
             let n = be16(&p.data, 7).unwrap_or(0) as usize;
             needed = 1 + n.min(1024);
@@ -79,7 +90,9 @@ fn read_headers<R: Read + Seek>(pr: &mut PacketReader<R>, codec: OggCodec) -> Re
     }
     match codec {
         OggCodec::Vorbis => {
-            if headers[1].get(..7) != Some(b"\x03vorbis") || headers[2].get(..7) != Some(b"\x05vorbis") {
+            if headers[1].get(..7) != Some(b"\x03vorbis")
+                || headers[2].get(..7) != Some(b"\x05vorbis")
+            {
                 return invalid("bad Vorbis header packets");
             }
         }
@@ -109,7 +122,9 @@ fn header_info(codec: OggCodec, headers: &[Vec<u8>]) -> Result<HeaderInfo, Error
     let h = &headers[0];
     match codec {
         OggCodec::Vorbis => {
-            let (Some(rate), Some(nom)) = (le32(h, 12), le32(h, 20)) else { return invalid("short Vorbis ident header") };
+            let (Some(rate), Some(nom)) = (le32(h, 12), le32(h, 20)) else {
+                return invalid("short Vorbis ident header");
+            };
             let channels = *h.get(11).unwrap_or(&0) as u16;
             if rate == 0 || channels == 0 {
                 return invalid("bad Vorbis ident header");
@@ -134,14 +149,29 @@ fn header_info(codec: OggCodec, headers: &[Vec<u8>]) -> Result<HeaderInfo, Error
             })
         }
         OggCodec::Flac => {
-            let si = h.get(17..).and_then(parse_streaminfo).ok_or_else(|| Error::InvalidData("bad Ogg FLAC header".into()))?;
+            let si = h
+                .get(17..)
+                .and_then(parse_streaminfo)
+                .ok_or_else(|| Error::InvalidData("bad Ogg FLAC header".into()))?;
             let max_block = be16(h, 17 + 2).unwrap_or(4096).max(16) as u64;
-            Ok(HeaderInfo { sample_rate: si.sample_rate, channels: si.channels, granule_offset: 0, nominal_bitrate: None, max_packet: max_block })
+            Ok(HeaderInfo {
+                sample_rate: si.sample_rate,
+                channels: si.channels,
+                granule_offset: 0,
+                nominal_bitrate: None,
+                max_packet: max_block,
+            })
         }
     }
 }
 
-fn read_comments(codec: OggCodec, headers: &[Vec<u8>], tags: &mut Tags, pictures: &mut Vec<crate::Picture>, with_pictures: bool) {
+fn read_comments(
+    codec: OggCodec,
+    headers: &[Vec<u8>],
+    tags: &mut Tags,
+    pictures: &mut Vec<crate::Picture>,
+    with_pictures: bool,
+) {
     let pics = with_pictures.then_some(&mut *pictures);
     match codec {
         OggCodec::Vorbis => parse_vorbis_comment(&headers[1][7..], tags, pics),
@@ -154,7 +184,9 @@ fn read_comments(codec: OggCodec, headers: &[Vec<u8>], tags: &mut Tags, pictures
                 match t & 0x7f {
                     4 => parse_vorbis_comment(body, tags, pics.as_deref_mut()),
                     6 => {
-                        if let (Some(p), Some(pic)) = (pics.as_deref_mut(), parse_flac_picture(body)) {
+                        if let (Some(p), Some(pic)) =
+                            (pics.as_deref_mut(), parse_flac_picture(body))
+                        {
                             p.push(pic);
                         }
                     }
@@ -173,7 +205,10 @@ fn codec_name(c: OggCodec) -> &'static str {
     }
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let file_len = stream_len(r)?;
     let (serial, codec) = find_stream(r)?;
     r.seek(SeekFrom::Start(0))?;
@@ -184,9 +219,13 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
     let mut tags = Tags::default();
     let mut pictures = Vec::new();
     read_comments(codec, &headers, &mut tags, &mut pictures, with_pictures);
-    let total = pr.last_granule(serial)?.map(|g| g.saturating_sub(info.granule_offset));
+    let total = pr
+        .last_granule(serial)?
+        .map(|g| g.saturating_sub(info.granule_offset));
     let audio_bytes = file_len.saturating_sub(data_start);
-    let bitrate = total.and_then(|t| bitrate_kbps(audio_bytes, t, info.sample_rate)).or(info.nominal_bitrate);
+    let bitrate = total
+        .and_then(|t| bitrate_kbps(audio_bytes, t, info.sample_rate))
+        .or(info.nominal_bitrate);
     Ok(MediaInfo {
         container: "ogg",
         codec: codec_name(codec),
@@ -273,7 +312,11 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     let (headers, data_start) = read_headers(&mut pr, codec)?;
     let info = header_info(codec, &headers)?;
     let dec = match codec {
-        OggCodec::Vorbis => PacketDecoder::Vorbis(Box::new(bl_vorbis::VorbisDecoder::new(&headers[0], &headers[1], &headers[2])?)),
+        OggCodec::Vorbis => PacketDecoder::Vorbis(Box::new(bl_vorbis::VorbisDecoder::new(
+            &headers[0],
+            &headers[1],
+            &headers[2],
+        )?)),
         OggCodec::Opus => {
             let head = bl_opus::OpusHead::parse(&headers[0])?;
             PacketDecoder::Opus(bl_opus::OpusDecoder::new(&head, 48000)?)
@@ -281,14 +324,25 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
         OggCodec::Flac => PacketDecoder::Flac(bl_flac::FlacFrameDecoder::new(&headers[0])?),
     };
     let spec = match &dec {
-        PacketDecoder::Vorbis(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Opus(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Flac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
+        PacketDecoder::Vorbis(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Opus(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Flac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
     };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("decoder reported an empty stream format");
     }
-    let total = pr.last_granule(serial)?.map(|g| g.saturating_sub(info.granule_offset));
+    let total = pr
+        .last_granule(serial)?
+        .map(|g| g.saturating_sub(info.granule_offset));
     let seek_preroll = match codec {
         OggCodec::Opus => 3840 + info.max_packet,
         _ => 2 * info.max_packet,
@@ -319,8 +373,19 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
 impl OggDecoder {
     fn emit(&mut self, from_pending: bool, pos: i64) {
         let ch = self.spec.channels as usize;
-        let chunk = if from_pending { &self.pending } else { &self.tmp };
-        emit_window(chunk, ch, pos, self.discard_before, self.total, &mut self.ready);
+        let chunk = if from_pending {
+            &self.pending
+        } else {
+            &self.tmp
+        };
+        emit_window(
+            chunk,
+            ch,
+            pos,
+            self.discard_before,
+            self.total,
+            &mut self.ready,
+        );
     }
 
     fn restart(&mut self) {

@@ -33,7 +33,9 @@ fn main() {
     }
     let first = AdtsHeader::parse(frames.first().expect("no ADTS frames")).unwrap();
     let asc: Vec<u8> = match args.get(3) {
-        Some(hex) => (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect(),
+        Some(hex) => (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect(),
         None => first.audio_specific_config().to_vec(),
     };
     let mut dec = AacDecoder::new(&asc).expect("decoder init");
@@ -66,7 +68,8 @@ fn main() {
 }
 
 fn decode_raw(data: &[u8], out_path: &str) {
-    let be32 = |p: usize| u32::from_be_bytes([data[p], data[p + 1], data[p + 2], data[p + 3]]) as usize;
+    let be32 =
+        |p: usize| u32::from_be_bytes([data[p], data[p + 1], data[p + 2], data[p + 3]]) as usize;
     let asc_len = be32(0);
     let asc = &data[4..4 + asc_len];
     let mut dec = AacDecoder::new(asc).expect("decoder init");

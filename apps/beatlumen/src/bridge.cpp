@@ -241,7 +241,13 @@ void Bridge::handleEvents(const QByteArray &json)
         const QJsonObject e = v.toObject();
         const QString type = e.value(QStringLiteral("type")).toString();
         if (type == QLatin1String("state")) {
+            const int underrunsBefore = m_state.value(QStringLiteral("underruns")).toInt();
             m_state = e.value(QStringLiteral("state")).toObject().toVariantMap();
+            if (!qEnvironmentVariableIsEmpty("BEATLUMEN_TEST_DUMP")) {
+                const int u = m_state.value(QStringLiteral("underruns")).toInt();
+                if (u != underrunsBefore)
+                    qInfo("audio underruns: %d", u);
+            }
             emit stateChanged();
         } else if (type == QLatin1String("toast")) {
             emit toast(e.value(QStringLiteral("text")).toString(), e.value(QStringLiteral("error")).toBool());

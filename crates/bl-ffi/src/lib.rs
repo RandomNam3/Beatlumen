@@ -27,9 +27,20 @@ pub struct BlCallbacks {
     pub log: Option<unsafe extern "C" fn(user: *mut c_void, msg: *const c_char)>,
     /// Starts an HTTP request (platforms without sockets); the UI answers
     /// with [`bl_core_http_complete`]. `headers` is a JSON array of pairs.
-    pub http_request: Option<unsafe extern "C" fn(user: *mut c_void, id: u64, method: *const c_char, url: *const c_char, headers: *const c_char, body: *const u8, len: usize)>,
+    pub http_request: Option<
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            id: u64,
+            method: *const c_char,
+            url: *const c_char,
+            headers: *const c_char,
+            body: *const u8,
+            len: usize,
+        ),
+    >,
     /// Push audio (platforms without threads): queue interleaved stereo samples.
-    pub audio_push: Option<unsafe extern "C" fn(user: *mut c_void, samples: *const f32, count: usize)>,
+    pub audio_push:
+        Option<unsafe extern "C" fn(user: *mut c_void, samples: *const f32, count: usize)>,
     pub audio_queued: Option<unsafe extern "C" fn(user: *mut c_void) -> u32>,
     pub audio_clear: Option<unsafe extern "C" fn(user: *mut c_void)>,
     pub audio_set_paused: Option<unsafe extern "C" fn(user: *mut c_void, paused: i32)>,
@@ -47,7 +58,9 @@ fn cstr(p: *const c_char) -> String {
 }
 
 fn out_string(s: String) -> *mut c_char {
-    CString::new(s.replace('\0', "")).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+    CString::new(s.replace('\0', ""))
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 struct UiHost {
@@ -66,7 +79,12 @@ struct UiHost {
 fn key_path(dir: &std::path::Path, key: &str) -> Option<PathBuf> {
     let mut p = dir.to_path_buf();
     for part in key.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.contains('\\') || part.contains(':') {
+        if part.is_empty()
+            || part == "."
+            || part == ".."
+            || part.contains('\\')
+            || part.contains(':')
+        {
             return None;
         }
         p.push(part);
@@ -86,7 +104,10 @@ impl UiHost {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if name != "emulated" && name != "self" {
-                    roots.push((format!("SD {name}"), e.path().to_string_lossy().into_owned()));
+                    roots.push((
+                        format!("SD {name}"),
+                        e.path().to_string_lossy().into_owned(),
+                    ));
                 }
             }
         }
@@ -99,10 +120,16 @@ impl Host for UiHost {
         self.start.elapsed().as_secs_f64()
     }
     fn unix_time(&self) -> f64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
     }
     fn random_seed(&self) -> u64 {
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         t ^ (&t as *const u64 as u64).rotate_left(29)
     }
     fn platform(&self) -> &'static str {
@@ -112,7 +139,9 @@ impl Host for UiHost {
         std::fs::read(key_path(&self.data_dir, key)?).ok()
     }
     fn storage_write(&self, key: &str, data: &[u8]) -> bool {
-        let Some(path) = key_path(&self.data_dir, key) else { return false };
+        let Some(path) = key_path(&self.data_dir, key) else {
+            return false;
+        };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -129,13 +158,23 @@ impl Host for UiHost {
             Some(i) => (&prefix[..i], &prefix[i + 1..]),
             None => ("", prefix),
         };
-        let base = if dir.is_empty() { Some(self.data_dir.clone()) } else { key_path(&self.data_dir, dir) };
+        let base = if dir.is_empty() {
+            Some(self.data_dir.clone())
+        } else {
+            key_path(&self.data_dir, dir)
+        };
         let mut out = Vec::new();
         if let Some(Ok(rd)) = base.map(std::fs::read_dir) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with(file_prefix) && e.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    out.push(if dir.is_empty() { name } else { format!("{dir}/{name}") });
+                if name.starts_with(file_prefix)
+                    && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+                {
+                    out.push(if dir.is_empty() {
+                        name
+                    } else {
+                        format!("{dir}/{name}")
+                    });
                 }
             }
         }
@@ -167,10 +206,22 @@ impl Host for UiHost {
                 continue;
             }
             let p = e.path();
-            let Ok(md) = std::fs::metadata(&p) else { continue };
-            out.push(DirEntry { name, path: p.to_string_lossy().into_owned(), is_dir: md.is_dir(), size: md.len(), modified: 0 });
+            let Ok(md) = std::fs::metadata(&p) else {
+                continue;
+            };
+            out.push(DirEntry {
+                name,
+                path: p.to_string_lossy().into_owned(),
+                is_dir: md.is_dir(),
+                size: md.len(),
+                modified: 0,
+            });
         }
-        out.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+        out.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
         Ok(out)
     }
     fn fs_open(&self, path: &str) -> Result<Box<dyn bl_media::Source>, String> {
@@ -182,9 +233,23 @@ impl Host for UiHost {
     }
     fn fs_metadata(&self, path: &str) -> Option<DirEntry> {
         let md = std::fs::metadata(path).ok()?;
-        let modified = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        Some(DirEntry { name, path: path.to_string(), is_dir: md.is_dir(), size: md.len(), modified })
+        let modified = md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Some(DirEntry {
+            name,
+            path: path.to_string(),
+            is_dir: md.is_dir(),
+            size: md.len(),
+            modified,
+        })
     }
     fn http_request(&mut self, req: HttpRequest) -> u64 {
         #[cfg(not(target_arch = "wasm32"))]
@@ -195,12 +260,36 @@ impl Host for UiHost {
         let id = self.next_http | (1 << 62);
         match self.cb.http_request {
             Some(f) => {
-                let headers = Value::Array(req.headers.iter().map(|(k, v)| Value::Array(vec![Value::from(k.as_str()), Value::from(v.as_str())])).collect()).to_json();
-                let (m, u, h) = (CString::new(req.method).unwrap_or_default(), CString::new(req.url).unwrap_or_default(), CString::new(headers).unwrap_or_default());
+                let headers = Value::Array(
+                    req.headers
+                        .iter()
+                        .map(|(k, v)| {
+                            Value::Array(vec![Value::from(k.as_str()), Value::from(v.as_str())])
+                        })
+                        .collect(),
+                )
+                .to_json();
+                let (m, u, h) = (
+                    CString::new(req.method).unwrap_or_default(),
+                    CString::new(req.url).unwrap_or_default(),
+                    CString::new(headers).unwrap_or_default(),
+                );
                 // SAFETY: valid pointers for the duration of the call.
-                unsafe { f(self.cb.user, id, m.as_ptr(), u.as_ptr(), h.as_ptr(), req.body.as_ptr(), req.body.len()) };
+                unsafe {
+                    f(
+                        self.cb.user,
+                        id,
+                        m.as_ptr(),
+                        u.as_ptr(),
+                        h.as_ptr(),
+                        req.body.as_ptr(),
+                        req.body.len(),
+                    )
+                };
             }
-            None => self.http_done.push((id, Err("HTTP is not available".into()))),
+            None => self
+                .http_done
+                .push((id, Err("HTTP is not available".into()))),
         }
         id
     }
@@ -230,7 +319,10 @@ impl Host for UiHost {
         if rate == 0 {
             return Err("no audio output".into());
         }
-        Ok(AudioDeviceInfo { sample_rate: rate, channels: 2 })
+        Ok(AudioDeviceInfo {
+            sample_rate: rate,
+            channels: 2,
+        })
     }
     fn audio_push(&mut self, samples: &[f32]) {
         if let Some(f) = self.cb.audio_push {
@@ -240,7 +332,10 @@ impl Host for UiHost {
     }
     fn audio_queued(&self) -> u32 {
         // SAFETY: UI callback contract.
-        self.cb.audio_queued.map(|f| unsafe { f(self.cb.user) }).unwrap_or(0)
+        self.cb
+            .audio_queued
+            .map(|f| unsafe { f(self.cb.user) })
+            .unwrap_or(0)
     }
     fn audio_clear(&mut self) {
         if let Some(f) = self.cb.audio_clear {
@@ -279,7 +374,13 @@ pub struct BlCore {
 /// Creates the core. `args_json` is an array of command line arguments,
 /// `platform` one of "linux", "windows", "macos", "android", "web".
 #[no_mangle]
-pub unsafe extern "C" fn bl_core_new(data_dir: *const c_char, args_json: *const c_char, language: *const c_char, platform: *const c_char, cb: BlCallbacks) -> *mut BlCore {
+pub unsafe extern "C" fn bl_core_new(
+    data_dir: *const c_char,
+    args_json: *const c_char,
+    language: *const c_char,
+    platform: *const c_char,
+    cb: BlCallbacks,
+) -> *mut BlCore {
     let platform: &'static str = match cstr(platform).as_str() {
         "android" => "android",
         "windows" => "windows",
@@ -291,7 +392,13 @@ pub unsafe extern "C" fn bl_core_new(data_dir: *const c_char, args_json: *const 
     let _ = std::fs::create_dir_all(&data_dir);
     let args: Vec<String> = bl_json::parse(&cstr(args_json))
         .ok()
-        .and_then(|v| v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()))
+        .and_then(|v| {
+            v.as_array().map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
         .unwrap_or_default();
     let launch = LaunchArgs::parse(args.into_iter()).unwrap_or_default();
     let mut host = UiHost {
@@ -307,7 +414,11 @@ pub unsafe extern "C" fn bl_core_new(data_dir: *const c_char, args_json: *const 
         use_ui_http: false,
     };
     let core = Core::new(&mut host, launch, &cstr(language));
-    Box::into_raw(Box::new(BlCore { host, core, gl: None }))
+    Box::into_raw(Box::new(BlCore {
+        host,
+        core,
+        gl: None,
+    }))
 }
 
 #[no_mangle]
@@ -325,7 +436,9 @@ pub unsafe extern "C" fn bl_core_free(c: *mut BlCore) {
 /// Executes a JSON command and returns the JSON result.
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_command(c: *mut BlCore, json: *const c_char) -> *mut c_char {
-    let Some(c) = c.as_mut() else { return std::ptr::null_mut() };
+    let Some(c) = c.as_mut() else {
+        return std::ptr::null_mut();
+    };
     let cmd = bl_json::parse(&cstr(json)).unwrap_or(Value::Null);
     let r = c.core.command(&mut c.host, &cmd);
     out_string(r.to_json())
@@ -335,7 +448,9 @@ pub unsafe extern "C" fn bl_core_command(c: *mut BlCore, json: *const c_char) ->
 /// the last call as a JSON array.
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_tick(c: *mut BlCore) -> *mut c_char {
-    let Some(c) = c.as_mut() else { return std::ptr::null_mut() };
+    let Some(c) = c.as_mut() else {
+        return std::ptr::null_mut();
+    };
     c.core.tick(&mut c.host);
     out_string(c.core.take_events().to_json())
 }
@@ -355,14 +470,26 @@ pub unsafe extern "C" fn bl_core_is_playing(c: *mut BlCore) -> i32 {
 /// Loads GL with `get_proc` (a context must be current). `flavor`: 0 =
 /// desktop OpenGL 3.3 core, 1 = OpenGL ES 3 / WebGL 2. Returns 0 on success.
 #[no_mangle]
-pub unsafe extern "C" fn bl_core_gl_init(c: *mut BlCore, get_proc: Option<unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *const c_void>, ctx: *mut c_void, flavor: i32) -> i32 {
+pub unsafe extern "C" fn bl_core_gl_init(
+    c: *mut BlCore,
+    get_proc: Option<unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *const c_void>,
+    ctx: *mut c_void,
+    flavor: i32,
+) -> i32 {
     let Some(c) = c.as_mut() else { return 1 };
     let Some(get_proc) = get_proc else { return 1 };
     let mut get = |name: &str| {
         let n = CString::new(name).unwrap_or_default();
         get_proc(ctx, n.as_ptr())
     };
-    let gl = match Gl::load(if flavor == 0 { Flavor::Core33 } else { Flavor::Gles3 }, &mut get) {
+    let gl = match Gl::load(
+        if flavor == 0 {
+            Flavor::Core33
+        } else {
+            Flavor::Gles3
+        },
+        &mut get,
+    ) {
         Ok(gl) => gl,
         Err(e) => {
             c.host.log(&format!("OpenGL: {e}"));
@@ -388,7 +515,14 @@ pub unsafe extern "C" fn bl_core_gl_lost(c: *mut BlCore) {
 
 /// Renders the visualizer into framebuffer `fbo` (physical pixel size).
 #[no_mangle]
-pub unsafe extern "C" fn bl_core_render(c: *mut BlCore, fbo: u32, w: u32, h: u32, dpr: f32, dt: f64) {
+pub unsafe extern "C" fn bl_core_render(
+    c: *mut BlCore,
+    fbo: u32,
+    w: u32,
+    h: u32,
+    dpr: f32,
+    dt: f64,
+) {
     let Some(c) = c.as_mut() else { return };
     let Some(gl) = &c.gl else { return };
     c.core.render(gl, &mut c.host, fbo, w, h, dpr, dt);
@@ -397,26 +531,62 @@ pub unsafe extern "C" fn bl_core_render(c: *mut BlCore, fbo: u32, w: u32, h: u32
 /// Completes a request started through `BlCallbacks::http_request`.
 /// `status` 0 means a network error described by `error`.
 #[no_mangle]
-pub unsafe extern "C" fn bl_core_http_complete(c: *mut BlCore, id: u64, status: i32, headers_json: *const c_char, body: *const u8, len: usize, error: *const c_char) {
+pub unsafe extern "C" fn bl_core_http_complete(
+    c: *mut BlCore,
+    id: u64,
+    status: i32,
+    headers_json: *const c_char,
+    body: *const u8,
+    len: usize,
+    error: *const c_char,
+) {
     let Some(c) = c.as_mut() else { return };
     let res = if status <= 0 {
         Err(cstr(error))
     } else {
         let headers = bl_json::parse(&cstr(headers_json))
             .ok()
-            .and_then(|v| v.as_array().map(|a| a.iter().map(|p| (p.at(0).as_str().unwrap_or("").to_string(), p.at(1).as_str().unwrap_or("").to_string())).collect()))
+            .and_then(|v| {
+                v.as_array().map(|a| {
+                    a.iter()
+                        .map(|p| {
+                            (
+                                p.at(0).as_str().unwrap_or("").to_string(),
+                                p.at(1).as_str().unwrap_or("").to_string(),
+                            )
+                        })
+                        .collect()
+                })
+            })
             .unwrap_or_default();
-        let body = if body.is_null() || len == 0 { Vec::new() } else { std::slice::from_raw_parts(body, len).to_vec() };
-        Ok(HttpResponse { status: status as u16, headers, body })
+        let body = if body.is_null() || len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(body, len).to_vec()
+        };
+        Ok(HttpResponse {
+            status: status as u16,
+            headers,
+            body,
+        })
     };
     c.host.http_done.push((id, res));
 }
 
 /// Opens a file given as bytes (browser uploads, Android content URIs).
 #[no_mangle]
-pub unsafe extern "C" fn bl_core_open_data(c: *mut BlCore, name: *const c_char, data: *const u8, len: usize) {
+pub unsafe extern "C" fn bl_core_open_data(
+    c: *mut BlCore,
+    name: *const c_char,
+    data: *const u8,
+    len: usize,
+) {
     let Some(c) = c.as_mut() else { return };
-    let bytes = if data.is_null() { Vec::new() } else { std::slice::from_raw_parts(data, len).to_vec() };
+    let bytes = if data.is_null() {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(data, len).to_vec()
+    };
     c.core.open_data(&mut c.host, cstr(name), bytes);
 }
 

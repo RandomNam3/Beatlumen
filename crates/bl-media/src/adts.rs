@@ -7,7 +7,10 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use bl_aac::AdtsHeader;
 
 use crate::tags::{self, id3};
-use crate::util::{bitrate_kbps, emit_window, seek_buffered, frames_to_ms, invalid, read_up_to, stream_len, unsupported};
+use crate::util::{
+    bitrate_kbps, emit_window, frames_to_ms, invalid, read_up_to, seek_buffered, stream_len,
+    unsupported,
+};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Source, Tags};
 
 /// A located ADTS frame.
@@ -28,7 +31,11 @@ fn parse_at(d: &[u8]) -> Option<AdtsHeader> {
 /// Scans ADTS frame headers in `[start, end)`, resynchronising after
 /// garbage. Only frames whose successor also has a valid header (or that
 /// end exactly at `end`) are accepted after a resync.
-fn scan<R: Read + Seek + ?Sized>(r: &mut R, start: u64, end: u64) -> Result<(Vec<Frame>, Option<AdtsHeader>), Error> {
+fn scan<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    start: u64,
+    end: u64,
+) -> Result<(Vec<Frame>, Option<AdtsHeader>), Error> {
     const BLOCK: usize = 256 * 1024;
     let mut buf = vec![0u8; BLOCK];
     let mut buf_start = start;
@@ -61,13 +68,19 @@ fn scan<R: Read + Seek + ?Sized>(r: &mut R, start: u64, end: u64) -> Result<(Vec
             Some(h) => {
                 // Confirm with the next header when (re)synchronising.
                 let next = i + h.frame_length;
-                pos + h.frame_length as u64 == end || (next + 7 <= filled && parse_at(&buf[next..filled]).is_some()) || next + 7 > filled
+                pos + h.frame_length as u64 == end
+                    || (next + 7 <= filled && parse_at(&buf[next..filled]).is_some())
+                    || next + 7 > filled
             }
             None => false,
         };
         if let (true, Some(h)) = (ok, h) {
             first.get_or_insert(h);
-            frames.push(Frame { offset: pos, len: h.frame_length as u32, header_len: h.header_length as u8 });
+            frames.push(Frame {
+                offset: pos,
+                len: h.frame_length as u32,
+                header_len: h.header_length as u8,
+            });
             pos += h.frame_length as u64;
             synced = true;
         } else {
@@ -79,7 +92,10 @@ fn scan<R: Read + Seek + ?Sized>(r: &mut R, start: u64, end: u64) -> Result<(Vec
 }
 
 fn rate_of(h: &AdtsHeader) -> u32 {
-    bl_aac::SAMPLE_RATES.get(h.sample_rate_index as usize).copied().unwrap_or(0)
+    bl_aac::SAMPLE_RATES
+        .get(h.sample_rate_index as usize)
+        .copied()
+        .unwrap_or(0)
 }
 
 fn channels_of(h: &AdtsHeader) -> u16 {
@@ -90,7 +106,10 @@ fn channels_of(h: &AdtsHeader) -> u16 {
     }
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let mut tags = Tags::default();
@@ -100,7 +119,9 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
     tags::merge_missing(&mut tags, &end.ape);
     tags::merge_missing(&mut tags, &end.id3v1);
     let (frames, first) = scan(r, start, end.audio_end)?;
-    let Some(h) = first else { return invalid("no ADTS frames") };
+    let Some(h) = first else {
+        return invalid("no ADTS frames");
+    };
     let rate = rate_of(&h);
     let total = frames.len() as u64 * 1024 * (h.raw_blocks as u64 + 1);
     let bytes: u64 = frames.iter().map(|f| f.len as u64).sum();
@@ -138,19 +159,35 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     let start = id3::skip_id3v2(&mut r)?;
     let end = tags::read_end_tags(&mut r, file_len, None)?;
     let (frames, first) = scan(&mut r, start, end.audio_end)?;
-    let Some(h) = first else { return invalid("no ADTS frames") };
+    let Some(h) = first else {
+        return invalid("no ADTS frames");
+    };
     if h.raw_blocks != 0 {
         return unsupported("ADTS frames with multiple raw data blocks");
     }
     let dec = bl_aac::AacDecoder::new(&h.audio_specific_config())?;
-    let spec = AudioSpec { sample_rate: dec.sample_rate(), channels: dec.channels() };
+    let spec = AudioSpec {
+        sample_rate: dec.sample_rate(),
+        channels: dec.channels(),
+    };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("decoder reported an empty stream format");
     }
     let core = rate_of(&h).max(1) as u64;
     let out_spf = 1024 * spec.sample_rate as u64 / core;
     let cur = r.stream_position()?;
-    Ok(Box::new(AdtsDecoder { r, cur, frames, dec, spec, out_spf: out_spf.max(1), next: 0, discard_before: 0, buf: Vec::new(), tmp: Vec::new() }))
+    Ok(Box::new(AdtsDecoder {
+        r,
+        cur,
+        frames,
+        dec,
+        spec,
+        out_spf: out_spf.max(1),
+        next: 0,
+        discard_before: 0,
+        buf: Vec::new(),
+        tmp: Vec::new(),
+    }))
 }
 
 impl Decoder for AdtsDecoder {
@@ -162,7 +199,9 @@ impl Decoder for AdtsDecoder {
     }
     fn next_chunk(&mut self, out: &mut Vec<f32>) -> Result<bool, Error> {
         loop {
-            let Some(&f) = self.frames.get(self.next) else { return Ok(false) };
+            let Some(&f) = self.frames.get(self.next) else {
+                return Ok(false);
+            };
             let pos = self.next as u64 * self.out_spf;
             self.next += 1;
             seek_buffered(&mut self.r, &mut self.cur, f.offset)?;
@@ -174,7 +213,9 @@ impl Decoder for AdtsDecoder {
                 return invalid("truncated ADTS frame");
             }
             self.tmp.clear();
-            let n = self.dec.decode_frame(&self.buf[f.header_len as usize..], &mut self.tmp)?;
+            let n = self
+                .dec
+                .decode_frame(&self.buf[f.header_len as usize..], &mut self.tmp)?;
             let ch = self.spec.channels as usize;
             self.tmp.truncate(n * ch);
             if n > 0 && n as u64 != self.out_spf && self.next == 1 {

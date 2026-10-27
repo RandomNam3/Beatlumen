@@ -19,7 +19,10 @@ fn chunks(mut d: &[u8]) -> impl Iterator<Item = (&[u8], &[u8])> {
         let size = u32::from_le_bytes([d[4], d[5], d[6], d[7]]) as usize;
         let end = 8usize.saturating_add(size).min(d.len());
         let payload = &d[8..end];
-        let next = 8usize.saturating_add(size).saturating_add(size & 1).min(d.len());
+        let next = 8usize
+            .saturating_add(size)
+            .saturating_add(size & 1)
+            .min(d.len());
         d = &d[next..];
         Some((id, payload))
     })
@@ -37,8 +40,14 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         match id {
             b"VP8X" => {
                 if payload.len() >= 10 {
-                    let w = 1 + (payload[4] as usize | (payload[5] as usize) << 8 | (payload[6] as usize) << 16);
-                    let h = 1 + (payload[7] as usize | (payload[8] as usize) << 8 | (payload[9] as usize) << 16);
+                    let w = 1
+                        + (payload[4] as usize
+                            | (payload[5] as usize) << 8
+                            | (payload[6] as usize) << 16);
+                    let h = 1
+                        + (payload[7] as usize
+                            | (payload[8] as usize) << 8
+                            | (payload[9] as usize) << 16);
                     canvas = Some((w, h));
                 }
             }
@@ -106,9 +115,36 @@ fn decode_lossy(payload: &[u8], alpha: Option<&[u8]>) -> Result<Image, Error> {
     let cw = f.width.div_ceil(2);
     let ch = f.height.div_ceil(2);
     let planes = [
-        Plane { data: &f.y, stride: f.y_stride, width: f.width, height: f.height, hn: 1, hd: 1, vn: 1, vd: 1 },
-        Plane { data: &f.u, stride: f.uv_stride, width: cw, height: ch, hn: 1, hd: 2, vn: 1, vd: 2 },
-        Plane { data: &f.v, stride: f.uv_stride, width: cw, height: ch, hn: 1, hd: 2, vn: 1, vd: 2 },
+        Plane {
+            data: &f.y,
+            stride: f.y_stride,
+            width: f.width,
+            height: f.height,
+            hn: 1,
+            hd: 1,
+            vn: 1,
+            vd: 1,
+        },
+        Plane {
+            data: &f.u,
+            stride: f.uv_stride,
+            width: cw,
+            height: ch,
+            hn: 1,
+            hd: 2,
+            vn: 1,
+            vd: 2,
+        },
+        Plane {
+            data: &f.v,
+            stride: f.uv_stride,
+            width: cw,
+            height: ch,
+            hn: 1,
+            hd: 2,
+            vn: 1,
+            vd: 2,
+        },
     ];
     color::convert(&planes, ColorSpace::YuvLimited, &mut img);
     if let Some(a) = alpha {
@@ -124,7 +160,9 @@ fn decode_lossy(payload: &[u8], alpha: Option<&[u8]>) -> Result<Image, Error> {
 
 /// Decodes an ALPH chunk into width*height alpha values.
 fn decode_alpha(chunk: &[u8], w: usize, h: usize) -> Result<Vec<u8>, Error> {
-    let hdr = *chunk.first().ok_or(Error::InvalidData("webp: empty ALPH chunk"))?;
+    let hdr = *chunk
+        .first()
+        .ok_or(Error::InvalidData("webp: empty ALPH chunk"))?;
     let method = hdr & 3;
     let filter = (hdr >> 2) & 3;
     let mut a = match method {
@@ -133,7 +171,10 @@ fn decode_alpha(chunk: &[u8], w: usize, h: usize) -> Result<Vec<u8>, Error> {
             v.resize(w * h, 0);
             v
         }
-        1 => lossless::decode_headerless(&chunk[1..], w, h)?.iter().map(|&p| (p >> 8) as u8).collect(),
+        1 => lossless::decode_headerless(&chunk[1..], w, h)?
+            .iter()
+            .map(|&p| (p >> 8) as u8)
+            .collect(),
         _ => return Err(Error::InvalidData("webp: unknown alpha compression")),
     };
     // Reverse the prediction filter.
@@ -141,21 +182,23 @@ fn decode_alpha(chunk: &[u8], w: usize, h: usize) -> Result<Vec<u8>, Error> {
         for y in 0..h {
             for x in 0..w {
                 let i = y * w + x;
-                let pred = if y == 0 {
-                    if x == 0 {
-                        0
+                let pred =
+                    if y == 0 {
+                        if x == 0 {
+                            0
+                        } else {
+                            a[i - 1]
+                        }
+                    } else if x == 0 {
+                        a[i - w]
                     } else {
-                        a[i - 1]
-                    }
-                } else if x == 0 {
-                    a[i - w]
-                } else {
-                    match filter {
-                        1 => a[i - 1],
-                        2 => a[i - w],
-                        _ => (a[i - 1] as i32 + a[i - w] as i32 - a[i - w - 1] as i32).clamp(0, 255) as u8,
-                    }
-                };
+                        match filter {
+                            1 => a[i - 1],
+                            2 => a[i - w],
+                            _ => (a[i - 1] as i32 + a[i - w] as i32 - a[i - w - 1] as i32)
+                                .clamp(0, 255) as u8,
+                        }
+                    };
                 a[i] = a[i].wrapping_add(pred);
             }
         }

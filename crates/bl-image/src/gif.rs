@@ -24,7 +24,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         pos += 1;
         match block {
             0x21 => {
-                let label = *data.get(pos).ok_or(Error::InvalidData("gif: truncated extension"))?;
+                let label = *data
+                    .get(pos)
+                    .ok_or(Error::InvalidData("gif: truncated extension"))?;
                 pos += 1;
                 if label == 0xf9 && data.get(pos) == Some(&4) && pos + 5 <= data.len() {
                     let packed = data[pos + 1];
@@ -52,7 +54,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
                 if palette.is_empty() {
                     palette = (0..=255u8).map(|v| [v, v, v]).collect();
                 }
-                let min_code = *data.get(pos).ok_or(Error::InvalidData("gif: truncated image"))?;
+                let min_code = *data
+                    .get(pos)
+                    .ok_or(Error::InvalidData("gif: truncated image"))?;
                 pos += 1;
                 let mut lzw = Vec::new();
                 while let Some(&n) = data.get(pos) {
@@ -67,7 +71,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
                 // LZW expands at most ~4096 pixels per 3-bit code; reject
                 // tiny files claiming huge frames before allocating.
                 if (lzw.len() as u64 + 1) * 11_000 * 64 < fw as u64 * fh as u64 {
-                    return Err(Error::InvalidData("gif: image data far too short for dimensions"));
+                    return Err(Error::InvalidData(
+                        "gif: image data far too short for dimensions",
+                    ));
                 }
                 // Canvas: logical screen, grown to contain the frame if the
                 // screen size is bogus.
@@ -106,13 +112,17 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
 }
 
 fn read_palette(data: &[u8], pos: usize, n: usize) -> Result<Vec<[u8; 3]>, Error> {
-    let raw = data.get(pos..pos + 3 * n).ok_or(Error::InvalidData("gif: truncated color table"))?;
+    let raw = data
+        .get(pos..pos + 3 * n)
+        .ok_or(Error::InvalidData("gif: truncated color table"))?;
     Ok(raw.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect())
 }
 
 fn skip_sub_blocks(data: &[u8], mut pos: usize) -> Result<usize, Error> {
     loop {
-        let n = *data.get(pos).ok_or(Error::InvalidData("gif: truncated sub-blocks"))? as usize;
+        let n = *data
+            .get(pos)
+            .ok_or(Error::InvalidData("gif: truncated sub-blocks"))? as usize;
         pos += 1 + n;
         if n == 0 {
             return Ok(pos);
@@ -215,7 +225,11 @@ fn lzw_decode(src: &[u8], min_code: u8, out: &mut [u8]) -> Result<usize, Error> 
             let n = next as usize;
             prefix[n] = p as u16;
             first[n] = first[p as usize];
-            suffix[n] = if code < next { first[code as usize] } else { first[p as usize] };
+            suffix[n] = if code < next {
+                first[code as usize]
+            } else {
+                first[p as usize]
+            };
             len[n] = len[p as usize] + 1;
             next += 1;
             if next == 1 << size && size < 12 {

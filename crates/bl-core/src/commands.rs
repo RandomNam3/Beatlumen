@@ -23,37 +23,85 @@ fn ok() -> Value {
 }
 
 fn strs(v: &Value) -> Vec<String> {
-    v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A form field for the effect / analysis editors.
 fn field_json(f: &Field, obj: &Value, tr: &dyn Fn(&str) -> String) -> Value {
-    let mut v = Value::object().with("key", f.key).with("label", tr(f.label)).with("unit", f.unit);
+    let mut v = Value::object()
+        .with("key", f.key)
+        .with("label", tr(f.label))
+        .with("unit", f.unit);
     match f.kind {
         FieldKind::Number | FieldKind::Integer => {
             let cur = obj.get(f.key).as_f64().unwrap_or(f.default);
             v = v
-                .with("kind", if matches!(f.kind, FieldKind::Integer) { "int" } else { "number" })
+                .with(
+                    "kind",
+                    if matches!(f.kind, FieldKind::Integer) {
+                        "int"
+                    } else {
+                        "number"
+                    },
+                )
                 .with("value", cur)
                 .with("default", f.default)
-                .with("min", if f.min.is_finite() { Value::from(f.min) } else { Value::Null })
-                .with("max", if f.max.is_finite() { Value::from(f.max) } else { Value::Null })
+                .with(
+                    "min",
+                    if f.min.is_finite() {
+                        Value::from(f.min)
+                    } else {
+                        Value::Null
+                    },
+                )
+                .with(
+                    "max",
+                    if f.max.is_finite() {
+                        Value::from(f.max)
+                    } else {
+                        Value::Null
+                    },
+                )
                 .with("step", if f.step > 0.0 { f.step } else { 0.01 });
         }
         FieldKind::Easing => {
             let cur = obj.get(f.key).as_str().unwrap_or(f.default_str).to_string();
-            let opts: Vec<Value> = bl_fx::easing::ALL.iter().map(|(_, n)| Value::object().with("value", *n).with("label", *n)).collect();
-            v = v.with("kind", "enum").with("value", cur).with("options", Value::Array(opts));
+            let opts: Vec<Value> = bl_fx::easing::ALL
+                .iter()
+                .map(|(_, n)| Value::object().with("value", *n).with("label", *n))
+                .collect();
+            v = v
+                .with("kind", "enum")
+                .with("value", cur)
+                .with("options", Value::Array(opts));
         }
         FieldKind::Enum(values) => {
             let cur = obj.get(f.key).as_str().unwrap_or(f.default_str).to_string();
-            let opts: Vec<Value> = values.iter().map(|(val, l)| Value::object().with("value", *val).with("label", tr(l))).collect();
-            v = v.with("kind", "enum").with("value", cur).with("options", Value::Array(opts));
+            let opts: Vec<Value> = values
+                .iter()
+                .map(|(val, l)| Value::object().with("value", *val).with("label", tr(l)))
+                .collect();
+            v = v
+                .with("kind", "enum")
+                .with("value", cur)
+                .with("options", Value::Array(opts));
         }
         FieldKind::IntEnum(values) => {
             let cur = obj.get(f.key).as_i64().unwrap_or(f.default as i64);
-            let opts: Vec<Value> = values.iter().map(|(val, l)| Value::object().with("value", *val).with("label", tr(l))).collect();
-            v = v.with("kind", "intenum").with("value", cur).with("options", Value::Array(opts));
+            let opts: Vec<Value> = values
+                .iter()
+                .map(|(val, l)| Value::object().with("value", *val).with("label", tr(l)))
+                .collect();
+            v = v
+                .with("kind", "intenum")
+                .with("value", cur)
+                .with("options", Value::Array(opts));
         }
         FieldKind::Color => {
             let cur = obj.get(f.key).as_u64().unwrap_or(f.default as u64);
@@ -63,11 +111,20 @@ fn field_json(f: &Field, obj: &Value, tr: &dyn Fn(&str) -> String) -> Value {
     v
 }
 
-fn section(title: String, block: &str, fields: &[Field], obj: &Value, tr: &dyn Fn(&str) -> String) -> Value {
+fn section(
+    title: String,
+    block: &str,
+    fields: &[Field],
+    obj: &Value,
+    tr: &dyn Fn(&str) -> String,
+) -> Value {
     Value::object()
         .with("title", title)
         .with("block", block)
-        .with("fields", Value::Array(fields.iter().map(|f| field_json(f, obj, tr)).collect()))
+        .with(
+            "fields",
+            Value::Array(fields.iter().map(|f| field_json(f, obj, tr)).collect()),
+        )
 }
 
 impl Core {
@@ -131,19 +188,31 @@ impl Core {
                 ok()
             }
             "mute" => {
-                let m = if c.get("value").is_null() { !self.settings.muted } else { b("value") };
+                let m = if c.get("value").is_null() {
+                    !self.settings.muted
+                } else {
+                    b("value")
+                };
                 self.set_muted(m);
                 ok()
             }
             "shuffle" => {
-                let on = if c.get("value").is_null() { !self.queue.shuffle } else { b("value") };
+                let on = if c.get("value").is_null() {
+                    !self.queue.shuffle
+                } else {
+                    b("value")
+                };
                 self.queue.set_shuffle(on, &mut self.rng);
                 self.revs.queue += 1;
                 self.settings_changed();
                 ok()
             }
             "repeat" => {
-                self.settings.repeat = if c.get("value").is_null() { self.settings.repeat.next() } else { Repeat::parse(&s("value")) };
+                self.settings.repeat = if c.get("value").is_null() {
+                    self.settings.repeat.next()
+                } else {
+                    Repeat::parse(&s("value"))
+                };
                 self.settings_changed();
                 ok()
             }
@@ -152,7 +221,11 @@ impl Core {
                 ok()
             }
             "open" => {
-                self.open_paths(host, strs(c.get("paths")), !c.get("play").is_null() && b("play") || c.get("play").is_null());
+                self.open_paths(
+                    host,
+                    strs(c.get("paths")),
+                    !c.get("play").is_null() && b("play") || c.get("play").is_null(),
+                );
                 ok()
             }
 
@@ -165,7 +238,9 @@ impl Core {
                     .enumerate()
                     .map(|(pos, (_, id))| {
                         let t = self.track_for(id);
-                        self.track_json(&t).with("pos", pos).with("current", Some(pos) == cur)
+                        self.track_json(&t)
+                            .with("pos", pos)
+                            .with("current", Some(pos) == cur)
                     })
                     .collect();
                 Value::Array(items)
@@ -205,23 +280,40 @@ impl Core {
             "library.tracks" => {
                 let ids = strs(c.get("ids"));
                 let tracks: Vec<Value> = if ids.is_empty() {
-                    self.library.tracks.iter().map(|t| self.track_json(t)).collect()
+                    self.library
+                        .tracks
+                        .iter()
+                        .map(|t| self.track_json(t))
+                        .collect()
                 } else {
-                    ids.iter().map(|id| self.track_json(&self.track_for(id))).collect()
+                    ids.iter()
+                        .map(|id| self.track_json(&self.track_for(id)))
+                        .collect()
                 };
                 Value::Array(tracks)
             }
             "library.search" => {
                 let q = s("query");
                 let hits = self.library.search(&q);
-                Value::Array(hits.into_iter().take(500).map(|i| self.track_json(&self.library.tracks[i])).collect())
+                Value::Array(
+                    hits.into_iter()
+                        .take(500)
+                        .map(|i| self.track_json(&self.library.tracks[i]))
+                        .collect(),
+                )
             }
             "library.albums" => Value::Array(
                 self.library
                     .albums
                     .iter()
                     .map(|a| {
-                        let cover = a.cover_track.as_ref().or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id)).and_then(|id| self.library.track(id)).map(|t| self.cover_url_cached(t)).unwrap_or_default();
+                        let cover = a
+                            .cover_track
+                            .as_ref()
+                            .or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id))
+                            .and_then(|id| self.library.track(id))
+                            .map(|t| self.cover_url_cached(t))
+                            .unwrap_or_default();
                         Value::object()
                             .with("id", a.id.as_str())
                             .with("title", a.name.as_str())
@@ -229,19 +321,48 @@ impl Core {
                             .with("year", a.year)
                             .with("tracks", a.track_count)
                             .with("cover", cover)
-                            .with("coverTrack", a.cover_track.clone().or_else(|| self.library.album_tracks(&a.id).first().map(|t| t.id.clone())))
+                            .with(
+                                "coverTrack",
+                                a.cover_track.clone().or_else(|| {
+                                    self.library
+                                        .album_tracks(&a.id)
+                                        .first()
+                                        .map(|t| t.id.clone())
+                                }),
+                            )
                     })
                     .collect(),
             ),
             "library.album" => {
                 let mut tracks: Vec<&Track> = self.library.album_tracks(&s("id"));
-                tracks.sort_by_key(|t| (t.disc.unwrap_or(0), t.track.unwrap_or(0), t.title.to_lowercase()));
+                tracks.sort_by_key(|t| {
+                    (
+                        t.disc.unwrap_or(0),
+                        t.track.unwrap_or(0),
+                        t.title.to_lowercase(),
+                    )
+                });
                 Value::Array(tracks.into_iter().map(|t| self.track_json(t)).collect())
             }
             "library.artists" => Value::Array(
-                self.library.artists.iter().map(|a| Value::object().with("name", a.name.as_str()).with("tracks", a.tracks).with("albums", a.albums)).collect(),
+                self.library
+                    .artists
+                    .iter()
+                    .map(|a| {
+                        Value::object()
+                            .with("name", a.name.as_str())
+                            .with("tracks", a.tracks)
+                            .with("albums", a.albums)
+                    })
+                    .collect(),
             ),
-            "library.artist" => Value::Array(self.library.artist_tracks(&s("name")).into_iter().map(|t| self.track_json(t)).collect()),
+            "library.artist" => Value::Array(
+                self.library
+                    .artist_tracks(&s("name"))
+                    .into_iter()
+                    .map(|t| self.track_json(t))
+                    .collect(),
+            ),
             "library.folder" => self.folder_view(&s("path")),
             "library.rescan" => {
                 if !self.settings.library_folders.is_empty() {
@@ -274,7 +395,12 @@ impl Core {
             }
 
             // ---- file system (folder picker) ------------------------------
-            "fs.roots" => Value::Array(host.fs_roots().into_iter().map(|(label, path)| Value::object().with("label", label).with("path", path)).collect()),
+            "fs.roots" => Value::Array(
+                host.fs_roots()
+                    .into_iter()
+                    .map(|(label, path)| Value::object().with("label", label).with("path", path))
+                    .collect(),
+            ),
             "fs.list" => match host.fs_list(&s("path")) {
                 Ok(entries) => {
                     let images_too = b("images");
@@ -283,9 +409,18 @@ impl Core {
                             .into_iter()
                             .filter(|e| {
                                 let ext = crate::jobs::extension(&e.name).unwrap_or_default();
-                                e.is_dir || bl_media::is_supported_extension(&ext) || (images_too && library::is_image_extension(&ext)) || ext == "hfx"
+                                e.is_dir
+                                    || bl_media::is_supported_extension(&ext)
+                                    || (images_too && library::is_image_extension(&ext))
+                                    || ext == "hfx"
                             })
-                            .map(|e| Value::object().with("name", e.name).with("path", e.path).with("dir", e.is_dir).with("size", e.size))
+                            .map(|e| {
+                                Value::object()
+                                    .with("name", e.name)
+                                    .with("path", e.path)
+                                    .with("dir", e.is_dir)
+                                    .with("size", e.size)
+                            })
                             .collect(),
                     )
                 }
@@ -293,7 +428,10 @@ impl Core {
             },
             "fs.parent" => {
                 let p = s("path");
-                let parent = std::path::Path::new(&p).parent().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+                let parent = std::path::Path::new(&p)
+                    .parent()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 Value::from(parent)
             }
 
@@ -305,7 +443,13 @@ impl Core {
                     .map(|p| (p, false))
                     .chain(self.server_playlists.iter().map(|p| (p, true)))
                     .map(|(p, srv)| {
-                        let cover = p.items.iter().filter(|_| p.kind == PlaylistKind::Track).find_map(|id| self.library.track(id)).map(|t| self.cover_url_cached(t)).unwrap_or_default();
+                        let cover = p
+                            .items
+                            .iter()
+                            .filter(|_| p.kind == PlaylistKind::Track)
+                            .find_map(|id| self.library.track(id))
+                            .map(|t| self.cover_url_cached(t))
+                            .unwrap_or_default();
                         Value::object()
                             .with("id", p.id.as_str())
                             .with("name", p.name.as_str())
@@ -318,13 +462,31 @@ impl Core {
                 Value::Array(all)
             }
             "playlist.items" => match self.find_playlist(&s("id")) {
-                Some(p) if p.kind == PlaylistKind::Track => Value::Array(p.items.iter().map(|id| self.track_json(&self.track_for(id))).collect()),
-                Some(p) => Value::Array(p.items.iter().map(|src| self.background_json(src)).collect()),
+                Some(p) if p.kind == PlaylistKind::Track => Value::Array(
+                    p.items
+                        .iter()
+                        .map(|id| self.track_json(&self.track_for(id)))
+                        .collect(),
+                ),
+                Some(p) => Value::Array(
+                    p.items
+                        .iter()
+                        .map(|src| self.background_json(src))
+                        .collect(),
+                ),
                 None => err("unknown playlist"),
             },
             "playlist.create" => {
-                let kind = if s("kind").eq_ignore_ascii_case("background") { PlaylistKind::Background } else { PlaylistKind::Track };
-                let items = if b("fromQueue") { self.queue.ordered().map(|(_, id)| id.clone()).collect() } else { strs(c.get("items")) };
+                let kind = if s("kind").eq_ignore_ascii_case("background") {
+                    PlaylistKind::Background
+                } else {
+                    PlaylistKind::Track
+                };
+                let items = if b("fromQueue") {
+                    self.queue.ordered().map(|(_, id)| id.clone()).collect()
+                } else {
+                    strs(c.get("items"))
+                };
                 self.create_playlist(host, &s("name"), kind, items, b("server"));
                 ok()
             }
@@ -332,7 +494,10 @@ impl Core {
                 if let Some(mut p) = self.find_playlist(&s("id")).cloned() {
                     p.items.extend(strs(c.get("items")));
                     self.update_playlist(host, &p);
-                    self.toast(format!("{} \"{}\"", self.tr("Added to playlist"), p.name), false);
+                    self.toast(
+                        format!("{} \"{}\"", self.tr("Added to playlist"), p.name),
+                        false,
+                    );
                 }
                 ok()
             }
@@ -374,16 +539,38 @@ impl Core {
             // ---- backgrounds ----------------------------------------------
             "backgrounds.list" => {
                 let cur = self.bg_queue.position();
-                Value::Array(self.bg_queue.ordered().enumerate().map(|(pos, (_, src))| self.background_json(src).with("pos", pos).with("current", Some(pos) == cur)).collect())
+                Value::Array(
+                    self.bg_queue
+                        .ordered()
+                        .enumerate()
+                        .map(|(pos, (_, src))| {
+                            self.background_json(src)
+                                .with("pos", pos)
+                                .with("current", Some(pos) == cur)
+                        })
+                        .collect(),
+                )
             }
             "backgrounds.add" => {
-                let sources: Vec<String> = strs(c.get("sources")).into_iter().map(|p| if p.contains(':') && !p.starts_with('/') && !p[1..].starts_with(":\\") { p } else { format!("{LOCAL_PREFIX}{p}") }).collect();
+                let sources: Vec<String> = strs(c.get("sources"))
+                    .into_iter()
+                    .map(|p| {
+                        if p.contains(':') && !p.starts_with('/') && !p[1..].starts_with(":\\") {
+                            p
+                        } else {
+                            format!("{LOCAL_PREFIX}{p}")
+                        }
+                    })
+                    .collect();
                 self.add_backgrounds(host, sources, b("show"));
                 ok()
             }
             "backgrounds.addFolder" => {
                 #[cfg(not(target_arch = "wasm32"))]
-                let images: Vec<String> = library::list_images(&s("path")).into_iter().map(|p| format!("{LOCAL_PREFIX}{p}")).collect();
+                let images: Vec<String> = library::list_images(&s("path"))
+                    .into_iter()
+                    .map(|p| format!("{LOCAL_PREFIX}{p}"))
+                    .collect();
                 #[cfg(target_arch = "wasm32")]
                 let images: Vec<String> = Vec::new();
                 let n = images.len();
@@ -418,7 +605,11 @@ impl Core {
                 ok()
             }
             "backgrounds.shuffle" => {
-                let on = if c.get("value").is_null() { !self.bg_queue.shuffle } else { b("value") };
+                let on = if c.get("value").is_null() {
+                    !self.bg_queue.shuffle
+                } else {
+                    b("value")
+                };
                 self.bg_queue.set_shuffle(on, &mut self.rng);
                 self.revs.backgrounds += 1;
                 self.settings_changed();
@@ -432,7 +623,11 @@ impl Core {
                             .with("id", i.id.as_str())
                             .with("name", i.name.as_str())
                             .with("source", format!("srv:{}", i.id))
-                            .with("thumb", self.server.media_url(&bl_net::api::paths::image(&i.id, 384)))
+                            .with(
+                                "thumb",
+                                self.server
+                                    .media_url(&bl_net::api::paths::image(&i.id, 384)),
+                            )
                     })
                     .collect(),
             ),
@@ -440,7 +635,10 @@ impl Core {
                 let path = s("path");
                 match host.fs_read(&path) {
                     Ok(data) => {
-                        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "image".into());
+                        let name = std::path::Path::new(&path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "image".into());
                         self.upload_image(host, &name, data);
                         ok()
                     }
@@ -452,7 +650,12 @@ impl Core {
             "presets.list" => Value::Array(
                 self.preset_list
                     .iter()
-                    .map(|p| Value::object().with("name", p.name.as_str()).with("origin", p.origin.name()).with("active", p.name == self.preset.name))
+                    .map(|p| {
+                        Value::object()
+                            .with("name", p.name.as_str())
+                            .with("origin", p.origin.name())
+                            .with("active", p.name == self.preset.name)
+                    })
                     .collect(),
             ),
             "preset.load" => {
@@ -461,8 +664,16 @@ impl Core {
                 ok()
             }
             "preset.save" => {
-                let name = if c.get("name").is_null() { self.preset.name.clone() } else { s("name") };
-                let srv = if c.get("server").is_null() { self.preset_origin == PresetOrigin::Server } else { b("server") };
+                let name = if c.get("name").is_null() {
+                    self.preset.name.clone()
+                } else {
+                    s("name")
+                };
+                let srv = if c.get("server").is_null() {
+                    self.preset_origin == PresetOrigin::Server
+                } else {
+                    b("server")
+                };
                 self.save_preset_as(host, &name, srv);
                 ok()
             }
@@ -482,7 +693,10 @@ impl Core {
                 let path = s("path");
                 match host.fs_read(&path) {
                     Ok(d) => {
-                        let stem = std::path::Path::new(&path).file_stem().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+                        let stem = std::path::Path::new(&path)
+                            .file_stem()
+                            .map(|x| x.to_string_lossy().into_owned())
+                            .unwrap_or_default();
                         self.import_preset_bytes(&stem, &d);
                         ok()
                     }
@@ -503,11 +717,18 @@ impl Core {
                                 .with("name", e.name.as_str())
                                 .with("type", e.effect_type.as_str())
                                 .with("kind", e.ty.as_str())
-                                .with("typeLabel", format!("{} · {}", self.tr(&e.effect_type), self.tr(&e.ty)))
+                                .with(
+                                    "typeLabel",
+                                    format!("{} · {}", self.tr(&e.effect_type), self.tr(&e.ty)),
+                                )
                                 .with("enabled", !e.disabled)
                                 .with("shadowed", shadowed.contains(&e.id))
                                 .with("trigger", self.trigger_label(e))
-                                .with("description", spec.map(|s| self.tr(s.description).to_string()).unwrap_or_default())
+                                .with(
+                                    "description",
+                                    spec.map(|s| self.tr(s.description).to_string())
+                                        .unwrap_or_default(),
+                                )
                         })
                         .collect(),
                 )
@@ -526,7 +747,9 @@ impl Core {
                     .collect(),
             ),
             "effect.add" => {
-                let Some(spec) = schema::find(&s("type"), &s("kind")) else { return err("unknown effect type") };
+                let Some(spec) = schema::find(&s("type"), &s("kind")) else {
+                    return err("unknown effect type");
+                };
                 let before = self.preset.clone();
                 let e = Effect::new(spec, &mut self.rng);
                 let id = e.id.clone();
@@ -534,9 +757,12 @@ impl Core {
                 self.preset_edited(before);
                 Value::object().with("id", id)
             }
-            "effect.remove" | "effect.duplicate" | "effect.moveUp" | "effect.moveDown" | "effect.toggle" | "effect.rename" => {
+            "effect.remove" | "effect.duplicate" | "effect.moveUp" | "effect.moveDown"
+            | "effect.toggle" | "effect.rename" => {
                 let id = s("id");
-                let Some(i) = self.preset.effects.iter().position(|e| e.id == id) else { return err("unknown effect") };
+                let Some(i) = self.preset.effects.iter().position(|e| e.id == id) else {
+                    return err("unknown effect");
+                };
                 let before = self.preset.clone();
                 match name.as_str() {
                     "effect.remove" => {
@@ -549,10 +775,16 @@ impl Core {
                         self.preset.effects.insert(i + 1, e);
                     }
                     "effect.moveUp" if i > 0 => self.preset.effects.swap(i, i - 1),
-                    "effect.moveDown" if i + 1 < self.preset.effects.len() => self.preset.effects.swap(i, i + 1),
+                    "effect.moveDown" if i + 1 < self.preset.effects.len() => {
+                        self.preset.effects.swap(i, i + 1)
+                    }
                     "effect.toggle" => {
                         let e = &mut self.preset.effects[i];
-                        e.disabled = if c.get("enabled").is_null() { !e.disabled } else { !b("enabled") };
+                        e.disabled = if c.get("enabled").is_null() {
+                            !e.disabled
+                        } else {
+                            !b("enabled")
+                        };
                     }
                     "effect.rename" => self.preset.effects[i].name = s("name"),
                     _ => return ok(),
@@ -569,7 +801,9 @@ impl Core {
                 let (id, block, key) = (s("id"), s("block"), s("key"));
                 let v = c.get("value").clone();
                 let before = self.preset.clone();
-                let Some(e) = self.preset.find_effect_mut(&id) else { return err("unknown effect") };
+                let Some(e) = self.preset.find_effect_mut(&id) else {
+                    return err("unknown effect");
+                };
                 match block.as_str() {
                     "config" => e.config.set(key.as_str(), v),
                     "trigger" => e.trigger.set(key.as_str(), v),
@@ -610,7 +844,9 @@ impl Core {
                 self.preset_edited(before);
                 ok()
             }
-            "analysis.curves" => self.analysis_curves(host, n("window").max(1.0), idx("columns").clamp(16, 2000)),
+            "analysis.curves" => {
+                self.analysis_curves(host, n("window").max(1.0), idx("columns").clamp(16, 2000))
+            }
 
             // ---- settings ----------------------------------------------------
             "settings.get" => self.settings_json(),
@@ -622,7 +858,11 @@ impl Core {
             // ---- server ------------------------------------------------------
             "server.connect" => {
                 let url = s("url").trim().trim_end_matches('/').to_string();
-                let url = if !url.is_empty() && !url.contains("://") { format!("http://{url}") } else { url };
+                let url = if !url.is_empty() && !url.contains("://") {
+                    format!("http://{url}")
+                } else {
+                    url
+                };
                 if url != self.server.base {
                     self.server.token.clear();
                     self.settings.server_token.clear();
@@ -689,7 +929,11 @@ impl Core {
         let new = Settings::from_json(&v);
         let old = std::mem::replace(&mut self.settings, new);
         if (old.volume - self.settings.volume).abs() > 1e-6 || old.muted != self.settings.muted {
-            self.player.set_volume(if self.settings.muted { 0.0 } else { self.settings.volume });
+            self.player.set_volume(if self.settings.muted {
+                0.0
+            } else {
+                self.settings.volume
+            });
         }
         if old.intensity != self.settings.intensity {
             self.engine.set_intensity(self.settings.intensity);
@@ -719,26 +963,72 @@ impl Core {
     }
 
     fn effect_form(&self, id: &str) -> Value {
-        let Some(e) = self.preset.find_effect(id) else { return err("unknown effect") };
-        let Some(spec) = e.spec() else { return err("unknown effect type") };
+        let Some(e) = self.preset.find_effect(id) else {
+            return err("unknown effect");
+        };
+        let Some(spec) = e.spec() else {
+            return err("unknown effect type");
+        };
         let tr = self.trf();
-        let mut sections = vec![section(format!("{} · {}", tr(spec.effect_type), tr(spec.ty)), "config", spec.config, &e.config, &tr)];
+        let mut sections = vec![section(
+            format!("{} · {}", tr(spec.effect_type), tr(spec.ty)),
+            "config",
+            spec.config,
+            &e.config,
+            &tr,
+        )];
         match spec.trigger {
             TriggerKind::Novelty => {
-                sections.push(section(tr("Trigger"), "trigger", schema::NOVELTY_TRIGGER, &e.trigger, &tr));
+                sections.push(section(
+                    tr("Trigger"),
+                    "trigger",
+                    schema::NOVELTY_TRIGGER,
+                    &e.trigger,
+                    &tr,
+                ));
                 if !spec.targets.is_empty() {
-                    sections.push(section(tr("Trigger animation (target values)"), "trigger", spec.targets, &e.trigger, &tr));
+                    sections.push(section(
+                        tr("Trigger animation (target values)"),
+                        "trigger",
+                        spec.targets,
+                        &e.trigger,
+                        &tr,
+                    ));
                 }
             }
-            TriggerKind::Transition => sections.push(section(tr("Trigger"), "trigger", schema::TRANSITION_TRIGGER, &e.trigger, &tr)),
+            TriggerKind::Transition => sections.push(section(
+                tr("Trigger"),
+                "trigger",
+                schema::TRANSITION_TRIGGER,
+                &e.trigger,
+                &tr,
+            )),
             TriggerKind::None => {}
         }
         if spec.camera {
-            sections.push(section(tr("Camera"), "camera", &[schema::CAMERA_SPEED], &e.camera, &tr));
+            sections.push(section(
+                tr("Camera"),
+                "camera",
+                &[schema::CAMERA_SPEED],
+                &e.camera,
+                &tr,
+            ));
             for (block, title, fields) in [
-                ("camera.exit", "Camera exit (outgoing image)", schema::CAMERA_EXIT),
-                ("camera.enter", "Camera enter (incoming image)", schema::CAMERA_ENTER),
-                ("camera.finish", "Camera finish (incoming image)", schema::CAMERA_FINISH),
+                (
+                    "camera.exit",
+                    "Camera exit (outgoing image)",
+                    schema::CAMERA_EXIT,
+                ),
+                (
+                    "camera.enter",
+                    "Camera enter (incoming image)",
+                    schema::CAMERA_ENTER,
+                ),
+                (
+                    "camera.finish",
+                    "Camera finish (incoming image)",
+                    schema::CAMERA_FINISH,
+                ),
             ] {
                 let sub = block.trim_start_matches("camera.");
                 sections.push(section(tr(title), block, fields, e.camera.get(sub), &tr));
@@ -754,9 +1044,21 @@ impl Core {
 
     fn analysis_form(&self) -> Value {
         let tr = self.trf();
-        let mut sections = vec![section(tr("Structure (transitions)"), "analysis", schema::ANALYSIS, &self.preset.analysis, &tr)];
+        let mut sections = vec![section(
+            tr("Structure (transitions)"),
+            "analysis",
+            schema::ANALYSIS,
+            &self.preset.analysis,
+            &tr,
+        )];
         for band in ["Low", "Mid", "High"] {
-            sections.push(section(format!("{} – {}", tr("Novelty"), tr(band)), band, schema::NOVELTY, self.preset.novelty.get(band), &tr));
+            sections.push(section(
+                format!("{} – {}", tr("Novelty"), tr(band)),
+                band,
+                schema::NOVELTY,
+                self.preset.novelty.get(band),
+                &tr,
+            ));
         }
         Value::Array(sections)
     }
@@ -764,7 +1066,9 @@ impl Core {
     /// Downsampled analysis curves around the playback position for the
     /// analysis graphs.
     fn analysis_curves(&self, host: &dyn Host, window: f64, cols: usize) -> Value {
-        let Some(a) = &self.analysis else { return Value::Null };
+        let Some(a) = &self.analysis else {
+            return Value::Null;
+        };
         let pos = self.player.position(host);
         let start = (pos - window * 0.2).max(0.0);
         let rate = a.frame_rate();
@@ -788,7 +1092,16 @@ impl Core {
             .with("window", window)
             .with("position", pos)
             .with("energy", Value::Array(sample(&a.energy, rate)))
-            .with("novelty", Value::Array(a.novelty.iter().take(3).map(|c| Value::Array(sample(c, rate))).collect()))
+            .with(
+                "novelty",
+                Value::Array(
+                    a.novelty
+                        .iter()
+                        .take(3)
+                        .map(|c| Value::Array(sample(c, rate)))
+                        .collect(),
+                ),
+            )
             .with("transitions", Value::Array(sample(&a.transitions, trate)))
     }
 
@@ -796,18 +1109,33 @@ impl Core {
         let (label, thumb) = if src == DEFAULT_BG {
             (self.tr("Default background").to_string(), String::new())
         } else if let Some(p) = src.strip_prefix(LOCAL_PREFIX) {
-            let name = std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string());
+            let name = std::path::Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string());
             (name, crate::core::file_url(p))
         } else if let Some(id) = src.strip_prefix("srv:") {
-            let name = self.server_images.iter().find(|i| i.id == id).map(|i| i.name.clone()).unwrap_or_else(|| id.to_string());
-            (name, self.server.media_url(&bl_net::api::paths::image(id, 384)))
+            let name = self
+                .server_images
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| i.name.clone())
+                .unwrap_or_else(|| id.to_string());
+            (
+                name,
+                self.server.media_url(&bl_net::api::paths::image(id, 384)),
+            )
         } else if let Some(tid) = src.strip_prefix("cover:") {
             let t = self.track_for(tid);
             (t.title.clone(), self.cover_url_cached(&t))
         } else {
             (src.trim_start_matches("mem:").to_string(), String::new())
         };
-        Value::object().with("source", src).with("label", label).with("thumb", thumb).with("active", self.bg_source.as_deref() == Some(src))
+        Value::object()
+            .with("source", src)
+            .with("label", label)
+            .with("thumb", thumb)
+            .with("active", self.bg_source.as_deref() == Some(src))
     }
 
     /// Folder view of the library: sub folders and tracks of `path` (""
@@ -817,20 +1145,37 @@ impl Core {
         let mut tracks = Vec::new();
         if path.is_empty() {
             for f in &self.settings.library_folders {
-                let n = self.library.tracks.iter().filter(|t| library::is_local(&t.id) && t.path.starts_with(f.as_str())).count();
-                let name = std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone());
+                let n = self
+                    .library
+                    .tracks
+                    .iter()
+                    .filter(|t| library::is_local(&t.id) && t.path.starts_with(f.as_str()))
+                    .count();
+                let name = std::path::Path::new(f)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| f.clone());
                 folders.push((name, f.clone(), n));
             }
             if !self.library.remote.tracks.is_empty() {
-                folders.push((self.tr("Server").to_string(), "server:".to_string(), self.library.remote.tracks.len()));
+                folders.push((
+                    self.tr("Server").to_string(),
+                    "server:".to_string(),
+                    self.library.remote.tracks.len(),
+                ));
             }
         } else {
             let (is_server, prefix) = match path.strip_prefix("server:") {
                 Some(p) => (true, p.trim_end_matches('/').to_string()),
                 None => (false, path.trim_end_matches(['/', '\\']).to_string()),
             };
-            let sep = if is_server || !prefix.contains('\\') { '/' } else { '\\' };
-            let mut sub: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+            let sep = if is_server || !prefix.contains('\\') {
+                '/'
+            } else {
+                '\\'
+            };
+            let mut sub: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
             for t in &self.library.tracks {
                 if library::is_local(&t.id) == is_server {
                     continue;
@@ -838,7 +1183,9 @@ impl Core {
                 let rest = if prefix.is_empty() {
                     Some(t.path.as_str())
                 } else {
-                    t.path.strip_prefix(prefix.as_str()).and_then(|r| r.strip_prefix(sep))
+                    t.path
+                        .strip_prefix(prefix.as_str())
+                        .and_then(|r| r.strip_prefix(sep))
                 };
                 let Some(rest) = rest else { continue };
                 match rest.split_once(sep) {
@@ -847,34 +1194,85 @@ impl Core {
                 }
             }
             for (name, count) in sub {
-                let full = if prefix.is_empty() { name.clone() } else { format!("{prefix}{sep}{name}") };
-                let full = if is_server { format!("server:{full}") } else { full };
+                let full = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}{sep}{name}")
+                };
+                let full = if is_server {
+                    format!("server:{full}")
+                } else {
+                    full
+                };
                 folders.push((name, full, count));
             }
         }
         Value::object()
             .with("path", path)
-            .with("folders", Value::Array(folders.into_iter().map(|(name, p, count)| Value::object().with("name", name).with("path", p).with("count", count)).collect()))
+            .with(
+                "folders",
+                Value::Array(
+                    folders
+                        .into_iter()
+                        .map(|(name, p, count)| {
+                            Value::object()
+                                .with("name", name)
+                                .with("path", p)
+                                .with("count", count)
+                        })
+                        .collect(),
+                ),
+            )
             .with("tracks", Value::Array(tracks))
     }
 
     fn find_playlist(&self, id: &str) -> Option<&Playlist> {
-        self.local_playlists.iter().chain(self.server_playlists.iter()).find(|p| p.id == id)
+        self.local_playlists
+            .iter()
+            .chain(self.server_playlists.iter())
+            .find(|p| p.id == id)
     }
 
-    pub(crate) fn create_playlist(&mut self, host: &mut dyn Host, name: &str, kind: PlaylistKind, items: Vec<String>, on_server: bool) {
-        let name = if name.trim().is_empty() { self.tr("New playlist").to_string() } else { name.trim().to_string() };
+    pub(crate) fn create_playlist(
+        &mut self,
+        host: &mut dyn Host,
+        name: &str,
+        kind: PlaylistKind,
+        items: Vec<String>,
+        on_server: bool,
+    ) {
+        let name = if name.trim().is_empty() {
+            self.tr("New playlist").to_string()
+        } else {
+            name.trim().to_string()
+        };
         if on_server && self.server.is_connected() {
-            let body = Value::object().with("name", name.as_str()).with("kind", kind.name()).to_json().into_bytes();
+            let body = Value::object()
+                .with("name", name.as_str())
+                .with("kind", kind.name())
+                .to_json()
+                .into_bytes();
             // Create, then (if items) update via a second request once we know the id.
-            let id = self.server.send(host, "POST", bl_net::api::paths::PLAYLISTS, body, "application/json");
+            let id = self.server.send(
+                host,
+                "POST",
+                bl_net::api::paths::PLAYLISTS,
+                body,
+                "application/json",
+            );
             self.requests.insert(id, Req::PlaylistSaved);
             if !items.is_empty() {
                 self.pending_playlist_items = Some((name, items));
             }
         } else {
             let id = format!("local-{:016x}", self.rng.next_u64());
-            self.local_playlists.push(Playlist { id, name, kind, items, modified: host.unix_time() as u64 });
+            self.local_playlists.push(Playlist {
+                id,
+                name,
+                kind,
+                items,
+                modified: host.unix_time() as u64,
+            });
             self.save_local_playlists(host);
         }
     }
@@ -886,8 +1284,18 @@ impl Core {
             }
             self.save_local_playlists(host);
         } else {
-            let body = Value::object().with("name", pl.name.as_str()).with("items", pl.items.clone()).to_json().into_bytes();
-            let id = self.server.send(host, "PUT", &bl_net::api::paths::playlist(&pl.id), body, "application/json");
+            let body = Value::object()
+                .with("name", pl.name.as_str())
+                .with("items", pl.items.clone())
+                .to_json()
+                .into_bytes();
+            let id = self.server.send(
+                host,
+                "PUT",
+                &bl_net::api::paths::playlist(&pl.id),
+                body,
+                "application/json",
+            );
             self.requests.insert(id, Req::PlaylistSaved);
             if let Some(p) = self.server_playlists.iter_mut().find(|p| p.id == pl.id) {
                 *p = pl.clone();
@@ -901,7 +1309,13 @@ impl Core {
             self.local_playlists.retain(|p| p.id != id);
             self.save_local_playlists(host);
         } else {
-            let rid = self.server.send(host, "DELETE", &bl_net::api::paths::playlist(id), Vec::new(), "application/json");
+            let rid = self.server.send(
+                host,
+                "DELETE",
+                &bl_net::api::paths::playlist(id),
+                Vec::new(),
+                "application/json",
+            );
             self.requests.insert(rid, Req::PlaylistSaved);
             self.server_playlists.retain(|p| p.id != id);
             self.revs.playlists += 1;

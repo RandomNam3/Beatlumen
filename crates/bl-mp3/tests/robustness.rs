@@ -2,8 +2,8 @@
 
 mod common;
 
-use common::*;
 use bl_mp3::{probe, Mp3Decoder, SeekMode};
+use common::*;
 use std::io::Cursor;
 
 /// Deterministic xorshift PRNG.

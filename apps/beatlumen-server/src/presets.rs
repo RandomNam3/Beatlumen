@@ -17,11 +17,15 @@ pub struct Presets {
 
 impl Presets {
     pub fn new(dir: PathBuf) -> Presets {
-        Presets { dir, write_lock: Mutex::new(()) }
+        Presets {
+            dir,
+            write_lock: Mutex::new(()),
+        }
     }
 
     fn path(&self, name: &str) -> Result<PathBuf, Failure> {
-        let name = util::validate_name(name).map_err(|e| (400, format!("invalid preset name: {e}")))?;
+        let name =
+            util::validate_name(name).map_err(|e| (400, format!("invalid preset name: {e}")))?;
         Ok(self.dir.join(format!("{name}.hfx")))
     }
 
@@ -33,12 +37,20 @@ impl Presets {
             .flatten()
             .filter_map(|e| {
                 let name = e.file_name().into_string().ok()?;
-                let stem = name.strip_suffix(".hfx").or_else(|| name.strip_suffix(".HFX"))?;
-                (util::validate_name(stem).is_ok() && e.file_type().ok()?.is_file()).then(|| stem.to_string())
+                let stem = name
+                    .strip_suffix(".hfx")
+                    .or_else(|| name.strip_suffix(".HFX"))?;
+                (util::validate_name(stem).is_ok() && e.file_type().ok()?.is_file())
+                    .then(|| stem.to_string())
             })
             .collect();
         names.sort_by_key(|n| n.to_lowercase());
-        Value::Array(names.into_iter().map(|n| Value::object().with("name", n)).collect())
+        Value::Array(
+            names
+                .into_iter()
+                .map(|n| Value::object().with("name", n))
+                .collect(),
+        )
     }
 
     pub fn get(&self, name: &str) -> Result<Vec<u8>, Failure> {

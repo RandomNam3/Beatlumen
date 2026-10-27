@@ -13,12 +13,20 @@ pub fn orientation(app1: &[u8]) -> Option<u16> {
     };
     let u16_at = |p: usize| -> Option<u16> {
         let b = tiff.get(p..p + 2)?;
-        Some(if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) })
+        Some(if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        })
     };
     let u32_at = |p: usize| -> Option<u32> {
         let b = tiff.get(p..p + 4)?;
         let a = [b[0], b[1], b[2], b[3]];
-        Some(if le { u32::from_le_bytes(a) } else { u32::from_be_bytes(a) })
+        Some(if le {
+            u32::from_le_bytes(a)
+        } else {
+            u32::from_be_bytes(a)
+        })
     };
     let ifd = u32_at(4)? as usize;
     let n = u16_at(ifd)? as usize;
@@ -63,7 +71,11 @@ pub fn apply(img: Image, orientation: u16) -> Image {
             out[d..d + 4].copy_from_slice(&src[s..s + 4]);
         }
     }
-    Image { width: ow as u32, height: oh as u32, pixels: out }
+    Image {
+        width: ow as u32,
+        height: oh as u32,
+        pixels: out,
+    }
 }
 
 #[cfg(test)]
@@ -73,7 +85,11 @@ mod tests {
     #[test]
     fn rotations() {
         // 2x1 image: A B
-        let img = Image { width: 2, height: 1, pixels: vec![1, 1, 1, 1, 2, 2, 2, 2] };
+        let img = Image {
+            width: 2,
+            height: 1,
+            pixels: vec![1, 1, 1, 1, 2, 2, 2, 2],
+        };
         let r6 = apply(img.clone(), 6); // 90 CW -> column A over B
         assert_eq!((r6.width, r6.height), (1, 2));
         assert_eq!(r6.pixels, vec![1, 1, 1, 1, 2, 2, 2, 2]);

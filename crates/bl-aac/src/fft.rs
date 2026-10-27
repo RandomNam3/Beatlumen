@@ -14,7 +14,10 @@ impl Complex {
     }
     #[inline(always)]
     pub fn mul(self, o: Complex) -> Complex {
-        Complex::new(self.re * o.re - self.im * o.im, self.re * o.im + self.im * o.re)
+        Complex::new(
+            self.re * o.re - self.im * o.im,
+            self.re * o.im + self.im * o.re,
+        )
     }
     /// e^{i * phase}
     pub fn expi(phase: f64) -> Complex {
@@ -35,9 +38,17 @@ impl Fft {
     pub fn new(n: usize) -> Fft {
         assert!(n.is_power_of_two() && n >= 4);
         let bits = n.trailing_zeros();
-        let bitrev = (0..n as u32).map(|i| i.reverse_bits() >> (32 - bits)).collect();
-        let twiddles = (0..n / 2).map(|k| Complex::expi(-2.0 * std::f64::consts::PI * k as f64 / n as f64)).collect();
-        Fft { n, bitrev, twiddles }
+        let bitrev = (0..n as u32)
+            .map(|i| i.reverse_bits() >> (32 - bits))
+            .collect();
+        let twiddles = (0..n / 2)
+            .map(|k| Complex::expi(-2.0 * std::f64::consts::PI * k as f64 / n as f64))
+            .collect();
+        Fft {
+            n,
+            bitrev,
+            twiddles,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -95,8 +106,14 @@ mod tests {
     fn fft_matches_dft() {
         for n in [4usize, 8, 16, 64, 512] {
             let fft = Fft::new(n);
-            let input: Vec<Complex> =
-                (0..n).map(|i| Complex::new(((i * 7 + 3) % 11) as f32 - 5.0, ((i * 5 + 1) % 13) as f32 - 6.0)).collect();
+            let input: Vec<Complex> = (0..n)
+                .map(|i| {
+                    Complex::new(
+                        ((i * 7 + 3) % 11) as f32 - 5.0,
+                        ((i * 5 + 1) % 13) as f32 - 6.0,
+                    )
+                })
+                .collect();
             let mut x = input.clone();
             fft.forward(&mut x);
             for k in 0..n {
@@ -106,8 +123,14 @@ mod tests {
                     acc.0 += v.re as f64 * ph.cos() - v.im as f64 * ph.sin();
                     acc.1 += v.re as f64 * ph.sin() + v.im as f64 * ph.cos();
                 }
-                assert!((acc.0 - x[k].re as f64).abs() < 1e-3 * n as f64, "n={n} k={k}");
-                assert!((acc.1 - x[k].im as f64).abs() < 1e-3 * n as f64, "n={n} k={k}");
+                assert!(
+                    (acc.0 - x[k].re as f64).abs() < 1e-3 * n as f64,
+                    "n={n} k={k}"
+                );
+                assert!(
+                    (acc.1 - x[k].im as f64).abs() < 1e-3 * n as f64,
+                    "n={n} k={k}"
+                );
             }
         }
     }

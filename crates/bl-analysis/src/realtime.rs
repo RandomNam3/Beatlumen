@@ -92,10 +92,15 @@ impl RealtimeAnalyzer {
         }
         self.energy = (sum / n as f32).sqrt();
         std::mem::swap(&mut self.spectrum, &mut self.prev_spectrum);
-        self.fft.amplitudes(&self.frame, &mut self.spectrum, &mut self.scratch);
+        self.fft
+            .amplitudes(&self.frame, &mut self.spectrum, &mut self.scratch);
         for v in &mut self.spectrum {
             let db = if *v <= 0.0 { 0.0 } else { 20.0 * v.log10() };
-            let lin = if db == 0.0 { 0.0 } else { ((db + 80.0).max(0.0) / 70.0).min(1.0) };
+            let lin = if db == 0.0 {
+                0.0
+            } else {
+                ((db + 80.0).max(0.0) / 70.0).min(1.0)
+            };
             *v = (lin - 0.5).max(0.0) / 0.5;
         }
         let bins = n / 2;
@@ -112,7 +117,11 @@ impl RealtimeAnalyzer {
             let avg = h.iter().sum::<f32>() / HISTORY as f32;
             h.rotate_left(1);
             h[HISTORY - 1] = flux;
-            let norm = if band.normalization == 0.0 { 1.0 } else { band.normalization };
+            let norm = if band.normalization == 0.0 {
+                1.0
+            } else {
+                band.normalization
+            };
             self.novelty[bi] = ((flux - avg) / norm).max(0.0);
         }
     }

@@ -37,7 +37,9 @@ fn from_ext(ext: Option<&str>) -> Option<Format> {
 
 /// Checks for an ADTS frame at the start of `d` followed by another one.
 pub(crate) fn looks_like_adts(d: &[u8]) -> bool {
-    let Some(h) = bl_aac::AdtsHeader::parse(d) else { return false };
+    let Some(h) = bl_aac::AdtsHeader::parse(d) else {
+        return false;
+    };
     if d[1] & 0x06 != 0 {
         return false; // layer must be 0
     }
@@ -63,7 +65,12 @@ fn classify_head(d: &[u8]) -> Option<Format> {
     if d.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
         return Some(Format::Matroska);
     }
-    if d.len() >= 8 && matches!(&d[4..8], b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free" | b"skip" | b"pnot") {
+    if d.len() >= 8
+        && matches!(
+            &d[4..8],
+            b"ftyp" | b"moov" | b"mdat" | b"wide" | b"free" | b"skip" | b"pnot"
+        )
+    {
         return Some(Format::Mp4);
     }
     None
@@ -83,7 +90,10 @@ fn classify_stream(d: &[u8]) -> Option<Format> {
 }
 
 /// Detects the container of the stream (position is restored to 0).
-pub(crate) fn probe<R: Read + Seek + ?Sized>(r: &mut R, ext_hint: Option<&str>) -> Result<Format, Error> {
+pub(crate) fn probe<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    ext_hint: Option<&str>,
+) -> Result<Format, Error> {
     r.seek(SeekFrom::Start(0))?;
     let mut head = vec![0u8; 16 * 1024];
     let n = read_up_to(r, &mut head)?;
@@ -109,16 +119,23 @@ pub(crate) fn probe<R: Read + Seek + ?Sized>(r: &mut R, ext_hint: Option<&str>) 
             None => {
                 // Junk or padding before the first frame: search for a
                 // well-confirmed MPEG or ADTS sync.
-                let confirm = if matches!(hint, Some(Format::Mp3)) || had_id3 { 2 } else { 4 };
+                let confirm = if matches!(hint, Some(Format::Mp3)) || had_id3 {
+                    2
+                } else {
+                    4
+                };
                 let mpeg = mp3::find_sync(&d, confirm).map(|(o, _)| o);
-                let adts = (0..d.len().saturating_sub(7)).find(|&i| d[i] == 0xff && d[i + 1] & 0xf6 == 0xf0 && looks_like_adts(&d[i..]));
+                let adts = (0..d.len().saturating_sub(7))
+                    .find(|&i| d[i] == 0xff && d[i + 1] & 0xf6 == 0xf0 && looks_like_adts(&d[i..]));
                 match (mpeg, adts, hint) {
                     (_, Some(_), Some(Format::Adts)) => Some(Format::Adts),
                     (Some(_), _, Some(Format::Mp3)) => Some(Format::Mp3),
                     (Some(a), Some(b), _) => Some(if a <= b { Format::Mp3 } else { Format::Adts }),
                     (Some(_), None, _) => Some(Format::Mp3),
                     (None, Some(_), _) if had_id3 || hint.is_some() => Some(Format::Adts),
-                    _ if had_id3 => hint.filter(|h| matches!(h, Format::Mp3 | Format::Flac | Format::Adts)),
+                    _ if had_id3 => {
+                        hint.filter(|h| matches!(h, Format::Mp3 | Format::Flac | Format::Adts))
+                    }
                     _ => None,
                 }
             }
@@ -138,13 +155,26 @@ mod tests {
         let mut wav = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
         wav.resize(64, 0);
         assert_eq!(probe(&mut Cursor::new(wav), None).unwrap(), Format::Wav);
-        assert_eq!(probe(&mut Cursor::new(b"OggS\0\x02".to_vec()), None).unwrap(), Format::Ogg);
-        assert_eq!(probe(&mut Cursor::new(b"\0\0\0\x20ftypM4A ".to_vec()), None).unwrap(), Format::Mp4);
-        assert!(probe(&mut Cursor::new(b"hello world, this is text".to_vec()), Some("mp3")).is_err());
+        assert_eq!(
+            probe(&mut Cursor::new(b"OggS\0\x02".to_vec()), None).unwrap(),
+            Format::Ogg
+        );
+        assert_eq!(
+            probe(&mut Cursor::new(b"\0\0\0\x20ftypM4A ".to_vec()), None).unwrap(),
+            Format::Mp4
+        );
+        assert!(probe(
+            &mut Cursor::new(b"hello world, this is text".to_vec()),
+            Some("mp3")
+        )
+        .is_err());
         // ID3 tag followed by fLaC
         let mut d = b"ID3\x04\0\0\0\0\0\x05\0\0\0\0\0fLaC\0\0\0\x22".to_vec();
         d.resize(100, 0);
-        assert_eq!(probe(&mut Cursor::new(d), Some("mp3")).unwrap(), Format::Flac);
+        assert_eq!(
+            probe(&mut Cursor::new(d), Some("mp3")).unwrap(),
+            Format::Flac
+        );
     }
 
     #[test]

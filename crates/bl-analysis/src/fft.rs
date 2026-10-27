@@ -17,7 +17,10 @@ pub struct RealFft {
 
 impl RealFft {
     pub fn new(n: usize) -> RealFft {
-        assert!(n >= 4 && n.is_power_of_two(), "fft size must be a power of two >= 4");
+        assert!(
+            n >= 4 && n.is_power_of_two(),
+            "fft size must be a power of two >= 4"
+        );
         let half = n / 2;
         let tw = (0..half / 2)
             .map(|k| {
@@ -32,8 +35,23 @@ impl RealFft {
             })
             .collect();
         let bits = half.trailing_zeros();
-        let bitrev = (0..half as u32).map(|i| if bits == 0 { 0 } else { i.reverse_bits() >> (32 - bits) }).collect();
-        RealFft { n, half, tw, split, bitrev, buf: vec![(0.0, 0.0); half] }
+        let bitrev = (0..half as u32)
+            .map(|i| {
+                if bits == 0 {
+                    0
+                } else {
+                    i.reverse_bits() >> (32 - bits)
+                }
+            })
+            .collect();
+        RealFft {
+            n,
+            half,
+            tw,
+            split,
+            bitrev,
+            buf: vec![(0.0, 0.0); half],
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -145,14 +163,22 @@ mod tests {
     #[test]
     fn matches_naive_dft() {
         for &n in &[4usize, 8, 64, 512] {
-            let input: Vec<f32> = (0..n).map(|i| ((i * 7919 % 101) as f32 / 50.0 - 1.0) + (i as f32 * 0.3).sin()).collect();
+            let input: Vec<f32> = (0..n)
+                .map(|i| ((i * 7919 % 101) as f32 / 50.0 - 1.0) + (i as f32 * 0.3).sin())
+                .collect();
             let mut fft = RealFft::new(n);
             let mut out = Vec::new();
             fft.forward(&input, &mut out);
             let reference = naive(&input);
             for (a, b) in out.iter().zip(&reference) {
-                assert!((a.0 as f64 - b.0).abs() < 1e-3 * n as f64, "n={n} {a:?} {b:?}");
-                assert!((a.1 as f64 - b.1).abs() < 1e-3 * n as f64, "n={n} {a:?} {b:?}");
+                assert!(
+                    (a.0 as f64 - b.0).abs() < 1e-3 * n as f64,
+                    "n={n} {a:?} {b:?}"
+                );
+                assert!(
+                    (a.1 as f64 - b.1).abs() < 1e-3 * n as f64,
+                    "n={n} {a:?} {b:?}"
+                );
             }
         }
     }
@@ -160,7 +186,9 @@ mod tests {
     #[test]
     fn sine_amplitude() {
         let n = 1024;
-        let input: Vec<f32> = (0..n).map(|i| (std::f32::consts::TAU * 32.0 * i as f32 / n as f32).sin()).collect();
+        let input: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * 32.0 * i as f32 / n as f32).sin())
+            .collect();
         let mut fft = RealFft::new(n);
         let mut amps = vec![0.0; n / 2];
         let mut scratch = Vec::new();

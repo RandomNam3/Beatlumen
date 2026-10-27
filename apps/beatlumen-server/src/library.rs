@@ -30,7 +30,12 @@ const CACHE_FORMAT: u64 = 2;
 const COVER_NAMES: &[&str] = &["cover", "folder", "front", "album"];
 
 /// Directory names never descended into (NAS thumbnail/recycle folders).
-const SKIP_DIRS: &[&str] = &["@eaDir", "#recycle", "$RECYCLE.BIN", "System Volume Information"];
+const SKIP_DIRS: &[&str] = &[
+    "@eaDir",
+    "#recycle",
+    "$RECYCLE.BIN",
+    "System Volume Information",
+];
 
 /// Maximum directory depth below a music folder.
 const MAX_DEPTH: usize = 64;
@@ -78,18 +83,42 @@ impl Index {
         entries.sort_by(|a, b| (a.root, &a.rel).cmp(&(b.root, &b.rel)));
         entries.dedup_by(|a, b| a.track.id == b.track.id);
         for e in &mut entries {
-            e.track.has_cover = e.embedded_cover == Some(true) || e.dir_cover_file.is_some() || e.dir_cover_track.is_some();
+            e.track.has_cover = e.embedded_cover == Some(true)
+                || e.dir_cover_file.is_some()
+                || e.dir_cover_track.is_some();
         }
         let albums = build_albums(&mut entries);
-        let by_id = entries.iter().enumerate().map(|(i, e)| (e.track.id.clone(), i)).collect();
-        let album_by_id = albums.iter().enumerate().map(|(i, a)| (a.id.clone(), i)).collect();
+        let by_id = entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.track.id.clone(), i))
+            .collect();
+        let album_by_id = albums
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.id.clone(), i))
+            .collect();
         let json = Value::object()
             .with("revision", revision)
-            .with("tracks", Value::Array(entries.iter().map(|e| e.track.to_json()).collect()))
-            .with("albums", Value::Array(albums.iter().map(Album::to_json).collect()))
+            .with(
+                "tracks",
+                Value::Array(entries.iter().map(|e| e.track.to_json()).collect()),
+            )
+            .with(
+                "albums",
+                Value::Array(albums.iter().map(Album::to_json).collect()),
+            )
             .to_json()
             .into_bytes();
-        Index { revision, roots, entries, albums, by_id, album_by_id, json }
+        Index {
+            revision,
+            roots,
+            entries,
+            albums,
+            by_id,
+            album_by_id,
+            json,
+        }
     }
 
     pub fn track(&self, id: &str) -> Option<&Entry> {
@@ -126,13 +155,25 @@ impl Index {
                 || a.embedded_cover != b.embedded_cover
                 || a.dir_cover_file != b.dir_cover_file
                 || a.dir_cover_track != b.dir_cover_track
-                || Track { album_id: String::new(), has_cover: false, ..a.track.clone() } != Track { album_id: String::new(), has_cover: false, ..b.track.clone() }
+                || Track {
+                    album_id: String::new(),
+                    has_cover: false,
+                    ..a.track.clone()
+                } != Track {
+                    album_id: String::new(),
+                    has_cover: false,
+                    ..b.track.clone()
+                }
         })
     }
 }
 
 fn album_key(t: &Track) -> String {
-    format!("album\u{0}{}\u{0}{}", t.album_artist.trim().to_lowercase(), t.album.trim().to_lowercase())
+    format!(
+        "album\u{0}{}\u{0}{}",
+        t.album_artist.trim().to_lowercase(),
+        t.album.trim().to_lowercase()
+    )
 }
 
 fn build_albums(entries: &mut [Entry]) -> Vec<Album> {
@@ -155,7 +196,16 @@ fn build_albums(entries: &mut [Entry]) -> Vec<Album> {
             let mut members = groups.remove(&id).unwrap_or_default();
             members.sort_by(|&a, &b| {
                 let (ta, tb) = (&entries[a].track, &entries[b].track);
-                (ta.disc.unwrap_or(1), ta.track.unwrap_or(u32::MAX), &entries[a].rel).cmp(&(tb.disc.unwrap_or(1), tb.track.unwrap_or(u32::MAX), &entries[b].rel))
+                (
+                    ta.disc.unwrap_or(1),
+                    ta.track.unwrap_or(u32::MAX),
+                    &entries[a].rel,
+                )
+                    .cmp(&(
+                        tb.disc.unwrap_or(1),
+                        tb.track.unwrap_or(u32::MAX),
+                        &entries[b].rel,
+                    ))
             });
             let first = &entries[members[0]].track;
             Album {
@@ -165,11 +215,20 @@ fn build_albums(entries: &mut [Entry]) -> Vec<Album> {
                 year: members.iter().find_map(|&m| entries[m].track.year),
                 track_count: members.len() as u32,
                 duration_ms: members.iter().map(|&m| entries[m].track.duration_ms).sum(),
-                cover_track: members.iter().find(|&&m| entries[m].track.has_cover).map(|&m| entries[m].track.id.clone()),
+                cover_track: members
+                    .iter()
+                    .find(|&&m| entries[m].track.has_cover)
+                    .map(|&m| entries[m].track.id.clone()),
             }
         })
         .collect();
-    albums.sort_by(|a, b| (a.artist.to_lowercase(), a.name.to_lowercase(), &a.id).cmp(&(b.artist.to_lowercase(), b.name.to_lowercase(), &b.id)));
+    albums.sort_by(|a, b| {
+        (a.artist.to_lowercase(), a.name.to_lowercase(), &a.id).cmp(&(
+            b.artist.to_lowercase(),
+            b.name.to_lowercase(),
+            &b.id,
+        ))
+    });
     albums
 }
 
@@ -207,7 +266,12 @@ pub fn split_artists(s: &str) -> Vec<String> {
 /// Trims a tag value and turns NUL separated multi values into "a; b".
 fn clean(s: Option<String>) -> Option<String> {
     let s = s?;
-    let joined = s.split('\u{0}').map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>().join("; ");
+    let joined = s
+        .split('\u{0}')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
     (!joined.is_empty()).then_some(joined)
 }
 
@@ -231,8 +295,16 @@ pub fn save_cache(path: &Path, idx: &Index) -> std::io::Result<()> {
                 .with("track", e.track.to_json())
         })
         .collect();
-    let roots: Vec<Value> = idx.roots.iter().map(|r| Value::from(r.to_string_lossy().into_owned())).collect();
-    let v = Value::object().with("format", CACHE_FORMAT).with("revision", idx.revision).with("roots", Value::Array(roots)).with("entries", Value::Array(entries));
+    let roots: Vec<Value> = idx
+        .roots
+        .iter()
+        .map(|r| Value::from(r.to_string_lossy().into_owned()))
+        .collect();
+    let v = Value::object()
+        .with("format", CACHE_FORMAT)
+        .with("revision", idx.revision)
+        .with("roots", Value::Array(roots))
+        .with("entries", Value::Array(entries));
     util::write_atomic(path, v.to_json().as_bytes())
 }
 
@@ -251,16 +323,29 @@ pub fn load_cache(path: &Path, roots: &[PathBuf]) -> Option<(u64, Vec<Entry>)> {
         return None;
     }
     let revision = v.get("revision").as_u64()?;
-    let cached_roots: Vec<&str> = v.get("roots").as_array()?.iter().map(|r| r.as_str().unwrap_or("")).collect();
+    let cached_roots: Vec<&str> = v
+        .get("roots")
+        .as_array()?
+        .iter()
+        .map(|r| r.as_str().unwrap_or(""))
+        .collect();
     let mut out = Vec::new();
     for e in v.get("entries").as_array()? {
-        let Some(root) = e.get("root").as_u64().map(|r| r as usize) else { continue };
-        let Some(root_path) = roots.get(root) else { continue };
+        let Some(root) = e.get("root").as_u64().map(|r| r as usize) else {
+            continue;
+        };
+        let Some(root_path) = roots.get(root) else {
+            continue;
+        };
         if cached_roots.get(root).copied() != Some(&*root_path.to_string_lossy()) {
             continue;
         }
-        let Some(rel) = e.get("rel").as_str() else { continue };
-        let Some(abs) = util::join_rel(root_path, rel) else { continue };
+        let Some(rel) = e.get("rel").as_str() else {
+            continue;
+        };
+        let Some(abs) = util::join_rel(root_path, rel) else {
+            continue;
+        };
         let track = Track::from_json(e.get("track"));
         if track.id != id_of(&format!("{root}/{rel}")) {
             continue;
@@ -270,7 +355,11 @@ pub fn load_cache(path: &Path, roots: &[PathBuf]) -> Option<(u64, Vec<Entry>)> {
             root,
             rel: rel.to_string(),
             abs,
-            mtime_ns: e.get("mtimeNs").as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
+            mtime_ns: e
+                .get("mtimeNs")
+                .as_str()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
             embedded_cover: e.get("embeddedCover").as_bool(),
             dir_cover_file: e.get("dirCoverFile").as_str().map(str::to_string),
             dir_cover_track: e.get("dirCoverTrack").as_str().map(str::to_string),
@@ -312,7 +401,13 @@ pub struct ScanStats {
 }
 
 /// Walks one music folder. Returns false if the folder is missing.
-fn walk(root_idx: usize, root: &Path, files: &mut Vec<FileRec>, dirs: &mut Vec<DirRec>, visited: &mut HashSet<PathBuf>) -> bool {
+fn walk(
+    root_idx: usize,
+    root: &Path,
+    files: &mut Vec<FileRec>,
+    dirs: &mut Vec<DirRec>,
+    visited: &mut HashSet<PathBuf>,
+) -> bool {
     if !root.is_dir() {
         return false;
     }
@@ -355,10 +450,20 @@ fn walk(root_idx: usize, root: &Path, files: &mut Vec<FileRec>, dirs: &mut Vec<D
         }
         here.sort_by(|a, b| a.0.cmp(&b.0));
         subdirs.sort_by(|a, b| b.0.cmp(&a.0)); // reversed: popped in order
-        let join = |name: &str| if rel.is_empty() { name.to_string() } else { format!("{rel}/{name}") };
+        let join = |name: &str| {
+            if rel.is_empty() {
+                name.to_string()
+            } else {
+                format!("{rel}/{name}")
+            }
+        };
         let cover_rel = COVER_NAMES.iter().find_map(|base| {
             ["jpg", "jpeg", "png"].iter().find_map(|ext| {
-                here.iter().find(|(n, _, m)| m.len() > 0 && n.eq_ignore_ascii_case(&format!("{base}.{ext}"))).map(|(n, _, _)| join(n))
+                here.iter()
+                    .find(|(n, _, m)| {
+                        m.len() > 0 && n.eq_ignore_ascii_case(&format!("{base}.{ext}"))
+                    })
+                    .map(|(n, _, _)| join(n))
             })
         });
         let dir_idx = dirs.len();
@@ -369,7 +474,15 @@ fn walk(root_idx: usize, root: &Path, files: &mut Vec<FileRec>, dirs: &mut Vec<D
             if ext.is_empty() || !bl_media::is_supported_extension(&ext) {
                 continue;
             }
-            files.push(FileRec { root: root_idx, rel: join(&name), abs: path, size: meta.len(), mtime_ns: util::mtime_ns(&meta), dir: dir_idx, first_in_dir: first });
+            files.push(FileRec {
+                root: root_idx,
+                rel: join(&name),
+                abs: path,
+                size: meta.len(),
+                mtime_ns: util::mtime_ns(&meta),
+                dir: dir_idx,
+                first_in_dir: first,
+            });
             first = false;
         }
         if depth < MAX_DEPTH {
@@ -377,7 +490,10 @@ fn walk(root_idx: usize, root: &Path, files: &mut Vec<FileRec>, dirs: &mut Vec<D
                 stack.push((path, join(&name), depth + 1));
             }
         } else if !subdirs.is_empty() {
-            crate::warn!("not descending below {} (maximum depth reached)", dir.display());
+            crate::warn!(
+                "not descending below {} (maximum depth reached)",
+                dir.display()
+            );
         }
     }
     true
@@ -398,7 +514,11 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
         }
     };
     let ext = util::ext_lower(&rec.abs);
-    let stem = rec.abs.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = rec
+        .abs
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut track = Track {
         id: id_of(&format!("{}/{}", rec.root, rec.rel)),
         title: stem.clone(),
@@ -410,13 +530,17 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
     };
     let mut embedded = None;
     let mut failed = false;
-    match util::catch("tag reader", || bl_media::read_info(&mut file, Some(&ext), want_pictures)) {
+    match util::catch("tag reader", || {
+        bl_media::read_info(&mut file, Some(&ext), want_pictures)
+    }) {
         Ok(Ok(info)) => {
             let t = info.tags;
             track.title = clean(t.title).unwrap_or_else(|| stem.clone());
             track.artists = t.artist.as_deref().map(split_artists).unwrap_or_default();
             track.album = clean(t.album).unwrap_or_default();
-            track.album_artist = clean(t.album_artist).or_else(|| track.artists.first().cloned()).unwrap_or_default();
+            track.album_artist = clean(t.album_artist)
+                .or_else(|| track.artists.first().cloned())
+                .unwrap_or_default();
             track.genre = clean(t.genre).unwrap_or_default();
             track.year = t.year.filter(|y| (1..=9999).contains(y));
             track.track = t.track.filter(|&n| n > 0);
@@ -453,7 +577,16 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
     if want_pictures && embedded.is_none() {
         embedded = Some(false);
     }
-    let entry = Entry { track, root: rec.root, rel: rec.rel.clone(), abs: rec.abs.clone(), mtime_ns: rec.mtime_ns, embedded_cover: embedded, dir_cover_file: None, dir_cover_track: None };
+    let entry = Entry {
+        track,
+        root: rec.root,
+        rel: rec.rel.clone(),
+        abs: rec.abs.clone(),
+        mtime_ns: rec.mtime_ns,
+        embedded_cover: embedded,
+        dir_cover_file: None,
+        dir_cover_track: None,
+    };
     (Some(entry), failed)
 }
 
@@ -462,7 +595,9 @@ fn assign_dir_covers(files: &[FileRec], dirs: &[DirRec], entries: &mut [Option<E
     let mut first_of_dir: HashMap<usize, (String, bool)> = HashMap::new();
     for (rec, e) in files.iter().zip(entries.iter()) {
         if let Some(e) = e {
-            first_of_dir.entry(rec.dir).or_insert_with(|| (e.track.id.clone(), e.embedded_cover == Some(true)));
+            first_of_dir
+                .entry(rec.dir)
+                .or_insert_with(|| (e.track.id.clone(), e.embedded_cover == Some(true)));
         }
     }
     for (rec, e) in files.iter().zip(entries.iter_mut()) {
@@ -479,7 +614,12 @@ fn assign_dir_covers(files: &[FileRec], dirs: &[DirRec], entries: &mut [Option<E
 /// Scans all music folders. `old` provides cached entries for unchanged
 /// files; `publish` receives intermediate results every few seconds while
 /// many files are read (first scan of a large library).
-pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn FnMut(Vec<Entry>)) -> (Vec<Entry>, ScanStats) {
+pub fn scan(
+    roots: &[PathBuf],
+    old: &Index,
+    threads: usize,
+    publish: &mut dyn FnMut(Vec<Entry>),
+) -> (Vec<Entry>, ScanStats) {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
     let mut visited = HashSet::new();
@@ -487,20 +627,37 @@ pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn Fn
     for (i, root) in roots.iter().enumerate() {
         if !walk(i, root, &mut files, &mut dirs, &mut visited) {
             // An unmounted drive must not wipe its part of the library.
-            crate::warn!("music folder {} is missing or not a directory; keeping its previous entries", root.display());
+            crate::warn!(
+                "music folder {} is missing or not a directory; keeping its previous entries",
+                root.display()
+            );
             missing.insert(i);
         }
     }
-    let mut stats = ScanStats { dirs: dirs.len(), files: files.len(), ..Default::default() };
+    let mut stats = ScanStats {
+        dirs: dirs.len(),
+        files: files.len(),
+        ..Default::default()
+    };
 
-    let old_map: HashMap<(usize, &str), &Entry> =
-        if old.roots == roots { old.entries.iter().map(|e| ((e.root, e.rel.as_str()), e)).collect() } else { HashMap::new() };
+    let old_map: HashMap<(usize, &str), &Entry> = if old.roots == roots {
+        old.entries
+            .iter()
+            .map(|e| ((e.root, e.rel.as_str()), e))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     let mut entries: Vec<Option<Entry>> = Vec::with_capacity(files.len());
     let mut to_read: Vec<(usize, bool)> = Vec::new();
     for (i, rec) in files.iter().enumerate() {
         let need_pictures = rec.first_in_dir && dirs[rec.dir].cover_rel.is_none();
         match old_map.get(&(rec.root, rec.rel.as_str())) {
-            Some(e) if e.track.size == rec.size && e.mtime_ns == rec.mtime_ns && (!need_pictures || e.embedded_cover.is_some()) => {
+            Some(e)
+                if e.track.size == rec.size
+                    && e.mtime_ns == rec.mtime_ns
+                    && (!need_pictures || e.embedded_cover.is_some()) =>
+            {
                 entries.push(Some((*e).clone()));
             }
             _ => {
@@ -512,7 +669,14 @@ pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn Fn
     stats.read = to_read.len();
 
     if !to_read.is_empty() {
-        let threads = if threads == 0 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4) } else { threads.clamp(1, 64) };
+        let threads = if threads == 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2)
+                .clamp(1, 4)
+        } else {
+            threads.clamp(1, 64)
+        };
         let results: Mutex<Vec<Option<ReadResult>>> = Mutex::new(vec![None; to_read.len()]);
         let next = AtomicUsize::new(0);
         let done = AtomicUsize::new(0);
@@ -520,7 +684,9 @@ pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn Fn
             for _ in 0..threads.min(to_read.len()) {
                 s.spawn(|| loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(&(fi, pics)) = to_read.get(i) else { break };
+                    let Some(&(fi, pics)) = to_read.get(i) else {
+                        break;
+                    };
                     let r = read_entry(&files[fi], pics);
                     results.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
                     done.fetch_add(1, Ordering::Relaxed);
@@ -538,14 +704,21 @@ pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn Fn
                         for (k, &(fi, _)) in to_read.iter().enumerate() {
                             partial[fi] = match &res[k] {
                                 Some((e, _)) => e.clone(),
-                                None => old_map.get(&(files[fi].root, files[fi].rel.as_str())).map(|e| (*e).clone()),
+                                None => old_map
+                                    .get(&(files[fi].root, files[fi].rel.as_str()))
+                                    .map(|e| (*e).clone()),
                             };
                         }
                     }
                     assign_dir_covers(&files, &dirs, &mut partial);
                     let mut partial: Vec<Entry> = partial.into_iter().flatten().collect();
                     if old.roots == roots {
-                        partial.extend(old.entries.iter().filter(|e| missing.contains(&e.root)).cloned());
+                        partial.extend(
+                            old.entries
+                                .iter()
+                                .filter(|e| missing.contains(&e.root))
+                                .cloned(),
+                        );
                     }
                     publish(partial);
                 }
@@ -566,7 +739,12 @@ pub fn scan(roots: &[PathBuf], old: &Index, threads: usize, publish: &mut dyn Fn
     assign_dir_covers(&files, &dirs, &mut entries);
     let mut out: Vec<Entry> = entries.into_iter().flatten().collect();
     if old.roots == roots {
-        out.extend(old.entries.iter().filter(|e| missing.contains(&e.root)).cloned());
+        out.extend(
+            old.entries
+                .iter()
+                .filter(|e| missing.contains(&e.root))
+                .cloned(),
+        );
     }
     (out, stats)
 }
@@ -583,11 +761,21 @@ mod tests {
         assert_eq!(split_artists("A feat. B"), vec!["A", "B"]);
         assert_eq!(split_artists("A Feat. B ft. C"), vec!["A", "B", "C"]);
         assert_eq!(split_artists("A\u{0}B\u{0}a"), vec!["A", "B"]);
-        assert_eq!(split_artists("Ünïcödé FEAT. Ärtist"), vec!["Ünïcödé", "Ärtist"]);
+        assert_eq!(
+            split_artists("Ünïcödé FEAT. Ärtist"),
+            vec!["Ünïcödé", "Ärtist"]
+        );
         assert!(split_artists(" ; ").is_empty());
     }
 
-    fn entry(root: usize, rel: &str, album: &str, artist: &str, track: Option<u32>, cover: bool) -> Entry {
+    fn entry(
+        root: usize,
+        rel: &str,
+        album: &str,
+        artist: &str,
+        track: Option<u32>,
+        cover: bool,
+    ) -> Entry {
         Entry {
             track: Track {
                 id: id_of(&format!("{root}/{rel}")),
@@ -627,7 +815,10 @@ mod tests {
         assert_eq!(idx.track(&id_of("0/a/1.wav")).unwrap().track.album_id, a.id);
         assert!(idx.album(&a.id).is_some());
         let lib = bl_net::api::Library::from_json(&bl_json::parse_bytes(idx.json()).unwrap());
-        assert_eq!((lib.revision, lib.tracks.len(), lib.albums.len()), (3, 3, 2));
+        assert_eq!(
+            (lib.revision, lib.tracks.len(), lib.albums.len()),
+            (3, 3, 2)
+        );
         assert!(!idx.differs(&idx.entries.clone()));
         let mut changed = idx.entries.clone();
         changed[0].track.title = "x".into();

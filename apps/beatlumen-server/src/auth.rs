@@ -55,25 +55,45 @@ impl Auth {
     /// the password changed).
     pub fn new(password: Option<&str>, path: PathBuf) -> Auth {
         let password_digest = password.map(|p| sha256(p.as_bytes()));
-        let stored = std::fs::read(&path).ok().and_then(|d| bl_json::parse_bytes(&d).ok()).unwrap_or_default();
+        let stored = std::fs::read(&path)
+            .ok()
+            .and_then(|d| bl_json::parse_bytes(&d).ok())
+            .unwrap_or_default();
         let mut salt = stored.str_or("salt", "").to_string();
         if !matches!(util::unhex(&salt), Some(s) if s.len() >= 16) {
-            salt = crate::random::hex(16).unwrap_or_else(|_| util::hex(&sha256(path.to_string_lossy().as_bytes())[..16]));
+            salt = crate::random::hex(16)
+                .unwrap_or_else(|_| util::hex(&sha256(path.to_string_lossy().as_bytes())[..16]));
         }
         let check = match password {
             Some(p) => util::hex(&sha256_parts(&[salt.as_bytes(), b"\0", p.as_bytes()])),
             None => String::new(),
         };
         let mut list = Vec::new();
-        if password.is_some() && ct_eq(stored.str_or("passwordCheck", "").as_bytes(), check.as_bytes()) {
+        if password.is_some()
+            && ct_eq(
+                stored.str_or("passwordCheck", "").as_bytes(),
+                check.as_bytes(),
+            )
+        {
             for t in stored.get("tokens").as_array().into_iter().flatten() {
-                if let Some(d) = t.as_str().and_then(util::unhex).and_then(|v| <[u8; 32]>::try_from(v).ok()) {
+                if let Some(d) = t
+                    .as_str()
+                    .and_then(util::unhex)
+                    .and_then(|v| <[u8; 32]>::try_from(v).ok())
+                {
                     list.push(d);
                 }
             }
         }
         let set = list.iter().copied().collect();
-        let auth = Auth { password_digest, path, salt, check, tokens: RwLock::new(TokenStore { order: list, set }), failures: Mutex::new(HashMap::new()) };
+        let auth = Auth {
+            password_digest,
+            path,
+            salt,
+            check,
+            tokens: RwLock::new(TokenStore { order: list, set }),
+            failures: Mutex::new(HashMap::new()),
+        };
         if password.is_some() {
             auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()).order);
         }
@@ -88,7 +108,10 @@ impl Auth {
         let v = Value::object()
             .with("salt", self.salt.as_str())
             .with("passwordCheck", self.check.as_str())
-            .with("tokens", Value::Array(list.iter().map(|d| Value::from(util::hex(d))).collect()));
+            .with(
+                "tokens",
+                Value::Array(list.iter().map(|d| Value::from(util::hex(d))).collect()),
+            );
         match util::write_atomic(&self.path, v.to_json_pretty().as_bytes()) {
             Ok(()) => util::make_private(&self.path),
             Err(e) => crate::warn!("cannot write {}: {e}", self.path.display()),
@@ -100,11 +123,15 @@ impl Auth {
     pub fn request_token(req: &Request) -> Option<String> {
         if let Some(h) = req.header("authorization") {
             let h = h.trim();
-            if h.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("bearer ")) {
+            if h.get(..7)
+                .is_some_and(|p| p.eq_ignore_ascii_case("bearer "))
+            {
                 return Some(h[7..].trim().to_string());
             }
         }
-        req.query("token").filter(|t| !t.is_empty()).map(str::to_string)
+        req.query("token")
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
     }
 
     /// True when the request may access protected endpoints.
@@ -112,9 +139,15 @@ impl Auth {
         if !self.required() {
             return true;
         }
-        let Some(t) = Self::request_token(req) else { return false };
+        let Some(t) = Self::request_token(req) else {
+            return false;
+        };
         let d = sha256(t.as_bytes());
-        self.tokens.read().unwrap_or_else(|e| e.into_inner()).set.contains(&d)
+        self.tokens
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .set
+            .contains(&d)
     }
 
     /// Checks the password and issues a new token.
@@ -124,8 +157,12 @@ impl Auth {
             // works because no endpoint checks it.
             return Ok(String::new());
         };
-        let v = bl_json::parse_bytes(body).map_err(|e| LoginError::BadRequest(format!("invalid JSON: {e}")))?;
-        let pw = v.get("password").as_str().ok_or_else(|| LoginError::BadRequest("missing \"password\"".into()))?;
+        let v = bl_json::parse_bytes(body)
+            .map_err(|e| LoginError::BadRequest(format!("invalid JSON: {e}")))?;
+        let pw = v
+            .get("password")
+            .as_str()
+            .ok_or_else(|| LoginError::BadRequest("missing \"password\"".into()))?;
         let ip = remote.unwrap_or(IpAddr::from([0, 0, 0, 0]));
         {
             let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
@@ -144,7 +181,8 @@ impl Auth {
             std::thread::sleep(FAILURE_DELAY);
             return Err(LoginError::Wrong);
         }
-        let token = crate::random::hex(16).map_err(|e| LoginError::Internal(format!("no random source: {e}")))?;
+        let token = crate::random::hex(16)
+            .map_err(|e| LoginError::Internal(format!("no random source: {e}")))?;
         let d = sha256(token.as_bytes());
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
         g.order.push(d);
@@ -159,7 +197,9 @@ impl Auth {
 
     /// Revokes the token of the request.
     pub fn logout(&self, req: &Request) {
-        let Some(t) = Self::request_token(req) else { return };
+        let Some(t) = Self::request_token(req) else {
+            return;
+        };
         let d = sha256(t.as_bytes());
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
         if g.set.remove(&d) {

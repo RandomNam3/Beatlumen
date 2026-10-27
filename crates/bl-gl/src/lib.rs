@@ -149,8 +149,14 @@ pub struct Gl {
 impl Gl {
     /// # Safety
     /// See [`Fns::load`]; a context of the given flavor must be current.
-    pub unsafe fn load(flavor: Flavor, get: &mut dyn FnMut(&str) -> *const c_void) -> Result<Gl, String> {
-        Ok(Gl { f: Fns::load(get)?, flavor })
+    pub unsafe fn load(
+        flavor: Flavor,
+        get: &mut dyn FnMut(&str) -> *const c_void,
+    ) -> Result<Gl, String> {
+        Ok(Gl {
+            f: Fns::load(get)?,
+            flavor,
+        })
     }
 
     pub fn flavor(&self) -> Flavor {
@@ -165,7 +171,9 @@ impl Gl {
     /// `#version` line plus default precision for GLSL ES 3.00 style shaders.
     pub fn shader_header(&self) -> &'static str {
         match self.flavor {
-            Flavor::Gles3 | Flavor::WebGl2 => "#version 300 es\nprecision highp float;\nprecision highp int;\n",
+            Flavor::Gles3 | Flavor::WebGl2 => {
+                "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+            }
             Flavor::Core33 => "#version 330 core\n",
         }
     }
@@ -206,7 +214,13 @@ impl Gl {
     pub fn disable(&self, cap: GLenum) {
         unsafe { (self.f.disable)(cap) }
     }
-    pub fn blend_func_separate(&self, src_rgb: GLenum, dst_rgb: GLenum, src_a: GLenum, dst_a: GLenum) {
+    pub fn blend_func_separate(
+        &self,
+        src_rgb: GLenum,
+        dst_rgb: GLenum,
+        src_a: GLenum,
+        dst_a: GLenum,
+    ) {
         unsafe { (self.f.blend_func_separate)(src_rgb, dst_rgb, src_a, dst_a) }
     }
     pub fn blend_func(&self, src: GLenum, dst: GLenum) {
@@ -230,7 +244,17 @@ impl Gl {
     /// Reads RGBA8 pixels of the bound read framebuffer (bottom row first).
     pub fn read_pixels_rgba(&self, x: i32, y: i32, w: i32, h: i32) -> Vec<u8> {
         let mut buf = vec![0u8; (w.max(0) * h.max(0) * 4) as usize];
-        unsafe { (self.f.read_pixels)(x, y, w, h, RGBA, UNSIGNED_BYTE, buf.as_mut_ptr() as *mut c_void) };
+        unsafe {
+            (self.f.read_pixels)(
+                x,
+                y,
+                w,
+                h,
+                RGBA,
+                UNSIGNED_BYTE,
+                buf.as_mut_ptr() as *mut c_void,
+            )
+        };
         buf
     }
     pub fn flush(&self) {
@@ -266,9 +290,16 @@ impl Gl {
 
     /// Compiles and links a program. `attribs` binds attribute names to
     /// locations before linking.
-    pub fn create_program(&self, vs: &str, fs: &str, attribs: &[(u32, &str)]) -> Result<GLuint, String> {
+    pub fn create_program(
+        &self,
+        vs: &str,
+        fs: &str,
+        attribs: &[(u32, &str)],
+    ) -> Result<GLuint, String> {
         let header = self.shader_header();
-        let v = self.compile_shader(VERTEX_SHADER, &format!("{header}{vs}")).map_err(|e| format!("vertex shader: {e}"))?;
+        let v = self
+            .compile_shader(VERTEX_SHADER, &format!("{header}{vs}"))
+            .map_err(|e| format!("vertex shader: {e}"))?;
         let f = match self.compile_shader(FRAGMENT_SHADER, &format!("{header}{fs}")) {
             Ok(f) => f,
             Err(e) => {
@@ -351,14 +382,28 @@ impl Gl {
         unsafe { (self.f.bind_buffer)(target, b) }
     }
     pub fn buffer_data<T: Copy>(&self, target: GLenum, data: &[T], usage: GLenum) {
-        unsafe { (self.f.buffer_data)(target, std::mem::size_of_val(data) as GLsizeiptr, data.as_ptr() as *const c_void, usage) }
+        unsafe {
+            (self.f.buffer_data)(
+                target,
+                std::mem::size_of_val(data) as GLsizeiptr,
+                data.as_ptr() as *const c_void,
+                usage,
+            )
+        }
     }
     /// Allocates an uninitialised buffer of `bytes` bytes.
     pub fn buffer_alloc(&self, target: GLenum, bytes: usize, usage: GLenum) {
         unsafe { (self.f.buffer_data)(target, bytes as GLsizeiptr, std::ptr::null(), usage) }
     }
     pub fn buffer_sub_data<T: Copy>(&self, target: GLenum, offset_bytes: usize, data: &[T]) {
-        unsafe { (self.f.buffer_sub_data)(target, offset_bytes as GLintptr, std::mem::size_of_val(data) as GLsizeiptr, data.as_ptr() as *const c_void) }
+        unsafe {
+            (self.f.buffer_sub_data)(
+                target,
+                offset_bytes as GLintptr,
+                std::mem::size_of_val(data) as GLsizeiptr,
+                data.as_ptr() as *const c_void,
+            )
+        }
     }
     pub fn create_vertex_array(&self) -> GLuint {
         let mut v = 0;
@@ -372,10 +417,25 @@ impl Gl {
         unsafe { (self.f.bind_vertex_array)(v) }
     }
     /// Enables attribute `index` and points it at the bound ARRAY_BUFFER.
-    pub fn vertex_attrib(&self, index: u32, size: i32, ty: GLenum, normalized: bool, stride: i32, offset: usize) {
+    pub fn vertex_attrib(
+        &self,
+        index: u32,
+        size: i32,
+        ty: GLenum,
+        normalized: bool,
+        stride: i32,
+        offset: usize,
+    ) {
         unsafe {
             (self.f.enable_vertex_attrib_array)(index);
-            (self.f.vertex_attrib_pointer)(index, size, ty, normalized as u8, stride, offset as *const c_void);
+            (self.f.vertex_attrib_pointer)(
+                index,
+                size,
+                ty,
+                normalized as u8,
+                stride,
+                offset as *const c_void,
+            );
         }
     }
     pub fn vertex_attrib_divisor(&self, index: u32, divisor: u32) {
@@ -385,7 +445,9 @@ impl Gl {
         unsafe { (self.f.draw_arrays)(mode, first, count) }
     }
     pub fn draw_elements_u16(&self, mode: GLenum, count: i32, offset_bytes: usize) {
-        unsafe { (self.f.draw_elements)(mode, count, UNSIGNED_SHORT, offset_bytes as *const c_void) }
+        unsafe {
+            (self.f.draw_elements)(mode, count, UNSIGNED_SHORT, offset_bytes as *const c_void)
+        }
     }
     pub fn draw_elements_u32(&self, mode: GLenum, count: i32, offset_bytes: usize) {
         unsafe { (self.f.draw_elements)(mode, count, UNSIGNED_INT, offset_bytes as *const c_void) }
@@ -414,7 +476,15 @@ impl Gl {
         unsafe { (self.f.tex_parameteri)(target, pname, param as GLint) }
     }
     /// Uploads (or allocates when `data` is `None`) a 2D texture level.
-    pub fn tex_image_2d(&self, internal: GLenum, w: i32, h: i32, format: GLenum, ty: GLenum, data: Option<&[u8]>) {
+    pub fn tex_image_2d(
+        &self,
+        internal: GLenum,
+        w: i32,
+        h: i32,
+        format: GLenum,
+        ty: GLenum,
+        data: Option<&[u8]>,
+    ) {
         unsafe {
             (self.f.tex_image_2d)(
                 TEXTURE_2D,
@@ -425,12 +495,34 @@ impl Gl {
                 0,
                 format,
                 ty,
-                data.map(|d| d.as_ptr() as *const c_void).unwrap_or(std::ptr::null()),
+                data.map(|d| d.as_ptr() as *const c_void)
+                    .unwrap_or(std::ptr::null()),
             )
         }
     }
-    pub fn tex_sub_image_2d(&self, x: i32, y: i32, w: i32, h: i32, format: GLenum, ty: GLenum, data: &[u8]) {
-        unsafe { (self.f.tex_sub_image_2d)(TEXTURE_2D, 0, x, y, w, h, format, ty, data.as_ptr() as *const c_void) }
+    pub fn tex_sub_image_2d(
+        &self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        format: GLenum,
+        ty: GLenum,
+        data: &[u8],
+    ) {
+        unsafe {
+            (self.f.tex_sub_image_2d)(
+                TEXTURE_2D,
+                0,
+                x,
+                y,
+                w,
+                h,
+                format,
+                ty,
+                data.as_ptr() as *const c_void,
+            )
+        }
     }
     pub fn generate_mipmap(&self, target: GLenum) {
         unsafe { (self.f.generate_mipmap)(target) }
@@ -450,7 +542,9 @@ impl Gl {
         unsafe { (self.f.bind_framebuffer)(FRAMEBUFFER, f) }
     }
     pub fn framebuffer_texture(&self, texture: GLuint) {
-        unsafe { (self.f.framebuffer_texture_2d)(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, texture, 0) }
+        unsafe {
+            (self.f.framebuffer_texture_2d)(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, texture, 0)
+        }
     }
     pub fn framebuffer_complete(&self) -> bool {
         unsafe { (self.f.check_framebuffer_status)(FRAMEBUFFER) == FRAMEBUFFER_COMPLETE }

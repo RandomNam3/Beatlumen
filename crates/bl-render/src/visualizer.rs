@@ -85,7 +85,14 @@ impl Visualizer {
                 gl,
                 PARTICLE_VS,
                 PARTICLE_FS,
-                &[(0, "corner"), (1, "position"), (2, "size"), (3, "gradient"), (4, "opacity"), (5, "color")],
+                &[
+                    (0, "corner"),
+                    (1, "position"),
+                    (2, "size"),
+                    (3, "gradient"),
+                    (4, "opacity"),
+                    (5, "color"),
+                ],
             )?,
         };
         // Unit plane (-1..1) with UVs, drawn as a triangle strip.
@@ -93,7 +100,9 @@ impl Visualizer {
         gl.bind_vertex_array(plane_vao);
         let plane_vbo = gl.create_buffer();
         gl.bind_buffer(ARRAY_BUFFER, plane_vbo);
-        let verts: [f32; 16] = [-1.0, -1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+        let verts: [f32; 16] = [
+            -1.0, -1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        ];
         gl.buffer_data(ARRAY_BUFFER, &verts, STATIC_DRAW);
         gl.vertex_attrib(0, 2, FLOAT, false, 16, 0);
         gl.vertex_attrib(1, 2, FLOAT, false, 16, 8);
@@ -147,7 +156,8 @@ impl Visualizer {
         if let Some(old) = self.images.remove(&id) {
             old.delete(gl);
         }
-        self.images.insert(id, Texture::from_rgba(gl, width, height, rgba, false));
+        self.images
+            .insert(id, Texture::from_rgba(gl, width, height, rgba, false));
     }
 
     pub fn has_image(&self, id: u64) -> bool {
@@ -162,7 +172,12 @@ impl Visualizer {
 
     /// Removes all images not in `keep`.
     pub fn retain_images(&mut self, gl: &Gl, keep: &[u64]) {
-        let drop: Vec<u64> = self.images.keys().filter(|k| !keep.contains(k)).copied().collect();
+        let drop: Vec<u64> = self
+            .images
+            .keys()
+            .filter(|k| !keep.contains(k))
+            .copied()
+            .collect();
         for id in drop {
             self.remove_image(gl, id);
         }
@@ -175,7 +190,15 @@ impl Visualizer {
         self.width = w;
         self.height = h;
         let [s0, s1] = &mut self.scene;
-        for rt in [s0, s1, &mut self.scene_tmp, &mut self.ping, &mut self.pong, &mut self.blur_tmp, &mut self.effect_tmp] {
+        for rt in [
+            s0,
+            s1,
+            &mut self.scene_tmp,
+            &mut self.ping,
+            &mut self.pong,
+            &mut self.blur_tmp,
+            &mut self.effect_tmp,
+        ] {
             rt.resize(gl, w, h);
         }
     }
@@ -189,7 +212,14 @@ impl Visualizer {
     }
 
     /// Renders a scene into `self.scene[slot]` (applying motion blur).
-    fn render_scene(&mut self, gl: &Gl, s: &SceneView, slot: usize, pixel_scale: f32, seen: &mut Vec<(u64, Mat4)>) {
+    fn render_scene(
+        &mut self,
+        gl: &Gl,
+        s: &SceneView,
+        slot: usize,
+        pixel_scale: f32,
+        seen: &mut Vec<(u64, Mat4)>,
+    ) {
         let vp = self.view_proj(s);
         let target = &self.scene[slot];
         target.bind(gl);
@@ -201,7 +231,13 @@ impl Visualizer {
         p.use_program(gl);
         p.set_mat4(gl, "viewProj", &vp);
         p.set_2f(gl, "halfSize", s.plane[0] / 2.0, s.plane[1] / 2.0);
-        p.set_3f(gl, "fallback", self.empty_color[0], self.empty_color[1], self.empty_color[2]);
+        p.set_3f(
+            gl,
+            "fallback",
+            self.empty_color[0],
+            self.empty_color[1],
+            self.empty_color[2],
+        );
         match s.image.and_then(|i| self.images.get(&i.id)) {
             Some(tex) => {
                 p.set_texture(gl, "map", 0, tex.id);
@@ -223,7 +259,19 @@ impl Visualizer {
             let floats: Vec<f32> = s
                 .particles
                 .iter()
-                .flat_map(|i| [i.position[0], i.position[1], i.position[2], i.size, i.gradient, i.opacity, i.color[0], i.color[1], i.color[2]])
+                .flat_map(|i| {
+                    [
+                        i.position[0],
+                        i.position[1],
+                        i.position[2],
+                        i.size,
+                        i.gradient,
+                        i.opacity,
+                        i.color[0],
+                        i.color[1],
+                        i.color[2],
+                    ]
+                })
                 .collect();
             gl.buffer_sub_data(ARRAY_BUFFER, 0, &floats);
             gl.enable(BLEND);
@@ -294,7 +342,11 @@ impl Visualizer {
                     self.blur(gl, src.texture, dst, radius, passes);
                 }
             }
-            FilterView::Bloom { opacity, radius, passes } => {
+            FilterView::Bloom {
+                opacity,
+                radius,
+                passes,
+            } => {
                 self.blur(gl, src.texture, &self.effect_tmp, radius, passes);
                 dst.bind(gl);
                 let p = &self.p.blend;
@@ -323,7 +375,11 @@ impl Visualizer {
                 p.set_f(gl, "darkness", darkness);
                 self.fullscreen.draw(gl);
             }
-            FilterView::VignetteBlur { size, radius, passes } => {
+            FilterView::VignetteBlur {
+                size,
+                radius,
+                passes,
+            } => {
                 self.blur(gl, src.texture, &self.effect_tmp, radius, passes);
                 dst.bind(gl);
                 let p = &self.p.vignette_blend;
@@ -353,7 +409,11 @@ impl Visualizer {
                 p.set_f(gl, "angle", degrees.to_radians());
                 self.fullscreen.draw(gl);
             }
-            FilterView::Kaleidoscope { amount, segments, angle } => {
+            FilterView::Kaleidoscope {
+                amount,
+                segments,
+                angle,
+            } => {
                 dst.bind(gl);
                 let p = &self.p.kaleidoscope;
                 p.use_program(gl);
@@ -381,7 +441,11 @@ impl Visualizer {
                 p.set_f(gl, "strength", strength);
                 self.fullscreen.draw(gl);
             }
-            FilterView::Grain { amount, scanlines, time } => {
+            FilterView::Grain {
+                amount,
+                scanlines,
+                time,
+            } => {
                 dst.bind(gl);
                 let p = &self.p.grain;
                 p.use_program(gl);
@@ -395,7 +459,14 @@ impl Visualizer {
         }
     }
 
-    fn transition(&self, gl: &Gl, t: &TransitionView, prev: GLuint, cur: GLuint, dst: &RenderTarget) {
+    fn transition(
+        &self,
+        gl: &Gl,
+        t: &TransitionView,
+        prev: GLuint,
+        cur: GLuint,
+        dst: &RenderTarget,
+    ) {
         dst.bind(gl);
         let bind_pair = |p: &Program| {
             p.use_program(gl);
@@ -417,7 +488,11 @@ impl Visualizer {
                 p.set_f(gl, "intensity", intensity);
                 p.set_i(gl, "samples", samples.min(64) as i32);
             }
-            TransitionKind::Wipe { direction, gradient, angle_deg } => {
+            TransitionKind::Wipe {
+                direction,
+                gradient,
+                angle_deg,
+            } => {
                 let p = &self.p.wipe;
                 bind_pair(p);
                 p.set_f(gl, "amount", t.amount);
@@ -426,7 +501,12 @@ impl Visualizer {
                 p.set_f(gl, "angle", angle_deg.to_radians());
                 p.set_f(gl, "aspect", self.width as f32 / self.height.max(1) as f32);
             }
-            TransitionKind::Slide { direction, slides, intensity, samples } => {
+            TransitionKind::Slide {
+                direction,
+                slides,
+                intensity,
+                samples,
+            } => {
                 let p = &self.p.slide;
                 bind_pair(p);
                 p.set_i(gl, "slides", slides.max(0));
@@ -450,7 +530,14 @@ impl Visualizer {
     /// Renders a frame. `render_size` is the internal resolution (may be
     /// smaller than the output for performance); `pixel_scale` converts
     /// logical pixels (particle sizes) to render pixels.
-    pub fn render(&mut self, gl: &Gl, frame: &FrameView, render_size: (u32, u32), out: Target, pixel_scale: f32) {
+    pub fn render(
+        &mut self,
+        gl: &Gl,
+        frame: &FrameView,
+        render_size: (u32, u32),
+        out: Target,
+        pixel_scale: f32,
+    ) {
         self.resize(gl, render_size.0.max(1), render_size.1.max(1));
         gl.disable(BLEND);
         gl.disable(SCISSOR_TEST);
@@ -492,7 +579,15 @@ impl Visualizer {
             t.delete(gl);
         }
         self.images.clear();
-        for rt in [&self.scene[0], &self.scene[1], &self.scene_tmp, &self.ping, &self.pong, &self.blur_tmp, &self.effect_tmp] {
+        for rt in [
+            &self.scene[0],
+            &self.scene[1],
+            &self.scene_tmp,
+            &self.ping,
+            &self.pong,
+            &self.blur_tmp,
+            &self.effect_tmp,
+        ] {
             rt.delete(gl);
         }
         gl.delete_vertex_array(self.plane_vao);

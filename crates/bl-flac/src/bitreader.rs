@@ -20,7 +20,12 @@ pub struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        let mut r = BitReader { data, pos: 0, cache: 0, bits: 0 };
+        let mut r = BitReader {
+            data,
+            pos: 0,
+            cache: 0,
+            bits: 0,
+        };
         r.refill();
         r
     }
@@ -181,7 +186,18 @@ mod tests {
 
     #[test]
     fn reads_bits_and_signed() {
-        let data = [0b1010_1100, 0xff, 0x00, 0x80, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
+        let data = [
+            0b1010_1100,
+            0xff,
+            0x00,
+            0x80,
+            0x12,
+            0x34,
+            0x56,
+            0x78,
+            0x9a,
+            0xbc,
+        ];
         let mut r = BitReader::new(&data);
         assert_eq!(r.read(1), Ok(1));
         assert_eq!(r.read(3), Ok(0b010));
@@ -201,7 +217,11 @@ mod tests {
         for k in [0u32, 1, 3, 7, 14] {
             let mut bits: Vec<bool> = Vec::new();
             for &v in &vals {
-                let f = if v >= 0 { (v as u32) << 1 } else { ((-v as u32) << 1) - 1 };
+                let f = if v >= 0 {
+                    (v as u32) << 1
+                } else {
+                    ((-v as u32) << 1) - 1
+                };
                 let q = f >> k;
                 bits.resize(bits.len() + q as usize, false);
                 bits.push(true);

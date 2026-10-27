@@ -4,8 +4,8 @@
 //! ffmpeg (for fixture encoding) are unavailable.
 
 mod common;
-use common::*;
 use bl_opus::OpusDecoder;
+use common::*;
 use std::path::PathBuf;
 use std::process::Command;
 

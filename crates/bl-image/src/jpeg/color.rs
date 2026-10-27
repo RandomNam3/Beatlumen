@@ -46,13 +46,21 @@ fn taps(n_out: usize, n_in: usize, factor: usize, max: usize) -> Vec<Tap> {
             let num = (2 * o + 1) as i64 * factor as i64 - max as i64;
             let den = 2 * max as i64;
             if num <= 0 {
-                return Tap { i0: 0, i1: 0, w1: 0 };
+                return Tap {
+                    i0: 0,
+                    i1: 0,
+                    w1: 0,
+                };
             }
             let i0 = (num / den) as usize;
             let w1 = ((num % den) * 256 + den / 2) / den;
             let i0c = i0.min(n_in - 1);
             let i1c = (i0 + 1).min(n_in - 1);
-            Tap { i0: i0c as u32, i1: i1c as u32, w1: w1 as u32 }
+            Tap {
+                i0: i0c as u32,
+                i1: i1c as u32,
+                w1: w1 as u32,
+            }
         })
         .collect()
 }
@@ -104,8 +112,16 @@ impl<'a> Upsampler<'a> {
             p,
             kind,
             odd_bias,
-            htaps: if generic { taps(w, p.width, p.hn, p.hd) } else { Vec::new() },
-            vtaps: if generic { taps(h, p.height, p.vn, p.vd) } else { Vec::new() },
+            htaps: if generic {
+                taps(w, p.width, p.hn, p.hd)
+            } else {
+                Vec::new()
+            },
+            vtaps: if generic {
+                taps(h, p.height, p.vn, p.vd)
+            } else {
+                Vec::new()
+            },
             vrow: vec![0; p.width],
             out: vec![0; (p.width * 2).max(w)],
         }
@@ -129,7 +145,11 @@ impl<'a> Upsampler<'a> {
             Kind::H2V2 => {
                 let k = y / 2;
                 let near = self.plane_row(k);
-                let far = if y % 2 == 0 { self.plane_row(k.saturating_sub(1)) } else { self.plane_row(k + 1) };
+                let far = if y % 2 == 0 {
+                    self.plane_row(k.saturating_sub(1))
+                } else {
+                    self.plane_row(k + 1)
+                };
                 for ((d, &a), &b) in self.vrow.iter_mut().zip(near).zip(far) {
                     *d = 3 * a as u16 + b as u16;
                 }
@@ -138,7 +158,11 @@ impl<'a> Upsampler<'a> {
             Kind::H1V2 => {
                 let k = y / 2;
                 let near = self.plane_row(k);
-                let (far, bias) = if y % 2 == 0 { (self.plane_row(k.saturating_sub(1)), 1) } else { (self.plane_row(k + 1), 2) };
+                let (far, bias) = if y % 2 == 0 {
+                    (self.plane_row(k.saturating_sub(1)), 1)
+                } else {
+                    (self.plane_row(k + 1), 2)
+                };
                 for ((o, &a), &b) in self.out.iter_mut().zip(near).zip(far) {
                     *o = ((3 * a as u16 + b as u16 + bias) >> 2) as u8;
                 }
@@ -219,7 +243,12 @@ struct YccTables {
 
 impl YccTables {
     fn new() -> Self {
-        let mut t = YccTables { cr_r: [0; 256], cb_b: [0; 256], cr_g: [0; 256], cb_g: [0; 256] };
+        let mut t = YccTables {
+            cr_r: [0; 256],
+            cb_b: [0; 256],
+            cr_g: [0; 256],
+            cb_g: [0; 256],
+        };
         for i in 0..256 {
             let x = i as i32 - 128;
             t.cr_r[i] = (91881 * x + 32768) >> 16;
@@ -236,7 +265,11 @@ impl YccTables {
         let r = y + self.cr_r[cr as usize];
         let g = y + ((self.cb_g[cb as usize] + self.cr_g[cr as usize]) >> 16);
         let b = y + self.cb_b[cb as usize];
-        [r.clamp(0, 255) as u8, g.clamp(0, 255) as u8, b.clamp(0, 255) as u8]
+        [
+            r.clamp(0, 255) as u8,
+            g.clamp(0, 255) as u8,
+            b.clamp(0, 255) as u8,
+        ]
     }
 }
 
@@ -251,7 +284,13 @@ struct LimitedTables {
 
 impl LimitedTables {
     fn new() -> Self {
-        let mut t = LimitedTables { y: [0; 256], v_r: [0; 256], u_g: [0; 256], v_g: [0; 256], u_b: [0; 256] };
+        let mut t = LimitedTables {
+            y: [0; 256],
+            v_r: [0; 256],
+            u_g: [0; 256],
+            v_g: [0; 256],
+            u_b: [0; 256],
+        };
         let f = |x: f64| (x * 16384.0).round() as i32;
         for i in 0..256 {
             let c = i as f64 - 128.0;
@@ -270,7 +309,11 @@ impl LimitedTables {
         let r = (yy + self.v_r[v as usize]) >> 14;
         let g = (yy + self.u_g[u as usize] + self.v_g[v as usize]) >> 14;
         let b = (yy + self.u_b[u as usize]) >> 14;
-        [r.clamp(0, 255) as u8, g.clamp(0, 255) as u8, b.clamp(0, 255) as u8]
+        [
+            r.clamp(0, 255) as u8,
+            g.clamp(0, 255) as u8,
+            b.clamp(0, 255) as u8,
+        ]
     }
 }
 
@@ -284,7 +327,10 @@ fn mul255(a: u8, b: u8) -> u8 {
 pub fn convert(planes: &[Plane], cs: ColorSpace, img: &mut Image) {
     let w = img.width as usize;
     let h = img.height as usize;
-    let mut ups: Vec<Upsampler> = planes.iter().map(|p| Upsampler::new(p, w, h, if cs == ColorSpace::YuvLimited { 8 } else { 7 })).collect();
+    let mut ups: Vec<Upsampler> = planes
+        .iter()
+        .map(|p| Upsampler::new(p, w, h, if cs == ColorSpace::YuvLimited { 8 } else { 7 }))
+        .collect();
     let ycc = YccTables::new();
     let limited = LimitedTables::new();
     for y in 0..h {
@@ -325,14 +371,24 @@ pub fn convert(planes: &[Plane], cs: ColorSpace, img: &mut Image) {
             ColorSpace::Cmyk => {
                 for (x, o) in out.chunks_exact_mut(4).enumerate() {
                     let k = rows[3][x];
-                    o.copy_from_slice(&[mul255(rows[0][x], k), mul255(rows[1][x], k), mul255(rows[2][x], k), 255]);
+                    o.copy_from_slice(&[
+                        mul255(rows[0][x], k),
+                        mul255(rows[1][x], k),
+                        mul255(rows[2][x], k),
+                        255,
+                    ]);
                 }
             }
             ColorSpace::Ycck => {
                 for (x, o) in out.chunks_exact_mut(4).enumerate() {
                     let [r, g, b] = ycc.rgb(rows[0][x], rows[1][x], rows[2][x]);
                     let k = rows[3][x];
-                    o.copy_from_slice(&[mul255(255 - r, k), mul255(255 - g, k), mul255(255 - b, k), 255]);
+                    o.copy_from_slice(&[
+                        mul255(255 - r, k),
+                        mul255(255 - g, k),
+                        mul255(255 - b, k),
+                        255,
+                    ]);
                 }
             }
         }
@@ -347,7 +403,16 @@ mod tests {
         let planes: Vec<Vec<u8>> = samples.iter().map(|&s| vec![s]).collect();
         let p: Vec<Plane> = planes
             .iter()
-            .map(|d| Plane { data: d, stride: 1, width: 1, height: 1, hn: 1, hd: 1, vn: 1, vd: 1 })
+            .map(|d| Plane {
+                data: d,
+                stride: 1,
+                width: 1,
+                height: 1,
+                hn: 1,
+                hd: 1,
+                vn: 1,
+                vd: 1,
+            })
             .collect();
         let mut img = Image::new(1, 1);
         convert(&p, cs, &mut img);
@@ -358,14 +423,25 @@ mod tests {
     fn cmyk_matches_ycck_relation() {
         // YCCK is verified against libjpeg-turbo; Adobe CMYK must give the
         // same result for the equivalent (inverted) CMY values.
-        for (y, cb, cr, k) in [(10u8, 128u8, 128u8, 255u8), (200, 90, 170, 128), (128, 128, 128, 0), (76, 85, 255, 200)] {
+        for (y, cb, cr, k) in [
+            (10u8, 128u8, 128u8, 255u8),
+            (200, 90, 170, 128),
+            (128, 128, 128, 0),
+            (76, 85, 255, 200),
+        ] {
             let ycck = convert_one(ColorSpace::Ycck, &[y, cb, cr, k]);
             let [r, g, b, _] = convert_one(ColorSpace::YCbCr, &[y, cb, cr]);
             let cmyk = convert_one(ColorSpace::Cmyk, &[255 - r, 255 - g, 255 - b, k]);
             assert_eq!(ycck, cmyk);
         }
-        assert_eq!(convert_one(ColorSpace::Cmyk, &[255, 255, 255, 255]), [255, 255, 255, 255]);
-        assert_eq!(convert_one(ColorSpace::Cmyk, &[0, 255, 255, 255]), [0, 255, 255, 255]);
+        assert_eq!(
+            convert_one(ColorSpace::Cmyk, &[255, 255, 255, 255]),
+            [255, 255, 255, 255]
+        );
+        assert_eq!(
+            convert_one(ColorSpace::Cmyk, &[0, 255, 255, 255]),
+            [0, 255, 255, 255]
+        );
     }
 
     #[test]

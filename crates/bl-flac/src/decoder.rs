@@ -94,7 +94,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
             }
             let mut rest = [0u8; 6];
             read_exact(&mut reader, &mut rest, "truncated ID3v2 tag")?;
-            let size = rest[2..6].iter().fold(0u64, |a, &b| (a << 7) | (b & 0x7f) as u64);
+            let size = rest[2..6]
+                .iter()
+                .fold(0u64, |a, &b| (a << 7) | (b & 0x7f) as u64);
             let footer = if rest[1] & 0x10 != 0 { 10 } else { 0 };
             pos += 10 + size + footer;
             reader.seek(SeekFrom::Start(pos))?;
@@ -116,7 +118,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
                 return Err(Error::InvalidData("forbidden metadata block type"));
             }
             if info.is_none() && block_type != MetadataBlock::STREAMINFO {
-                return Err(Error::InvalidData("STREAMINFO is not the first metadata block"));
+                return Err(Error::InvalidData(
+                    "STREAMINFO is not the first metadata block",
+                ));
             }
             if block_type == MetadataBlock::PADDING {
                 reader.seek(SeekFrom::Current(len as i64))?;
@@ -127,7 +131,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
                     return Err(Error::InvalidData("truncated metadata block"));
                 }
                 match block_type {
-                    MetadataBlock::STREAMINFO if info.is_none() => info = Some(StreamInfo::parse(&data)?),
+                    MetadataBlock::STREAMINFO if info.is_none() => {
+                        info = Some(StreamInfo::parse(&data)?)
+                    }
                     MetadataBlock::SEEKTABLE => seek_table = parse_seek_table(&data),
                     _ => {}
                 }
@@ -156,8 +162,16 @@ impl<R: Read + Seek> FlacDecoder<R> {
             buf_pos: 0,
             buf_offset: first_frame_offset,
             eof: false,
-            want: if max_frame > 0 { max_frame + MAX_HEADER_LEN } else { READ_CHUNK },
-            frame_cap: if max_frame > 0 { (max_frame * 4).max(1 << 20) } else { 16 << 20 },
+            want: if max_frame > 0 {
+                max_frame + MAX_HEADER_LEN
+            } else {
+                READ_CHUNK
+            },
+            frame_cap: if max_frame > 0 {
+                (max_frame * 4).max(1 << 20)
+            } else {
+                16 << 20
+            },
             core: FrameDecoder::new(),
             position: 0,
             skip: 0,
@@ -174,7 +188,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
         dec.fill(MAX_HEADER_LEN)?;
         if let Ok(h) = parse_header(&dec.buf) {
             dec.variable = Some(h.variable);
-            if !h.variable && (info.min_block_size != info.max_block_size || info.max_block_size == 0) {
+            if !h.variable
+                && (info.min_block_size != info.max_block_size || info.max_block_size == 0)
+            {
                 dec.fixed_block_size = h.block_size;
             }
         }
@@ -329,7 +345,8 @@ impl<R: Read + Seek> FlacDecoder<R> {
                     let frac = span * (target - lo_sample) as u128 / (hs - lo_sample) as u128;
                     let est = lo_off + frac.min(span) as u64;
                     // Aim a little early so that the frame found precedes the target.
-                    est.saturating_sub(threshold / 4).clamp(lo_off + 1, hi_off - 1)
+                    est.saturating_sub(threshold / 4)
+                        .clamp(lo_off + 1, hi_off - 1)
                 }
                 _ => lo_off + (hi_off - lo_off) / 2,
             };
@@ -457,11 +474,19 @@ impl<R: Read + Seek> FlacDecoder<R> {
         loop {
             self.fill(MAX_HEADER_LEN)?;
             if self.buf_pos >= self.buf.len() {
-                return Ok(Search { found: None, lost, bad_frames });
+                return Ok(Search {
+                    found: None,
+                    lost,
+                    bad_frames,
+                });
             }
             let offset = self.buf_offset + self.buf_pos as u64;
             if offset >= limit {
-                return Ok(Search { found: None, lost, bad_frames });
+                return Ok(Search {
+                    found: None,
+                    lost,
+                    bad_frames,
+                });
             }
             if let Ok(h) = parse_header(&self.buf[self.buf_pos..]) {
                 if self.acceptable(&h, strict || lost) {
@@ -474,7 +499,11 @@ impl<R: Read + Seek> FlacDecoder<R> {
                             }
                             let sample = h.first_sample(self.fixed_block_size);
                             return Ok(Search {
-                                found: Some(Found { offset, sample, block_size: h.block_size }),
+                                found: Some(Found {
+                                    offset,
+                                    sample,
+                                    block_size: h.block_size,
+                                }),
                                 lost,
                                 bad_frames,
                             });
@@ -512,7 +541,11 @@ impl<R: Read + Seek> FlacDecoder<R> {
     /// Decodes the frame at the buffer position, reading more input as
     /// needed. The outer error is an I/O error, the inner one a frame error.
     fn decode_at_pos(&mut self, h: &FrameHeader) -> Result<Result<usize, FrameError>, Error> {
-        let bps = if h.bps != 0 { h.bps } else { self.info.bits_per_sample as u32 };
+        let bps = if h.bps != 0 {
+            h.bps
+        } else {
+            self.info.bits_per_sample as u32
+        };
         let mut want = self.want;
         loop {
             self.fill(want)?;
@@ -532,7 +565,11 @@ impl<R: Read + Seek> FlacDecoder<R> {
     /// Returns the sample number of a valid frame starting exactly at `off`.
     fn frame_sample_at(&mut self, off: u64) -> Result<Option<u64>, Error> {
         self.reposition(off)?;
-        Ok(self.next_frame(true, off + 1)?.found.filter(|f| f.offset == off).map(|f| f.sample))
+        Ok(self
+            .next_frame(true, off + 1)?
+            .found
+            .filter(|f| f.offset == off)
+            .map(|f| f.sample))
     }
 
     /// Moves the read position to stream offset `off`.

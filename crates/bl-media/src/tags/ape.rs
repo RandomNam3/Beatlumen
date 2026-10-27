@@ -37,20 +37,38 @@ pub(crate) fn read_ape_tag<R: Read + Seek + ?Sized>(
     }
     let items_start = end - size;
     let has_header = flags & (1 << 31) != 0;
-    let start = if has_header && items_start >= 32 { items_start - 32 } else { items_start };
+    let start = if has_header && items_start >= 32 {
+        items_start - 32
+    } else {
+        items_start
+    };
     r.seek(SeekFrom::Start(items_start))?;
     let items = read_vec(r, size - 32, 64 << 20)?;
     parse_items(&items, count, version, tags, pictures);
     Ok(Some(ApeTag { start }))
 }
 
-fn parse_items(d: &[u8], count: u32, version: u32, tags: &mut Tags, mut pictures: Option<&mut Vec<Picture>>) {
+fn parse_items(
+    d: &[u8],
+    count: u32,
+    version: u32,
+    tags: &mut Tags,
+    mut pictures: Option<&mut Vec<Picture>>,
+) {
     let mut pos = 0usize;
     for _ in 0..count.min(4096) {
-        let (Some(len), Some(flags)) = (le32(d, pos), le32(d, pos + 4)) else { break };
+        let (Some(len), Some(flags)) = (le32(d, pos), le32(d, pos + 4)) else {
+            break;
+        };
         let len = len as usize;
         pos += 8;
-        let Some(key_end) = d[pos.min(d.len())..].iter().position(|&b| b == 0).map(|p| pos + p) else { break };
+        let Some(key_end) = d[pos.min(d.len())..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|p| pos + p)
+        else {
+            break;
+        };
         let key = String::from_utf8_lossy(&d[pos..key_end]).into_owned();
         pos = key_end + 1;
         if pos + len > d.len() {
@@ -65,7 +83,8 @@ fn parse_items(d: &[u8], count: u32, version: u32, tags: &mut Tags, mut pictures
             if lkey.starts_with("cover art") {
                 if let Some(p) = pictures.as_deref_mut() {
                     let split = value.iter().position(|&b| b == 0).map_or(0, |i| i + 1);
-                    let desc = String::from_utf8_lossy(&value[..split.saturating_sub(1)]).into_owned();
+                    let desc =
+                        String::from_utf8_lossy(&value[..split.saturating_sub(1)]).into_owned();
                     let pic_kind = if lkey.contains("front") {
                         3
                     } else if lkey.contains("back") {
@@ -83,7 +102,11 @@ fn parse_items(d: &[u8], count: u32, version: u32, tags: &mut Tags, mut pictures
         if kind != 0 {
             continue;
         }
-        let text = if version >= 2000 { String::from_utf8_lossy(value).into_owned() } else { utf8_or_latin1(value) };
+        let text = if version >= 2000 {
+            String::from_utf8_lossy(value).into_owned()
+        } else {
+            utf8_or_latin1(value)
+        };
         // Multiple values are NUL separated; use the first.
         let first = text.split('\0').next().unwrap_or("");
         let k = match lkey.as_str() {
@@ -133,7 +156,9 @@ mod tests {
         let mut c = std::io::Cursor::new(&data);
         let mut tags = Tags::default();
         let mut pics = Vec::new();
-        let t = read_ape_tag(&mut c, data.len() as u64, &mut tags, Some(&mut pics)).unwrap().unwrap();
+        let t = read_ape_tag(&mut c, data.len() as u64, &mut tags, Some(&mut pics))
+            .unwrap()
+            .unwrap();
         assert_eq!(t.start, 10);
         assert_eq!(tags.title.as_deref(), Some("Song"));
         assert_eq!(tags.artist.as_deref(), Some("Band"));

@@ -61,7 +61,9 @@ impl std::error::Error for Error {}
 pub fn probe(data: &[u8]) -> bool {
     let mut d = data;
     while d.len() >= 10 && &d[..3] == b"ID3" {
-        let size = d[6..10].iter().fold(0usize, |a, &b| (a << 7) | (b & 0x7f) as usize);
+        let size = d[6..10]
+            .iter()
+            .fold(0usize, |a, &b| (a << 7) | (b & 0x7f) as usize);
         let footer = if d[5] & 0x10 != 0 { 10 } else { 0 };
         match d.get(10 + size + footer..) {
             Some(rest) => d = rest,

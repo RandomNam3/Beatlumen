@@ -26,7 +26,11 @@ pub struct HuffTable {
 
 impl Default for HuffTable {
     fn default() -> Self {
-        HuffTable { entries: vec![INVALID], primary_bits: 0, mask: 0 }
+        HuffTable {
+            entries: vec![INVALID],
+            primary_bits: 0,
+            mask: 0,
+        }
     }
 }
 
@@ -52,11 +56,19 @@ impl HuffTable {
         count[0] = 0;
         let used: u32 = count.iter().sum();
         if used == 0 {
-            return Ok(HuffTable { entries: vec![INVALID], primary_bits: 0, mask: 0 });
+            return Ok(HuffTable {
+                entries: vec![INVALID],
+                primary_bits: 0,
+                mask: 0,
+            });
         }
         if used == 1 && single_zero_len {
             let sym = lengths.iter().position(|&l| l != 0).unwrap_or(0);
-            return Ok(HuffTable { entries: vec![payload(sym) & !0xf], primary_bits: 0, mask: 0 });
+            return Ok(HuffTable {
+                entries: vec![payload(sym) & !0xf],
+                primary_bits: 0,
+                mask: 0,
+            });
         }
         let mut left: i32 = 1;
         let mut max_len = 0;
@@ -138,7 +150,11 @@ impl HuffTable {
                 }
             }
         }
-        Ok(HuffTable { entries, primary_bits: pb, mask: pmask })
+        Ok(HuffTable {
+            entries,
+            primary_bits: pb,
+            mask: pmask,
+        })
     }
 
     /// Looks up the entry for the next input bits (LSB = next bit). The

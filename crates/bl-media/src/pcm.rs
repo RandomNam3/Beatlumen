@@ -89,16 +89,46 @@ fn convert_packed(fmt: SampleFormat, d: &[u8], out: &mut Vec<f32>) {
     match fmt {
         U8 => out.extend(d.iter().map(|&b| (b as f32 - 128.0) * (1.0 / 128.0))),
         S8 => out.extend(d.iter().map(|&b| b as i8 as f32 * (1.0 / 128.0))),
-        S16Le => out.extend(d.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 * S16)),
-        S16Be => out.extend(d.chunks_exact(2).map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 * S16)),
-        S24Le => out.extend(d.chunks_exact(3).map(|c| (i32::from_le_bytes([0, c[0], c[1], c[2]]) >> 8) as f32 * S24)),
-        S24Be => out.extend(d.chunks_exact(3).map(|c| (i32::from_be_bytes([c[0], c[1], c[2], 0]) >> 8) as f32 * S24)),
-        S32Le => out.extend(d.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 * S32)),
-        S32Be => out.extend(d.chunks_exact(4).map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]) as f32 * S32)),
-        F32Le => out.extend(d.chunks_exact(4).map(|c| sanitize(f32::from_le_bytes([c[0], c[1], c[2], c[3]])))),
-        F32Be => out.extend(d.chunks_exact(4).map(|c| sanitize(f32::from_be_bytes([c[0], c[1], c[2], c[3]])))),
-        F64Le => out.extend(d.chunks_exact(8).map(|c| sanitize(f64::from_le_bytes(c.try_into().unwrap()) as f32))),
-        F64Be => out.extend(d.chunks_exact(8).map(|c| sanitize(f64::from_be_bytes(c.try_into().unwrap()) as f32))),
+        S16Le => out.extend(
+            d.chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 * S16),
+        ),
+        S16Be => out.extend(
+            d.chunks_exact(2)
+                .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 * S16),
+        ),
+        S24Le => out.extend(
+            d.chunks_exact(3)
+                .map(|c| (i32::from_le_bytes([0, c[0], c[1], c[2]]) >> 8) as f32 * S24),
+        ),
+        S24Be => out.extend(
+            d.chunks_exact(3)
+                .map(|c| (i32::from_be_bytes([c[0], c[1], c[2], 0]) >> 8) as f32 * S24),
+        ),
+        S32Le => out.extend(
+            d.chunks_exact(4)
+                .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 * S32),
+        ),
+        S32Be => out.extend(
+            d.chunks_exact(4)
+                .map(|c| i32::from_be_bytes([c[0], c[1], c[2], c[3]]) as f32 * S32),
+        ),
+        F32Le => out.extend(
+            d.chunks_exact(4)
+                .map(|c| sanitize(f32::from_le_bytes([c[0], c[1], c[2], c[3]]))),
+        ),
+        F32Be => out.extend(
+            d.chunks_exact(4)
+                .map(|c| sanitize(f32::from_be_bytes([c[0], c[1], c[2], c[3]]))),
+        ),
+        F64Le => out.extend(
+            d.chunks_exact(8)
+                .map(|c| sanitize(f64::from_le_bytes(c.try_into().unwrap()) as f32)),
+        ),
+        F64Be => out.extend(
+            d.chunks_exact(8)
+                .map(|c| sanitize(f64::from_be_bytes(c.try_into().unwrap()) as f32)),
+        ),
         ALaw => out.extend(d.iter().map(|&b| alaw(b))),
         MuLaw => out.extend(d.iter().map(|&b| mulaw(b))),
     }
@@ -116,7 +146,13 @@ fn sanitize(v: f32) -> f32 {
 
 /// Converts whole frames of `frame_bytes` bytes (which may contain padding
 /// after the `channels` samples) to interleaved `f32`.
-pub(crate) fn convert(fmt: SampleFormat, channels: usize, frame_bytes: usize, d: &[u8], out: &mut Vec<f32>) {
+pub(crate) fn convert(
+    fmt: SampleFormat,
+    channels: usize,
+    frame_bytes: usize,
+    d: &[u8],
+    out: &mut Vec<f32>,
+) {
     let used = channels * fmt.bytes();
     if frame_bytes == used {
         let n = d.len() / frame_bytes * frame_bytes;
@@ -145,7 +181,9 @@ impl PcmStream {
         if self.channels == 0 || self.sample_rate == 0 {
             return crate::util::invalid("zero channels or sample rate");
         }
-        if self.frame_bytes < self.channels as usize * self.fmt.bytes() || self.frame_bytes > 1 << 20 {
+        if self.frame_bytes < self.channels as usize * self.fmt.bytes()
+            || self.frame_bytes > 1 << 20
+        {
             return crate::util::invalid("bad block alignment");
         }
         Ok(())
@@ -166,13 +204,21 @@ impl<R: Read + Seek + Send> PcmDecoder<R> {
     pub fn new(mut r: R, s: PcmStream) -> Result<Self, Error> {
         s.validate()?;
         r.seek(SeekFrom::Start(s.data_start))?;
-        Ok(PcmDecoder { r, s, pos: 0, buf: Vec::new() })
+        Ok(PcmDecoder {
+            r,
+            s,
+            pos: 0,
+            buf: Vec::new(),
+        })
     }
 }
 
 impl<R: Read + Seek + Send> Decoder for PcmDecoder<R> {
     fn spec(&self) -> AudioSpec {
-        AudioSpec { sample_rate: self.s.sample_rate, channels: self.s.channels }
+        AudioSpec {
+            sample_rate: self.s.sample_rate,
+            channels: self.s.channels,
+        }
     }
     fn total_frames(&self) -> Option<u64> {
         Some(self.s.total_frames)
@@ -195,13 +241,21 @@ impl<R: Read + Seek + Send> Decoder for PcmDecoder<R> {
         if whole < frames {
             self.s.total_frames = self.pos + whole as u64;
         }
-        convert(self.s.fmt, self.s.channels as usize, fb, &self.buf[..whole * fb], out);
+        convert(
+            self.s.fmt,
+            self.s.channels as usize,
+            fb,
+            &self.buf[..whole * fb],
+            out,
+        );
         self.pos += whole as u64;
         Ok(true)
     }
     fn seek(&mut self, frame: u64) -> Result<u64, Error> {
         let f = frame.min(self.s.total_frames);
-        self.r.seek(SeekFrom::Start(self.s.data_start + f * self.s.frame_bytes as u64))?;
+        self.r.seek(SeekFrom::Start(
+            self.s.data_start + f * self.s.frame_bytes as u64,
+        ))?;
         self.pos = f;
         Ok(f)
     }
@@ -217,11 +271,23 @@ mod tests {
     #[test]
     fn conversions() {
         let mut out = Vec::new();
-        convert(SampleFormat::S16Le, 1, 2, &[0x00, 0x80, 0xff, 0x7f], &mut out);
+        convert(
+            SampleFormat::S16Le,
+            1,
+            2,
+            &[0x00, 0x80, 0xff, 0x7f],
+            &mut out,
+        );
         assert_eq!(out[0], -1.0);
         assert!((out[1] - 32767.0 / 32768.0).abs() < 1e-7);
         out.clear();
-        convert(SampleFormat::S24Be, 1, 3, &[0x80, 0, 0, 0x40, 0, 0], &mut out);
+        convert(
+            SampleFormat::S24Be,
+            1,
+            3,
+            &[0x80, 0, 0, 0x40, 0, 0],
+            &mut out,
+        );
         assert_eq!(out, vec![-1.0, 0.5]);
         out.clear();
         convert(SampleFormat::U8, 2, 3, &[0, 255, 9, 128, 128, 9], &mut out);

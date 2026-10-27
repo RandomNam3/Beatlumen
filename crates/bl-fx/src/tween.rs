@@ -13,8 +13,21 @@ pub struct Tween<const N: usize> {
 }
 
 impl<const N: usize> Tween<N> {
-    pub fn new(from: [f32; N], to: [f32; N], now: f64, delay: f64, duration: f64, easing: Easing) -> Tween<N> {
-        Tween { from, to, start: now + delay.max(0.0), duration: duration.max(0.0), easing }
+    pub fn new(
+        from: [f32; N],
+        to: [f32; N],
+        now: f64,
+        delay: f64,
+        duration: f64,
+        easing: Easing,
+    ) -> Tween<N> {
+        Tween {
+            from,
+            to,
+            start: now + delay.max(0.0),
+            duration: duration.max(0.0),
+            easing,
+        }
     }
 
     /// Eased progress in [0, 1] (0 before the start).
@@ -24,7 +37,8 @@ impl<const N: usize> Tween<N> {
         } else if self.duration <= 0.0 {
             1.0
         } else {
-            self.easing.apply(((now - self.start) / self.duration).min(1.0) as f32)
+            self.easing
+                .apply(((now - self.start) / self.duration).min(1.0) as f32)
         }
     }
 

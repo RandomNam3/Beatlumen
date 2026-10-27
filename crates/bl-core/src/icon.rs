@@ -7,7 +7,11 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
 }
 
 /// Gradient across the bars (0 = left, 1 = right).

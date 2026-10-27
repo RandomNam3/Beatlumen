@@ -8,20 +8,132 @@ use crate::Error;
 
 const ALPHABET_LEN_DIST: usize = 40;
 const NUM_LENGTH_CODES: usize = 24;
-const CL_ORDER: [usize; 19] = [17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const CL_ORDER: [usize; 19] = [
+    17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+];
 
 /// (xi, yi) offsets for distance codes 1..=120.
 const DIST_MAP: [(i8, i8); 120] = [
-    (0, 1), (1, 0), (1, 1), (-1, 1), (0, 2), (2, 0), (1, 2), (-1, 2), (2, 1), (-2, 1), (2, 2), (-2, 2), (0, 3),
-    (3, 0), (1, 3), (-1, 3), (3, 1), (-3, 1), (2, 3), (-2, 3), (3, 2), (-3, 2), (0, 4), (4, 0), (1, 4), (-1, 4),
-    (4, 1), (-4, 1), (3, 3), (-3, 3), (2, 4), (-2, 4), (4, 2), (-4, 2), (0, 5), (3, 4), (-3, 4), (4, 3), (-4, 3),
-    (5, 0), (1, 5), (-1, 5), (5, 1), (-5, 1), (2, 5), (-2, 5), (5, 2), (-5, 2), (4, 4), (-4, 4), (3, 5), (-3, 5),
-    (5, 3), (-5, 3), (0, 6), (6, 0), (1, 6), (-1, 6), (6, 1), (-6, 1), (2, 6), (-2, 6), (6, 2), (-6, 2), (4, 5),
-    (-4, 5), (5, 4), (-5, 4), (3, 6), (-3, 6), (6, 3), (-6, 3), (0, 7), (7, 0), (1, 7), (-1, 7), (5, 5), (-5, 5),
-    (7, 1), (-7, 1), (4, 6), (-4, 6), (6, 4), (-6, 4), (2, 7), (-2, 7), (7, 2), (-7, 2), (3, 7), (-3, 7), (7, 3),
-    (-7, 3), (5, 6), (-5, 6), (6, 5), (-6, 5), (8, 0), (4, 7), (-4, 7), (7, 4), (-7, 4), (8, 1), (8, 2), (6, 6),
-    (-6, 6), (8, 3), (5, 7), (-5, 7), (7, 5), (-7, 5), (8, 4), (6, 7), (-6, 7), (7, 6), (-7, 6), (8, 5), (7, 7),
-    (-7, 7), (8, 6), (8, 7),
+    (0, 1),
+    (1, 0),
+    (1, 1),
+    (-1, 1),
+    (0, 2),
+    (2, 0),
+    (1, 2),
+    (-1, 2),
+    (2, 1),
+    (-2, 1),
+    (2, 2),
+    (-2, 2),
+    (0, 3),
+    (3, 0),
+    (1, 3),
+    (-1, 3),
+    (3, 1),
+    (-3, 1),
+    (2, 3),
+    (-2, 3),
+    (3, 2),
+    (-3, 2),
+    (0, 4),
+    (4, 0),
+    (1, 4),
+    (-1, 4),
+    (4, 1),
+    (-4, 1),
+    (3, 3),
+    (-3, 3),
+    (2, 4),
+    (-2, 4),
+    (4, 2),
+    (-4, 2),
+    (0, 5),
+    (3, 4),
+    (-3, 4),
+    (4, 3),
+    (-4, 3),
+    (5, 0),
+    (1, 5),
+    (-1, 5),
+    (5, 1),
+    (-5, 1),
+    (2, 5),
+    (-2, 5),
+    (5, 2),
+    (-5, 2),
+    (4, 4),
+    (-4, 4),
+    (3, 5),
+    (-3, 5),
+    (5, 3),
+    (-5, 3),
+    (0, 6),
+    (6, 0),
+    (1, 6),
+    (-1, 6),
+    (6, 1),
+    (-6, 1),
+    (2, 6),
+    (-2, 6),
+    (6, 2),
+    (-6, 2),
+    (4, 5),
+    (-4, 5),
+    (5, 4),
+    (-5, 4),
+    (3, 6),
+    (-3, 6),
+    (6, 3),
+    (-6, 3),
+    (0, 7),
+    (7, 0),
+    (1, 7),
+    (-1, 7),
+    (5, 5),
+    (-5, 5),
+    (7, 1),
+    (-7, 1),
+    (4, 6),
+    (-4, 6),
+    (6, 4),
+    (-6, 4),
+    (2, 7),
+    (-2, 7),
+    (7, 2),
+    (-7, 2),
+    (3, 7),
+    (-3, 7),
+    (7, 3),
+    (-7, 3),
+    (5, 6),
+    (-5, 6),
+    (6, 5),
+    (-6, 5),
+    (8, 0),
+    (4, 7),
+    (-4, 7),
+    (7, 4),
+    (-7, 4),
+    (8, 1),
+    (8, 2),
+    (6, 6),
+    (-6, 6),
+    (8, 3),
+    (5, 7),
+    (-5, 7),
+    (7, 5),
+    (-7, 5),
+    (8, 4),
+    (6, 7),
+    (-6, 7),
+    (7, 6),
+    (-7, 6),
+    (8, 5),
+    (7, 7),
+    (-7, 7),
+    (8, 6),
+    (8, 7),
 ];
 
 /// Decodes a complete VP8L bitstream (starting with the 0x2f signature).
@@ -41,7 +153,9 @@ pub fn decode(data: &[u8]) -> Result<(u32, u32, Vec<u32>), Error> {
         return Err(Error::Unsupported("image too large"));
     }
     if (data.len() as u64) << 21 < w as u64 * h as u64 {
-        return Err(Error::InvalidData("webp: stream far too short for dimensions"));
+        return Err(Error::InvalidData(
+            "webp: stream far too short for dimensions",
+        ));
     }
     let px = decode_image_stream(&mut br, w, h, true)?;
     Ok((w as u32, h as u32, px))
@@ -54,10 +168,21 @@ pub fn decode_headerless(data: &[u8], w: usize, h: usize) -> Result<Vec<u32>, Er
 }
 
 enum Transform {
-    Predictor { bits: u32, xsize: usize, data: Vec<u32> },
-    Color { bits: u32, xsize: usize, data: Vec<u32> },
+    Predictor {
+        bits: u32,
+        xsize: usize,
+        data: Vec<u32>,
+    },
+    Color {
+        bits: u32,
+        xsize: usize,
+        data: Vec<u32>,
+    },
     SubtractGreen,
-    ColorIndexing { xsize: usize, palette: Vec<u32> },
+    ColorIndexing {
+        xsize: usize,
+        palette: Vec<u32>,
+    },
 }
 
 /// One prefix code group: green/length/cache, red, blue, alpha, distance.
@@ -85,10 +210,14 @@ fn read_code(br: &mut BitReader, alphabet: usize) -> Result<HuffTable, Error> {
         let n = br.bits(1) + 1;
         let first_bits = if br.bits(1) == 1 { 8 } else { 1 };
         let s0 = br.bits(first_bits) as usize;
-        *lens.get_mut(s0).ok_or(Error::InvalidData("webp: symbol out of range"))? = 1;
+        *lens
+            .get_mut(s0)
+            .ok_or(Error::InvalidData("webp: symbol out of range"))? = 1;
         if n == 2 {
             let s1 = br.bits(8) as usize;
-            *lens.get_mut(s1).ok_or(Error::InvalidData("webp: symbol out of range"))? = 1;
+            *lens
+                .get_mut(s1)
+                .ok_or(Error::InvalidData("webp: symbol out of range"))? = 1;
         }
     } else {
         let num_cl = br.bits(4) as usize + 4;
@@ -155,7 +284,9 @@ fn read_group(br: &mut BitReader, cache_size: usize) -> Result<Group, Error> {
     let b = read_code(br, 256)?;
     let a = read_code(br, 256)?;
     let d = read_code(br, ALPHABET_LEN_DIST)?;
-    Ok(Group { codes: [g, r, b, a, d] })
+    Ok(Group {
+        codes: [g, r, b, a, d],
+    })
 }
 
 #[inline]
@@ -173,7 +304,12 @@ fn div_round_up(n: usize, bits: u32) -> usize {
     n.div_ceil(1 << bits)
 }
 
-fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: bool) -> Result<Vec<u32>, Error> {
+fn decode_image_stream(
+    br: &mut BitReader,
+    xsize: usize,
+    ysize: usize,
+    level0: bool,
+) -> Result<Vec<u32>, Error> {
     let mut transforms: Vec<Transform> = Vec::new();
     let mut width = xsize;
     if level0 {
@@ -187,11 +323,24 @@ fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: b
             match ty {
                 0 | 1 => {
                     let bits = br.bits(3) + 2;
-                    let data = decode_image_stream(br, div_round_up(width, bits), div_round_up(ysize, bits), false)?;
+                    let data = decode_image_stream(
+                        br,
+                        div_round_up(width, bits),
+                        div_round_up(ysize, bits),
+                        false,
+                    )?;
                     transforms.push(if ty == 0 {
-                        Transform::Predictor { bits, xsize: width, data }
+                        Transform::Predictor {
+                            bits,
+                            xsize: width,
+                            data,
+                        }
                     } else {
-                        Transform::Color { bits, xsize: width, data }
+                        Transform::Color {
+                            bits,
+                            xsize: width,
+                            data,
+                        }
                     });
                 }
                 2 => transforms.push(Transform::SubtractGreen),
@@ -207,7 +356,10 @@ fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: b
                         5..=16 => 1,
                         _ => 0,
                     };
-                    transforms.push(Transform::ColorIndexing { xsize: width, palette });
+                    transforms.push(Transform::ColorIndexing {
+                        xsize: width,
+                        palette,
+                    });
                     width = div_round_up(width, wb);
                 }
             }
@@ -223,7 +375,11 @@ fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: b
     } else {
         0
     };
-    let cache_size = if cache_bits > 0 { 1usize << cache_bits } else { 0 };
+    let cache_size = if cache_bits > 0 {
+        1usize << cache_bits
+    } else {
+        0
+    };
     // Meta prefix codes.
     let mut meta: Option<(u32, usize, Vec<u32>)> = None;
     let mut num_groups = 1;
@@ -247,7 +403,9 @@ fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: b
         }
     }
 
-    let total = width.checked_mul(ysize).ok_or(Error::InvalidData("webp: size overflow"))?;
+    let total = width
+        .checked_mul(ysize)
+        .ok_or(Error::InvalidData("webp: size overflow"))?;
     let mut data = vec![0u32; total];
     let mut cache = vec![0u32; cache_size];
     let cache_shift = 32 - cache_bits;
@@ -343,8 +501,16 @@ fn decode_image_stream(br: &mut BitReader, xsize: usize, ysize: usize, level0: b
     // Inverse transforms, last read first.
     for t in transforms.iter().rev() {
         match t {
-            Transform::Predictor { bits, xsize, data: sub } => inverse_predictor(&mut data, *xsize, ysize, *bits, sub),
-            Transform::Color { bits, xsize, data: sub } => inverse_color(&mut data, *xsize, *bits, sub),
+            Transform::Predictor {
+                bits,
+                xsize,
+                data: sub,
+            } => inverse_predictor(&mut data, *xsize, ysize, *bits, sub),
+            Transform::Color {
+                bits,
+                xsize,
+                data: sub,
+            } => inverse_color(&mut data, *xsize, *bits, sub),
             Transform::SubtractGreen => {
                 for p in data.iter_mut() {
                     let g = (*p >> 8) & 0xff;
@@ -426,7 +592,12 @@ fn inverse_predictor(data: &mut [u32], w: usize, h: usize, bits: u32, sub: &[u32
         data[row] = add_pixels(data[row], data[row - w]);
         for x in 1..w {
             let i = row + x;
-            let mode = (sub.get((y >> bits) * bw + (x >> bits)).copied().unwrap_or(0) >> 8) & 15;
+            let mode = (sub
+                .get((y >> bits) * bw + (x >> bits))
+                .copied()
+                .unwrap_or(0)
+                >> 8)
+                & 15;
             let l = data[i - 1];
             let t = data[i - w];
             let pred = match mode {
@@ -463,7 +634,10 @@ fn inverse_color(data: &mut [u32], w: usize, bits: u32, sub: &[u32]) {
     let bw = div_round_up(w, bits);
     for (i, p) in data.iter_mut().enumerate() {
         let (x, y) = (i % w, i / w);
-        let e = sub.get((y >> bits) * bw + (x >> bits)).copied().unwrap_or(0);
+        let e = sub
+            .get((y >> bits) * bw + (x >> bits))
+            .copied()
+            .unwrap_or(0);
         let (g2r, g2b, r2b) = (e & 0xff, (e >> 8) & 0xff, (e >> 16) & 0xff);
         let g = (*p >> 8) & 0xff;
         let r = (((*p >> 16) & 0xff) as i32 + color_delta(g2r, g)) as u32 & 0xff;
@@ -488,7 +662,11 @@ fn inverse_color_indexing(data: &[u32], w: usize, h: usize, palette: &[u32]) -> 
         for x in 0..w {
             let p = data.get(y * packed_w + (x >> wb)).copied().unwrap_or(0);
             let g = (p >> 8) & 0xff;
-            let idx = if wb == 0 { g } else { (g >> ((x & ((1 << wb) - 1)) as u32 * bits_per)) & mask };
+            let idx = if wb == 0 {
+                g
+            } else {
+                (g >> ((x & ((1 << wb) - 1)) as u32 * bits_per)) & mask
+            };
             out[y * w + x] = palette.get(idx as usize).copied().unwrap_or(0);
         }
     }

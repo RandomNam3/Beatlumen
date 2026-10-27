@@ -26,13 +26,18 @@ pub struct Map {
 
 impl Map {
     pub fn new() -> Map {
-        Map { entries: Vec::new() }
+        Map {
+            entries: Vec::new(),
+        }
     }
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.entries.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.entries
+            .iter_mut()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
     }
     /// Inserts or replaces a value, keeping the original position on replace.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) {
@@ -101,7 +106,9 @@ impl Value {
     }
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => Some(*n as i64),
+            Value::Number(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => {
+                Some(*n as i64)
+            }
             _ => None,
         }
     }
@@ -345,7 +352,11 @@ pub struct Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} at line {}, column {}", self.message, self.line, self.column)
+        write!(
+            f,
+            "{} at line {}, column {}",
+            self.message, self.line, self.column
+        )
     }
 }
 
@@ -353,7 +364,11 @@ impl std::error::Error for Error {}
 
 /// Parses a JSON document.
 pub fn parse(text: &str) -> Result<Value, Error> {
-    let mut p = Parser { s: text.as_bytes(), pos: 0, depth: 0 };
+    let mut p = Parser {
+        s: text.as_bytes(),
+        pos: 0,
+        depth: 0,
+    };
     p.skip_ws();
     let v = p.value()?;
     p.skip_ws();
@@ -368,7 +383,11 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Value, Error> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     match std::str::from_utf8(bytes) {
         Ok(s) => parse(s),
-        Err(e) => Err(Error { message: format!("invalid utf-8: {e}"), line: 0, column: 0 }),
+        Err(e) => Err(Error {
+            message: format!("invalid utf-8: {e}"),
+            line: 0,
+            column: 0,
+        }),
     }
 }
 
@@ -385,7 +404,11 @@ impl Parser<'_> {
         let upto = &self.s[..self.pos.min(self.s.len())];
         let line = upto.iter().filter(|&&b| b == b'\n').count() + 1;
         let column = upto.iter().rev().take_while(|&&b| b != b'\n').count() + 1;
-        Error { message: msg.to_string(), line, column }
+        Error {
+            message: msg.to_string(),
+            line,
+            column,
+        }
     }
 
     fn skip_ws(&mut self) {
@@ -490,7 +513,10 @@ impl Parser<'_> {
     }
 
     fn hex4(&mut self) -> Result<u32, Error> {
-        let h = self.s.get(self.pos..self.pos + 4).ok_or_else(|| self.err("truncated escape"))?;
+        let h = self
+            .s
+            .get(self.pos..self.pos + 4)
+            .ok_or_else(|| self.err("truncated escape"))?;
         let s = std::str::from_utf8(h).map_err(|_| self.err("bad escape"))?;
         let v = u32::from_str_radix(s, 16).map_err(|_| self.err("bad unicode escape"))?;
         self.pos += 4;
@@ -510,7 +536,10 @@ impl Parser<'_> {
             }
             // Input is a &str (valid UTF-8) and we only stop at ASCII bytes,
             // so this slice is valid UTF-8.
-            out.push_str(std::str::from_utf8(&self.s[start..self.pos]).map_err(|_| self.err("invalid utf-8"))?);
+            out.push_str(
+                std::str::from_utf8(&self.s[start..self.pos])
+                    .map_err(|_| self.err("invalid utf-8"))?,
+            );
             match self.s.get(self.pos) {
                 None => return Err(self.err("unterminated string")),
                 Some(b'"') => {
@@ -519,7 +548,10 @@ impl Parser<'_> {
                 }
                 Some(b'\\') => {
                     self.pos += 1;
-                    let e = *self.s.get(self.pos).ok_or_else(|| self.err("unterminated escape"))?;
+                    let e = *self
+                        .s
+                        .get(self.pos)
+                        .ok_or_else(|| self.err("unterminated escape"))?;
                     self.pos += 1;
                     match e {
                         b'"' => out.push('"'),
@@ -585,7 +617,9 @@ impl Parser<'_> {
             }
         }
         let text = std::str::from_utf8(&self.s[start..self.pos]).unwrap_or("0");
-        text.parse::<f64>().map(Value::Number).map_err(|_| self.err("invalid number"))
+        text.parse::<f64>()
+            .map(Value::Number)
+            .map_err(|_| self.err("invalid number"))
     }
 }
 
@@ -625,7 +659,17 @@ mod tests {
 
     #[test]
     fn errors() {
-        for bad in ["", "{", "[1,]", "{\"a\" 1}", "01x", "\"abc", "tru", "[1 2]", "{\"a\":1,}"] {
+        for bad in [
+            "",
+            "{",
+            "[1,]",
+            "{\"a\" 1}",
+            "01x",
+            "\"abc",
+            "tru",
+            "[1 2]",
+            "{\"a\":1,}",
+        ] {
             assert!(parse(bad).is_err(), "{bad}");
         }
         let deep = "[".repeat(1000);

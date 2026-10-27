@@ -15,7 +15,12 @@ impl<R: Read + Seek> Window<R> {
     pub fn new(mut inner: R, start: u64, end: u64) -> io::Result<Self> {
         let end = end.max(start);
         inner.seek(SeekFrom::Start(start))?;
-        Ok(Window { inner, start, end, pos: start })
+        Ok(Window {
+            inner,
+            start,
+            end,
+            pos: start,
+        })
     }
 }
 
@@ -40,7 +45,10 @@ impl<R: Read + Seek> Seek for Window<R> {
             SeekFrom::Current(k) => self.pos as i128 + k as i128,
         };
         if target < self.start as i128 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek before start of window"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before start of window",
+            ));
         }
         let target = target.min(u64::MAX as i128) as u64;
         if target != self.pos {

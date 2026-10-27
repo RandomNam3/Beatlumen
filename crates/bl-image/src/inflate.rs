@@ -25,7 +25,9 @@ pub fn zlib_decompress_with_limit(data: &[u8], max_output: usize) -> Result<Vec<
     let mut d = Inflater::new(body, 0, max_output);
     d.run()?;
     let consumed = d.bytes_consumed();
-    let trailer = body.get(consumed..consumed + 4).ok_or(Error::InvalidData("zlib: missing checksum"))?;
+    let trailer = body
+        .get(consumed..consumed + 4)
+        .ok_or(Error::InvalidData("zlib: missing checksum"))?;
     let expected = u32::from_be_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
     let out = d.finish();
     if adler32(&out) != expected {
@@ -45,7 +47,11 @@ pub fn inflate_with_limit(data: &[u8], max_output: usize) -> Result<Vec<u8>, Err
 /// Lenient zlib decompression for image decoders: the checksum is ignored,
 /// decoding stops silently once `limit` bytes were produced, and on errors the
 /// data decoded so far is returned together with the error.
-pub(crate) fn zlib_decompress_partial(data: &[u8], size_hint: usize, limit: usize) -> (Vec<u8>, Option<Error>) {
+pub(crate) fn zlib_decompress_partial(
+    data: &[u8],
+    size_hint: usize,
+    limit: usize,
+) -> (Vec<u8>, Option<Error>) {
     let body = match zlib_header(data) {
         Ok(b) => b,
         Err(e) => return (Vec::new(), Some(e)),
@@ -102,16 +108,24 @@ pub fn adler32(data: &[u8]) -> u32 {
 const LITERAL: u32 = 1 << 8;
 const END_OF_BLOCK: u32 = 1 << 9;
 
-pub(crate) const LENGTH_BASE: [u16; 29] =
-    [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-pub(crate) const LENGTH_EXTRA: [u8; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-pub(crate) const DIST_BASE: [u16; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
-    8193, 12289, 16385, 24577,
+pub(crate) const LENGTH_BASE: [u16; 29] = [
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
+    163, 195, 227, 258,
 ];
-pub(crate) const DIST_EXTRA: [u8; 30] =
-    [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
-pub(crate) const CL_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+pub(crate) const LENGTH_EXTRA: [u8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+];
+pub(crate) const DIST_BASE: [u16; 30] = [
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+];
+pub(crate) const DIST_EXTRA: [u8; 30] = [
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13,
+];
+pub(crate) const CL_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
 
 const LITLEN_BITS: u32 = 10;
 const DIST_BITS: u32 = 8;
@@ -149,7 +163,12 @@ pub(crate) struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        BitReader { data, pos: 0, bitbuf: 0, bitcnt: 0 }
+        BitReader {
+            data,
+            pos: 0,
+            bitbuf: 0,
+            bitcnt: 0,
+        }
     }
 
     /// Ensures at least 56 bits are buffered.
@@ -240,7 +259,12 @@ struct Inflater<'a> {
 
 impl<'a> Inflater<'a> {
     fn new(data: &'a [u8], size_hint: usize, limit: usize) -> Self {
-        let initial = if size_hint > 0 { size_hint } else { data.len().saturating_mul(4).max(1024) }.min(limit);
+        let initial = if size_hint > 0 {
+            size_hint
+        } else {
+            data.len().saturating_mul(4).max(1024)
+        }
+        .min(limit);
         Inflater {
             br: BitReader::new(data),
             out: vec![0; initial],
@@ -284,7 +308,10 @@ impl<'a> Inflater<'a> {
             }
             return Err(Error::InvalidData("inflate: output size limit exceeded"));
         }
-        let new_len = needed.max(self.out.len().saturating_mul(2)).max(4096).min(self.limit);
+        let new_len = needed
+            .max(self.out.len().saturating_mul(2))
+            .max(4096)
+            .min(self.limit);
         self.out.resize(new_len, 0);
         Ok(true)
     }
@@ -322,7 +349,9 @@ impl<'a> Inflater<'a> {
     fn stored_block(&mut self) -> Result<bool, Error> {
         let p = self.br.align_to_byte();
         let data = self.br.data();
-        let hdr = data.get(p..p + 4).ok_or(Error::InvalidData("inflate: truncated stored block"))?;
+        let hdr = data
+            .get(p..p + 4)
+            .ok_or(Error::InvalidData("inflate: truncated stored block"))?;
         let len = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
         let nlen = u16::from_le_bytes([hdr[2], hdr[3]]) as usize;
         if len != !nlen & 0xffff {
@@ -364,7 +393,9 @@ impl<'a> Inflater<'a> {
         let hdist = br.take(5) as usize + 1;
         let hclen = br.take(4) as usize + 4;
         if hlit > 286 || hdist > 30 {
-            return Err(Error::InvalidData("inflate: too many length or distance codes"));
+            return Err(Error::InvalidData(
+                "inflate: too many length or distance codes",
+            ));
         }
         let mut cl_lens = [0u8; 19];
         for &idx in CL_ORDER.iter().take(hclen) {
@@ -389,7 +420,9 @@ impl<'a> Inflater<'a> {
                 0..=15 => (sym, 1),
                 16 => {
                     if i == 0 {
-                        return Err(Error::InvalidData("inflate: repeat without previous length"));
+                        return Err(Error::InvalidData(
+                            "inflate: repeat without previous length",
+                        ));
                     }
                     (lens[i - 1], 3 + br.take(2) as usize)
                 }
@@ -431,7 +464,12 @@ impl<'a> Inflater<'a> {
         r
     }
 
-    fn decode_symbols(&mut self, br: &mut BitReader<'a>, litlen: &HuffTable, dist_t: &HuffTable) -> Result<bool, Error> {
+    fn decode_symbols(
+        &mut self,
+        br: &mut BitReader<'a>,
+        litlen: &HuffTable,
+        dist_t: &HuffTable,
+    ) -> Result<bool, Error> {
         let data = br.data;
         let (mut pos, mut bitbuf, mut bitcnt) = (br.pos, br.bitbuf, br.bitcnt);
         let mut opos = self.opos;

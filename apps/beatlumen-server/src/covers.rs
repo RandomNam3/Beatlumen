@@ -37,10 +37,17 @@ pub fn make_thumbnail(data: &[u8], max_dim: u32) -> Result<Vec<u8>, String> {
 /// in a decodable image format.
 pub fn embedded_picture(path: &Path, ext: &str) -> Option<Vec<u8>> {
     let mut f = std::fs::File::open(path).ok()?;
-    let info = util::catch("tag reader", || bl_media::read_info(&mut f, Some(ext), true)).ok()?.ok()?;
+    let info = util::catch("tag reader", || {
+        bl_media::read_info(&mut f, Some(ext), true)
+    })
+    .ok()?
+    .ok()?;
     let mut pics = info.pictures;
     let usable = |p: &bl_media::Picture| bl_image::probe_format(&p.data).is_some();
-    let i = pics.iter().position(|p| p.kind == 3 && usable(p)).or_else(|| pics.iter().position(usable))?;
+    let i = pics
+        .iter()
+        .position(|p| p.kind == 3 && usable(p))
+        .or_else(|| pics.iter().position(usable))?;
     Some(pics.swap_remove(i).data)
 }
 
@@ -61,7 +68,11 @@ pub fn cover_source(idx: &Index, e: &Entry) -> Option<Vec<u8>> {
     if let Some(d) = idx.dir_cover_path(e).and_then(|p| read_image_file(&p)) {
         return Some(d);
     }
-    let other = e.dir_cover_track.as_deref().and_then(|id| idx.track(id)).filter(|o| o.track.id != e.track.id)?;
+    let other = e
+        .dir_cover_track
+        .as_deref()
+        .and_then(|id| idx.track(id))
+        .filter(|o| o.track.id != e.track.id)?;
     embedded_picture(&other.abs, &other.ext())
 }
 
@@ -69,7 +80,10 @@ pub fn cover_source(idx: &Index, e: &Entry) -> Option<Vec<u8>> {
 /// changes (track file, folder image, fallback track).
 pub fn cover_stamp(idx: &Index, e: &Entry) -> u64 {
     let mut s = format!("{}:{}", e.mtime_ns, e.track.size);
-    if let Some(m) = idx.dir_cover_path(e).and_then(|p| std::fs::metadata(p).ok()) {
+    if let Some(m) = idx
+        .dir_cover_path(e)
+        .and_then(|p| std::fs::metadata(p).ok())
+    {
         s.push_str(&format!(":{}:{}", util::mtime_ns(&m), m.len()));
     }
     if let Some(o) = e.dir_cover_track.as_deref().and_then(|id| idx.track(id)) {
@@ -95,7 +109,10 @@ mod tests {
 
     #[test]
     fn cache_names() {
-        assert_eq!(parse_cache_name("0123456789abcdef_300_00000000000000ff.jpg"), Some(("0123456789abcdef", 300, 255)));
+        assert_eq!(
+            parse_cache_name("0123456789abcdef_300_00000000000000ff.jpg"),
+            Some(("0123456789abcdef", 300, 255))
+        );
         assert!(parse_cache_name("x_300_ff.jpg").is_none());
         assert!(parse_cache_name("0123456789abcdef_300.jpg").is_none());
     }
@@ -103,6 +120,10 @@ mod tests {
     #[test]
     fn thumbnail_of_garbage_is_an_error() {
         assert!(make_thumbnail(b"not an image", 100).is_err());
-        assert!(make_thumbnail(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0], 100).is_err());
+        assert!(make_thumbnail(
+            &[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0],
+            100
+        )
+        .is_err());
     }
 }

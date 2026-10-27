@@ -3,8 +3,8 @@
 
 mod common;
 
-use common::*;
 use bl_mp3::{Mp3Decoder, SeekMode};
+use common::*;
 use std::io::Cursor;
 
 fn stereo(noise_amp: &str, out: &[&str]) -> Vec<String> {

@@ -21,7 +21,11 @@ pub struct ServerClient {
 
 impl ServerClient {
     pub fn new(base: &str, token: &str) -> ServerClient {
-        ServerClient { base: base.trim().trim_end_matches('/').to_string(), token: token.to_string(), state: ServerState::Disabled }
+        ServerClient {
+            base: base.trim().trim_end_matches('/').to_string(),
+            token: token.to_string(),
+            state: ServerState::Disabled,
+        }
     }
 
     pub fn is_connected(&self) -> bool {
@@ -52,13 +56,30 @@ impl ServerClient {
     }
 
     pub fn get(&self, host: &mut dyn Host, path: &str) -> u64 {
-        host.http_request(HttpRequest { method: "GET".into(), url: self.url(path), headers: self.headers(), body: Vec::new() })
+        host.http_request(HttpRequest {
+            method: "GET".into(),
+            url: self.url(path),
+            headers: self.headers(),
+            body: Vec::new(),
+        })
     }
 
-    pub fn send(&self, host: &mut dyn Host, method: &str, path: &str, body: Vec<u8>, content_type: &str) -> u64 {
+    pub fn send(
+        &self,
+        host: &mut dyn Host,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> u64 {
         let mut headers = self.headers();
         headers.push(("Content-Type".into(), content_type.into()));
-        host.http_request(HttpRequest { method: method.into(), url: self.url(path), headers, body })
+        host.http_request(HttpRequest {
+            method: method.into(),
+            url: self.url(path),
+            headers,
+            body,
+        })
     }
 
     pub fn request_info(&mut self, host: &mut dyn Host) -> u64 {
@@ -67,7 +88,10 @@ impl ServerClient {
     }
 
     pub fn request_login(&self, host: &mut dyn Host, password: &str) -> u64 {
-        let body = bl_json::Value::object().with("password", password).to_json().into_bytes();
+        let body = bl_json::Value::object()
+            .with("password", password)
+            .to_json()
+            .into_bytes();
         host.http_request(HttpRequest {
             method: "POST".into(),
             url: self.url(paths::LOGIN),

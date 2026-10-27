@@ -3,15 +3,18 @@
 //! ffmpeg is available, ffmpeg-encoded AAC-LC streams with all LC tools.
 
 mod common;
+use bl_aac::{AacDecoder, AdtsHeader};
 use common::synth::{generate, Synth};
 use common::*;
-use bl_aac::{AacDecoder, AdtsHeader};
 use std::process::Command;
 
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
 }
@@ -67,7 +70,9 @@ fn fuzz_stream(data: &[u8], seed: u64, rounds: usize) -> (usize, usize) {
                 Ok(n) => {
                     ok += 1;
                     assert_eq!(out.len() - before, n * dec.channels() as usize);
-                    assert!(out[before..].iter().all(|v| v.is_finite() && v.abs() <= 1.0));
+                    assert!(out[before..]
+                        .iter()
+                        .all(|v| v.is_finite() && v.abs() <= 1.0));
                 }
                 Err(_) => err += 1,
             }
@@ -79,9 +84,24 @@ fn fuzz_stream(data: &[u8], seed: u64, rounds: usize) -> (usize, usize) {
 #[test]
 fn corrupted_he_aac_does_not_panic() {
     for (i, s) in [
-        Synth { stereo: false, ps: false, ps_type_b: false, frames: 60 },
-        Synth { stereo: true, ps: false, ps_type_b: false, frames: 60 },
-        Synth { stereo: false, ps: true, ps_type_b: true, frames: 60 },
+        Synth {
+            stereo: false,
+            ps: false,
+            ps_type_b: false,
+            frames: 60,
+        },
+        Synth {
+            stereo: true,
+            ps: false,
+            ps_type_b: false,
+            frames: 60,
+        },
+        Synth {
+            stereo: false,
+            ps: true,
+            ps_type_b: true,
+            frames: 60,
+        },
     ]
     .iter()
     .enumerate()
@@ -100,7 +120,11 @@ fn corrupted_lc_does_not_panic() {
         return;
     }
     let dir = temp_dir("fuzz");
-    for (rate, ch, br) in [(44100u32, 2usize, "96k"), (48000, 6, "256k"), (16000, 1, "24k")] {
+    for (rate, ch, br) in [
+        (44100u32, 2usize, "96k"),
+        (48000, 6, "256k"),
+        (16000, 1, "24k"),
+    ] {
         let wav = dir.join(format!("f{rate}_{ch}.wav"));
         let aac = dir.join(format!("f{rate}_{ch}.aac"));
         assert!(make_wav(&wav, rate, ch, 1.5));

@@ -14,7 +14,10 @@ pub mod fft;
 pub mod realtime;
 pub mod track;
 
-pub use track::{analyze, AnalysisConfig, NoveltyConfig, Spectrum, TrackAnalysis, TRANSITION_MAJOR, TRANSITION_MINOR, TRANSITION_NONE};
+pub use track::{
+    analyze, AnalysisConfig, NoveltyConfig, Spectrum, TrackAnalysis, TRANSITION_MAJOR,
+    TRANSITION_MINOR, TRANSITION_NONE,
+};
 
 /// Bumped whenever analysis output changes; part of cache keys.
 pub const ANALYSIS_VERSION: u32 = 1;
@@ -26,7 +29,15 @@ pub fn encode(a: &TrackAnalysis) -> Vec<u8> {
     let n = a.energy.len();
     let mut out = Vec::with_capacity(32 + 4 * (n * (1 + a.novelty.len()) + a.transitions.len()));
     out.extend_from_slice(MAGIC);
-    for v in [ANALYSIS_VERSION, a.sample_rate, a.hop_size as u32, a.transition_down_sampling as u32, n as u32, a.novelty.len() as u32, a.transitions.len() as u32] {
+    for v in [
+        ANALYSIS_VERSION,
+        a.sample_rate,
+        a.hop_size as u32,
+        a.transition_down_sampling as u32,
+        n as u32,
+        a.novelty.len() as u32,
+        a.transitions.len() as u32,
+    ] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     let mut put = |s: &[f32]| {
@@ -51,7 +62,14 @@ pub fn decode(data: &[u8]) -> Option<TrackAnalysis> {
     if u(0) != ANALYSIS_VERSION {
         return None;
     }
-    let (sample_rate, hop, down, n, k, m) = (u(1), u(2) as usize, u(3) as usize, u(4) as usize, u(5) as usize, u(6) as usize);
+    let (sample_rate, hop, down, n, k, m) = (
+        u(1),
+        u(2) as usize,
+        u(3) as usize,
+        u(4) as usize,
+        u(5) as usize,
+        u(6) as usize,
+    );
     if hop == 0 || sample_rate == 0 || k > 64 {
         return None;
     }
@@ -61,14 +79,24 @@ pub fn decode(data: &[u8]) -> Option<TrackAnalysis> {
     }
     let mut pos = 32;
     let mut take = |len: usize| {
-        let v: Vec<f32> = data[pos..pos + len * 4].chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        let v: Vec<f32> = data[pos..pos + len * 4]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         pos += len * 4;
         v
     };
     let energy = take(n);
     let novelty = (0..k).map(|_| take(n)).collect();
     let transitions = take(m);
-    Some(TrackAnalysis { sample_rate, hop_size: hop, energy, novelty, transitions, transition_down_sampling: down.max(1) })
+    Some(TrackAnalysis {
+        sample_rate,
+        hop_size: hop,
+        energy,
+        novelty,
+        transitions,
+        transition_down_sampling: down.max(1),
+    })
 }
 
 /// Downmixes interleaved audio to mono by averaging channels.

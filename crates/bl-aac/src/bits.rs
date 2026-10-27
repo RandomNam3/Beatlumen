@@ -21,13 +21,21 @@ pub(crate) struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        BitReader { data, pos: 0, end: data.len() * 8 }
+        BitReader {
+            data,
+            pos: 0,
+            end: data.len() * 8,
+        }
     }
 
     /// A reader over the next `nbits` bits (clamped to this reader's end).
     pub fn sub(&self, nbits: usize) -> BitReader<'a> {
         let end = self.pos.saturating_add(nbits).min(self.end);
-        BitReader { data: self.data, pos: self.pos.min(end), end }
+        BitReader {
+            data: self.data,
+            pos: self.pos.min(end),
+            end,
+        }
     }
 
     /// Next 32 bits, MSB-aligned; bits beyond the end read as zero.

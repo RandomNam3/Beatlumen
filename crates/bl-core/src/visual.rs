@@ -44,7 +44,10 @@ fn update_spectrum(core: &mut Core, width: f32) {
     // Like an AnalyserNode: magnitude in dB mapped from [-100, -10] to [0, 1].
     let rate = core.player.device_rate().max(1) as f32;
     let bin_hz = rate / 2.0 / amps.len() as f32;
-    let (f0, f1) = (s.spectrum_min_freq.max(0.0), s.spectrum_max_freq.max(s.spectrum_min_freq + 10.0));
+    let (f0, f1) = (
+        s.spectrum_min_freq.max(0.0),
+        s.spectrum_max_freq.max(s.spectrum_min_freq + 10.0),
+    );
     let mut bars = vec![0.0f32; n];
     for (i, b) in bars.iter_mut().enumerate() {
         let lo = f0 + (f1 - f0) * i as f32 / n as f32;
@@ -56,7 +59,12 @@ fn update_spectrum(core: &mut Core, width: f32) {
         let peak = amps[b0..b1].iter().cloned().fold(0.0f32, f32::max);
         let db = 20.0 * (peak / 2.0).max(1e-9).log10();
         let v = ((db + 100.0) / 90.0).clamp(0.0, 1.0);
-        *b = if v > 0.4 { v.powf(v + 0.6) } else { v * (v + 0.6) * 0.25 }.min(1.0);
+        *b = if v > 0.4 {
+            v.powf(v + 0.6)
+        } else {
+            v * (v + 0.6) * 0.25
+        }
+        .min(1.0);
     }
     // Local mean gate.
     let win = oddify(n / 8).min(n).max(1);
@@ -75,7 +83,9 @@ fn update_spectrum(core: &mut Core, width: f32) {
         .collect();
     // Gaussian blur across bars.
     let sigma = 1.5f32;
-    let k: Vec<f32> = (0..win).map(|j| (-((j as f32 - half as f32).powi(2)) / (2.0 * sigma * sigma)).exp()).collect();
+    let k: Vec<f32> = (0..win)
+        .map(|j| (-((j as f32 - half as f32).powi(2)) / (2.0 * sigma * sigma)).exp())
+        .collect();
     let ksum: f32 = k.iter().sum();
     let blurred: Vec<f32> = (0..n)
         .map(|i| {
@@ -120,7 +130,14 @@ fn update_waveform(core: &mut Core, width: f32) {
 }
 
 /// Draws the overlay into `r` (logical pixels).
-pub(crate) fn draw(s: &Settings, spectrum: &[f32], waveform: &[f32], batch: &mut Batch2d, r: Rect, alpha: f32) {
+pub(crate) fn draw(
+    s: &Settings,
+    spectrum: &[f32],
+    waveform: &[f32],
+    batch: &mut Batch2d,
+    r: Rect,
+    alpha: f32,
+) {
     match s.visualizer {
         VisualizerKind::None => {}
         VisualizerKind::Spectrum => {
@@ -132,7 +149,11 @@ pub(crate) fn draw(s: &Settings, spectrum: &[f32], waveform: &[f32], batch: &mut
                 if x + bw > r.x + r.w + 0.5 {
                     break;
                 }
-                batch.rect(Rect::new(x, r.y + r.h - h, bw, h), Color(1.0, 1.0, 1.0, 0.92 * alpha), bw.min(2.0) / 2.0);
+                batch.rect(
+                    Rect::new(x, r.y + r.h - h, bw, h),
+                    Color(1.0, 1.0, 1.0, 0.92 * alpha),
+                    bw.min(2.0) / 2.0,
+                );
             }
         }
         VisualizerKind::Waveform => {
@@ -146,8 +167,18 @@ pub(crate) fn draw(s: &Settings, spectrum: &[f32], waveform: &[f32], batch: &mut
                 let y1 = r.y + r.h - waveform[i] * r.h;
                 let (top, bot) = (y0.min(y1), y0.max(y1));
                 // Fade at the edges.
-                let edge = ((i as f32 / points as f32).min(1.0 - i as f32 / points as f32) * 12.0).min(1.0);
-                batch.rect(Rect::new(r.x + i as f32 * step, top - 1.0, step.max(1.5), (bot - top).max(2.0)), Color(1.0, 1.0, 1.0, 0.9 * alpha * edge), 0.0);
+                let edge = ((i as f32 / points as f32).min(1.0 - i as f32 / points as f32) * 12.0)
+                    .min(1.0);
+                batch.rect(
+                    Rect::new(
+                        r.x + i as f32 * step,
+                        top - 1.0,
+                        step.max(1.5),
+                        (bot - top).max(2.0),
+                    ),
+                    Color(1.0, 1.0, 1.0, 0.9 * alpha * edge),
+                    0.0,
+                );
             }
         }
     }

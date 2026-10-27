@@ -89,7 +89,11 @@ impl Effect {
             if self.camera.get("speed").as_f64().is_none() {
                 self.camera.set("speed", 0.0);
             }
-            for (key, fields) in [("exit", schema::CAMERA_EXIT), ("enter", schema::CAMERA_ENTER), ("finish", schema::CAMERA_FINISH)] {
+            for (key, fields) in [
+                ("exit", schema::CAMERA_EXIT),
+                ("enter", schema::CAMERA_ENTER),
+                ("finish", schema::CAMERA_FINISH),
+            ] {
                 let mut block = self.camera.get(key).clone();
                 fill(&mut block, fields);
                 self.camera.set(key, block);
@@ -106,14 +110,31 @@ impl Effect {
         let mut extra = Map::new();
         if let Some(o) = v.as_object() {
             for (k, val) in o.iter() {
-                if !matches!(k, "id" | "name" | "effectType" | "type" | "disabled" | "config" | "trigger" | "camera") {
+                if !matches!(
+                    k,
+                    "id" | "name"
+                        | "effectType"
+                        | "type"
+                        | "disabled"
+                        | "config"
+                        | "trigger"
+                        | "camera"
+                ) {
                     extra.insert(k, val.clone());
                 }
             }
         }
         let mut e = Effect {
-            id: v.get("id").as_str().map(str::to_string).unwrap_or_else(|| rng.id()),
-            name: v.get("name").as_str().unwrap_or(spec.default_name).to_string(),
+            id: v
+                .get("id")
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| rng.id()),
+            name: v
+                .get("name")
+                .as_str()
+                .unwrap_or(spec.default_name)
+                .to_string(),
             effect_type,
             ty,
             disabled: v.get("disabled").as_bool().unwrap_or(false),
@@ -147,12 +168,20 @@ impl Effect {
     }
 
     fn field_default(fields: &[Field], key: &str) -> f32 {
-        fields.iter().find(|f| f.key == key).map(|f| f.default as f32).unwrap_or(0.0)
+        fields
+            .iter()
+            .find(|f| f.key == key)
+            .map(|f| f.default as f32)
+            .unwrap_or(0.0)
     }
 
     /// Numeric config value (schema default when missing).
     pub fn cfg(&self, key: &str) -> f32 {
-        self.config.get(key).as_f32().unwrap_or_else(|| self.spec().map(|s| Self::field_default(s.config, key)).unwrap_or(0.0))
+        self.config.get(key).as_f32().unwrap_or_else(|| {
+            self.spec()
+                .map(|s| Self::field_default(s.config, key))
+                .unwrap_or(0.0)
+        })
     }
 
     pub fn cfg_str(&self, key: &str) -> &str {
@@ -163,7 +192,10 @@ impl Effect {
     pub fn trig(&self, key: &str) -> f32 {
         self.trigger.get(key).as_f32().unwrap_or_else(|| {
             let base = Self::field_default(schema::NOVELTY_TRIGGER, key);
-            self.spec().and_then(|s| s.targets.iter().find(|f| f.key == key)).map(|f| f.default as f32).unwrap_or(base)
+            self.spec()
+                .and_then(|s| s.targets.iter().find(|f| f.key == key))
+                .map(|f| f.default as f32)
+                .unwrap_or(base)
         })
     }
 
@@ -189,7 +221,12 @@ pub struct Preset {
 
 impl Default for Preset {
     fn default() -> Self {
-        let mut p = Preset { name: "New Preset".into(), effects: Vec::new(), analysis: Value::Null, novelty: Value::Null };
+        let mut p = Preset {
+            name: "New Preset".into(),
+            effects: Vec::new(),
+            analysis: Value::Null,
+            novelty: Value::Null,
+        };
         p.normalize();
         p
     }
@@ -224,7 +261,12 @@ impl Preset {
             Value::Null => Vec::new(),
             _ => return Err("\"effects\" must be an array".into()),
         };
-        let mut p = Preset { name: name.to_string(), effects, analysis: v.get("analysisConfig").clone(), novelty: v.get("noveltyConfigs").clone() };
+        let mut p = Preset {
+            name: name.to_string(),
+            effects,
+            analysis: v.get("analysisConfig").clone(),
+            novelty: v.get("noveltyConfigs").clone(),
+        };
         p.normalize();
         Ok(p)
     }
@@ -237,7 +279,10 @@ impl Preset {
     pub fn to_json(&self) -> Value {
         Value::object()
             .with("version", PRESET_VERSION)
-            .with("effects", Value::Array(self.effects.iter().map(Effect::to_json).collect()))
+            .with(
+                "effects",
+                Value::Array(self.effects.iter().map(Effect::to_json).collect()),
+            )
             .with("analysisConfig", self.analysis.clone())
             .with("noveltyConfigs", self.novelty.clone())
     }
@@ -256,7 +301,8 @@ impl Preset {
             .map(|k| {
                 let n = self.novelty.get(k);
                 NoveltyConfig {
-                    spectrum: Spectrum::from_name(n.str_or("spectrum", "Percussive")).unwrap_or(Spectrum::Percussive),
+                    spectrum: Spectrum::from_name(n.str_or("spectrum", "Percussive"))
+                        .unwrap_or(Spectrum::Percussive),
                     normalization: n.f32_or("normalization", 1.0),
                     start_freq: n.f32_or("startFreq", 0.0),
                     end_freq: n.f32_or("endFreq", 300.0),
@@ -291,7 +337,10 @@ impl Preset {
             if e.disabled || !(e.effect_type == "Camera" || e.effect_type == "Filter") {
                 continue;
             }
-            if self.effects[i + 1..].iter().any(|o| !o.disabled && o.effect_type == e.effect_type && o.ty == e.ty) {
+            if self.effects[i + 1..]
+                .iter()
+                .any(|o| !o.disabled && o.effect_type == e.effect_type && o.ty == e.ty)
+            {
                 out.push(e.id.clone());
             }
         }
@@ -304,13 +353,25 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("Balanced", include_str!("../../../presets/balanced.hfx")),
     ("Energetic", include_str!("../../../presets/energetic.hfx")),
     ("Calm", include_str!("../../../presets/calm.hfx")),
-    ("Neon Pulse", include_str!("../../../presets/neon-pulse.hfx")),
-    ("Kaleido Dream", include_str!("../../../presets/kaleido-dream.hfx")),
-    ("Retro Film", include_str!("../../../presets/retro-film.hfx")),
+    (
+        "Neon Pulse",
+        include_str!("../../../presets/neon-pulse.hfx"),
+    ),
+    (
+        "Kaleido Dream",
+        include_str!("../../../presets/kaleido-dream.hfx"),
+    ),
+    (
+        "Retro Film",
+        include_str!("../../../presets/retro-film.hfx"),
+    ),
 ];
 
 pub fn builtin(name: &str, rng: &mut Rng) -> Option<Preset> {
-    BUILTIN.iter().find(|(n, _)| *n == name).and_then(|(n, src)| Preset::parse(src.as_bytes(), n, rng).ok())
+    BUILTIN
+        .iter()
+        .find(|(n, _)| *n == name)
+        .and_then(|(n, src)| Preset::parse(src.as_bytes(), n, rng).ok())
 }
 
 #[cfg(test)]
@@ -339,8 +400,14 @@ mod tests {
         assert_eq!(p.effects.len(), 2);
         assert_eq!(p.effects[0].cfg("passes"), 1.0);
         assert_eq!(p.effects[0].trig("smoothing"), 0.8);
-        assert_eq!(p.effects[1].camera.get("finish").str_or("easing", ""), "CubicIn");
-        assert_eq!(p.effects[1].extra.get("custom").and_then(|v| v.as_i64()), Some(5));
+        assert_eq!(
+            p.effects[1].camera.get("finish").str_or("easing", ""),
+            "CubicIn"
+        );
+        assert_eq!(
+            p.effects[1].extra.get("custom").and_then(|v| v.as_i64()),
+            Some(5)
+        );
         assert_eq!(p.novelty.get("Mid").f64_or("endFreq", 0.0), 800.0);
     }
 

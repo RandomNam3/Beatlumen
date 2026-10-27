@@ -30,10 +30,15 @@ impl FlacFrameDecoder {
     /// by metadata blocks (Matroska `CodecPrivate`) or the first Ogg FLAC
     /// header packet (`0x7F "FLAC" ...`).
     pub fn new(streaminfo: &[u8]) -> Result<Self, Error> {
-        let payload = StreamInfo::find_in_codec_private(streaminfo)
-            .ok_or(Error::InvalidData("STREAMINFO not found in codec setup data"))?;
+        let payload = StreamInfo::find_in_codec_private(streaminfo).ok_or(Error::InvalidData(
+            "STREAMINFO not found in codec setup data",
+        ))?;
         let info = StreamInfo::parse(payload)?;
-        Ok(FlacFrameDecoder { info, core: FrameDecoder::new(), corrupt: 0 })
+        Ok(FlacFrameDecoder {
+            info,
+            core: FrameDecoder::new(),
+            corrupt: 0,
+        })
     }
 
     pub fn stream_info(&self) -> &StreamInfo {
@@ -108,7 +113,11 @@ impl FlacFrameDecoder {
         if h.channels != self.info.channels as u32 {
             return Err(Error::Unsupported("channel count differs from STREAMINFO"));
         }
-        let bps = if h.bps != 0 { h.bps } else { self.info.bits_per_sample as u32 };
+        let bps = if h.bps != 0 {
+            h.bps
+        } else {
+            self.info.bits_per_sample as u32
+        };
         match self.core.decode(frame, &h, bps) {
             Ok(_) => Ok(Ok(())),
             Err(_) => {

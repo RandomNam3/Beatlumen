@@ -9,11 +9,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn ffmpeg_available() -> bool {
-    Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 pub fn temp_dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("bl-aac-tests-{}", std::process::id())).join(name);
+    let d = std::env::temp_dir()
+        .join(format!("bl-aac-tests-{}", std::process::id()))
+        .join(name);
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -22,7 +28,11 @@ pub fn run(cmd: &mut Command) -> bool {
     match cmd.output() {
         Ok(o) if o.status.success() => true,
         Ok(o) => {
-            eprintln!("command failed: {:?}\n{}", cmd, String::from_utf8_lossy(&o.stderr));
+            eprintln!(
+                "command failed: {:?}\n{}",
+                cmd,
+                String::from_utf8_lossy(&o.stderr)
+            );
             false
         }
         Err(e) => {
@@ -62,23 +72,47 @@ pub fn make_wav(path: &Path, rate: u32, channels: usize, seconds: f64) -> bool {
         8 => "7.1",
         _ => "",
     };
-    let layout = if layout.is_empty() { String::new() } else { format!(":c={layout}") };
-    run(Command::new("ffmpeg").args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"]).arg(format!(
-        "aevalsrc='{}':s={rate}:d={seconds}{layout}",
-        signal_expr(channels)
-    ))
-    .args(["-c:a", "pcm_f32le"])
-    .arg(path))
+    let layout = if layout.is_empty() {
+        String::new()
+    } else {
+        format!(":c={layout}")
+    };
+    run(Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+        ])
+        .arg(format!(
+            "aevalsrc='{}':s={rate}:d={seconds}{layout}",
+            signal_expr(channels)
+        ))
+        .args(["-c:a", "pcm_f32le"])
+        .arg(path))
 }
 
 /// Decodes `input` with ffmpeg to interleaved f32 (native channel order).
 pub fn ffmpeg_decode(input: &Path) -> Option<Vec<f32>> {
     let out = input.with_extension("ref.f32");
-    if !run(Command::new("ffmpeg").args(["-y", "-hide_banner", "-loglevel", "error", "-i"]).arg(input).args(["-f", "f32le"]).arg(&out)) {
+    if !run(Command::new("ffmpeg")
+        .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
+        .arg(input)
+        .args(["-f", "f32le"])
+        .arg(&out))
+    {
         return None;
     }
     let bytes = std::fs::read(&out).ok()?;
-    Some(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    Some(
+        bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+    )
 }
 
 /// Splits an ADTS stream into frames.
@@ -169,6 +203,15 @@ pub fn compare(ours: &[f32], reference: &[f32], channels: usize, max_offset: isi
             max_abs_err = max_abs_err.max((a - b).abs());
         }
     }
-    let snr_db = if err == 0.0 { 200.0 } else { 10.0 * (sig / err).log10() };
-    Compare { snr_db, max_abs_err, compared_frames: count, offset }
+    let snr_db = if err == 0.0 {
+        200.0
+    } else {
+        10.0 * (sig / err).log10()
+    };
+    Compare {
+        snr_db,
+        max_abs_err,
+        compared_frames: count,
+        offset,
+    }
 }

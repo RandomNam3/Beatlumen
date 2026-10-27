@@ -107,7 +107,13 @@ pub struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8], pos: usize) -> Self {
-        BitReader { data, pos, bits: 0, cnt: 0, marker_hit: false }
+        BitReader {
+            data,
+            pos,
+            bits: 0,
+            cnt: 0,
+            marker_hit: false,
+        }
     }
 
     #[inline(always)]
@@ -219,7 +225,11 @@ impl<'a> BitReader<'a> {
             if c <= t.maxcode[len] {
                 self.consume(len as u32);
                 let idx = (c + t.delta[len]) as usize;
-                return t.symbols.get(idx).copied().ok_or(Error::InvalidData("jpeg: bad huffman code"));
+                return t
+                    .symbols
+                    .get(idx)
+                    .copied()
+                    .ok_or(Error::InvalidData("jpeg: bad huffman code"));
             }
         }
         Err(Error::InvalidData("jpeg: bad huffman code"))

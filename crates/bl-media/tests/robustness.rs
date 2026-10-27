@@ -56,7 +56,10 @@ fn exercise(data: Vec<u8>, ext: &str) -> Result<(), String> {
         }
     }));
     r.map_err(|e| {
-        e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+        e.downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default()
     })
 }
 
@@ -72,7 +75,9 @@ fn corrupted_files_never_panic() {
     let mut failures = Vec::new();
     let mut runs = 0;
     for fx in fixtures() {
-        let Some(p) = make(fx.file, fx.master, fx.args) else { continue };
+        let Some(p) = make(fx.file, fx.master, fx.args) else {
+            continue;
+        };
         let original = std::fs::read(&p).unwrap();
         let ext = ext_of(&p);
         let mut rng = Rng(0x9e3779b97f4a7c15 ^ original.len() as u64);
@@ -84,7 +89,11 @@ fn corrupted_files_never_panic() {
         for i in 0..14 {
             let mut d = original.clone();
             // Concentrate some mutations on the headers.
-            let region = if i % 2 == 0 { d.len().min(4096) } else { d.len() };
+            let region = if i % 2 == 0 {
+                d.len().min(4096)
+            } else {
+                d.len()
+            };
             let count = 1 + rng.below(if i < 7 { 4 } else { 64 });
             for _ in 0..count {
                 let at = rng.below(region);
@@ -115,6 +124,9 @@ fn corrupted_files_never_panic() {
         }
     }
     std::panic::set_hook(hook);
-    println!("{runs} corrupted inputs exercised, {} panics", failures.len());
+    println!(
+        "{runs} corrupted inputs exercised, {} panics",
+        failures.len()
+    );
     assert!(failures.is_empty(), "panics:\n{}", failures.join("\n"));
 }

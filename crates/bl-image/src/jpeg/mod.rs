@@ -19,9 +19,10 @@ pub use decode::{decode, decode_scaled, dimensions};
 /// Zigzag index -> natural (row-major) index, padded with 63 so that corrupt
 /// run lengths cannot index out of bounds.
 pub(crate) const ZIGZAG_EXT: [usize; 80] = [
-    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21,
-    28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61,
-    54, 47, 55, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63,
+    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
+    13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59,
+    52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63,
+    63, 63, 63, 63, 63, 63,
 ];
 
 #[cfg(test)]
@@ -60,17 +61,27 @@ mod tests {
     fn unsupported_coding_processes() {
         let jpg = super::encode::encode(&test_image(16, 16), 80);
         let sof = jpg.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
-        for (marker, what) in [(0xc9u8, "arithmetic"), (0xc3, "lossless"), (0xc5, "hierarchical")] {
+        for (marker, what) in [
+            (0xc9u8, "arithmetic"),
+            (0xc3, "lossless"),
+            (0xc5, "hierarchical"),
+        ] {
             let mut m = jpg.clone();
             m[sof + 1] = marker;
             match super::decode(&m, 1) {
                 Err(crate::Error::Unsupported(msg)) => assert!(msg.contains(what), "{msg}"),
-                other => panic!("expected Unsupported for {what}, got {:?}", other.map(|i| i.width)),
+                other => panic!(
+                    "expected Unsupported for {what}, got {:?}",
+                    other.map(|i| i.width)
+                ),
             }
         }
         let mut m = jpg.clone();
         m[sof + 4] = 12; // sample precision
-        assert!(matches!(super::decode(&m, 1), Err(crate::Error::Unsupported(_))));
+        assert!(matches!(
+            super::decode(&m, 1),
+            Err(crate::Error::Unsupported(_))
+        ));
     }
 
     #[test]
@@ -91,7 +102,10 @@ mod tests {
     fn zigzag_is_diagonal_walk() {
         let mut zz = Vec::new();
         for s in 0..15usize {
-            let cells: Vec<usize> = (0..=s).filter(|&r| r < 8 && s - r < 8).map(|r| r * 8 + (s - r)).collect();
+            let cells: Vec<usize> = (0..=s)
+                .filter(|&r| r < 8 && s - r < 8)
+                .map(|r| r * 8 + (s - r))
+                .collect();
             // Even diagonals go up-right (row decreasing), odd ones down-left.
             if s % 2 == 0 {
                 zz.extend(cells.iter().rev());

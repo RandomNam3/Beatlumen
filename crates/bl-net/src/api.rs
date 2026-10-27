@@ -20,7 +20,14 @@ fn ou32(v: &Value, k: &str) -> Option<u32> {
     v.get(k).as_u64().map(|x| x as u32)
 }
 fn strs(v: &Value, k: &str) -> Vec<String> {
-    v.get(k).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+    v.get(k)
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -190,14 +197,28 @@ impl Library {
     pub fn to_json(&self) -> Value {
         Value::object()
             .with("revision", self.revision)
-            .with("tracks", Value::Array(self.tracks.iter().map(Track::to_json).collect()))
-            .with("albums", Value::Array(self.albums.iter().map(Album::to_json).collect()))
+            .with(
+                "tracks",
+                Value::Array(self.tracks.iter().map(Track::to_json).collect()),
+            )
+            .with(
+                "albums",
+                Value::Array(self.albums.iter().map(Album::to_json).collect()),
+            )
     }
     pub fn from_json(v: &Value) -> Library {
         Library {
             revision: u(v, "revision"),
-            tracks: v.get("tracks").as_array().map(|a| a.iter().map(Track::from_json).collect()).unwrap_or_default(),
-            albums: v.get("albums").as_array().map(|a| a.iter().map(Album::from_json).collect()).unwrap_or_default(),
+            tracks: v
+                .get("tracks")
+                .as_array()
+                .map(|a| a.iter().map(Track::from_json).collect())
+                .unwrap_or_default(),
+            albums: v
+                .get("albums")
+                .as_array()
+                .map(|a| a.iter().map(Album::from_json).collect())
+                .unwrap_or_default(),
         }
     }
 }
@@ -245,7 +266,13 @@ impl Playlist {
             .with("modified", self.modified)
     }
     pub fn from_json(v: &Value) -> Playlist {
-        Playlist { id: s(v, "id"), name: s(v, "name"), kind: PlaylistKind::parse(v.str_or("kind", "track")), items: strs(v, "items"), modified: u(v, "modified") }
+        Playlist {
+            id: s(v, "id"),
+            name: s(v, "name"),
+            kind: PlaylistKind::parse(v.str_or("kind", "track")),
+            items: strs(v, "items"),
+            modified: u(v, "modified"),
+        }
     }
 }
 
@@ -269,7 +296,13 @@ impl ImageEntry {
             .with("modified", self.modified)
     }
     pub fn from_json(v: &Value) -> ImageEntry {
-        ImageEntry { id: s(v, "id"), name: s(v, "name"), folder: s(v, "folder"), size: u(v, "size"), modified: u(v, "modified") }
+        ImageEntry {
+            id: s(v, "id"),
+            name: s(v, "name"),
+            folder: s(v, "folder"),
+            size: u(v, "size"),
+            modified: u(v, "modified"),
+        }
     }
 }
 
@@ -315,11 +348,35 @@ mod tests {
 
     #[test]
     fn roundtrips() {
-        let t = Track { id: "ab".into(), title: "T".into(), artists: vec!["A".into(), "B".into()], year: Some(1999), track: Some(3), ..Default::default() };
-        assert_eq!(Track::from_json(&bl_json::parse(&t.to_json().to_json()).unwrap()), t);
-        let lib = Library { revision: 5, tracks: vec![t], albums: vec![Album { id: "x".into(), cover_track: Some("ab".into()), ..Default::default() }] };
+        let t = Track {
+            id: "ab".into(),
+            title: "T".into(),
+            artists: vec!["A".into(), "B".into()],
+            year: Some(1999),
+            track: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(
+            Track::from_json(&bl_json::parse(&t.to_json().to_json()).unwrap()),
+            t
+        );
+        let lib = Library {
+            revision: 5,
+            tracks: vec![t],
+            albums: vec![Album {
+                id: "x".into(),
+                cover_track: Some("ab".into()),
+                ..Default::default()
+            }],
+        };
         assert_eq!(Library::from_json(&lib.to_json()), lib);
-        let p = Playlist { id: "p".into(), name: "N".into(), kind: PlaylistKind::Background, items: vec!["1".into()], modified: 2 };
+        let p = Playlist {
+            id: "p".into(),
+            name: "N".into(),
+            kind: PlaylistKind::Background,
+            items: vec!["1".into()],
+            modified: 2,
+        };
         assert_eq!(Playlist::from_json(&p.to_json()), p);
     }
 }
@@ -335,7 +392,11 @@ pub fn guess_from_file_name(stem: &str) -> (Option<String>, String) {
     if s.ends_with(']') {
         if let Some(open) = s.rfind('[') {
             let id = &s[open + 1..s.len() - 1];
-            if id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            if id.len() == 11
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
                 s = s[..open].trim_end().to_string();
             }
         }
@@ -343,7 +404,9 @@ pub fn guess_from_file_name(stem: &str) -> (Option<String>, String) {
     // Leading track number: "01 ", "01. ", "01 - ".
     let digits = s.bytes().take_while(|b| b.is_ascii_digit()).count();
     if (1..=3).contains(&digits) {
-        let rest = s[digits..].trim_start_matches(['.', ' ', '-', '_']).trim_start();
+        let rest = s[digits..]
+            .trim_start_matches(['.', ' ', '-', '_'])
+            .trim_start();
         if !rest.is_empty() && rest.len() < s.len() - digits {
             s = rest.to_string();
         }
@@ -366,8 +429,14 @@ mod guess_tests {
 
     #[test]
     fn file_names() {
-        assert_eq!(g("Some Band - Night Drive [abcDEF12345]"), (Some("Some Band".into()), "Night Drive".into()));
-        assert_eq!(g("01. Artist – Title"), (Some("Artist".into()), "Title".into()));
+        assert_eq!(
+            g("Some Band - Night Drive [abcDEF12345]"),
+            (Some("Some Band".into()), "Night Drive".into())
+        );
+        assert_eq!(
+            g("01. Artist – Title"),
+            (Some("Artist".into()), "Title".into())
+        );
         assert_eq!(g("07 Title Only"), (None, "Title Only".into()));
         assert_eq!(g("Alles neu [DmbYRLrU5_0]"), (None, "Alles neu".into()));
         assert_eq!(g("1999"), (None, "1999".into()));

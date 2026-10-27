@@ -11,7 +11,10 @@ pub(crate) struct NoiseGen {
 impl NoiseGen {
     #[inline]
     fn next(&mut self) -> f32 {
-        self.state = self.state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.state = self
+            .state
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
         (self.state as i32) as f32 * (1.0 / 2_147_483_648.0)
     }
 }
@@ -41,7 +44,11 @@ fn noise_band(spec: &mut [f32], nrg: i32, rng: &mut NoiseGen) {
 /// Perceptual noise substitution for one channel. When `left` is given
 /// (right channel of a CPE) and M/S is signalled for a band where both
 /// channels are noise, the left channel's noise is reused (correlated).
-pub(crate) fn apply_pns(ch: &mut ChannelData, left: Option<(&ChannelData, &[bool])>, rng: &mut NoiseGen) {
+pub(crate) fn apply_pns(
+    ch: &mut ChannelData,
+    left: Option<(&ChannelData, &[bool])>,
+    rng: &mut NoiseGen,
+) {
     let info = ch.info;
     let wlen = window_len(ch);
     let mut win = 0;
@@ -106,7 +113,12 @@ pub(crate) fn apply_ms(l: &mut ChannelData, r: &mut ChannelData, ms_used: &[bool
 
 /// Intensity stereo: right channel bands coded with the intensity codebooks
 /// are derived from the left channel.
-pub(crate) fn apply_intensity(l: &ChannelData, r: &mut ChannelData, ms_used: &[bool], ms_present: bool) {
+pub(crate) fn apply_intensity(
+    l: &ChannelData,
+    r: &mut ChannelData,
+    ms_used: &[bool],
+    ms_present: bool,
+) {
     let info = r.info;
     let wlen = window_len(r);
     let mut win = 0;

@@ -42,7 +42,11 @@ pub enum BackgroundMode {
 }
 
 impl BackgroundMode {
-    pub const ALL: [BackgroundMode; 3] = [BackgroundMode::Manual, BackgroundMode::OnTrackFinish, BackgroundMode::OnTrackChange];
+    pub const ALL: [BackgroundMode; 3] = [
+        BackgroundMode::Manual,
+        BackgroundMode::OnTrackFinish,
+        BackgroundMode::OnTrackChange,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             BackgroundMode::Manual => "Manual",
@@ -67,7 +71,11 @@ pub enum VisualizerKind {
 }
 
 impl VisualizerKind {
-    pub const ALL: [VisualizerKind; 3] = [VisualizerKind::None, VisualizerKind::Spectrum, VisualizerKind::Waveform];
+    pub const ALL: [VisualizerKind; 3] = [
+        VisualizerKind::None,
+        VisualizerKind::Spectrum,
+        VisualizerKind::Waveform,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             VisualizerKind::None => "None",
@@ -162,7 +170,13 @@ impl Default for Settings {
 }
 
 fn strs(v: &Value) -> Vec<String> {
-    v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl Settings {
@@ -194,13 +208,21 @@ impl Settings {
             visualizer: VisualizerKind::parse(v.str_or("visualizer", "Spectrum")),
             spectrum_min_freq: v.f32_or("spectrumMinFreq", d.spectrum_min_freq),
             spectrum_max_freq: v.f32_or("spectrumMaxFreq", d.spectrum_max_freq),
-            spectrum_smoothing: v.f32_or("spectrumSmoothing", d.spectrum_smoothing).clamp(0.0, 0.99),
+            spectrum_smoothing: v
+                .f32_or("spectrumSmoothing", d.spectrum_smoothing)
+                .clamp(0.0, 0.99),
             bar_width: v.f32_or("barWidth", d.bar_width).max(1.0),
             bar_gap: v.f32_or("barGap", d.bar_gap).max(0.0),
-            waveform_thickness: v.f32_or("waveformThickness", d.waveform_thickness).clamp(0.0, 0.99),
+            waveform_thickness: v
+                .f32_or("waveformThickness", d.waveform_thickness)
+                .clamp(0.0, 0.99),
             intensity: v.f32_or("intensity", d.intensity).clamp(0.0, 2.0),
             adaptive: v.bool_or("adaptive", d.adaptive),
-            ui: if v.get("ui").as_object().is_some() { v.get("ui").clone() } else { Value::object() },
+            ui: if v.get("ui").as_object().is_some() {
+                v.get("ui").clone()
+            } else {
+                Value::object()
+            },
         }
     }
 

@@ -27,7 +27,13 @@ pub fn handle(state: &State, req: Request) -> Response {
     if crate::log::verbose() || resp.status >= 500 {
         let remote = req.remote.map(|a| a.to_string()).unwrap_or_default();
         // The query string is not logged (it may contain a token).
-        crate::info!("{remote} {} {} -> {} ({} ms)", req.method, req.path, resp.status, t0.elapsed().as_millis());
+        crate::info!(
+            "{remote} {} {} -> {} ({} ms)",
+            req.method,
+            req.path,
+            resp.status,
+            t0.elapsed().as_millis()
+        );
     }
     resp
 }
@@ -37,7 +43,9 @@ fn finish_headers(resp: &mut Response, is_api: bool) {
     h.set("X-Content-Type-Options", "nosniff");
     h.set("Referrer-Policy", "no-referrer");
     h.set("Cross-Origin-Resource-Policy", "same-origin");
-    if h.get("content-type").is_some_and(|t| t.starts_with("text/html")) {
+    if h.get("content-type")
+        .is_some_and(|t| t.starts_with("text/html"))
+    {
         h.set("Content-Security-Policy", CSP);
         h.set("Cross-Origin-Opener-Policy", "same-origin");
         h.set("Cross-Origin-Embedder-Policy", "require-corp");
@@ -73,19 +81,35 @@ fn json(status: u16, v: &Value) -> Response {
 
 /// Parses `?size=` with a default and clamping.
 fn size_param(req: &Request, default: u32, min: u32, max: u32) -> u32 {
-    req.query("size").and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(default).clamp(min, max)
+    req.query("size")
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(default)
+        .clamp(min, max)
 }
 
 fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     let m = req.method.as_str();
     let get = m == "GET" || m == "HEAD";
     match segs {
-        ["info"] => return if get { json(200, &state.info().to_json()) } else { not_allowed("GET, HEAD") },
-        ["login"] => return if m == "POST" { login(state, req) } else { not_allowed("POST") },
+        ["info"] => {
+            return if get {
+                json(200, &state.info().to_json())
+            } else {
+                not_allowed("GET, HEAD")
+            }
+        }
+        ["login"] => {
+            return if m == "POST" {
+                login(state, req)
+            } else {
+                not_allowed("POST")
+            }
+        }
         _ => {}
     }
     if !state.auth.authorized(req) {
-        return Response::error(401, "authentication required").with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
+        return Response::error(401, "authentication required")
+            .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
     match segs {
         ["logout"] => match m {
@@ -107,7 +131,9 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 return not_allowed("GET, HEAD");
             }
             let idx = state.library();
-            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else { return Response::error(404, "track not found") };
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
             match *what {
                 "stream" => stream(state, req, e),
                 "cover" => cover(state, req, &idx, e),
@@ -120,7 +146,9 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 return not_allowed("GET, HEAD");
             }
             let idx = state.library();
-            let Some(album) = util::is_id(id).then(|| idx.album(id)).flatten() else { return Response::error(404, "album not found") };
+            let Some(album) = util::is_id(id).then(|| idx.album(id)).flatten() else {
+                return Response::error(404, "album not found");
+            };
             match album.cover_track.as_deref().and_then(|t| idx.track(t)) {
                 Some(e) => cover(state, req, &idx, e),
                 None => Response::error(404, "album has no cover"),
@@ -180,14 +208,21 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["presets", ..] => {
             // The name is everything after the prefix (already decoded); a
             // decoded '/' makes it invalid instead of changing the route.
-            let name = req.path.trim_end_matches('/').strip_prefix("/api/presets/").unwrap_or("");
+            let name = req
+                .path
+                .trim_end_matches('/')
+                .strip_prefix("/api/presets/")
+                .unwrap_or("");
             match m {
                 "GET" | "HEAD" => match state.presets.get(name) {
                     Ok(data) => Response::bytes(200, "application/json", data),
                     Err(e) => fail(e),
                 },
                 "PUT" => match state.presets.put(name, &req.body) {
-                    Ok(created) => json(if created { 201 } else { 200 }, &Value::object().with("name", name)),
+                    Ok(created) => json(
+                        if created { 201 } else { 200 },
+                        &Value::object().with("name", name),
+                    ),
                     Err(e) => fail(e),
                 },
                 "DELETE" => match state.presets.delete(name) {
@@ -207,7 +242,10 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
 fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
     let peer = req.remote.map(|a| a.ip())?;
     if peer.is_loopback() {
-        let forwarded = req.header("x-forwarded-for").and_then(|h| h.rsplit(',').next()).or_else(|| req.header("x-real-ip"));
+        let forwarded = req
+            .header("x-forwarded-for")
+            .and_then(|h| h.rsplit(',').next())
+            .or_else(|| req.header("x-real-ip"));
         if let Some(ip) = forwarded.and_then(|v| v.trim().parse().ok()) {
             return Some(ip);
         }
@@ -221,7 +259,9 @@ fn login(state: &State, req: &Request) -> Response {
         Ok(token) => json(200, &Value::object().with("token", token)),
         Err(LoginError::BadRequest(msg)) => Response::error(400, &msg),
         Err(LoginError::Wrong) => Response::error(401, "wrong password"),
-        Err(LoginError::TooMany) => Response::error(429, "too many failed login attempts; try again later"),
+        Err(LoginError::TooMany) => {
+            Response::error(429, "too many failed login attempts; try again later")
+        }
         Err(LoginError::Internal(msg)) => Response::error(500, &msg),
     }
 }
@@ -230,9 +270,13 @@ fn library(state: &State, req: &Request) -> Response {
     let idx = state.library();
     let etag = idx.revision.to_string();
     if etag_matches(req.header("if-none-match"), &etag) {
-        return Response::new(304).with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "no-cache");
+        return Response::new(304)
+            .with_header("ETag", format!("\"{etag}\""))
+            .with_header("Cache-Control", "no-cache");
     }
-    Response::bytes(200, "application/json", idx.json().to_vec()).with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "no-cache")
+    Response::bytes(200, "application/json", idx.json().to_vec())
+        .with_header("ETag", format!("\"{etag}\""))
+        .with_header("Cache-Control", "no-cache")
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
@@ -250,11 +294,17 @@ fn cover(state: &State, req: &Request, idx: &Index, e: &Entry) -> Response {
     let size = size_param(req, 300, 32, 1024);
     let stamp = covers::cover_stamp(idx, e);
     let etag = format!("{stamp:016x}-{size}");
-    let finish = |r: Response| r.with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "private, max-age=3600");
+    let finish = |r: Response| {
+        r.with_header("ETag", format!("\"{etag}\""))
+            .with_header("Cache-Control", "private, max-age=3600")
+    };
     if etag_matches(req.header("if-none-match"), &etag) {
         return finish(Response::new(304));
     }
-    let cache = state.data.covers.join(format!("{}_{size}_{stamp:016x}.jpg", e.track.id));
+    let cache = state
+        .data
+        .covers
+        .join(format!("{}_{size}_{stamp:016x}.jpg", e.track.id));
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
@@ -262,7 +312,9 @@ fn cover(state: &State, req: &Request, idx: &Index, e: &Entry) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::cover_source(idx, e) else { return Response::error(404, "no cover") };
+    let Some(src) = covers::cover_source(idx, e) else {
+        return Response::error(404, "no cover");
+    };
     match covers::make_thumbnail(&src, size) {
         Ok(jpeg) => {
             if let Err(err) = util::write_atomic(&cache, &jpeg) {
@@ -283,16 +335,25 @@ fn analysis(state: &State, req: &Request, e: &Entry) -> Response {
         Err(msg) => return Response::error(400, &msg),
     };
     match state.analyzer.get(e, &cfg) {
-        Ok(blob) => Response::bytes(200, "application/octet-stream", blob).with_header("Cache-Control", "private, max-age=3600"),
+        Ok(blob) => Response::bytes(200, "application/octet-stream", blob)
+            .with_header("Cache-Control", "private, max-age=3600"),
         Err(err) => fail(err),
     }
 }
 
 fn image(state: &State, req: &Request, id: &str) -> Response {
-    let Some(item) = state.images.find(id) else { return Response::error(404, "image not found") };
-    let wants_scaled = req.query("size").is_some_and(|s| !s.trim().is_empty() && s.trim() != "0");
+    let Some(item) = state.images.find(id) else {
+        return Response::error(404, "image not found");
+    };
+    let wants_scaled = req
+        .query("size")
+        .is_some_and(|s| !s.trim().is_empty() && s.trim() != "0");
     if !wants_scaled {
-        let resp = Response::file(&item.path, util::image_mime(&util::ext_lower(&item.path)), req.header("range"));
+        let resp = Response::file(
+            &item.path,
+            util::image_mime(&util::ext_lower(&item.path)),
+            req.header("range"),
+        );
         if resp.status == 404 {
             state.images.invalidate();
             return Response::error(404, "image not found");
@@ -301,8 +362,14 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     }
     let size = size_param(req, 1920, 64, 4096);
     let cache = state.images.scaled_path(&item, size);
-    let etag = cache.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let finish = |r: Response| r.with_header("ETag", format!("\"{etag}\"")).with_header("Cache-Control", "private, max-age=3600");
+    let etag = cache
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let finish = |r: Response| {
+        r.with_header("ETag", format!("\"{etag}\""))
+            .with_header("Cache-Control", "private, max-age=3600")
+    };
     if etag_matches(req.header("if-none-match"), &etag) {
         return finish(Response::new(304));
     }
@@ -313,7 +380,9 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::read_image_file(&item.path) else { return Response::error(404, "image not found") };
+    let Some(src) = covers::read_image_file(&item.path) else {
+        return Response::error(404, "image not found");
+    };
     match covers::make_thumbnail(&src, size) {
         Ok(jpeg) => {
             if let Err(err) = util::write_atomic(&cache, &jpeg) {

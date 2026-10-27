@@ -112,11 +112,12 @@ impl Resampler {
         let n = ((ATTENUATION_DB - 7.95) / (14.36 * transition)).ceil() as usize + 1;
         let taps = (n.div_ceil(2) * 2).clamp(8, MAX_TAPS);
         let half = taps / 2;
-        let (phases, interpolate) = if (self.l as usize) <= 4096 && self.l as usize * taps <= MAX_TABLE {
-            (self.l as usize, false)
-        } else {
-            (INTERP_PHASES, true)
-        };
+        let (phases, interpolate) =
+            if (self.l as usize) <= 4096 && self.l as usize * taps <= MAX_TABLE {
+                (self.l as usize, false)
+            } else {
+                (INTERP_PHASES, true)
+            };
         let i0b = bessel_i0(beta);
         let mut table = vec![0f32; (phases + 1) * taps];
         for p in 0..=phases {
@@ -131,7 +132,11 @@ impl Resampler {
                     continue;
                 }
                 let arg = 2.0 * fc * tau;
-                let sinc = if arg.abs() < 1e-12 { 1.0 } else { (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg) };
+                let sinc = if arg.abs() < 1e-12 {
+                    1.0
+                } else {
+                    (std::f64::consts::PI * arg).sin() / (std::f64::consts::PI * arg)
+                };
                 let w = bessel_i0(beta * (1.0 - x * x).sqrt()) / i0b;
                 *v = 2.0 * fc * sinc * w;
                 sum += *v;
@@ -184,7 +189,8 @@ impl Resampler {
                 let a = &self.table[p * taps..(p + 1) * taps];
                 let b = &self.table[(p + 1) * taps..(p + 2) * taps];
                 self.scratch.clear();
-                self.scratch.extend(a.iter().zip(b).map(|(&a, &b)| a + (b - a) * w));
+                self.scratch
+                    .extend(a.iter().zip(b).map(|(&a, &b)| a + (b - a) * w));
                 &self.scratch
             } else {
                 let p = self.frac as usize;
@@ -260,7 +266,11 @@ mod tests {
     use super::*;
 
     fn sine(rate: u32, freq: f64, n: usize) -> Vec<f32> {
-        (0..n).map(|i| (0.5 * (2.0 * std::f64::consts::PI * freq * i as f64 / rate as f64).sin()) as f32).collect()
+        (0..n)
+            .map(|i| {
+                (0.5 * (2.0 * std::f64::consts::PI * freq * i as f64 / rate as f64).sin()) as f32
+            })
+            .collect()
     }
 
     /// SNR of the resampled sine against the ideal sine (after latency).
@@ -274,10 +284,18 @@ mod tests {
         }
         let lat = r.latency();
         let expected_len = (n as u64 * out_rate as u64 / in_rate as u64) as i64;
-        assert!((y.len() as i64 - expected_len).abs() <= 2, "{} vs {}", y.len(), expected_len);
+        assert!(
+            (y.len() as i64 - expected_len).abs() <= 2,
+            "{} vs {}",
+            y.len(),
+            expected_len
+        );
         let (mut sig, mut err) = (0.0f64, 0.0f64);
         // Skip filter warm-up / tail regions.
-        let (a, b) = (lat + out_rate as usize / 20, y.len() - out_rate as usize / 20);
+        let (a, b) = (
+            lat + out_rate as usize / 20,
+            y.len() - out_rate as usize / 20,
+        );
         for (i, &v) in y.iter().enumerate().take(b).skip(a) {
             let t = (i - lat) as f64 / out_rate as f64;
             let ideal = 0.5 * (2.0 * std::f64::consts::PI * freq * t).sin();
@@ -289,7 +307,14 @@ mod tests {
 
     #[test]
     fn sine_snr() {
-        for &(a, b) in &[(44100, 48000), (48000, 44100), (22050, 48000), (96000, 44100), (44100, 44101), (8000, 48000)] {
+        for &(a, b) in &[
+            (44100, 48000),
+            (48000, 44100),
+            (22050, 48000),
+            (96000, 44100),
+            (44100, 44101),
+            (8000, 48000),
+        ] {
             for &f in &[100.0, 1000.0, 3500.0, 7000.0, 18000.0] {
                 if f > 0.9 * 0.5 * a.min(b) as f64 {
                     continue;
@@ -309,7 +334,12 @@ mod tests {
         let mut y = Vec::new();
         r.process(&x, &mut y);
         let lat = r.latency() + 2000;
-        let rms = (y[lat..y.len() - 2000].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / (y.len() - lat - 2000) as f64).sqrt();
+        let rms = (y[lat..y.len() - 2000]
+            .iter()
+            .map(|v| (*v as f64).powi(2))
+            .sum::<f64>()
+            / (y.len() - lat - 2000) as f64)
+            .sqrt();
         let db = 20.0 * (rms / (0.5 / 2f64.sqrt())).log10();
         println!("resampler 48000 -> 44100 Hz, 23 kHz alias level {db:.1} dB");
         assert!(db < -80.0, "alias level {db:.1} dB");
@@ -317,7 +347,10 @@ mod tests {
 
     #[test]
     fn chunking_is_seamless_and_reset_works() {
-        let x: Vec<f32> = sine(44100, 440.0, 20000).iter().flat_map(|&v| [v, -v]).collect();
+        let x: Vec<f32> = sine(44100, 440.0, 20000)
+            .iter()
+            .flat_map(|&v| [v, -v])
+            .collect();
         let mut a = Resampler::new(44100, 48000, 2);
         let mut ya = Vec::new();
         a.process(&x, &mut ya);

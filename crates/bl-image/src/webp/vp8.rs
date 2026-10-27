@@ -3,7 +3,9 @@
 //! (16x16, 4x4 subblock and chroma modes), WHT / DCT inversion and the
 //! normal and simple loop filters. Inter frames are not needed for WebP.
 
-use super::vp8_tables::{AC_QLOOKUP, COEFF_UPDATE_PROBS, DC_QLOOKUP, DEFAULT_COEFF_PROBS, KF_BMODE_PROB};
+use super::vp8_tables::{
+    AC_QLOOKUP, COEFF_UPDATE_PROBS, DC_QLOOKUP, DEFAULT_COEFF_PROBS, KF_BMODE_PROB,
+};
 use crate::Error;
 
 /// Decoded 4:2:0 frame; planes are padded to whole macroblocks.
@@ -28,7 +30,13 @@ struct BoolDecoder<'a> {
 
 impl<'a> BoolDecoder<'a> {
     fn new(data: &'a [u8]) -> Self {
-        let mut d = BoolDecoder { data, pos: 0, value: 0, bits: 0, range: 255 };
+        let mut d = BoolDecoder {
+            data,
+            pos: 0,
+            value: 0,
+            bits: 0,
+            range: 255,
+        };
         d.fill();
         d
     }
@@ -124,9 +132,25 @@ const B_VL_PRED: usize = 7;
 const B_HD_PRED: usize = 8;
 const B_HU_PRED: usize = 9;
 
-const KF_YMODE_TREE: [i8; 8] = [-(B_PRED as i8), 2, 4, 6, -(DC_PRED as i8), -(V_PRED as i8), -(H_PRED as i8), -(TM_PRED as i8)];
+const KF_YMODE_TREE: [i8; 8] = [
+    -(B_PRED as i8),
+    2,
+    4,
+    6,
+    -(DC_PRED as i8),
+    -(V_PRED as i8),
+    -(H_PRED as i8),
+    -(TM_PRED as i8),
+];
 const KF_YMODE_PROB: [u8; 4] = [145, 156, 163, 128];
-const UV_MODE_TREE: [i8; 6] = [-(DC_PRED as i8), 2, -(V_PRED as i8), 4, -(H_PRED as i8), -(TM_PRED as i8)];
+const UV_MODE_TREE: [i8; 6] = [
+    -(DC_PRED as i8),
+    2,
+    -(V_PRED as i8),
+    4,
+    -(H_PRED as i8),
+    -(TM_PRED as i8),
+];
 const KF_UV_MODE_PROB: [u8; 3] = [142, 114, 183];
 const BMODE_TREE: [i8; 18] = [
     -(B_DC_PRED as i8),
@@ -316,11 +340,21 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
     for (s, d) in dequant.iter_mut().enumerate() {
         let mut q = q_index;
         if h.segmentation {
-            q = if h.seg_abs { h.seg_quant[s] } else { q + h.seg_quant[s] };
+            q = if h.seg_abs {
+                h.seg_quant[s]
+            } else {
+                q + h.seg_quant[s]
+            };
         }
         d.y1 = [dq_lookup(&DC_QLOOKUP, q + y1_dc), dq_lookup(&AC_QLOOKUP, q)];
-        d.y2 = [dq_lookup(&DC_QLOOKUP, q + y2_dc) * 2, (dq_lookup(&AC_QLOOKUP, q + y2_ac) * 155 / 100).max(8)];
-        d.uv = [dq_lookup(&DC_QLOOKUP, q + uv_dc).min(132), dq_lookup(&AC_QLOOKUP, q + uv_ac)];
+        d.y2 = [
+            dq_lookup(&DC_QLOOKUP, q + y2_dc) * 2,
+            (dq_lookup(&AC_QLOOKUP, q + y2_ac) * 155 / 100).max(8),
+        ];
+        d.uv = [
+            dq_lookup(&DC_QLOOKUP, q + uv_dc).min(132),
+            dq_lookup(&AC_QLOOKUP, q + uv_ac),
+        ];
     }
 
     let mb_cols = width.div_ceil(16);
@@ -350,14 +384,26 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
         let tp = &mut parts[my % num_parts];
         for mx in 0..mb_cols {
             // --- Modes (first partition).
-            let segment = if h.update_map { bd.tree(&SEGMENT_TREE, &h.seg_probs) } else { 0 };
+            let segment = if h.update_map {
+                bd.tree(&SEGMENT_TREE, &h.seg_probs)
+            } else {
+                0
+            };
             let skip = h.skip_enabled && bd.read(h.skip_prob);
             let ymode = bd.tree(&KF_YMODE_TREE, &KF_YMODE_PROB);
             let mut bmodes = [B_DC_PRED; 16];
             if ymode == B_PRED {
                 for i in 0..16 {
-                    let a = if i < 4 { above_modes[mx][i] } else { bmodes[i - 4] };
-                    let l = if i % 4 == 0 { left_modes[i / 4] } else { bmodes[i - 1] };
+                    let a = if i < 4 {
+                        above_modes[mx][i]
+                    } else {
+                        bmodes[i - 4]
+                    };
+                    let l = if i % 4 == 0 {
+                        left_modes[i / 4]
+                    } else {
+                        bmodes[i - 1]
+                    };
                     bmodes[i] = bd.tree(&BMODE_TREE, &KF_BMODE_PROB[a][l]);
                 }
             } else {
@@ -432,7 +478,11 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
             // Loop filter level for this macroblock.
             let mut level = h.filter_level;
             if h.segmentation {
-                level = if h.seg_abs { h.seg_lf[segment] } else { level + h.seg_lf[segment] };
+                level = if h.seg_abs {
+                    h.seg_lf[segment]
+                } else {
+                    level + h.seg_lf[segment]
+                };
             }
             level = level.clamp(0, 63);
             if h.lf_delta {
@@ -442,7 +492,10 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
                 }
                 level = level.clamp(0, 63);
             }
-            mb_info[my * mb_cols + mx] = MbInfo { filter_level: level as u8, inner: any_nz || ymode == B_PRED };
+            mb_info[my * mb_cols + mx] = MbInfo {
+                filter_level: level as u8,
+                inner: any_nz || ymode == B_PRED,
+            };
         }
         if bd.exhausted() {
             break; // truncated mode partition: keep what was decoded
@@ -456,7 +509,14 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
 
 /// Reads the tokens of one 4x4 block; returns whether any coefficient was
 /// coded (the context for neighbouring blocks).
-fn read_block(bd: &mut BoolDecoder, probs: &[[[u8; 11]; 3]; 8], ctx: usize, first: usize, dq: [i32; 2], out: &mut [i16; 16]) -> bool {
+fn read_block(
+    bd: &mut BoolDecoder,
+    probs: &[[[u8; 11]; 3]; 8],
+    ctx: usize,
+    first: usize,
+    dq: [i32; 2],
+    out: &mut [i16; 16],
+) -> bool {
     let mut c = first;
     let mut p = &probs[COEFF_BANDS[c]][ctx];
     if !bd.read(p[0]) {
@@ -581,7 +641,12 @@ fn idct_add(coef: &[i16; 16], dst: &mut [u8], off: usize, stride: usize) {
         let b1 = r[0] - r[2];
         let c1 = ((r[1] * S1) >> 16) - (r[3] + ((r[3] * C1) >> 16));
         let d1 = (r[1] + ((r[1] * C1) >> 16)) + ((r[3] * S1) >> 16);
-        let res = [(a1 + d1 + 4) >> 3, (b1 + c1 + 4) >> 3, (b1 - c1 + 4) >> 3, (a1 - d1 + 4) >> 3];
+        let res = [
+            (a1 + d1 + 4) >> 3,
+            (b1 + c1 + 4) >> 3,
+            (b1 - c1 + 4) >> 3,
+            (a1 - d1 + 4) >> 3,
+        ];
         let row = &mut dst[off + i * stride..off + i * stride + 4];
         for (p, r) in row.iter_mut().zip(res) {
             *p = (*p as i32 + r).clamp(0, 255) as u8;
@@ -596,7 +661,8 @@ fn predict_mb(plane: &mut [u8], stride: usize, mx: usize, my: usize, size: usize
     let mut above = [127u8; 16];
     let mut left = [129u8; 16];
     if my > 0 {
-        above[..size].copy_from_slice(&plane[(y0 - 1) * stride + x0..(y0 - 1) * stride + x0 + size]);
+        above[..size]
+            .copy_from_slice(&plane[(y0 - 1) * stride + x0..(y0 - 1) * stride + x0 + size]);
     }
     if mx > 0 {
         for (i, l) in left.iter_mut().enumerate().take(size) {
@@ -627,7 +693,8 @@ fn predict_mb(plane: &mut [u8], stride: usize, mx: usize, my: usize, size: usize
         }
         V_PRED => {
             for y in 0..size {
-                plane[(y0 + y) * stride + x0..(y0 + y) * stride + x0 + size].copy_from_slice(&above[..size]);
+                plane[(y0 + y) * stride + x0..(y0 + y) * stride + x0 + size]
+                    .copy_from_slice(&above[..size]);
             }
         }
         H_PRED => {
@@ -638,7 +705,8 @@ fn predict_mb(plane: &mut [u8], stride: usize, mx: usize, my: usize, size: usize
         _ => {
             for y in 0..size {
                 for x in 0..size {
-                    plane[(y0 + y) * stride + x0 + x] = (left[y] as i32 + above[x] as i32 - p as i32).clamp(0, 255) as u8;
+                    plane[(y0 + y) * stride + x0 + x] =
+                        (left[y] as i32 + above[x] as i32 - p as i32).clamp(0, 255) as u8;
                 }
             }
         }
@@ -660,7 +728,7 @@ fn avg2(x: u8, y: u8) -> u8 {
 fn predict_sub(b: &mut [[u8; 4]; 4], a: &[u8; 9], l: &[u8; 4], mode: usize) {
     let p = a[0];
     let at = |i: usize| a[i + 1]; // A[i]
-    // Edge array E: L[3], L[2], L[1], L[0], P, A[0..4].
+                                  // Edge array E: L[3], L[2], L[1], L[0], P, A[0..4].
     let e = [l[3], l[2], l[1], l[0], p, at(0), at(1), at(2), at(3)];
     match mode {
         B_DC_PRED => {
@@ -687,13 +755,24 @@ fn predict_sub(b: &mut [[u8; 4]; 4], a: &[u8; 9], l: &[u8; 4], mode: usize) {
             }
         }
         B_HE_PRED => {
-            let v = [avg3(p, l[0], l[1]), avg3(l[0], l[1], l[2]), avg3(l[1], l[2], l[3]), avg3(l[2], l[3], l[3])];
+            let v = [
+                avg3(p, l[0], l[1]),
+                avg3(l[0], l[1], l[2]),
+                avg3(l[1], l[2], l[3]),
+                avg3(l[2], l[3], l[3]),
+            ];
             for r in 0..4 {
                 b[r] = [v[r]; 4];
             }
         }
         B_LD_PRED => {
-            let s = |i: usize| if i == 7 { avg3(at(6), at(7), at(7)) } else { avg3(at(i - 1), at(i), at(i + 1)) };
+            let s = |i: usize| {
+                if i == 7 {
+                    avg3(at(6), at(7), at(7))
+                } else {
+                    avg3(at(i - 1), at(i), at(i + 1))
+                }
+            };
             for r in 0..4 {
                 for c in 0..4 {
                     b[r][c] = s(r + c + 1);
@@ -812,7 +891,11 @@ fn reconstruct_mb(
                 }
             }
             if y0 > 0 {
-                a[0] = if x0 > 0 { f.y[(y0 - 1) * ys + x0 - 1] } else { 129 };
+                a[0] = if x0 > 0 {
+                    f.y[(y0 - 1) * ys + x0 - 1]
+                } else {
+                    129
+                };
                 a[1..5].copy_from_slice(&f.y[(y0 - 1) * ys + x0..(y0 - 1) * ys + x0 + 4]);
                 // Above-right pixels.
                 if bx < 3 && by > 0 {
@@ -911,7 +994,12 @@ fn hev(s: &Seg, t: i32) -> bool {
 
 #[inline(always)]
 fn filter_common(s: &mut Seg, outer: bool) {
-    let (p1, p0, q0, q1) = (s.get(-2) - 128, s.get(-1) - 128, s.get(0) - 128, s.get(1) - 128);
+    let (p1, p0, q0, q1) = (
+        s.get(-2) - 128,
+        s.get(-1) - 128,
+        s.get(0) - 128,
+        s.get(1) - 128,
+    );
     let mut a = 3 * (q0 - p0);
     if outer {
         a += s8(p1 - q1);
@@ -947,9 +1035,23 @@ fn filter_mb_edge(s: &mut Seg) {
 /// Filters `len` segments across an edge. `pos` is the first pixel after
 /// the edge, `step` crosses the edge, `along` moves along it.
 #[allow(clippy::too_many_arguments)]
-fn filter_edge(d: &mut [u8], pos: usize, step: usize, along: usize, len: usize, mb: bool, e: i32, i: i32, t: i32) {
+fn filter_edge(
+    d: &mut [u8],
+    pos: usize,
+    step: usize,
+    along: usize,
+    len: usize,
+    mb: bool,
+    e: i32,
+    i: i32,
+    t: i32,
+) {
     for k in 0..len {
-        let mut s = Seg { d: &mut *d, pos: pos + k * along, step };
+        let mut s = Seg {
+            d: &mut *d,
+            pos: pos + k * along,
+            step,
+        };
         if normal_threshold(&s, e, i) {
             if mb {
                 if hev(&s, t) {
@@ -967,7 +1069,11 @@ fn filter_edge(d: &mut [u8], pos: usize, step: usize, along: usize, len: usize, 
 
 fn filter_edge_simple(d: &mut [u8], pos: usize, step: usize, along: usize, limit: i32) {
     for k in 0..16 {
-        let mut s = Seg { d: &mut *d, pos: pos + k * along, step };
+        let mut s = Seg {
+            d: &mut *d,
+            pos: pos + k * along,
+            step,
+        };
         if simple_threshold(&s, limit) {
             filter_common(&mut s, true);
         }
@@ -1027,10 +1133,40 @@ fn loop_filter(f: &mut Frame, h: &Header, info: &[MbInfo], mb_cols: usize, mb_ro
             }
             if mi.inner {
                 for k in [4, 8, 12] {
-                    filter_edge(&mut f.y, yy * ys + yx + k, 1, ys, 16, false, level, interior, hev_t);
+                    filter_edge(
+                        &mut f.y,
+                        yy * ys + yx + k,
+                        1,
+                        ys,
+                        16,
+                        false,
+                        level,
+                        interior,
+                        hev_t,
+                    );
                 }
-                filter_edge(&mut f.u, cy * us + cx + 4, 1, us, 8, false, level, interior, hev_t);
-                filter_edge(&mut f.v, cy * us + cx + 4, 1, us, 8, false, level, interior, hev_t);
+                filter_edge(
+                    &mut f.u,
+                    cy * us + cx + 4,
+                    1,
+                    us,
+                    8,
+                    false,
+                    level,
+                    interior,
+                    hev_t,
+                );
+                filter_edge(
+                    &mut f.v,
+                    cy * us + cx + 4,
+                    1,
+                    us,
+                    8,
+                    false,
+                    level,
+                    interior,
+                    hev_t,
+                );
             }
             if my > 0 {
                 filter_edge(&mut f.y, yy * ys + yx, ys, 1, 16, true, me, interior, hev_t);
@@ -1039,10 +1175,40 @@ fn loop_filter(f: &mut Frame, h: &Header, info: &[MbInfo], mb_cols: usize, mb_ro
             }
             if mi.inner {
                 for k in [4, 8, 12] {
-                    filter_edge(&mut f.y, (yy + k) * ys + yx, ys, 1, 16, false, level, interior, hev_t);
+                    filter_edge(
+                        &mut f.y,
+                        (yy + k) * ys + yx,
+                        ys,
+                        1,
+                        16,
+                        false,
+                        level,
+                        interior,
+                        hev_t,
+                    );
                 }
-                filter_edge(&mut f.u, (cy + 4) * us + cx, us, 1, 8, false, level, interior, hev_t);
-                filter_edge(&mut f.v, (cy + 4) * us + cx, us, 1, 8, false, level, interior, hev_t);
+                filter_edge(
+                    &mut f.u,
+                    (cy + 4) * us + cx,
+                    us,
+                    1,
+                    8,
+                    false,
+                    level,
+                    interior,
+                    hev_t,
+                );
+                filter_edge(
+                    &mut f.v,
+                    (cy + 4) * us + cx,
+                    us,
+                    1,
+                    8,
+                    false,
+                    level,
+                    interior,
+                    hev_t,
+                );
             }
         }
     }

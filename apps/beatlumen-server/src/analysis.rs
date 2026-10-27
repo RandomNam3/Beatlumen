@@ -56,7 +56,11 @@ impl Drop for OwnerGuard<'_> {
             }
         }
         self.slot.cv.notify_all();
-        self.analyzer.inflight.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.key);
+        self.analyzer
+            .inflight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
     }
 }
 
@@ -90,14 +94,21 @@ pub fn config_from_query(cfg: Option<&str>) -> Result<AnalysisConfig, String> {
     if v.as_object().is_none() {
         return Err("cfg must be a JSON object".into());
     }
-    let only = Value::object().with("analysisConfig", v.get("analysisConfig").clone()).with("noveltyConfigs", v.get("noveltyConfigs").clone());
+    let only = Value::object()
+        .with("analysisConfig", v.get("analysisConfig").clone())
+        .with("noveltyConfigs", v.get("noveltyConfigs").clone());
     let preset = bl_fx::Preset::from_json(&only, "cfg", &mut bl_fx::Rng::new(0))?;
     Ok(sanitize(preset.analysis_config()))
 }
 
 impl Analyzer {
     pub fn new(dir: PathBuf, max_minutes: u64) -> Analyzer {
-        Analyzer { dir, max_minutes, inflight: Mutex::new(HashMap::new()), sem: Semaphore::new(MAX_CONCURRENT) }
+        Analyzer {
+            dir,
+            max_minutes,
+            inflight: Mutex::new(HashMap::new()),
+            sem: Semaphore::new(MAX_CONCURRENT),
+        }
     }
 
     pub fn cache_path(&self, id: &str, cfg: &AnalysisConfig) -> PathBuf {
@@ -126,7 +137,10 @@ impl Analyzer {
             match m.get(&key) {
                 Some(s) => (s.clone(), false),
                 None => {
-                    let s = Arc::new(Slot { result: Mutex::new(None), cv: Condvar::new() });
+                    let s = Arc::new(Slot {
+                        result: Mutex::new(None),
+                        cv: Condvar::new(),
+                    });
                     m.insert(key.clone(), s.clone());
                     (s, true)
                 }
@@ -137,9 +151,16 @@ impl Analyzer {
             while r.is_none() {
                 r = slot.cv.wait(r).unwrap_or_else(|e| e.into_inner());
             }
-            return r.clone().unwrap_or_else(|| Err((500, "analysis failed".into()))).map(|a| (*a).clone());
+            return r
+                .clone()
+                .unwrap_or_else(|| Err((500, "analysis failed".into())))
+                .map(|a| (*a).clone());
         }
-        let guard = OwnerGuard { analyzer: self, key, slot };
+        let guard = OwnerGuard {
+            analyzer: self,
+            key,
+            slot,
+        };
         let outcome: Outcome = (|| {
             // Another request may have finished between the check and now.
             if let Some(b) = Self::cached(&path, e) {
@@ -160,7 +181,8 @@ impl Analyzer {
     }
 
     fn compute(&self, e: &Entry, cfg: &AnalysisConfig) -> Result<Vec<u8>, Failure> {
-        let file = std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;
+        let file =
+            std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;
         let ext = e.ext();
         let max_minutes = self.max_minutes;
         let rel = e.rel.clone();
@@ -222,8 +244,14 @@ mod tests {
         assert_eq!(c.chroma_smoothing, 12);
         assert_eq!(c.novelty[0].end_freq, 200.0);
         assert_ne!(c.cache_key(), d.cache_key());
-        let huge = config_from_query(Some(r#"{"analysisConfig":{"spectralSmoothing":1e12,"chromaDownSampling":-5}}"#)).unwrap();
-        assert_eq!((huge.spectral_smoothing, huge.chroma_down_sampling), (50, 1));
+        let huge = config_from_query(Some(
+            r#"{"analysisConfig":{"spectralSmoothing":1e12,"chromaDownSampling":-5}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            (huge.spectral_smoothing, huge.chroma_down_sampling),
+            (50, 1)
+        );
         assert!(config_from_query(Some("[1,2]")).is_err());
         assert!(config_from_query(Some("{bad")).is_err());
     }

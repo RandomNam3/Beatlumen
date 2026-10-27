@@ -13,7 +13,10 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use crate::alac::AlacDecoder;
 use crate::tags::mp4::{find_box, parse_ilst, parse_keys, BoxIter, ITunSmpb};
-use crate::util::{be16, be32, be64, bitrate_kbps, emit_window, invalid, mul_div, seek_buffered, read_up_to, read_vec, stream_len, unsupported};
+use crate::util::{
+    be16, be32, be64, bitrate_kbps, emit_window, invalid, mul_div, read_up_to, read_vec,
+    seek_buffered, stream_len, unsupported,
+};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Picture, Source, Tags};
 
 const MAX_MOOV: u64 = 256 << 20;
@@ -217,7 +220,12 @@ pub(crate) fn parse_asc(asc: &[u8]) -> Option<AscInfo> {
         7 => 8,
         _ => 0,
     };
-    Some(AscInfo { object_type: aot, sample_rate, sbr_rate, channels })
+    Some(AscInfo {
+        object_type: aot,
+        sample_rate,
+        sbr_rate,
+        channels,
+    })
 }
 
 fn parse_sample_entry(stsd: &[u8]) -> Option<(Codec, u16, u32, Option<u32>)> {
@@ -239,7 +247,8 @@ fn parse_sample_entry(stsd: &[u8]) -> Option<(Codec, u16, u32, Option<u32>)> {
     let mut avg = None;
     let codec = match &typ {
         b"mp4a" => {
-            let esds = find_box(children, b"esds").or_else(|| find_box(children, b"wave").and_then(|w| find_box(w, b"esds")));
+            let esds = find_box(children, b"esds")
+                .or_else(|| find_box(children, b"wave").and_then(|w| find_box(w, b"esds")));
             match esds.and_then(parse_esds) {
                 Some((oti, dsi, br)) => {
                     avg = (br > 0).then_some(br);
@@ -253,9 +262,12 @@ fn parse_sample_entry(stsd: &[u8]) -> Option<(Codec, u16, u32, Option<u32>)> {
             }
         }
         b"alac" => {
-            let cfg = find_box(children, b"alac").or_else(|| find_box(children, b"wave").and_then(|w| find_box(w, b"alac")));
+            let cfg = find_box(children, b"alac")
+                .or_else(|| find_box(children, b"wave").and_then(|w| find_box(w, b"alac")));
             match cfg {
-                Some(c) if c.len() >= 28 => Codec::Alac { cookie: c[4..].to_vec() },
+                Some(c) if c.len() >= 28 => Codec::Alac {
+                    cookie: c[4..].to_vec(),
+                },
                 Some(c) if c.len() >= 24 => Codec::Alac { cookie: c.to_vec() },
                 _ => Codec::Other("alac without config".into()),
             }
@@ -273,16 +285,22 @@ fn parse_stbl(stbl: &[u8]) -> RawTables {
         let count = be32(d, 0).unwrap_or(0) as usize;
         match &typ {
             b"stts" => {
-                t.stts = (0..count).map_while(|i| Some((be32(d, 4 + i * 8)?, be32(d, 8 + i * 8)?))).collect();
+                t.stts = (0..count)
+                    .map_while(|i| Some((be32(d, 4 + i * 8)?, be32(d, 8 + i * 8)?)))
+                    .collect();
             }
             b"stsc" => {
-                t.stsc = (0..count).map_while(|i| Some((be32(d, 4 + i * 12)?, be32(d, 8 + i * 12)?))).collect();
+                t.stsc = (0..count)
+                    .map_while(|i| Some((be32(d, 4 + i * 12)?, be32(d, 8 + i * 12)?)))
+                    .collect();
             }
             b"stsz" => {
                 t.const_size = be32(d, 0).unwrap_or(0);
                 t.count = be32(d, 4).unwrap_or(0);
                 if t.const_size == 0 {
-                    t.sizes = (0..t.count as usize).map_while(|i| be32(d, 8 + i * 4)).collect();
+                    t.sizes = (0..t.count as usize)
+                        .map_while(|i| be32(d, 8 + i * 4))
+                        .collect();
                     t.count = t.sizes.len() as u32;
                 }
             }
@@ -291,14 +309,32 @@ fn parse_stbl(stbl: &[u8]) -> RawTables {
                 t.count = be32(d, 4).unwrap_or(0);
                 let data = d.get(8..).unwrap_or(&[]);
                 t.sizes = match field {
-                    4 => (0..t.count as usize).map_while(|i| data.get(i / 2).map(|b| if i % 2 == 0 { (b >> 4) as u32 } else { (b & 15) as u32 })).collect(),
-                    8 => (0..t.count as usize).map_while(|i| data.get(i).map(|&b| b as u32)).collect(),
-                    16 => (0..t.count as usize).map_while(|i| be16(data, i * 2).map(|v| v as u32)).collect(),
+                    4 => (0..t.count as usize)
+                        .map_while(|i| {
+                            data.get(i / 2).map(|b| {
+                                if i % 2 == 0 {
+                                    (b >> 4) as u32
+                                } else {
+                                    (b & 15) as u32
+                                }
+                            })
+                        })
+                        .collect(),
+                    8 => (0..t.count as usize)
+                        .map_while(|i| data.get(i).map(|&b| b as u32))
+                        .collect(),
+                    16 => (0..t.count as usize)
+                        .map_while(|i| be16(data, i * 2).map(|v| v as u32))
+                        .collect(),
                     _ => Vec::new(),
                 };
                 t.count = t.sizes.len() as u32;
             }
-            b"stco" => t.chunk_offsets = (0..count).map_while(|i| be32(d, 4 + i * 4).map(|v| v as u64)).collect(),
+            b"stco" => {
+                t.chunk_offsets = (0..count)
+                    .map_while(|i| be32(d, 4 + i * 4).map(|v| v as u64))
+                    .collect()
+            }
             b"co64" => t.chunk_offsets = (0..count).map_while(|i| be64(d, 4 + i * 8)).collect(),
             _ => {}
         }
@@ -332,9 +368,14 @@ fn parse_trak(trak: &[u8]) -> Option<AudioTrack> {
             let (dur, mt) = if v1 {
                 (be64(d, o), be64(d, o + 8).map(|v| v as i64))
             } else {
-                (be32(d, o).map(|v| v as u64), be32(d, o + 4).map(|v| v as i32 as i64))
+                (
+                    be32(d, o).map(|v| v as u64),
+                    be32(d, o + 4).map(|v| v as i32 as i64),
+                )
             };
-            let (Some(dur), Some(mt)) = (dur, mt) else { break };
+            let (Some(dur), Some(mt)) = (dur, mt) else {
+                break;
+            };
             if mt >= 0 {
                 edit = Some((dur, mt));
                 break;
@@ -344,10 +385,23 @@ fn parse_trak(trak: &[u8]) -> Option<AudioTrack> {
     if timescale == 0 {
         return None;
     }
-    Some(AudioTrack { timescale, media_duration, codec, channels, entry_rate, edit, avg_bitrate, raw })
+    Some(AudioTrack {
+        timescale,
+        media_duration,
+        codec,
+        channels,
+        entry_rate,
+        edit,
+        avg_bitrate,
+        raw,
+    })
 }
 
-fn parse_file<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures: bool) -> Result<Mp4File, Error> {
+fn parse_file<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    want_tags: bool,
+    want_pictures: bool,
+) -> Result<Mp4File, Error> {
     let moov = read_moov(r)?;
     let mut movie_timescale = 0u32;
     let mut movie_duration = 0u64;
@@ -374,7 +428,11 @@ fn parse_file<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures
     ];
     for meta in metas.into_iter().flatten() {
         // `meta` is a full box in ISO files but not in QuickTime files.
-        let body = if meta.get(4..8) == Some(b"hdlr") { meta } else { full_box_body(meta) };
+        let body = if meta.get(4..8) == Some(b"hdlr") {
+            meta
+        } else {
+            full_box_body(meta)
+        };
         if let Some(ilst) = find_box(body, b"ilst") {
             let keys = find_box(body, b"keys").map(parse_keys).unwrap_or_default();
             let mut t = Tags::default();
@@ -386,7 +444,14 @@ fn parse_file<R: Read + Seek + ?Sized>(r: &mut R, want_tags: bool, want_pictures
             }
         }
     }
-    Ok(Mp4File { track, movie_timescale, movie_duration, tags, pictures, smpb })
+    Ok(Mp4File {
+        track,
+        movie_timescale,
+        movie_duration,
+        tags,
+        pictures,
+        smpb,
+    })
 }
 
 /// Gapless layout in media timescale units.
@@ -403,13 +468,22 @@ fn gapless(f: &Mp4File, out_rate: u32) -> Gapless {
         } else {
             None
         };
-        return Gapless { priming: mt as u64, duration };
+        return Gapless {
+            priming: mt as u64,
+            duration,
+        };
     }
     if let (Some(s), true) = (f.smpb, out_rate > 0) {
         let scale = |v: u64| mul_div(v, t.timescale as u64, out_rate as u64);
-        return Gapless { priming: scale(s.delay as u64), duration: (s.samples > 0).then(|| scale(s.samples)) };
+        return Gapless {
+            priming: scale(s.delay as u64),
+            duration: (s.samples > 0).then(|| scale(s.samples)),
+        };
     }
-    Gapless { priming: 0, duration: None }
+    Gapless {
+        priming: 0,
+        duration: None,
+    }
 }
 
 fn codec_name(c: &Codec) -> &'static str {
@@ -421,14 +495,28 @@ fn codec_name(c: &Codec) -> &'static str {
     }
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let f = parse_file(r, true, with_pictures)?;
     let t = &f.track;
     let (rate, channels) = match &t.codec {
         Codec::Aac { asc } => match parse_asc(asc) {
             Some(a) => {
-                let rate = a.sbr_rate.unwrap_or(if t.timescale == a.sample_rate * 2 { t.timescale } else { a.sample_rate });
-                (rate, if a.channels > 0 { a.channels } else { t.channels })
+                let rate = a.sbr_rate.unwrap_or(if t.timescale == a.sample_rate * 2 {
+                    t.timescale
+                } else {
+                    a.sample_rate
+                });
+                (
+                    rate,
+                    if a.channels > 0 {
+                        a.channels
+                    } else {
+                        t.channels
+                    },
+                )
             }
             None => (t.entry_rate, t.channels),
         },
@@ -441,12 +529,19 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
     let g = gapless(&f, rate);
     let media_total: u64 = t.raw.stts.iter().map(|&(c, d)| c as u64 * d as u64).sum();
     let dur_ts = g.duration.or_else(|| {
-        let m = if t.media_duration > 0 { t.media_duration } else { media_total };
+        let m = if t.media_duration > 0 {
+            t.media_duration
+        } else {
+            media_total
+        };
         (m > 0).then_some(m)
     });
     let duration_ms = dur_ts
         .map(|d| mul_div(d, 1000, t.timescale as u64))
-        .or_else(|| (f.movie_timescale > 0).then(|| mul_div(f.movie_duration, 1000, f.movie_timescale as u64)));
+        .or_else(|| {
+            (f.movie_timescale > 0)
+                .then(|| mul_div(f.movie_duration, 1000, f.movie_timescale as u64))
+        });
     let bytes: u64 = if t.raw.const_size > 0 {
         t.raw.const_size as u64 * t.raw.count as u64
     } else {
@@ -478,8 +573,18 @@ struct SampleTable {
 
 impl SampleTable {
     fn build(raw: &RawTables, file_len: u64) -> Result<SampleTable, Error> {
-        let n = if raw.const_size > 0 { raw.count as usize } else { raw.sizes.len() };
-        let size_of = |i: usize| if raw.const_size > 0 { raw.const_size } else { raw.sizes[i] };
+        let n = if raw.const_size > 0 {
+            raw.count as usize
+        } else {
+            raw.sizes.len()
+        };
+        let size_of = |i: usize| {
+            if raw.const_size > 0 {
+                raw.const_size
+            } else {
+                raw.sizes[i]
+            }
+        };
         let mut offsets = Vec::new();
         let mut sizes = Vec::new();
         let mut stsc_i = 0usize;
@@ -510,7 +615,12 @@ impl SampleTable {
             if count == 0 {
                 continue;
             }
-            runs.push(SttsRun { first_sample, first_time, count, delta });
+            runs.push(SttsRun {
+                first_sample,
+                first_time,
+                count,
+                delta,
+            });
             first_sample += count as u64;
             first_time += count as u64 * delta as u64;
         }
@@ -520,7 +630,11 @@ impl SampleTable {
         let total = first_sample.min(offsets.len() as u64) as usize;
         offsets.truncate(total);
         sizes.truncate(total);
-        Ok(SampleTable { offsets, sizes, runs })
+        Ok(SampleTable {
+            offsets,
+            sizes,
+            runs,
+        })
     }
 
     fn len(&self) -> usize {
@@ -528,7 +642,10 @@ impl SampleTable {
     }
 
     fn run_of_sample(&self, i: u64) -> &SttsRun {
-        let idx = self.runs.partition_point(|r| r.first_sample <= i).saturating_sub(1);
+        let idx = self
+            .runs
+            .partition_point(|r| r.first_sample <= i)
+            .saturating_sub(1);
         &self.runs[idx]
     }
 
@@ -543,9 +660,16 @@ impl SampleTable {
 
     /// Index of the sample containing media time `t`.
     fn sample_at(&self, t: u64) -> usize {
-        let ri = self.runs.partition_point(|r| r.first_time <= t).saturating_sub(1);
+        let ri = self
+            .runs
+            .partition_point(|r| r.first_time <= t)
+            .saturating_sub(1);
         let r = &self.runs[ri];
-        let within = if r.delta == 0 { 0 } else { (t - r.first_time.min(t)) / r.delta as u64 };
+        let within = if r.delta == 0 {
+            0
+        } else {
+            (t - r.first_time.min(t)) / r.delta as u64
+        };
         let i = r.first_sample + within.min(r.count as u64 - 1);
         (i as usize).min(self.len().saturating_sub(1))
     }
@@ -595,14 +719,23 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     let f = parse_file(&mut r, false, false)?;
     let t = &f.track;
     let (dec, preroll) = match &t.codec {
-        Codec::Aac { asc } => (PacketDecoder::Aac(Box::new(bl_aac::AacDecoder::new(asc)?)), 1),
+        Codec::Aac { asc } => (
+            PacketDecoder::Aac(Box::new(bl_aac::AacDecoder::new(asc)?)),
+            1,
+        ),
         Codec::Alac { cookie } => (PacketDecoder::Alac(AlacDecoder::new(cookie)?), 0),
         Codec::Mp3 => return unsupported("MP3 in MP4"),
         Codec::Other(s) => return unsupported(format!("MP4 codec {s}")),
     };
     let spec = match &dec {
-        PacketDecoder::Aac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
-        PacketDecoder::Alac(d) => AudioSpec { sample_rate: d.sample_rate(), channels: d.channels() },
+        PacketDecoder::Aac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
+        PacketDecoder::Alac(d) => AudioSpec {
+            sample_rate: d.sample_rate(),
+            channels: d.channels(),
+        },
     };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("decoder reported an empty stream format");
@@ -610,9 +743,16 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
     let table = SampleTable::build(&t.raw, file_len)?;
     let g = gapless(&f, spec.sample_rate);
     let to_frames = |ts: u64| mul_div(ts, spec.sample_rate as u64, t.timescale as u64);
-    let media_end = if table.len() > 0 { table.time_of(table.len() - 1) + table.duration_of(table.len() - 1) } else { 0 };
+    let media_end = if table.len() > 0 {
+        table.time_of(table.len() - 1) + table.duration_of(table.len() - 1)
+    } else {
+        0
+    };
     let available = to_frames(media_end.saturating_sub(g.priming));
-    let total = Some(g.duration.map_or(available, |d| to_frames(d).min(available)));
+    let total = Some(
+        g.duration
+            .map_or(available, |d| to_frames(d).min(available)),
+    );
     let cur = r.stream_position()?;
     Ok(Box::new(Mp4Decoder {
         r,
@@ -685,7 +825,8 @@ impl Decoder for Mp4Decoder {
         if self.table.len() == 0 {
             return Ok(0);
         }
-        let target_ts = mul_div(frame, self.timescale as u64, self.spec.sample_rate as u64) + self.priming;
+        let target_ts =
+            mul_div(frame, self.timescale as u64, self.spec.sample_rate as u64) + self.priming;
         let idx = self.table.sample_at(target_ts);
         self.next = idx.saturating_sub(self.preroll);
         self.dec.reset();
@@ -705,17 +846,25 @@ mod tests {
     fn asc() {
         // AAC-LC 44.1 kHz stereo
         let a = parse_asc(&[0x12, 0x10]).unwrap();
-        assert_eq!((a.object_type, a.sample_rate, a.channels, a.sbr_rate), (2, 44100, 2, None));
+        assert_eq!(
+            (a.object_type, a.sample_rate, a.channels, a.sbr_rate),
+            (2, 44100, 2, None)
+        );
         // HE-AAC explicit: AOT 5, 22050 core, stereo, ext 44100, AOT 2
         let a = parse_asc(&[0x2b, 0x92, 0x08, 0x00]).unwrap();
-        assert_eq!((a.object_type, a.sample_rate, a.sbr_rate), (5, 22050, Some(44100)));
+        assert_eq!(
+            (a.object_type, a.sample_rate, a.sbr_rate),
+            (5, 22050, Some(44100))
+        );
     }
 
     #[test]
     fn esds() {
         let mut d = vec![0, 0, 0, 0];
         d.extend_from_slice(&[0x03, 0x19, 0x00, 0x01, 0x00]);
-        d.extend_from_slice(&[0x04, 0x11, 0x40, 0x15, 0, 0, 0, 0, 0x01, 0xf4, 0, 0, 0x01, 0xf4, 0x00]);
+        d.extend_from_slice(&[
+            0x04, 0x11, 0x40, 0x15, 0, 0, 0, 0, 0x01, 0xf4, 0, 0, 0x01, 0xf4, 0x00,
+        ]);
         d.extend_from_slice(&[0x05, 0x02, 0x12, 0x10]);
         d.extend_from_slice(&[0x06, 0x01, 0x02]);
         let (oti, dsi, avg) = parse_esds(&d).unwrap();

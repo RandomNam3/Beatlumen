@@ -33,8 +33,44 @@ fn he_aac_matches_ffmpeg() {
         eprintln!("ffmpeg not found; skipping");
         return;
     }
-    run("sbr_mono", &Synth { stereo: false, ps: false, ps_type_b: false, frames: 120 }, 70.0);
-    run("sbr_stereo", &Synth { stereo: true, ps: false, ps_type_b: false, frames: 120 }, 70.0);
-    run("ps_mix_a", &Synth { stereo: false, ps: true, ps_type_b: false, frames: 120 }, 70.0);
-    run("ps_mix_b", &Synth { stereo: false, ps: true, ps_type_b: true, frames: 120 }, 70.0);
+    run(
+        "sbr_mono",
+        &Synth {
+            stereo: false,
+            ps: false,
+            ps_type_b: false,
+            frames: 120,
+        },
+        70.0,
+    );
+    run(
+        "sbr_stereo",
+        &Synth {
+            stereo: true,
+            ps: false,
+            ps_type_b: false,
+            frames: 120,
+        },
+        70.0,
+    );
+    run(
+        "ps_mix_a",
+        &Synth {
+            stereo: false,
+            ps: true,
+            ps_type_b: false,
+            frames: 120,
+        },
+        70.0,
+    );
+    run(
+        "ps_mix_b",
+        &Synth {
+            stereo: false,
+            ps: true,
+            ps_type_b: true,
+            frames: 120,
+        },
+        70.0,
+    );
 }

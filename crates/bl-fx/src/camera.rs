@@ -46,7 +46,15 @@ pub fn max_distance(plane_w: f32, plane_h: f32, view_aspect: f32, angle: f32) ->
 }
 
 /// World space camera placement for a normalised position.
-pub fn world_position(plane_w: f32, plane_h: f32, view_aspect: f32, x: f32, y: f32, z: f32, rot: f32) -> [f32; 3] {
+pub fn world_position(
+    plane_w: f32,
+    plane_h: f32,
+    view_aspect: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+    rot: f32,
+) -> [f32; 3] {
     let dist_max = max_distance(plane_w, plane_h, view_aspect, rot);
     let (iw, ih) = inner_rect(plane_w, plane_h, rot);
     let d = z * dist_max;
@@ -71,7 +79,12 @@ pub struct CamPos {
 
 impl Default for CamPos {
     fn default() -> Self {
-        CamPos { x: 0.5, y: 0.5, z: 1.0, zr_deg: 0.0 }
+        CamPos {
+            x: 0.5,
+            y: 0.5,
+            z: 1.0,
+            zr_deg: 0.0,
+        }
     }
 }
 
@@ -116,24 +129,50 @@ impl Default for Camera {
 impl Camera {
     pub fn new(p: CamPos) -> Camera {
         let position = [p.x, p.y, p.z, p.zr_deg.to_radians()];
-        Camera { position, offset: [0.0; 4], sway_offset: [0.0; 4], sway: None, move_tween: None, rotate_tween: None, with_offset: position }
+        Camera {
+            position,
+            offset: [0.0; 4],
+            sway_offset: [0.0; 4],
+            sway: None,
+            move_tween: None,
+            rotate_tween: None,
+            with_offset: position,
+        }
     }
 
     /// Current base position (without shake/sway), rotation in degrees.
     pub fn position(&self) -> CamPos {
-        CamPos { x: self.position[0], y: self.position[1], z: self.position[2], zr_deg: self.position[3].to_degrees() }
+        CamPos {
+            x: self.position[0],
+            y: self.position[1],
+            z: self.position[2],
+            zr_deg: self.position[3].to_degrees(),
+        }
     }
 
     pub fn is_moving(&self, now: f64) -> bool {
-        self.move_tween.as_ref().is_some_and(|t| !t.is_finished(now))
+        self.move_tween
+            .as_ref()
+            .is_some_and(|t| !t.is_finished(now))
     }
 
     pub fn is_rotating(&self, now: f64) -> bool {
-        self.rotate_tween.as_ref().is_some_and(|t| !t.is_finished(now))
+        self.rotate_tween
+            .as_ref()
+            .is_some_and(|t| !t.is_finished(now))
     }
 
     /// Moves (instantly when duration and delay are 0) to a position.
-    pub fn move_to(&mut self, now: f64, x: f32, y: f32, z: f32, duration: f64, delay: f64, easing: Easing) {
+    pub fn move_to(
+        &mut self,
+        now: f64,
+        x: f32,
+        y: f32,
+        z: f32,
+        duration: f64,
+        delay: f64,
+        easing: Easing,
+    ) {
         if duration > 0.0 || delay > 0.0 {
             let from = [self.position[0], self.position[1], self.position[2]];
             self.move_tween = Some(Tween::new(from, [x, y, z], now, delay, duration, easing));
@@ -149,7 +188,14 @@ impl Camera {
     pub fn rotate_to(&mut self, now: f64, deg: f32, duration: f64, delay: f64, easing: Easing) {
         let target = deg.to_radians();
         if duration > 0.0 || delay > 0.0 {
-            self.rotate_tween = Some(Tween::new([self.position[3]], [target], now, delay, duration, easing));
+            self.rotate_tween = Some(Tween::new(
+                [self.position[3]],
+                [target],
+                now,
+                delay,
+                duration,
+                easing,
+            ));
         } else {
             self.rotate_tween = None;
             self.position[3] = target;
@@ -163,9 +209,21 @@ impl Camera {
     }
 
     /// Starts a looping sway (amplitudes x, y, z normalised; zr degrees).
-    pub fn start_sway(&mut self, now: f64, rng: &mut Rng, amplitude: [f32; 4], duration: f64, easing: Easing) {
+    pub fn start_sway(
+        &mut self,
+        now: f64,
+        rng: &mut Rng,
+        amplitude: [f32; 4],
+        duration: f64,
+        easing: Easing,
+    ) {
         let tween = self.next_sway_tween(now, rng, amplitude, duration, easing);
-        self.sway = Some(Sway { amplitude, duration, easing, tween });
+        self.sway = Some(Sway {
+            amplitude,
+            duration,
+            easing,
+            tween,
+        });
     }
 
     pub fn stop_sway(&mut self) {
@@ -176,7 +234,14 @@ impl Camera {
         self.sway.is_some()
     }
 
-    fn next_sway_tween(&self, now: f64, rng: &mut Rng, a: [f32; 4], duration: f64, easing: Easing) -> Tween<4> {
+    fn next_sway_tween(
+        &self,
+        now: f64,
+        rng: &mut Rng,
+        a: [f32; 4],
+        duration: f64,
+        easing: Easing,
+    ) -> Tween<4> {
         let mut target = [0.0f32; 4];
         for i in 0..3 {
             let cur = (self.position[i] + self.offset[i]).clamp(0.0, 1.0);
@@ -191,7 +256,14 @@ impl Camera {
 
     /// Advances animations and returns the world camera for a plane of the
     /// given size seen through a viewport with `view_aspect`.
-    pub fn update(&mut self, now: f64, rng: &mut Rng, plane_w: f32, plane_h: f32, view_aspect: f32) -> CameraView {
+    pub fn update(
+        &mut self,
+        now: f64,
+        rng: &mut Rng,
+        plane_w: f32,
+        plane_h: f32,
+        view_aspect: f32,
+    ) -> CameraView {
         if let Some(t) = &self.move_tween {
             if t.has_started(now) {
                 let v = t.value(now);
@@ -224,7 +296,8 @@ impl Camera {
         let rot_now = self.with_offset[3];
         // Sway in x/y is scaled by the current zoom relative to the
         // maximum camera distance (closer camera -> smaller pan sway).
-        let scale = self.with_offset[2] / max_distance(plane_w, plane_h, view_aspect, rot_now).max(1e-6);
+        let scale =
+            self.with_offset[2] / max_distance(plane_w, plane_h, view_aspect, rot_now).max(1e-6);
         let p = &self.position;
         let o = &self.offset;
         let s = &self.sway_offset;
@@ -236,7 +309,11 @@ impl Camera {
         ];
         let w = &self.with_offset;
         let position = world_position(plane_w, plane_h, view_aspect, w[0], w[1], w[2], w[3]);
-        CameraView { position, rotation: w[3], fov_deg: FOV_DEG }
+        CameraView {
+            position,
+            rotation: w[3],
+            fov_deg: FOV_DEG,
+        }
     }
 }
 

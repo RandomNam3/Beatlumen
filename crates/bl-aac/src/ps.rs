@@ -57,14 +57,19 @@ const G1: [f32; 13] = [
 
 /// Centre frequencies (in QMF band units) of the 10 hybrid sub-bands, in
 /// the order produced by [`Ps::hybrid_analysis`].
-const F_CENTER_HYBRID: [f64; 10] = [0.125, 0.375, 0.625, 0.875, -0.375, -0.125, 1.75, 1.25, 2.25, 2.75];
+const F_CENTER_HYBRID: [f64; 10] = [
+    0.125, 0.375, 0.625, 0.875, -0.375, -0.125, 1.75, 1.25, 2.25, 2.75,
+];
 /// Parameter bin of each hybrid sub-band.
 const BIN_HYBRID: [usize; 10] = [0, 1, 2, 3, 1, 0, 5, 4, 6, 7];
 
-const IID_COARSE_DB: [f64; 15] = [-25.0, -18.0, -14.0, -10.0, -7.0, -4.0, -2.0, 0.0, 2.0, 4.0, 7.0, 10.0, 14.0, 18.0, 25.0];
+const IID_COARSE_DB: [f64; 15] = [
+    -25.0, -18.0, -14.0, -10.0, -7.0, -4.0, -2.0, 0.0, 2.0, 4.0, 7.0, 10.0, 14.0, 18.0, 25.0,
+];
 const IID_FINE_DB: [f64; 31] = [
-    -50.0, -45.0, -40.0, -35.0, -30.0, -25.0, -22.0, -19.0, -16.0, -13.0, -10.0, -8.0, -6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0,
-    8.0, 10.0, 13.0, 16.0, 19.0, 22.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0,
+    -50.0, -45.0, -40.0, -35.0, -30.0, -25.0, -22.0, -19.0, -16.0, -13.0, -10.0, -8.0, -6.0, -4.0,
+    -2.0, 0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 13.0, 16.0, 19.0, 22.0, 25.0, 30.0, 35.0, 40.0, 45.0,
+    50.0,
 ];
 const ICC_RHO: [f64; 8] = [1.0, 0.937, 0.84118, 0.60092, 0.36764, 0.0, -0.589, -1.0];
 
@@ -107,7 +112,11 @@ fn tables() -> &'static Tables {
     T.get_or_init(|| {
         let mut bin = [0usize; NB];
         for (b, v) in bin.iter_mut().enumerate() {
-            *v = if b < 10 { BIN_HYBRID[b] } else { qmf_bin(b - 7) };
+            *v = if b < 10 {
+                BIN_HYBRID[b]
+            } else {
+                qmf_bin(b - 7)
+            };
         }
         let mut g8 = [[Complex::default(); 13]; 8];
         for (q, g) in g8.iter_mut().enumerate() {
@@ -127,9 +136,17 @@ fn tables() -> &'static Tables {
         let mut qf = [[Complex::default(); 3]; NR_ALLPASS];
         let mut ag = [[0f32; 3]; NR_ALLPASS];
         for k in 0..NR_ALLPASS {
-            let (fc, qmf_band) = if k < 10 { (F_CENTER_HYBRID[k], 0usize) } else { ((k - 7) as f64 + 0.5, k - 7) };
+            let (fc, qmf_band) = if k < 10 {
+                (F_CENTER_HYBRID[k], 0usize)
+            } else {
+                ((k - 7) as f64 + 0.5, k - 7)
+            };
             phi[k] = Complex::expi(-PI * Q_PHI * fc);
-            let slope = if qmf_band <= 3 { 1.0 } else { (1.0 - 0.05 * (qmf_band as f64 - 3.0)).max(0.0) };
+            let slope = if qmf_band <= 3 {
+                1.0
+            } else {
+                (1.0 - 0.05 * (qmf_band as f64 - 3.0)).max(0.0)
+            };
             for m in 0..3 {
                 qf[k][m] = Complex::expi(-PI * AP_Q[m] * fc);
                 ag[k][m] = (AP_A[m] * slope) as f32;
@@ -155,7 +172,11 @@ fn tables() -> &'static Tables {
 
 /// Mixing matrix (h11, h12, h21, h22) for IID/ICC indices.
 fn mixing_matrix(iid: i32, icc: i32, fine: bool, type_b: bool) -> [f32; 4] {
-    let db = if fine { IID_FINE_DB[(iid + 15).clamp(0, 30) as usize] } else { IID_COARSE_DB[(iid + 7).clamp(0, 14) as usize] };
+    let db = if fine {
+        IID_FINE_DB[(iid + 15).clamp(0, 30) as usize]
+    } else {
+        IID_COARSE_DB[(iid + 7).clamp(0, 14) as usize]
+    };
     let c = 10f64.powf(db / 20.0);
     let rho = ICC_RHO[icc.clamp(0, 7) as usize];
     if !type_b {
@@ -275,9 +296,23 @@ impl Ps {
     }
 
     pub fn reset(&mut self) {
-        let header = (self.header_seen, self.enable_iid, self.iid_mode, self.enable_icc, self.icc_mode, self.enable_ext);
+        let header = (
+            self.header_seen,
+            self.enable_iid,
+            self.iid_mode,
+            self.enable_icc,
+            self.icc_mode,
+            self.enable_ext,
+        );
         *self = Ps::new();
-        (self.header_seen, self.enable_iid, self.iid_mode, self.enable_icc, self.icc_mode, self.enable_ext) = header;
+        (
+            self.header_seen,
+            self.enable_iid,
+            self.iid_mode,
+            self.enable_icc,
+            self.icc_mode,
+            self.enable_ext,
+        ) = header;
     }
 
     /// Whether a PS header has been received (processing has started).
@@ -311,7 +346,11 @@ impl Ps {
         }
         let frame_class = r.read_bit();
         let idx = r.read(2) as usize;
-        let num_env = if frame_class { idx + 1 } else { [0, 1, 2, 4][idx] };
+        let num_env = if frame_class {
+            idx + 1
+        } else {
+            [0, 1, 2, 4][idx]
+        };
         let mut borders = [0usize; MAX_ENV + 1];
         if frame_class {
             for e in 1..=num_env {
@@ -336,16 +375,28 @@ impl Ps {
                     (true, true) => (&t.iid_huff[3], PS_IID_FINE_T_OFFSET),
                 };
                 for b in 0..n_iid {
-                    raw_iid[e][b] = book.decode(r).ok_or(Error::InvalidData("PS: bad IID code"))? as i32 - off;
+                    raw_iid[e][b] = book
+                        .decode(r)
+                        .ok_or(Error::InvalidData("PS: bad IID code"))?
+                        as i32
+                        - off;
                 }
             }
         }
         if self.enable_icc {
             for e in 0..num_env {
                 dt_icc[e] = r.read_bit();
-                let (book, off) = if dt_icc[e] { (&t.icc_huff[1], PS_ICC_T_OFFSET) } else { (&t.icc_huff[0], PS_ICC_F_OFFSET) };
+                let (book, off) = if dt_icc[e] {
+                    (&t.icc_huff[1], PS_ICC_T_OFFSET)
+                } else {
+                    (&t.icc_huff[0], PS_ICC_F_OFFSET)
+                };
                 for b in 0..n_icc {
-                    raw_icc[e][b] = book.decode(r).ok_or(Error::InvalidData("PS: bad ICC code"))? as i32 - off;
+                    raw_icc[e][b] = book
+                        .decode(r)
+                        .ok_or(Error::InvalidData("PS: bad ICC code"))?
+                        as i32
+                        - off;
                 }
             }
         }
@@ -361,17 +412,41 @@ impl Ps {
         // Differential decoding.
         let max_iid = if fine { 15 } else { 7 };
         for e in 0..num_env {
-            decode_par(self.enable_iid, &raw_iid[e], dt_iid[e], n_iid, &mut self.iid_prev, -max_iid, max_iid);
+            decode_par(
+                self.enable_iid,
+                &raw_iid[e],
+                dt_iid[e],
+                n_iid,
+                &mut self.iid_prev,
+                -max_iid,
+                max_iid,
+            );
             self.iid[e] = self.iid_prev;
-            decode_par(self.enable_icc, &raw_icc[e], dt_icc[e], n_icc, &mut self.icc_prev, 0, 7);
+            decode_par(
+                self.enable_icc,
+                &raw_icc[e],
+                dt_icc[e],
+                n_icc,
+                &mut self.icc_prev,
+                0,
+                7,
+            );
             self.icc[e] = self.icc_prev;
         }
         let mut num_env = num_env;
         if num_env == 0 {
             // Keep the previous parameters for the whole frame.
             num_env = 1;
-            self.iid[0] = if self.enable_iid { self.iid_prev } else { [0; 34] };
-            self.icc[0] = if self.enable_icc { self.icc_prev } else { [0; 34] };
+            self.iid[0] = if self.enable_iid {
+                self.iid_prev
+            } else {
+                [0; 34]
+            };
+            self.icc[0] = if self.enable_icc {
+                self.icc_prev
+            } else {
+                [0; 34]
+            };
         }
         // Envelope borders.
         if !frame_class {
@@ -515,8 +590,14 @@ impl Ps {
                 let mut r = [Complex::default(); NB];
                 for k in 0..NB {
                     let hb = &h[t.bin[k]];
-                    l[k] = Complex::new(hb[0] * s[k].re + hb[2] * d[k].re, hb[0] * s[k].im + hb[2] * d[k].im);
-                    r[k] = Complex::new(hb[1] * s[k].re + hb[3] * d[k].re, hb[1] * s[k].im + hb[3] * d[k].im);
+                    l[k] = Complex::new(
+                        hb[0] * s[k].re + hb[2] * d[k].re,
+                        hb[0] * s[k].im + hb[2] * d[k].im,
+                    );
+                    r[k] = Complex::new(
+                        hb[1] * s[k].re + hb[3] * d[k].re,
+                        hb[1] * s[k].im + hb[3] * d[k].im,
+                    );
                 }
                 // Hybrid synthesis.
                 for (out, src) in [(&mut left[n], &l), (&mut right[n], &r)] {
@@ -599,7 +680,15 @@ impl Ps {
 
 /// Delta decoding of one envelope of IID or ICC indices into `prev` (which
 /// then holds the absolute values in 34-band capable resolution).
-fn decode_par(enable: bool, raw: &[i32; 34], dt: bool, n: usize, prev: &mut [i32; 34], min: i32, max: i32) {
+fn decode_par(
+    enable: bool,
+    raw: &[i32; 34],
+    dt: bool,
+    n: usize,
+    prev: &mut [i32; 34],
+    min: i32,
+    max: i32,
+) {
     if !enable {
         *prev = [0; 34];
         return;

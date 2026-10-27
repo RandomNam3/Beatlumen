@@ -70,7 +70,11 @@ pub struct Image {
 impl Image {
     /// Creates a fully transparent black image.
     pub fn new(width: u32, height: u32) -> Image {
-        Image { width, height, pixels: vec![0; width as usize * height as usize * 4] }
+        Image {
+            width,
+            height,
+            pixels: vec![0; width as usize * height as usize * 4],
+        }
     }
 
     /// Returns true when every pixel has alpha 255.

@@ -14,7 +14,9 @@ fn collect(dir: &Path, rel: &str, depth: usize, out: &mut Vec<(String, PathBuf)>
     if depth > 32 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut items: Vec<_> = rd.flatten().collect();
     items.sort_by_key(|e| e.file_name());
     for e in items {
@@ -23,8 +25,14 @@ fn collect(dir: &Path, rel: &str, depth: usize, out: &mut Vec<(String, PathBuf)>
             continue;
         }
         let path = e.path();
-        let child_rel = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         if meta.is_dir() {
             collect(&path, &child_rel, depth + 1, out);
         } else if meta.is_file() {
@@ -43,13 +51,17 @@ fn main() {
         println!("cargo:rerun-if-changed={}", dir.display());
         collect(&dir, "", 0, &mut files);
         if files.is_empty() {
-            println!("cargo:warning=BEATLUMEN_EMBED_WEB={} contains no files; nothing embedded", dir.display());
+            println!(
+                "cargo:warning=BEATLUMEN_EMBED_WEB={} contains no files; nothing embedded",
+                dir.display()
+            );
         }
         for (_, p) in &files {
             println!("cargo:rerun-if-changed={}", p.display());
         }
     }
-    let mut src = String::from("/// Embedded web client files (path relative to the web root, contents).\n");
+    let mut src =
+        String::from("/// Embedded web client files (path relative to the web root, contents).\n");
     src.push_str("pub static EMBEDDED_WEB: &[(&str, &[u8])] = &[\n");
     for (rel, path) in &files {
         let abs = path.to_string_lossy();

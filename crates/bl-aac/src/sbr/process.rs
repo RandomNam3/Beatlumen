@@ -11,7 +11,13 @@ use crate::fft::Complex;
 const LIM_GAINS: [f32; 4] = [0.70795, 1.0, 1.41254, 1e10];
 const EPS0: f32 = 1e-12;
 /// Smoothing filter, h_smooth[0] applies to the current slot.
-const H_SMOOTH: [f32; 5] = [0.333_333_33, 0.301_502_83, 0.218_169_5, 0.115_163_83, 0.031_830_5];
+const H_SMOOTH: [f32; 5] = [
+    0.333_333_33,
+    0.301_502_83,
+    0.218_169_5,
+    0.115_163_83,
+    0.031_830_5,
+];
 
 fn chirp(invf: u8, prev_invf: u8, bw_prev: f32) -> f32 {
     let new = match invf {
@@ -32,7 +38,11 @@ fn chirp(invf: u8, prev_invf: u8, bw_prev: f32) -> f32 {
             }
         }
     };
-    let bw = if new < bw_prev { 0.75 * new + 0.25 * bw_prev } else { 0.90625 * new + 0.09375 * bw_prev };
+    let bw = if new < bw_prev {
+        0.75 * new + 0.25 * bw_prev
+    } else {
+        0.90625 * new + 0.09375 * bw_prev
+    };
     if bw < 0.015625 {
         0.0
     } else {
@@ -83,7 +93,13 @@ fn lpc(x_low: &[[Complex; 32]], k: usize) -> ((f64, f64), (f64, f64)) {
 /// Processes one frame of one channel. `ft` is `None` when no SBR data is
 /// available (the low band is then only resampled). Writes 32 slots of the
 /// combined QMF signal into `x`.
-pub(super) fn process(ch: &mut SbrChannel, ft: Option<&FreqTables>, h: &SbrHeader, reset: bool, x: &mut [Slot]) {
+pub(super) fn process(
+    ch: &mut SbrChannel,
+    ft: Option<&FreqTables>,
+    h: &SbrHeader,
+    reset: bool,
+    x: &mut [Slot],
+) {
     // X_low only carries the bands below the crossover of the frame it
     // belongs to (history slots: previous kx, new slots: current kx).
     let kx_now = ft.map_or(32, |f| f.kx.min(32));
@@ -101,7 +117,11 @@ pub(super) fn process(ch: &mut SbrChannel, ft: Option<&FreqTables>, h: &SbrHeade
     };
     // Assemble the synthesis input.
     for (j, slot) in x.iter_mut().enumerate().take(SLOTS) {
-        let (kxj, mj) = if j < 2 * t_e0 { (ch.kx_prev, ch.m_prev) } else { (kx, m) };
+        let (kxj, mj) = if j < 2 * t_e0 {
+            (ch.kx_prev, ch.m_prev)
+        } else {
+            (kx, m)
+        };
         let low = &ch.x_low[j + T_HFADJ];
         let kxj = kxj.min(32);
         slot[..kxj].copy_from_slice(&low[..kxj]);
@@ -213,7 +233,11 @@ fn adjust(ch: &mut SbrChannel, ft: &FreqTables, h: &SbrHeader, reset: bool) {
         let table = ft.table(grid.freq_res[e]);
         let l0 = 2 * grid.t_e[e];
         let l1 = 2 * grid.t_e[e + 1];
-        let q = if grid.num_noise == 2 && grid.t_e[e] >= grid.t_q[1] { 1 } else { 0 };
+        let q = if grid.num_noise == 2 && grid.t_e[e] >= grid.t_q[1] {
+            1
+        } else {
+            0
+        };
         let delta = !(e as i32 == l_a || e as i32 == l_a_prev);
         let mut e_orig = [0f32; MAX_BANDS];
         let mut q_map = [0f32; MAX_BANDS];
@@ -281,7 +305,9 @@ fn adjust(ch: &mut SbrChannel, ft: &FreqTables, h: &SbrHeader, reset: bool) {
             }
             let sum_orig: f32 = e_orig[lo..hi].iter().sum();
             let sum_curr: f32 = e_curr[lo..hi].iter().sum();
-            let g_max = (LIM_GAINS[h.limiter_gains as usize & 3] * ((EPS0 + sum_orig) / (EPS0 + sum_curr)).sqrt()).min(1e5);
+            let g_max = (LIM_GAINS[h.limiter_gains as usize & 3]
+                * ((EPS0 + sum_orig) / (EPS0 + sum_curr)).sqrt())
+            .min(1e5);
             let mut denom = EPS0;
             for k in lo..hi {
                 if g[k] > g_max {

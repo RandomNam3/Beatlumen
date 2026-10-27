@@ -33,9 +33,18 @@ mod win {
             // `chunk.len()` bytes for the duration of the call; a null
             // algorithm handle is allowed together with
             // BCRYPT_USE_SYSTEM_PREFERRED_RNG.
-            let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), chunk.as_mut_ptr(), chunk.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+            let status = unsafe {
+                BCryptGenRandom(
+                    std::ptr::null_mut(),
+                    chunk.as_mut_ptr(),
+                    chunk.len() as u32,
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+                )
+            };
             if status != 0 {
-                return Err(std::io::Error::other(format!("BCryptGenRandom failed with NTSTATUS {status:#x}")));
+                return Err(std::io::Error::other(format!(
+                    "BCryptGenRandom failed with NTSTATUS {status:#x}"
+                )));
             }
         }
         Ok(())
@@ -49,7 +58,10 @@ pub fn fill(buf: &mut [u8]) -> io::Result<()> {
 
 #[cfg(not(any(unix, windows)))]
 pub fn fill(_buf: &mut [u8]) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "no secure random source on this platform"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "no secure random source on this platform",
+    ))
 }
 
 /// `n` random bytes as lower case hex (2n characters).

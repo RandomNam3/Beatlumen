@@ -12,8 +12,15 @@ use crate::{alloc_image, crc32, deflate, inflate, Error, Image};
 const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
 /// Adam7 passes: (x0, y0, dx, dy).
-const ADAM7: [(usize, usize, usize, usize); 7] =
-    [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)];
+const ADAM7: [(usize, usize, usize, usize); 7] = [
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+];
 
 #[derive(Clone, Copy)]
 struct Header {
@@ -65,7 +72,8 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     let mut trns: &[u8] = &[];
     let mut idat = Vec::new();
     while pos + 8 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let ty = &data[pos + 4..pos + 8];
         let start = pos + 8;
         let end = start.saturating_add(len).min(data.len());
@@ -88,7 +96,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
                     return Err(Error::InvalidData("png: invalid color type / bit depth"));
                 }
                 if body[10] != 0 || body[11] != 0 {
-                    return Err(Error::Unsupported("png: unknown compression or filter method"));
+                    return Err(Error::Unsupported(
+                        "png: unknown compression or filter method",
+                    ));
                 }
                 if body[12] > 1 {
                     return Err(Error::InvalidData("png: invalid interlace method"));
@@ -120,7 +130,11 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         return Err(Error::Unsupported("image too large"));
     }
 
-    let mut conv = Converter { hdr, palette: [[0, 0, 0, 255]; 256], key: None };
+    let mut conv = Converter {
+        hdr,
+        palette: [[0, 0, 0, 255]; 256],
+        key: None,
+    };
     if hdr.color_type == 3 {
         if plte.len() < 3 {
             return Err(Error::InvalidData("png: missing palette"));
@@ -144,8 +158,16 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         ADAM7
             .iter()
             .filter_map(|&(x0, y0, dx, dy)| {
-                let pw = if hdr.width > x0 { (hdr.width - x0).div_ceil(dx) } else { 0 };
-                let ph = if hdr.height > y0 { (hdr.height - y0).div_ceil(dy) } else { 0 };
+                let pw = if hdr.width > x0 {
+                    (hdr.width - x0).div_ceil(dx)
+                } else {
+                    0
+                };
+                let ph = if hdr.height > y0 {
+                    (hdr.height - y0).div_ceil(dy)
+                } else {
+                    0
+                };
                 (pw > 0 && ph > 0).then_some((x0, y0, dx, dy, pw, ph))
             })
             .collect()
@@ -156,7 +178,9 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     // Deflate expands at most ~1032:1; reject files that cannot hold even a
     // small fraction of the image (avoids huge allocations for tiny files).
     if (idat.len() as u64) * 1032 * 64 < expected as u64 {
-        return Err(Error::InvalidData("png: image data far too short for dimensions"));
+        return Err(Error::InvalidData(
+            "png: image data far too short for dimensions",
+        ));
     }
     // Deflate cannot expand by more than ~1032:1, so cap the initial
     // allocation for files whose header promises far more than they hold.
@@ -178,7 +202,11 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         offset += ph * stride;
         for y in 0..ph {
             let (before, rest) = pass.split_at_mut(y * stride);
-            let prev = if y > 0 { Some(&before[(y - 1) * stride + 1..]) } else { None };
+            let prev = if y > 0 {
+                Some(&before[(y - 1) * stride + 1..])
+            } else {
+                None
+            };
             let (ft, cur) = rest[..stride].split_at_mut(1);
             unfilter(ft[0], cur, prev, bpp)?;
             if !hdr.interlaced {

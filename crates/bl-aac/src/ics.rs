@@ -59,7 +59,11 @@ impl IcsInfo {
         }
         let window_sequence = r.read(2) as u8;
         let window_shape = r.read(1) as u8;
-        let mut info = IcsInfo { window_sequence, window_shape, ..Default::default() };
+        let mut info = IcsInfo {
+            window_sequence,
+            window_shape,
+            ..Default::default()
+        };
         if window_sequence == EIGHT_SHORT {
             info.max_sfb = r.read(4) as usize;
             let grouping = r.read(7);
@@ -84,7 +88,9 @@ impl IcsInfo {
         }
         info.num_swb = info.swb.len() - 1;
         if info.max_sfb > info.num_swb {
-            return Err(Error::InvalidData("max_sfb exceeds number of scalefactor bands"));
+            return Err(Error::InvalidData(
+                "max_sfb exceeds number of scalefactor bands",
+            ));
         }
         Ok(info)
     }
@@ -142,7 +148,9 @@ struct DequantTables {
 fn dequant_tables() -> &'static DequantTables {
     static T: OnceLock<DequantTables> = OnceLock::new();
     T.get_or_init(|| {
-        let pow43 = (0..8192).map(|i| (i as f64).powf(4.0 / 3.0) as f32).collect();
+        let pow43 = (0..8192)
+            .map(|i| (i as f64).powf(4.0 / 3.0) as f32)
+            .collect();
         let mut gain = [0f32; 256];
         for (i, g) in gain.iter_mut().enumerate() {
             *g = 2f64.powf((i as f64 - 100.0) / 4.0) as f32;
@@ -154,7 +162,11 @@ fn dequant_tables() -> &'static DequantTables {
 #[inline]
 fn pow43(t: &DequantTables, q: i32) -> f32 {
     let a = q.unsigned_abs() as usize;
-    let v = if a < t.pow43.len() { t.pow43[a] } else { (a as f32).powf(4.0 / 3.0) };
+    let v = if a < t.pow43.len() {
+        t.pow43[a]
+    } else {
+        (a as f32).powf(4.0 / 3.0)
+    };
     if q < 0 {
         -v
     } else {
@@ -306,8 +318,11 @@ fn parse_scalefactors(r: &mut BitReader, ch: &mut ChannelData, b: &Books) -> Res
 
 fn parse_tns(r: &mut BitReader, tns: &mut Tns, info: &IcsInfo) -> Result<(), Error> {
     let short = info.is_short();
-    let (nf_bits, len_bits, ord_bits, max_order) =
-        if short { (1, 4, 3, TNS_MAX_ORDER_SHORT) } else { (2, 6, 5, TNS_MAX_ORDER_LONG) };
+    let (nf_bits, len_bits, ord_bits, max_order) = if short {
+        (1, 4, 3, TNS_MAX_ORDER_SHORT)
+    } else {
+        (2, 6, 5, TNS_MAX_ORDER_LONG)
+    };
     for w in 0..info.num_windows {
         let n_filt = r.read(nf_bits) as usize;
         tns.n_filt[w] = n_filt as u8;
@@ -402,7 +417,9 @@ fn parse_spectral_data(r: &mut BitReader, ch: &mut ChannelData, b: &Books) -> Re
                                     while r.read_bit() {
                                         n += 1;
                                         if n > 12 {
-                                            return Err(Error::InvalidData("escape sequence too long"));
+                                            return Err(Error::InvalidData(
+                                                "escape sequence too long",
+                                            ));
                                         }
                                     }
                                     let mag = (1i32 << n) + r.read(n) as i32;

@@ -58,15 +58,26 @@ fn walk(root: &Path, recursive: bool, out: &mut Vec<(String, PathBuf, std::fs::M
         if !visited.insert(std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone())) {
             continue;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        let mut items: Vec<_> = rd.flatten().filter_map(|e| Some((e.file_name().into_string().ok()?, e.path()))).collect();
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut items: Vec<_> = rd
+            .flatten()
+            .filter_map(|e| Some((e.file_name().into_string().ok()?, e.path())))
+            .collect();
         items.sort();
         for (name, path) in items.into_iter().rev() {
             if name.starts_with('.') || out.len() >= MAX_IMAGES {
                 continue;
             }
-            let Ok(meta) = std::fs::metadata(&path) else { continue };
-            let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            let child = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
             if meta.is_dir() {
                 if recursive && depth < MAX_DEPTH && name != "@eaDir" {
                     stack.push((path, child, depth + 1));
@@ -81,39 +92,85 @@ fn walk(root: &Path, recursive: bool, out: &mut Vec<(String, PathBuf, std::fs::M
 
 impl Images {
     pub fn new(dirs: Vec<PathBuf>, uploads: PathBuf, cache_dir: PathBuf) -> Images {
-        Images { dirs, uploads, cache_dir, index: Mutex::new(None), upload_lock: Mutex::new(()) }
+        Images {
+            dirs,
+            uploads,
+            cache_dir,
+            index: Mutex::new(None),
+            upload_lock: Mutex::new(()),
+        }
     }
 
     fn build(&self) -> ImageIndex {
         let mut items = Vec::new();
-        let mut add = |key: String, name: &str, folder: String, path: PathBuf, meta: &std::fs::Metadata, upload: bool| {
+        let mut add = |key: String,
+                       name: &str,
+                       folder: String,
+                       path: PathBuf,
+                       meta: &std::fs::Metadata,
+                       upload: bool| {
             let mtime_ns = util::mtime_ns(meta);
             items.push(ImageItem {
-                entry: ImageEntry { id: id_of(&key), name: name.to_string(), folder, size: meta.len(), modified: mtime_ns / 1_000_000_000 },
+                entry: ImageEntry {
+                    id: id_of(&key),
+                    name: name.to_string(),
+                    folder,
+                    size: meta.len(),
+                    modified: mtime_ns / 1_000_000_000,
+                },
                 path,
                 upload,
                 mtime_ns,
             });
         };
         for (i, root) in self.dirs.iter().enumerate() {
-            let root_name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| root.to_string_lossy().into_owned());
+            let root_name = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string_lossy().into_owned());
             let mut files = Vec::new();
             walk(root, true, &mut files);
             for (rel, path, meta) in files {
                 let (parent, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
-                let folder = if parent.is_empty() { root_name.clone() } else { format!("{root_name}/{parent}") };
-                add(format!("{i}/{rel}"), name, folder, path.clone(), &meta, false);
+                let folder = if parent.is_empty() {
+                    root_name.clone()
+                } else {
+                    format!("{root_name}/{parent}")
+                };
+                add(
+                    format!("{i}/{rel}"),
+                    name,
+                    folder,
+                    path.clone(),
+                    &meta,
+                    false,
+                );
             }
         }
         let mut files = Vec::new();
         walk(&self.uploads, false, &mut files);
         for (rel, path, meta) in files {
-            add(format!("uploads/{rel}"), &rel.clone(), "uploads".into(), path.clone(), &meta, true);
+            add(
+                format!("uploads/{rel}"),
+                &rel.clone(),
+                "uploads".into(),
+                path.clone(),
+                &meta,
+                true,
+            );
         }
         let mut by_id = HashMap::new();
         items.retain(|it| by_id.insert(it.entry.id.clone(), ()).is_none());
-        let by_id = items.iter().enumerate().map(|(i, it)| (it.entry.id.clone(), i)).collect();
-        ImageIndex { built: Instant::now(), items, by_id }
+        let by_id = items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| (it.entry.id.clone(), i))
+            .collect();
+        ImageIndex {
+            built: Instant::now(),
+            items,
+            by_id,
+        }
     }
 
     /// The current listing (rebuilt when older than a few seconds).
@@ -138,7 +195,13 @@ impl Images {
     }
 
     pub fn list_json(&self) -> Value {
-        Value::Array(self.index().items.iter().map(|i| i.entry.to_json()).collect())
+        Value::Array(
+            self.index()
+                .items
+                .iter()
+                .map(|i| i.entry.to_json())
+                .collect(),
+        )
     }
 
     /// Looks up an image; an unknown id triggers one refresh of a listing
@@ -155,7 +218,8 @@ impl Images {
     /// Cache file of a scaled version.
     pub fn scaled_path(&self, item: &ImageItem, size: u32) -> PathBuf {
         let stamp = util::fnv1a64(format!("{}:{}", item.mtime_ns, item.entry.size).as_bytes());
-        self.cache_dir.join(format!("{}_{size}_{stamp:016x}.jpg", item.entry.id))
+        self.cache_dir
+            .join(format!("{}_{size}_{stamp:016x}.jpg", item.entry.id))
     }
 
     /// Stores an uploaded image (raw body, client file name from `X-Filename`).
@@ -164,18 +228,35 @@ impl Images {
             return Err((400, "empty upload".into()));
         }
         if body.len() > MAX_UPLOAD {
-            return Err((413, format!("image larger than {} MB", MAX_UPLOAD / (1024 * 1024))));
+            return Err((
+                413,
+                format!("image larger than {} MB", MAX_UPLOAD / (1024 * 1024)),
+            ));
         }
-        let format = bl_image::probe_format(body).ok_or((415, "not a supported image format (JPEG, PNG, BMP, GIF, WebP)".to_string()))?;
-        let raw = filename.map(|f| bl_net::http::percent_decode(f, false)).unwrap_or_default();
+        let format = bl_image::probe_format(body).ok_or((
+            415,
+            "not a supported image format (JPEG, PNG, BMP, GIF, WebP)".to_string(),
+        ))?;
+        let raw = filename
+            .map(|f| bl_net::http::percent_decode(f, false))
+            .unwrap_or_default();
         let stem = util::sanitize_stem(&raw);
         let ext = util::image_format_ext(format);
-        std::fs::create_dir_all(&self.uploads).map_err(|e| (500, format!("cannot create upload folder: {e}")))?;
+        std::fs::create_dir_all(&self.uploads)
+            .map_err(|e| (500, format!("cannot create upload folder: {e}")))?;
         let _g = self.upload_lock.lock().unwrap_or_else(|e| e.into_inner());
         for n in 1..=1000 {
-            let name = if n == 1 { format!("{stem}.{ext}") } else { format!("{stem} ({n}).{ext}") };
+            let name = if n == 1 {
+                format!("{stem}.{ext}")
+            } else {
+                format!("{stem} ({n}).{ext}")
+            };
             let path = self.uploads.join(&name);
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
                 Ok(mut f) => {
                     if let Err(e) = f.write_all(body).and_then(|_| f.sync_all()) {
                         drop(f);
@@ -191,7 +272,9 @@ impl Images {
                         name,
                         folder: "uploads".into(),
                         size: body.len() as u64,
-                        modified: meta.map(|m| util::mtime_ns(&m) / 1_000_000_000).unwrap_or_else(util::now_secs),
+                        modified: meta
+                            .map(|m| util::mtime_ns(&m) / 1_000_000_000)
+                            .unwrap_or_else(util::now_secs),
                     });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

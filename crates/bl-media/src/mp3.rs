@@ -24,11 +24,19 @@ pub(crate) struct MpegHeader {
 }
 
 const BITRATES: [[u16; 15]; 5] = [
-    [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448], // V1 L1
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],    // V1 L2
-    [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],     // V1 L3
-    [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],    // V2 L1
-    [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],         // V2 L2/L3
+    [
+        0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448,
+    ], // V1 L1
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384,
+    ], // V1 L2
+    [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ], // V1 L3
+    [
+        0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256,
+    ], // V2 L1
+    [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160], // V2 L2/L3
 ];
 
 /// Parses a 4-byte frame header. Free-format streams are not accepted.
@@ -211,29 +219,48 @@ impl Layout {
     fn total_frames(&self) -> u64 {
         let h = &self.header;
         match self.vbr.and_then(|v| v.frames.map(|f| (f, v))) {
-            Some((frames, v)) => (frames as u64 * h.samples as u64).saturating_sub(v.delay as u64 + v.padding as u64),
+            Some((frames, v)) => {
+                (frames as u64 * h.samples as u64).saturating_sub(v.delay as u64 + v.padding as u64)
+            }
             None => {
                 // CBR estimate from the stream size and first frame bitrate.
                 let bytes = self.audio_end.saturating_sub(self.first_frame);
-                mul_div(bytes, 8 * h.sample_rate as u64, h.bitrate_kbps as u64 * 1000)
+                mul_div(
+                    bytes,
+                    8 * h.sample_rate as u64,
+                    h.bitrate_kbps as u64 * 1000,
+                )
             }
         }
     }
 }
 
-fn scan_layout<R: Read + Seek + ?Sized>(r: &mut R, audio_start: u64, audio_end: u64) -> Result<Layout, Error> {
+fn scan_layout<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    audio_start: u64,
+    audio_end: u64,
+) -> Result<Layout, Error> {
     // Look for the first frame within the first 256 KiB after the tags.
     let mut buf = vec![0u8; (audio_end.saturating_sub(audio_start)).min(256 * 1024) as usize];
     r.seek(SeekFrom::Start(audio_start))?;
     let n = read_up_to(r, &mut buf)?;
     buf.truncate(n);
-    let (off, header) = find_sync(&buf, 2).ok_or_else(|| Error::InvalidData("no MPEG audio frame found".into()))?;
+    let (off, header) =
+        find_sync(&buf, 2).ok_or_else(|| Error::InvalidData("no MPEG audio frame found".into()))?;
     let frame = &buf[off..(off + header.frame_len).min(buf.len())];
     let vbr = parse_vbr_header(frame, &header);
-    Ok(Layout { header, first_frame: audio_start + off as u64, audio_end, vbr })
+    Ok(Layout {
+        header,
+        first_frame: audio_start + off as u64,
+        audio_end,
+        vbr,
+    })
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let mut tags = Tags::default();
@@ -246,8 +273,14 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
     let h = layout.header;
     let total = layout.total_frames();
     let bitrate = match layout.vbr {
-        Some(VbrInfo { frames: Some(_), bytes, .. }) => {
-            let bytes = bytes.map_or(end.audio_end.saturating_sub(layout.first_frame), |b| b as u64);
+        Some(VbrInfo {
+            frames: Some(_),
+            bytes,
+            ..
+        }) => {
+            let bytes = bytes.map_or(end.audio_end.saturating_sub(layout.first_frame), |b| {
+                b as u64
+            });
             bitrate_kbps(bytes, total, h.sample_rate)
         }
         _ => Some(h.bitrate_kbps),
@@ -280,13 +313,27 @@ pub(crate) fn open(mut src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> 
     let end = tags::read_end_tags(&mut src, file_len, None)?;
     let layout = scan_layout(&mut src, audio_start, end.audio_end)?;
     let win = Window::new(src, 0, end.audio_end)?;
-    let dec = bl_mp3::Mp3Decoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
+    let dec =
+        bl_mp3::Mp3Decoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
     let spec = AudioSpec {
-        sample_rate: if dec.sample_rate() > 0 { dec.sample_rate() } else { layout.header.sample_rate },
-        channels: if dec.channels() > 0 { dec.channels() } else { layout.header.channels },
+        sample_rate: if dec.sample_rate() > 0 {
+            dec.sample_rate()
+        } else {
+            layout.header.sample_rate
+        },
+        channels: if dec.channels() > 0 {
+            dec.channels()
+        } else {
+            layout.header.channels
+        },
     };
     let total = dec.total_frames().or(Some(layout.total_frames()));
-    Ok(Box::new(Mp3Adapter { dec, codec: codec_name(layout.header.layer), total, spec }))
+    Ok(Box::new(Mp3Adapter {
+        dec,
+        codec: codec_name(layout.header.layer),
+        total,
+        spec,
+    }))
 }
 
 impl Decoder for Mp3Adapter {
@@ -320,7 +367,16 @@ mod tests {
     fn header() {
         // MPEG-1 Layer III, 128 kbps, 44.1 kHz, stereo.
         let h = parse_header(&[0xff, 0xfb, 0x90, 0x00]).unwrap();
-        assert_eq!((h.version, h.layer, h.bitrate_kbps, h.sample_rate, h.channels), (1, 3, 128, 44100, 2));
+        assert_eq!(
+            (
+                h.version,
+                h.layer,
+                h.bitrate_kbps,
+                h.sample_rate,
+                h.channels
+            ),
+            (1, 3, 128, 44100, 2)
+        );
         assert_eq!(h.frame_len, 417);
         assert!(parse_header(&[0xff, 0xfb, 0xf0, 0x00]).is_none());
         assert!(parse_header(&[0xff, 0xf1, 0x50, 0x80]).is_none()); // ADTS (layer 0)

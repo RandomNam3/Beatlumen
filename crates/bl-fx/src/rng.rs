@@ -12,7 +12,9 @@ impl Rng {
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         z ^= z >> 31;
-        Rng { state: if z == 0 { 0x2545_f491_4f6c_dd1d } else { z } }
+        Rng {
+            state: if z == 0 { 0x2545_f491_4f6c_dd1d } else { z },
+        }
     }
 
     pub fn next_u64(&mut self) -> u64 {
@@ -40,8 +42,11 @@ impl Rng {
 
     /// A 21 character URL-safe id (like nanoid).
     pub fn id(&mut self) -> String {
-        const ALPHABET: &[u8; 64] = b"useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
-        (0..21).map(|_| ALPHABET[(self.next_u64() >> 58) as usize] as char).collect()
+        const ALPHABET: &[u8; 64] =
+            b"useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+        (0..21)
+            .map(|_| ALPHABET[(self.next_u64() >> 58) as usize] as char)
+            .collect()
     }
 }
 

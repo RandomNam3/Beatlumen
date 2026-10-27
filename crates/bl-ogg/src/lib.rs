@@ -58,7 +58,11 @@ fn crc_table() -> &'static [u32; 256] {
         for (i, e) in t.iter_mut().enumerate() {
             let mut r = (i as u32) << 24;
             for _ in 0..8 {
-                r = if r & 0x8000_0000 != 0 { (r << 1) ^ 0x04c1_1db7 } else { r << 1 };
+                r = if r & 0x8000_0000 != 0 {
+                    (r << 1) ^ 0x04c1_1db7
+                } else {
+                    r << 1
+                };
             }
             *e = r;
         }
@@ -137,7 +141,15 @@ pub fn read_page<R: Read + Seek>(r: &mut R) -> io::Result<Option<Page>> {
             filled = 0;
             continue;
         }
-        return Ok(Some(Page { header_type, granule, serial, sequence, lacing, data, offset }));
+        return Ok(Some(Page {
+            header_type,
+            granule,
+            serial,
+            sequence,
+            lacing,
+            data,
+            offset,
+        }));
     }
 }
 
@@ -260,7 +272,11 @@ impl<R: Read + Seek> PacketReader<R> {
             self.pending.push_back(Packet {
                 serial: page.serial,
                 data,
-                granule: if last && page.granule >= 0 { Some(page.granule as u64) } else { None },
+                granule: if last && page.granule >= 0 {
+                    Some(page.granule as u64)
+                } else {
+                    None
+                },
                 bos: page.is_bos() && i == 0,
                 eos: page.is_eos() && last,
             });
@@ -356,7 +372,14 @@ impl<R: Read + Seek> PacketReader<R> {
 }
 
 /// Builds an Ogg page (used by tests and tools).
-pub fn write_page(out: &mut Vec<u8>, header_type: u8, granule: i64, serial: u32, sequence: u32, packets: &[&[u8]]) {
+pub fn write_page(
+    out: &mut Vec<u8>,
+    header_type: u8,
+    granule: i64,
+    serial: u32,
+    sequence: u32,
+    packets: &[&[u8]],
+) {
     let mut lacing = Vec::new();
     let mut data = Vec::new();
     for p in packets {

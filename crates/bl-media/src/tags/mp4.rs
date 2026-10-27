@@ -67,16 +67,20 @@ fn parse_itunsmpb(s: &str) -> Option<ITunSmpb> {
 
 /// Returns `(type indicator, value)` of every `data` box in an item.
 fn data_boxes(item: &[u8]) -> impl Iterator<Item = (u32, &[u8])> {
-    BoxIter::new(item).filter(|(t, _)| t == b"data").filter_map(|(_, b)| {
-        let typ = be32(b, 0)? & 0x00ff_ffff;
-        Some((typ, b.get(8..)?))
-    })
+    BoxIter::new(item)
+        .filter(|(t, _)| t == b"data")
+        .filter_map(|(_, b)| {
+            let typ = be32(b, 0)? & 0x00ff_ffff;
+            Some((typ, b.get(8..)?))
+        })
 }
 
 fn data_text(typ: u32, v: &[u8]) -> String {
     if typ == 2 {
         let units = v.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]]));
-        char::decode_utf16(units).map(|c| c.unwrap_or('\u{fffd}')).collect()
+        char::decode_utf16(units)
+            .map(|c| c.unwrap_or('\u{fffd}'))
+            .collect()
     } else {
         String::from_utf8_lossy(v).into_owned()
     }
@@ -90,7 +94,9 @@ pub(crate) fn parse_keys(b: &[u8]) -> Vec<String> {
     let mut keys = Vec::new();
     let mut pos = 8usize;
     for _ in 0..count.min(4096) {
-        let Some(size) = be32(b, pos).map(|s| s as usize) else { break };
+        let Some(size) = be32(b, pos).map(|s| s as usize) else {
+            break;
+        };
         if size < 8 || pos + size > b.len() {
             break;
         }
@@ -102,7 +108,12 @@ pub(crate) fn parse_keys(b: &[u8]) -> Vec<String> {
 
 /// Parses the body of an `ilst` box. `keys` maps integer item types to
 /// names (QuickTime `mdta` metadata). Returns iTunes gapless info if present.
-pub(crate) fn parse_ilst(data: &[u8], keys: &[String], tags: &mut Tags, mut pictures: Option<&mut Vec<Picture>>) -> Option<ITunSmpb> {
+pub(crate) fn parse_ilst(
+    data: &[u8],
+    keys: &[String],
+    tags: &mut Tags,
+    mut pictures: Option<&mut Vec<Picture>>,
+) -> Option<ITunSmpb> {
     let mut smpb = None;
     for (typ, item) in BoxIter::new(data) {
         let index = u32::from_be_bytes(typ) as usize;
@@ -125,7 +136,12 @@ pub(crate) fn parse_ilst(data: &[u8], keys: &[String], tags: &mut Tags, mut pict
                     }
                 } else if (ty == 13 || ty == 14) && keys[index - 1].ends_with("artwork") {
                     if let Some(p) = pictures.as_deref_mut() {
-                        p.push(make_picture(if ty == 13 { "image/jpeg" } else { "image/png" }, 3, "", v.to_vec()));
+                        p.push(make_picture(
+                            if ty == 13 { "image/jpeg" } else { "image/png" },
+                            3,
+                            "",
+                            v.to_vec(),
+                        ));
                     }
                 }
             }
@@ -137,7 +153,9 @@ pub(crate) fn parse_ilst(data: &[u8], keys: &[String], tags: &mut Tags, mut pict
                 let mut value = None;
                 for (t, b) in BoxIter::new(item) {
                     match &t {
-                        b"name" if b.len() >= 4 => name = String::from_utf8_lossy(&b[4..]).into_owned(),
+                        b"name" if b.len() >= 4 => {
+                            name = String::from_utf8_lossy(&b[4..]).into_owned()
+                        }
                         b"data" if b.len() >= 8 => {
                             let ty = be32(b, 0).unwrap_or(1) & 0x00ff_ffff;
                             value = Some(data_text(ty, &b[8..]));
@@ -187,13 +205,18 @@ pub(crate) fn parse_ilst(data: &[u8], keys: &[String], tags: &mut Tags, mut pict
             }
             b"gnre" => {
                 if let Some((_, v)) = data_boxes(item).next() {
-                    if let Some(g) = be16(v, 0).and_then(|i| (i as usize).checked_sub(1)).and_then(id3v1_genre) {
+                    if let Some(g) = be16(v, 0)
+                        .and_then(|i| (i as usize).checked_sub(1))
+                        .and_then(id3v1_genre)
+                    {
                         set_str(&mut tags.genre, g);
                     }
                 }
             }
             _ => {
-                let Some((ty, v)) = data_boxes(item).next() else { continue };
+                let Some((ty, v)) = data_boxes(item).next() else {
+                    continue;
+                };
                 if ty != 1 && ty != 2 {
                     continue;
                 }
@@ -254,7 +277,10 @@ pub(crate) mod tests {
         let mut free = Vec::new();
         free.extend(mkbox(b"mean", b"\0\0\0\0com.apple.iTunes"));
         free.extend(mkbox(b"name", b"\0\0\0\0iTunSMPB"));
-        free.extend(data_box(1, b" 00000000 00000840 000001CA 00000000000F34B6 00000000"));
+        free.extend(data_box(
+            1,
+            b" 00000000 00000840 000001CA 00000000000F34B6 00000000",
+        ));
         ilst.extend(mkbox(b"----", &free));
         let mut tags = Tags::default();
         let mut pics = Vec::new();
@@ -266,6 +292,13 @@ pub(crate) mod tests {
         assert_eq!(tags.genre.as_deref(), Some("Rock"));
         assert_eq!(tags.replaygain_track_gain, Some(-4.0));
         assert_eq!(pics[0].mime, "image/png");
-        assert_eq!(smpb, Some(ITunSmpb { delay: 0x840, padding: 0x1ca, samples: 0xf34b6 }));
+        assert_eq!(
+            smpb,
+            Some(ITunSmpb {
+                delay: 0x840,
+                padding: 0x1ca,
+                samples: 0xf34b6
+            })
+        );
     }
 }

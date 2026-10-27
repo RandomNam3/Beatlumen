@@ -63,7 +63,9 @@ impl StreamInfo {
             return Err(Error::Unsupported("bits per sample below 4"));
         }
         if max_block_size != 0 && min_block_size > max_block_size {
-            return Err(Error::InvalidData("STREAMINFO min block size > max block size"));
+            return Err(Error::InvalidData(
+                "STREAMINFO min block size > max block size",
+            ));
         }
         Ok(StreamInfo {
             min_block_size,
@@ -134,7 +136,11 @@ pub fn parse_seek_table(d: &[u8]) -> Vec<SeekPoint> {
                 continue;
             }
         }
-        out.push(SeekPoint { sample, offset, samples });
+        out.push(SeekPoint {
+            sample,
+            offset,
+            samples,
+        });
     }
     out
 }

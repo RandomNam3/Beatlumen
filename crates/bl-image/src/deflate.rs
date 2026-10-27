@@ -37,7 +37,11 @@ pub fn deflate(data: &[u8], level: u8) -> Vec<u8> {
 }
 
 fn deflate_into(data: &[u8], level: u8, out: &mut Vec<u8>) {
-    let mut w = BitWriter { out: std::mem::take(out), buf: 0, cnt: 0 };
+    let mut w = BitWriter {
+        out: std::mem::take(out),
+        buf: 0,
+        cnt: 0,
+    };
     if level == 0 {
         write_stored(&mut w, data, true);
     } else {
@@ -118,7 +122,13 @@ fn params(level: u8) -> Params {
         8 => (1024, 258, 32, true, 258),
         _ => (4096, 258, 32, true, 258),
     };
-    Params { max_chain, nice, good, lazy, max_lazy }
+    Params {
+        max_chain,
+        nice,
+        good,
+        lazy,
+        max_lazy,
+    }
 }
 
 const WSIZE: usize = 32768;
@@ -227,7 +237,11 @@ impl<'a> Compressor<'a> {
         }
         let mut best = prev_len.max(MIN_MATCH - 1);
         let mut best_dist = 0;
-        let mut chain = if prev_len >= self.p.good { self.p.max_chain / 4 } else { self.p.max_chain };
+        let mut chain = if prev_len >= self.p.good {
+            self.p.max_chain / 4
+        } else {
+            self.p.max_chain
+        };
         let nice = self.p.nice.min(max);
         let mut last = pos as u32;
         while cand != NIL && cand < last && pos - cand as usize <= WSIZE && chain > 0 {
@@ -261,7 +275,8 @@ impl<'a> Compressor<'a> {
 
     #[inline]
     fn emit_match(&mut self, len: usize, dist: usize) {
-        self.syms.push(MATCH_FLAG | (len as u32) << 16 | dist as u32);
+        self.syms
+            .push(MATCH_FLAG | (len as u32) << 16 | dist as u32);
         self.lit_freq[257 + len_code(len)] += 1;
         self.dist_freq[dist_code(dist)] += 1;
     }
@@ -354,7 +369,12 @@ impl<'a> Compressor<'a> {
             cl_freq[s as usize] += 1;
         }
         let cl_lens = huffman_lengths(&cl_freq, 7);
-        let hclen = 4.max(CL_ORDER.iter().rposition(|&i| cl_lens[i] != 0).map_or(0, |i| i + 1));
+        let hclen = 4.max(
+            CL_ORDER
+                .iter()
+                .rposition(|&i| cl_lens[i] != 0)
+                .map_or(0, |i| i + 1),
+        );
 
         // Cost of each alternative in bits.
         let extra_bits: u64 = (0..29)
@@ -362,8 +382,18 @@ impl<'a> Compressor<'a> {
             .chain((0..30).map(|i| self.dist_freq[i] as u64 * DIST_EXTRA[i] as u64))
             .sum();
         let sym_cost = |ll: &[u8], dl: &[u8]| -> u64 {
-            let a: u64 = self.lit_freq.iter().zip(ll).map(|(&f, &l)| f as u64 * l as u64).sum();
-            let b: u64 = self.dist_freq.iter().zip(dl).map(|(&f, &l)| f as u64 * l as u64).sum();
+            let a: u64 = self
+                .lit_freq
+                .iter()
+                .zip(ll)
+                .map(|(&f, &l)| f as u64 * l as u64)
+                .sum();
+            let b: u64 = self
+                .dist_freq
+                .iter()
+                .zip(dl)
+                .map(|(&f, &l)| f as u64 * l as u64)
+                .sum();
             a + b + extra_bits
         };
         let mut header_cost = 3 + 5 + 5 + 4 + 3 * hclen as u64;
@@ -423,7 +453,10 @@ impl<'a> Compressor<'a> {
                 let dist = (s & 0xffff) as usize;
                 let l = len_code(len);
                 w.put(lc[257 + l], lit_lens[257 + l] as u32);
-                w.put((len - LENGTH_BASE[l] as usize) as u32, LENGTH_EXTRA[l] as u32);
+                w.put(
+                    (len - LENGTH_BASE[l] as usize) as u32,
+                    LENGTH_EXTRA[l] as u32,
+                );
                 let d = dist_code(dist);
                 w.put(dc[d], dist_lens[d] as u32);
                 w.put((dist - DIST_BASE[d] as usize) as u32, DIST_EXTRA[d] as u32);
@@ -523,8 +556,12 @@ pub(crate) fn canonical_codes(lens: &[u8]) -> Vec<u32> {
 /// with zero frequency get length 0; a single used symbol gets length 1.
 pub(crate) fn huffman_lengths(freq: &[u32], max_bits: u32) -> Vec<u8> {
     let mut lens = vec![0u8; freq.len()];
-    let mut leaves: Vec<(u64, i32)> =
-        freq.iter().enumerate().filter(|(_, &f)| f > 0).map(|(i, &f)| (f as u64, i as i32)).collect();
+    let mut leaves: Vec<(u64, i32)> = freq
+        .iter()
+        .enumerate()
+        .filter(|(_, &f)| f > 0)
+        .map(|(i, &f)| (f as u64, i as i32))
+        .collect();
     let n = leaves.len();
     if n == 0 {
         return lens;
@@ -540,7 +577,10 @@ pub(crate) fn huffman_lengths(freq: &[u32], max_bits: u32) -> Vec<u8> {
     for _ in 1..max_bits {
         let prev = lists.last().map(|v| v.as_slice()).unwrap_or(&[]);
         let mut merged = Vec::with_capacity(keep);
-        let mut packages = prev.chunks_exact(2).map(|p| (p[0].0 + p[1].0, -1)).peekable();
+        let mut packages = prev
+            .chunks_exact(2)
+            .map(|p| (p[0].0 + p[1].0, -1))
+            .peekable();
         let mut li = leaves.iter().peekable();
         while merged.len() < keep {
             let take_leaf = match (li.peek(), packages.peek()) {
@@ -610,7 +650,12 @@ mod tests {
     #[test]
     fn round_trip_small() {
         for level in 0..=9 {
-            for data in [&b""[..], b"a", b"abcabcabcabcabcabcabc", b"hello hello hello world"] {
+            for data in [
+                &b""[..],
+                b"a",
+                b"abcabcabcabcabcabcabc",
+                b"hello hello hello world",
+            ] {
                 let z = zlib_compress(data, level);
                 assert_eq!(crate::inflate::zlib_decompress(&z).unwrap(), data);
             }

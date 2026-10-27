@@ -178,8 +178,21 @@ pub fn parse_header(d: &[u8]) -> Result<FrameHeader, FrameError> {
         6 => 24,
         _ => 32,
     };
-    let channels = if assignment < 8 { assignment as u32 + 1 } else { 2 };
-    Ok(FrameHeader { variable, block_size, sample_rate, assignment, channels, bps, number, len: i + 1 })
+    let channels = if assignment < 8 {
+        assignment as u32 + 1
+    } else {
+        2
+    };
+    Ok(FrameHeader {
+        variable,
+        block_size,
+        sample_rate,
+        assignment,
+        channels,
+        bps,
+        number,
+        len: i + 1,
+    })
 }
 
 /// Reusable frame decoder holding the decoded samples of the last frame.
@@ -206,7 +219,12 @@ impl FrameDecoder {
     /// from the same bytes. `bps` is the effective bit depth (from the header
     /// or STREAMINFO). Returns the total frame length in bytes. On error the
     /// previously decoded frame is invalidated.
-    pub fn decode(&mut self, data: &[u8], hdr: &FrameHeader, bps: u32) -> Result<usize, FrameError> {
+    pub fn decode(
+        &mut self,
+        data: &[u8],
+        hdr: &FrameHeader,
+        bps: u32,
+    ) -> Result<usize, FrameError> {
         self.block_size = 0;
         if !(4..=32).contains(&bps) {
             return Err(FrameError::Invalid("unsupported bit depth"));
@@ -320,7 +338,11 @@ fn subframe_header(br: &mut BitReader, bps: u32) -> Result<(u32, u32), FrameErro
     if h & 0x80 != 0 {
         return Err(FrameError::Invalid("subframe padding bit set"));
     }
-    let wasted = if h & 1 != 0 { br.read_unary()?.saturating_add(1) } else { 0 };
+    let wasted = if h & 1 != 0 {
+        br.read_unary()?.saturating_add(1)
+    } else {
+        0
+    };
     if wasted >= bps {
         return Err(FrameError::Invalid("too many wasted bits"));
     }
@@ -397,7 +419,12 @@ fn decode_subframe(br: &mut BitReader, bps: u32, out: &mut [i32]) -> Result<(), 
 
 /// Decodes one subframe of up to 33 bits per sample (the side channel of
 /// 32-bit stereo) using 64-bit arithmetic.
-fn decode_subframe_wide(br: &mut BitReader, bps: u32, out: &mut [i64], resid: &mut [i32]) -> Result<(), FrameError> {
+fn decode_subframe_wide(
+    br: &mut BitReader,
+    bps: u32,
+    out: &mut [i64],
+    resid: &mut [i32],
+) -> Result<(), FrameError> {
     let bs = out.len();
     let (typ, wasted) = subframe_header(br, bps)?;
     let sbps = bps - wasted;
@@ -541,7 +568,11 @@ fn restore_fixed(order: usize, s: &mut [i32]) {
         4 => {
             let (mut a, mut b, mut c, mut d) = (s[3], s[2], s[1], s[0]);
             for x in &mut s[4..] {
-                let p = a.wrapping_add(c).wrapping_mul(4).wrapping_sub(b.wrapping_mul(6)).wrapping_sub(d);
+                let p = a
+                    .wrapping_add(c)
+                    .wrapping_mul(4)
+                    .wrapping_sub(b.wrapping_mul(6))
+                    .wrapping_sub(d);
                 let v = x.wrapping_add(p);
                 *x = v;
                 d = c;
@@ -588,7 +619,9 @@ fn reversed<const N: usize>(coefs: &[i32]) -> [i32; N] {
 fn lpc_i32<const N: usize>(coefs: &[i32], shift: u32, s: &mut [i32]) {
     let c = reversed::<N>(coefs);
     for i in N..s.len() {
-        let Ok(w) = <&[i32; N]>::try_from(&s[i - N..i]) else { return };
+        let Ok(w) = <&[i32; N]>::try_from(&s[i - N..i]) else {
+            return;
+        };
         let mut sum = 0i32;
         for j in 0..N {
             sum = sum.wrapping_add(c[j].wrapping_mul(w[j]));
@@ -600,7 +633,9 @@ fn lpc_i32<const N: usize>(coefs: &[i32], shift: u32, s: &mut [i32]) {
 fn lpc_i64<const N: usize>(coefs: &[i32], shift: u32, s: &mut [i32]) {
     let c = reversed::<N>(coefs);
     for i in N..s.len() {
-        let Ok(w) = <&[i32; N]>::try_from(&s[i - N..i]) else { return };
+        let Ok(w) = <&[i32; N]>::try_from(&s[i - N..i]) else {
+            return;
+        };
         let mut sum = 0i64;
         for j in 0..N {
             sum = sum.wrapping_add(c[j] as i64 * w[j] as i64);

@@ -154,10 +154,16 @@ impl AlacConfig {
             sample_rate: be32(20),
         };
         if cfg.compatible_version > 0 {
-            return Err(Error::Unsupported(format!("alac: compatible version {}", cfg.compatible_version)));
+            return Err(Error::Unsupported(format!(
+                "alac: compatible version {}",
+                cfg.compatible_version
+            )));
         }
         if !matches!(cfg.bit_depth, 16 | 20 | 24 | 32) {
-            return Err(Error::Unsupported(format!("alac: {}-bit samples", cfg.bit_depth)));
+            return Err(Error::Unsupported(format!(
+                "alac: {}-bit samples",
+                cfg.bit_depth
+            )));
         }
         if cfg.num_channels == 0 || cfg.num_channels > 8 {
             return Err(err("bad channel count"));
@@ -242,7 +248,13 @@ fn dyn_get_32bit(br: &mut BitReader, m: u32, k: u32, maxbits: u32) -> u32 {
     }
 }
 
-fn dyn_decomp(p: &AgParams, br: &mut BitReader, pc: &mut [i32], num_samples: usize, max_size: u32) -> Result<(), Error> {
+fn dyn_decomp(
+    p: &AgParams,
+    br: &mut BitReader,
+    pc: &mut [i32],
+    num_samples: usize,
+    max_size: u32,
+) -> Result<(), Error> {
     let total_bits = br.bits_total();
     let mut mb = p.mb0;
     let mut zmode = 0u32;
@@ -260,14 +272,18 @@ fn dyn_decomp(p: &AgParams, br: &mut BitReader, pc: &mut [i32], num_samples: usi
         let del = ((ndecode.wrapping_add(1) >> 1) as i32).wrapping_mul(multiplier);
         pc[c] = del;
         c += 1;
-        mb = p.pb.wrapping_mul(n.wrapping_add(zmode)).wrapping_add(mb).wrapping_sub(p.pb.wrapping_mul(mb) >> QBSHIFT);
+        mb =
+            p.pb.wrapping_mul(n.wrapping_add(zmode))
+                .wrapping_add(mb)
+                .wrapping_sub(p.pb.wrapping_mul(mb) >> QBSHIFT);
         if n > N_MAX_MEAN_CLAMP {
             mb = N_MEAN_CLAMP_VAL;
         }
         zmode = 0;
         if (mb << MMULSHIFT) < QB && c < num_samples {
             zmode = 1;
-            let k = (lead(mb) as i32 - BITOFF + ((mb.wrapping_add(MOFF)) >> MDENSHIFT) as i32).clamp(0, 31) as u32;
+            let k = (lead(mb) as i32 - BITOFF + ((mb.wrapping_add(MOFF)) >> MDENSHIFT) as i32)
+                .clamp(0, 31) as u32;
             let mz = mask(k) & p.wb;
             let n = dyn_get(br, mz, k) as usize;
             if c + n > num_samples {
@@ -312,12 +328,24 @@ fn unpc_first_order(buf: &mut [i32], num: usize, chanbits: u32) {
 }
 
 /// Dynamic predictor reconstruction (`unpc_block`).
-fn unpc_block(pc1: &[i32], out: &mut [i32], num: usize, coefs: &mut [i16], numactive: usize, chanbits: u32, denshift: u32) {
+fn unpc_block(
+    pc1: &[i32],
+    out: &mut [i32],
+    num: usize,
+    coefs: &mut [i16],
+    numactive: usize,
+    chanbits: u32,
+    denshift: u32,
+) {
     if num == 0 {
         return;
     }
     let chanshift = 32u32.wrapping_sub(chanbits);
-    let denhalf: i32 = if denshift == 0 { 0 } else { 1i32.wrapping_shl(denshift - 1) };
+    let denhalf: i32 = if denshift == 0 {
+        0
+    } else {
+        1i32.wrapping_shl(denshift - 1)
+    };
     out[0] = pc1[0];
     if numactive == 0 {
         out[1..num].copy_from_slice(&pc1[1..num]);
@@ -346,13 +374,17 @@ fn unpc_block(pc1: &[i32], out: &mut [i32], num: usize, coefs: &mut [i16], numac
         let del_in = pc1[j];
         let mut del0 = del_in;
         let sg = sign_of(del_in);
-        let del = del_in.wrapping_add(top).wrapping_add(sum1.wrapping_add(denhalf).wrapping_shr(denshift));
+        let del = del_in
+            .wrapping_add(top)
+            .wrapping_add(sum1.wrapping_add(denhalf).wrapping_shr(denshift));
         if sg > 0 {
             for (i, (c, &h)) in rc.iter_mut().zip(hist).enumerate() {
                 let dd = top.wrapping_sub(h);
                 let sgn = sign_of(dd);
                 *c = c.wrapping_sub(sgn as i16);
-                del0 = del0.wrapping_sub(((i + 1) as i32).wrapping_mul(sgn.wrapping_mul(dd).wrapping_shr(denshift)));
+                del0 = del0.wrapping_sub(
+                    ((i + 1) as i32).wrapping_mul(sgn.wrapping_mul(dd).wrapping_shr(denshift)),
+                );
                 if del0 <= 0 {
                     break;
                 }
@@ -362,7 +394,9 @@ fn unpc_block(pc1: &[i32], out: &mut [i32], num: usize, coefs: &mut [i16], numac
                 let dd = top.wrapping_sub(h);
                 let sgn = sign_of(dd);
                 *c = c.wrapping_add(sgn as i16);
-                del0 = del0.wrapping_sub(((i + 1) as i32).wrapping_mul((-sgn).wrapping_mul(dd).wrapping_shr(denshift)));
+                del0 = del0.wrapping_sub(
+                    ((i + 1) as i32).wrapping_mul((-sgn).wrapping_mul(dd).wrapping_shr(denshift)),
+                );
                 if del0 >= 0 {
                     break;
                 }
@@ -395,7 +429,13 @@ fn read_channel_params(br: &mut BitReader) -> ChannelParams {
     for c in coefs.iter_mut().take(num) {
         *c = br.read(16) as u16 as i16;
     }
-    ChannelParams { mode, den_shift, pb_factor, num, coefs }
+    ChannelParams {
+        mode,
+        den_shift,
+        pb_factor,
+        num,
+        coefs,
+    }
 }
 
 /// Apple Lossless decoder producing interleaved `f32` in WAVE order.
@@ -451,7 +491,10 @@ impl AlacDecoder {
         let start = out.len();
         out.resize(start + n * nch, 0.0);
         let dst = &mut out[start..];
-        for (frame_in, frame_out) in self.samples[..n * nch].chunks_exact(nch).zip(dst.chunks_exact_mut(nch)) {
+        for (frame_in, frame_out) in self.samples[..n * nch]
+            .chunks_exact(nch)
+            .zip(dst.chunks_exact_mut(nch))
+        {
             for (c, &v) in frame_in.iter().enumerate() {
                 frame_out[map[c]] = v as f32 * scale;
             }
@@ -505,10 +548,16 @@ impl AlacDecoder {
                         mix_bits = br.read(8);
                         mix_res = br.read(8) as u8 as i8 as i32;
                         let mut pu = read_channel_params(&mut br);
-                        let mut pv = if pair { Some(read_channel_params(&mut br)) } else { None };
+                        let mut pv = if pair {
+                            Some(read_channel_params(&mut br))
+                        } else {
+                            None
+                        };
                         let shift_reader = if bytes_shifted != 0 {
                             let sr = br.clone();
-                            br.skip(shift_bits_count as usize * num_samples * if pair { 2 } else { 1 });
+                            br.skip(
+                                shift_bits_count as usize * num_samples * if pair { 2 } else { 1 },
+                            );
                             Some(sr)
                         } else {
                             None
@@ -550,7 +599,14 @@ impl AlacDecoder {
                             *v = sr.read(bytes_shifted * 8) as u16;
                         }
                     }
-                    self.output(channel_index, pair, num_samples, mix_bits, mix_res, bytes_shifted);
+                    self.output(
+                        channel_index,
+                        pair,
+                        num_samples,
+                        mix_bits,
+                        mix_res,
+                        bytes_shifted,
+                    );
                     channel_index += if pair { 2 } else { 1 };
                     out_samples = num_samples;
                 }
@@ -600,7 +656,14 @@ impl AlacDecoder {
     }
 
     /// Entropy-decodes and runs the predictor for one channel of an element.
-    fn decode_channel(&mut self, br: &mut BitReader, p: &mut ChannelParams, second: bool, n: usize, chan_bits: u32) -> Result<(), Error> {
+    fn decode_channel(
+        &mut self,
+        br: &mut BitReader,
+        p: &mut ChannelParams,
+        second: bool,
+        n: usize,
+        chan_bits: u32,
+    ) -> Result<(), Error> {
         let cfg = self.cfg;
         let ag = AgParams {
             mb0: cfg.mb as u32,
@@ -612,18 +675,42 @@ impl AlacDecoder {
         if p.mode != 0 {
             unpc_first_order(&mut self.predictor, n, chan_bits);
         }
-        let mix = if second { &mut self.mix_v } else { &mut self.mix_u };
-        unpc_block(&self.predictor, mix, n, &mut p.coefs, p.num, chan_bits, p.den_shift);
+        let mix = if second {
+            &mut self.mix_v
+        } else {
+            &mut self.mix_u
+        };
+        unpc_block(
+            &self.predictor,
+            mix,
+            n,
+            &mut p.coefs,
+            p.num,
+            chan_bits,
+            p.den_shift,
+        );
         Ok(())
     }
 
     /// Un-mixes / shifts the decoded element and stores it in `samples`.
-    fn output(&mut self, ch: usize, pair: bool, n: usize, mix_bits: u32, mix_res: i32, bytes_shifted: u32) {
+    fn output(
+        &mut self,
+        ch: usize,
+        pair: bool,
+        n: usize,
+        mix_bits: u32,
+        mix_res: i32,
+        bytes_shifted: u32,
+    ) {
         let nch = self.cfg.num_channels as usize;
         let depth = self.cfg.bit_depth as u32;
         let shift = bytes_shifted * 8;
         let finish = |v: i32, low: u16| -> i32 {
-            let v = if shift > 0 { (v << shift) | low as i32 } else { v };
+            let v = if shift > 0 {
+                (v << shift) | low as i32
+            } else {
+                v
+            };
             match depth {
                 16 => v as i16 as i32,
                 20 => sext(v, 12),
@@ -635,7 +722,9 @@ impl AlacDecoder {
             for j in 0..n {
                 let (u, v) = (self.mix_u[j], self.mix_v[j]);
                 let (l, r) = if mix_res != 0 {
-                    let l = u.wrapping_add(v).wrapping_sub(mix_res.wrapping_mul(v).wrapping_shr(mix_bits));
+                    let l = u
+                        .wrapping_add(v)
+                        .wrapping_sub(mix_res.wrapping_mul(v).wrapping_shr(mix_bits));
                     (l, l.wrapping_sub(v))
                 } else {
                     (u, v)
@@ -697,7 +786,10 @@ mod tests {
         let mut d = AlacDecoder::new(&cookie(1, 16)).unwrap();
         let mut out = Vec::new();
         assert_eq!(d.decode_packet(&data, &mut out).unwrap(), 3);
-        assert_eq!(out, vec![1000.0 / 32768.0, -2.0 / 32768.0, 32767.0 / 32768.0]);
+        assert_eq!(
+            out,
+            vec![1000.0 / 32768.0, -2.0 / 32768.0, 32767.0 / 32768.0]
+        );
     }
 
     #[test]

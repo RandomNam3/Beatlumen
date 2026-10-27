@@ -8,7 +8,11 @@ use crate::{Picture, Tags};
 
 /// Parses a comment header body (without the codec specific packet prefix
 /// such as `\x03vorbis` or `OpusTags`).
-pub(crate) fn parse_vorbis_comment(data: &[u8], tags: &mut Tags, mut pictures: Option<&mut Vec<Picture>>) {
+pub(crate) fn parse_vorbis_comment(
+    data: &[u8],
+    tags: &mut Tags,
+    mut pictures: Option<&mut Vec<Picture>>,
+) {
     let mut c = ByteCursor::new(data);
     let Ok(vendor_len) = c.le32() else { return };
     if c.skip(vendor_len as usize).is_err() {
@@ -19,14 +23,19 @@ pub(crate) fn parse_vorbis_comment(data: &[u8], tags: &mut Tags, mut pictures: O
     let mut r128_album: Option<f32> = None;
     for _ in 0..count {
         let Ok(len) = c.le32() else { break };
-        let Ok(entry) = c.bytes(len as usize) else { break };
-        let Some(eq) = entry.iter().position(|&b| b == b'=') else { continue };
+        let Ok(entry) = c.bytes(len as usize) else {
+            break;
+        };
+        let Some(eq) = entry.iter().position(|&b| b == b'=') else {
+            continue;
+        };
         let key = String::from_utf8_lossy(&entry[..eq]).to_ascii_uppercase();
         let value = &entry[eq + 1..];
         match key.as_str() {
             "METADATA_BLOCK_PICTURE" => {
                 if let Some(p) = pictures.as_deref_mut() {
-                    if let Some(pic) = base64_decode(value).and_then(|raw| parse_flac_picture(&raw)) {
+                    if let Some(pic) = base64_decode(value).and_then(|raw| parse_flac_picture(&raw))
+                    {
                         p.push(pic);
                     }
                 }
@@ -79,7 +88,12 @@ pub(crate) fn parse_flac_picture(data: &[u8]) -> Option<Picture> {
     if mime == "-->" {
         return None;
     }
-    Some(make_picture(&mime, kind.min(255) as u8, &desc, img.to_vec()))
+    Some(make_picture(
+        &mime,
+        kind.min(255) as u8,
+        &desc,
+        img.to_vec(),
+    ))
 }
 
 #[cfg(test)]

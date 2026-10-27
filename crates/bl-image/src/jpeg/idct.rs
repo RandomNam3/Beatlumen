@@ -80,7 +80,9 @@ pub fn idct8(coef: &[i16; 64], dq: &Dequant, out: &mut [u8], off: usize, stride:
     // Rows.
     for r in 0..8 {
         let row = &ws[r * 8..r * 8 + 8];
-        let o = aan_1d([row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]]);
+        let o = aan_1d([
+            row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+        ]);
         let dst = &mut out[off + r * stride..off + r * stride + 8];
         for x in 0..8 {
             dst[x] = to_u8(o[x]);
@@ -112,7 +114,16 @@ fn aan_1d(i: [f32; 8]) -> [f32; 8] {
     let o6 = t12 - o7;
     let o5 = t11 - o6;
     let o4 = t10 - o5;
-    [e0 + o7, e1 + o6, e2 + o5, e3 + o4, e3 - o4, e2 - o5, e1 - o6, e0 - o7]
+    [
+        e0 + o7,
+        e1 + o6,
+        e2 + o5,
+        e3 + o4,
+        e3 - o4,
+        e2 - o5,
+        e1 - o6,
+        e0 - o7,
+    ]
 }
 
 /// Basis tables for the reduced IDCTs: `b[n][x][u]` = C(u)/2 *
@@ -124,7 +135,13 @@ pub struct ReducedBasis {
 
 impl ReducedBasis {
     pub fn new() -> Self {
-        let c = |u: usize| if u == 0 { std::f64::consts::FRAC_1_SQRT_2 } else { 1.0 };
+        let c = |u: usize| {
+            if u == 0 {
+                std::f64::consts::FRAC_1_SQRT_2
+            } else {
+                1.0
+            }
+        };
         let mut b4 = [[0f32; 4]; 4];
         for (x, row) in b4.iter_mut().enumerate() {
             for (u, v) in row.iter_mut().enumerate() {
@@ -193,7 +210,10 @@ pub fn idct_reduced(
             }
             for y in 0..4 {
                 for x in 0..4 {
-                    let s = b[y][0] * t[0][x] + b[y][1] * t[1][x] + b[y][2] * t[2][x] + b[y][3] * t[3][x];
+                    let s = b[y][0] * t[0][x]
+                        + b[y][1] * t[1][x]
+                        + b[y][2] * t[2][x]
+                        + b[y][3] * t[3][x];
                     out[off + y * stride + x] = to_u8(s);
                 }
             }
@@ -207,7 +227,13 @@ mod tests {
 
     fn reference(coef: &[i16; 64], q: &[u16; 64]) -> [f64; 64] {
         let mut out = [0f64; 64];
-        let c = |u: usize| if u == 0 { std::f64::consts::FRAC_1_SQRT_2 } else { 1.0 };
+        let c = |u: usize| {
+            if u == 0 {
+                std::f64::consts::FRAC_1_SQRT_2
+            } else {
+                1.0
+            }
+        };
         for y in 0..8 {
             for x in 0..8 {
                 let mut s = 0.0;
@@ -250,7 +276,12 @@ mod tests {
             idct8(&coef, &dq, &mut out, 0, 8);
             for i in 0..64 {
                 let expect = r[i].round().clamp(0.0, 255.0);
-                assert!((out[i] as f64 - expect).abs() <= 1.0, "idct mismatch {} vs {}", out[i], expect);
+                assert!(
+                    (out[i] as f64 - expect).abs() <= 1.0,
+                    "idct mismatch {} vs {}",
+                    out[i],
+                    expect
+                );
             }
             // Reduced versions approximate block averages.
             let basis = ReducedBasis::new();

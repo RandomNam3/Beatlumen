@@ -30,10 +30,17 @@ pub(crate) fn parse_streaminfo(d: &[u8]) -> Option<StreamInfo> {
     if sample_rate == 0 {
         return None;
     }
-    Some(StreamInfo { sample_rate, channels, total: (total > 0).then_some(total) })
+    Some(StreamInfo {
+        sample_rate,
+        channels,
+        total: (total > 0).then_some(total),
+    })
 }
 
-pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub(crate) fn read_info<R: Read + Seek + ?Sized>(
+    r: &mut R,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     let file_len = stream_len(r)?;
     r.seek(SeekFrom::Start(0))?;
     let mut id3_tags = Tags::default();
@@ -59,7 +66,11 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
             0 => info = parse_streaminfo(&read_vec(r, len, 1 << 16)?),
             4 => {
                 let d = read_vec(r, len, 16 << 20)?;
-                vorbis_comment::parse_vorbis_comment(&d, &mut tags, with_pictures.then_some(&mut pictures));
+                vorbis_comment::parse_vorbis_comment(
+                    &d,
+                    &mut tags,
+                    with_pictures.then_some(&mut pictures),
+                );
             }
             6 if with_pictures => {
                 let d = read_vec(r, len, 16 << 20)?;
@@ -87,7 +98,9 @@ pub(crate) fn read_info<R: Read + Seek + ?Sized>(r: &mut R, with_pictures: bool)
         sample_rate: info.sample_rate,
         channels: info.channels,
         duration_ms: info.total.map(|t| frames_to_ms(t, info.sample_rate)),
-        bitrate_kbps: info.total.and_then(|t| bitrate_kbps(audio_bytes, t, info.sample_rate)),
+        bitrate_kbps: info
+            .total
+            .and_then(|t| bitrate_kbps(audio_bytes, t, info.sample_rate)),
         tags,
         pictures,
     })
@@ -104,8 +117,12 @@ pub(crate) fn open(mut src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> 
     let file_len = stream_len(&mut src)?;
     let end = tags::read_end_tags(&mut src, file_len, None)?;
     let win = Window::new(src, 0, end.audio_end)?;
-    let dec = bl_flac::FlacDecoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
-    let spec = AudioSpec { sample_rate: dec.sample_rate(), channels: dec.channels() };
+    let dec =
+        bl_flac::FlacDecoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
+    let spec = AudioSpec {
+        sample_rate: dec.sample_rate(),
+        channels: dec.channels(),
+    };
     if spec.sample_rate == 0 || spec.channels == 0 {
         return invalid("FLAC decoder reported an empty stream format");
     }

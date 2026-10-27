@@ -55,11 +55,26 @@ fn make_tagged(c: &Case) -> Option<std::path::PathBuf> {
     let tmp = fixture_dir().join(format!("tmp_{}", c.file));
     let mut a: Vec<&str> = vec!["-i", m.to_str().unwrap()];
     if c.with_cover {
-        a.extend_from_slice(&["-i", cover.to_str().unwrap(), "-map", "0", "-map", "1", "-c:v", "copy", "-disposition:v", "attached_pic"]);
+        a.extend_from_slice(&[
+            "-i",
+            cover.to_str().unwrap(),
+            "-map",
+            "0",
+            "-map",
+            "1",
+            "-c:v",
+            "copy",
+            "-disposition:v",
+            "attached_pic",
+        ]);
     }
     a.extend_from_slice(META);
     let cover_s = cover.to_str().unwrap().to_string();
-    a.extend(c.args.iter().map(|&x| if x == "COVER" { cover_s.as_str() } else { x }));
+    a.extend(
+        c.args
+            .iter()
+            .map(|&x| if x == "COVER" { cover_s.as_str() } else { x }),
+    );
     let t = tmp.to_str().unwrap().to_string();
     a.push(&t);
     if !ffmpeg(&a) {
@@ -85,19 +100,123 @@ fn tags_and_pictures() {
         expect_picture: pic,
     };
     let cases = vec![
-        case("tag_v23.mp3", &["-c:a", "libmp3lame", "-id3v2_version", "3"], true, true, true, true, true),
-        case("tag_v24.mp3", &["-c:a", "libmp3lame", "-id3v2_version", "4"], true, true, true, true, true),
+        case(
+            "tag_v23.mp3",
+            &["-c:a", "libmp3lame", "-id3v2_version", "3"],
+            true,
+            true,
+            true,
+            true,
+            true,
+        ),
+        case(
+            "tag_v24.mp3",
+            &["-c:a", "libmp3lame", "-id3v2_version", "4"],
+            true,
+            true,
+            true,
+            true,
+            true,
+        ),
         case("tag.flac", &["-c:a", "flac"], true, true, true, true, true),
-        case("tag.ogg", &["-c:a", "libvorbis"], false, true, true, true, false),
-        case("tag.opus", &["-c:a", "libopus"], false, true, true, true, false),
+        case(
+            "tag.ogg",
+            &["-c:a", "libvorbis"],
+            false,
+            true,
+            true,
+            true,
+            false,
+        ),
+        case(
+            "tag.opus",
+            &["-c:a", "libopus"],
+            false,
+            true,
+            true,
+            true,
+            false,
+        ),
         case("tag.m4a", &["-c:a", "aac"], true, true, true, false, true),
-        case("tag_mdta.m4a", &["-c:a", "aac", "-movflags", "use_metadata_tags"], false, true, true, true, false),
-        case("tag_alac.m4a", &["-c:a", "alac"], true, true, true, false, true),
-        case("tag.mka", &["-c:a", "libopus"], false, true, true, true, false),
-        case("tag_attach.mka", &["-c:a", "libopus", "-attach", "COVER", "-metadata:s:t", "mimetype=image/png"], false, true, true, true, true),
-        case("tag.wav", &["-c:a", "pcm_s16le"], false, false, false, false, false),
-        case("tag.aiff", &["-c:a", "pcm_s16be", "-write_id3v2", "1"], true, true, true, true, true),
-        case("tag.aac", &["-c:a", "aac", "-f", "adts", "-write_id3v2", "1", "-write_apetag", "1"], false, true, true, true, false),
+        case(
+            "tag_mdta.m4a",
+            &["-c:a", "aac", "-movflags", "use_metadata_tags"],
+            false,
+            true,
+            true,
+            true,
+            false,
+        ),
+        case(
+            "tag_alac.m4a",
+            &["-c:a", "alac"],
+            true,
+            true,
+            true,
+            false,
+            true,
+        ),
+        case(
+            "tag.mka",
+            &["-c:a", "libopus"],
+            false,
+            true,
+            true,
+            true,
+            false,
+        ),
+        case(
+            "tag_attach.mka",
+            &[
+                "-c:a",
+                "libopus",
+                "-attach",
+                "COVER",
+                "-metadata:s:t",
+                "mimetype=image/png",
+            ],
+            false,
+            true,
+            true,
+            true,
+            true,
+        ),
+        case(
+            "tag.wav",
+            &["-c:a", "pcm_s16le"],
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
+        case(
+            "tag.aiff",
+            &["-c:a", "pcm_s16be", "-write_id3v2", "1"],
+            true,
+            true,
+            true,
+            true,
+            true,
+        ),
+        case(
+            "tag.aac",
+            &[
+                "-c:a",
+                "aac",
+                "-f",
+                "adts",
+                "-write_id3v2",
+                "1",
+                "-write_apetag",
+                "1",
+            ],
+            false,
+            true,
+            true,
+            true,
+            false,
+        ),
     ];
     let mut failures = Vec::new();
     for c in &cases {
@@ -116,7 +235,14 @@ fn tags_and_pictures() {
         let t = &info.tags;
         println!("{:<14} {:?}", c.file, t);
         for pic in &info.pictures {
-            println!("{:<14}   picture {} kind {} desc {:?} {} bytes", "", pic.mime, pic.kind, pic.description, pic.data.len());
+            println!(
+                "{:<14}   picture {} kind {} desc {:?} {} bytes",
+                "",
+                pic.mime,
+                pic.kind,
+                pic.description,
+                pic.data.len()
+            );
         }
         let mut check = |ok: bool, what: &str| {
             if !ok {
@@ -139,17 +265,27 @@ fn tags_and_pictures() {
         }
         if c.expect_replaygain {
             check(t.replaygain_track_gain == Some(-6.5), "replaygain gain");
-            check(t.replaygain_track_peak.is_some_and(|p| (p - 0.988).abs() < 1e-6), "replaygain peak");
+            check(
+                t.replaygain_track_peak
+                    .is_some_and(|p| (p - 0.988).abs() < 1e-6),
+                "replaygain peak",
+            );
         }
         if c.expect_picture {
             let png = std::fs::read(cover_png()).unwrap();
-            let ok = info.pictures.iter().any(|p| p.mime == "image/png" && p.data == png);
+            let ok = info
+                .pictures
+                .iter()
+                .any(|p| p.mime == "image/png" && p.data == png);
             check(ok, "picture");
         }
         // Without pictures requested, none are returned.
         let mut f = std::fs::File::open(&p).unwrap();
         let info2 = bl_media::read_info(&mut f, Some(&ext_of(&p)), false).unwrap();
-        check(info2.pictures.is_empty() && info2.tags == info.tags, "with_pictures=false");
+        check(
+            info2.pictures.is_empty() && info2.tags == info.tags,
+            "with_pictures=false",
+        );
     }
     assert!(failures.is_empty(), "failures:\n{}", failures.join("\n"));
 }
@@ -161,11 +297,29 @@ fn ape_and_id3v1_at_end() {
         eprintln!("ffmpeg not found: skipping");
         return;
     }
-    let Some(p) = make("plain.mp3", "stereo44", &["-c:a", "libmp3lame", "-id3v2_version", "0", "-write_xing", "0"]) else { return };
+    let Some(p) = make(
+        "plain.mp3",
+        "stereo44",
+        &[
+            "-c:a",
+            "libmp3lame",
+            "-id3v2_version",
+            "0",
+            "-write_xing",
+            "0",
+        ],
+    ) else {
+        return;
+    };
     let mut data = std::fs::read(&p).unwrap();
     let audio_len = data.len();
     // APEv2 tag (footer only).
-    let items: &[(&str, &str)] = &[("Title", "Ape Title"), ("Artist", "Ape Artist"), ("Track", "5/9"), ("REPLAYGAIN_TRACK_GAIN", "+1.25 dB")];
+    let items: &[(&str, &str)] = &[
+        ("Title", "Ape Title"),
+        ("Artist", "Ape Artist"),
+        ("Track", "5/9"),
+        ("REPLAYGAIN_TRACK_GAIN", "+1.25 dB"),
+    ];
     let mut body = Vec::new();
     for (k, v) in items {
         body.extend_from_slice(&(v.len() as u32).to_le_bytes());
@@ -210,5 +364,9 @@ fn ape_and_id3v1_at_end() {
     let mut d2 = bl_media::open(Box::new(std::fs::File::open(&p).unwrap()), Some("mp3")).unwrap();
     let mut out2 = Vec::new();
     while d2.next_chunk(&mut out2).unwrap() {}
-    assert_eq!(out.len(), out2.len(), "audio length changed by trailing tags ({audio_len} bytes audio)");
+    assert_eq!(
+        out.len(),
+        out2.len(),
+        "audio length changed by trailing tags ({audio_len} bytes audio)"
+    );
 }

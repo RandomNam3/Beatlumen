@@ -21,7 +21,10 @@ fn info_durations_match_ffprobe() {
     let mut failures = Vec::new();
     for fx in fixtures() {
         let Some(p) = path_of(&fx) else {
-            eprintln!("{:<18} fixture generation failed (encoder missing?)", fx.file);
+            eprintln!(
+                "{:<18} fixture generation failed (encoder missing?)",
+                fx.file
+            );
             continue;
         };
         let mut f = std::fs::File::open(&p).unwrap();
@@ -42,12 +45,18 @@ fn info_durations_match_ffprobe() {
             fx.file, info.container, info.codec, info.sample_rate, info.channels, ours, probe, diff_ms, info.bitrate_kbps, us
         );
         if info.codec != fx.codec || info.container != fx.container {
-            failures.push(format!("{}: codec/container {}/{} expected {}/{}", fx.file, info.codec, info.container, fx.codec, fx.container));
+            failures.push(format!(
+                "{}: codec/container {}/{} expected {}/{}",
+                fx.file, info.codec, info.container, fx.codec, fx.container
+            ));
         }
         // Lossy streams: ffprobe and we may disagree on priming handling.
         let tol = if fx.lossless { 2.0 } else { 70.0 };
         if diff_ms > tol {
-            failures.push(format!("{}: duration {ours:.3}s vs ffprobe {probe:.3}s", fx.file));
+            failures.push(format!(
+                "{}: duration {ours:.3}s vs ffprobe {probe:.3}s",
+                fx.file
+            ));
         }
     }
     assert!(failures.is_empty(), "failures:\n{}", failures.join("\n"));
@@ -80,17 +89,26 @@ fn decode_matches_ffmpeg() {
         let ch = spec.channels as usize;
         reference.drain(..(fx.ref_skip * ch).min(reference.len()));
         let frames = ours.len() / ch.max(1);
-        let ref_frames = if fx.master_len { master_frames(&fx) } else { reference.len() / ch.max(1) };
+        let ref_frames = if fx.master_len {
+            master_frames(&fx)
+        } else {
+            reference.len() / ch.max(1)
+        };
         let audio_secs = frames as f64 / spec.sample_rate as f64;
         let (max_err, snr) = compare(&ours, &reference);
-        let offset = if fx.lossless || snr > 30.0 { 0 } else { best_offset(&ours, &reference, ch, 3000) };
+        let offset = if fx.lossless || snr > 30.0 {
+            0
+        } else {
+            best_offset(&ours, &reference, ch, 3000)
+        };
         // Gapless alignment against the original signal (same rate only).
         let (m_spec, _, m_samples, _) = decode_all(&master(fx.master)).unwrap();
-        let master_offset = if m_spec.sample_rate == spec.sample_rate && m_spec.channels == spec.channels {
-            Some(best_offset(&ours, &m_samples, ch, 2500))
-        } else {
-            None
-        };
+        let master_offset =
+            if m_spec.sample_rate == spec.sample_rate && m_spec.channels == spec.channels {
+                Some(best_offset(&ours, &m_samples, ch, 2500))
+            } else {
+                None
+            };
         println!(
             "dec  {:<18} {:<6} {} ch {:>6} Hz frames {:>7} (ffmpeg {:>7}, total_frames {:?})  max_err {:.2e}  SNR {:6.1} dB  {} vs-master offset {:?}  speed {:.0}x",
             fx.file,
@@ -107,14 +125,20 @@ fn decode_matches_ffmpeg() {
             audio_secs / secs.max(1e-9)
         );
         if fx.align.is_some() && master_offset != fx.align {
-            failures.push(format!("{}: offset against the source signal {master_offset:?}, expected {:?}", fx.file, fx.align));
+            failures.push(format!(
+                "{}: offset against the source signal {master_offset:?}, expected {:?}",
+                fx.file, fx.align
+            ));
         }
         if codec != fx.codec {
             failures.push(format!("{}: codec name {codec}", fx.file));
         }
         if fx.lossless {
             if frames != ref_frames || max_err > 1e-6 {
-                failures.push(format!("{}: lossless mismatch (frames {frames} vs {ref_frames}, max err {max_err})", fx.file));
+                failures.push(format!(
+                    "{}: lossless mismatch (frames {frames} vs {ref_frames}, max err {max_err})",
+                    fx.file
+                ));
             }
         } else if frames.abs_diff(ref_frames) > 0 || snr < 40.0 {
             failures.push(format!("{}: lossy mismatch (frames {frames} vs {ref_frames}, SNR {snr:.1} dB, offset {offset})", fx.file));
@@ -143,7 +167,13 @@ fn seek_is_sample_accurate() {
         let ch = spec.channels as usize;
         let frames = (full.len() / ch) as u64;
         let mut worst = (0f32, f64::INFINITY);
-        for &target in &[frames / 2 + 1234, 777, spec.sample_rate as u64 + 1, frames.saturating_sub(5000), 0] {
+        for &target in &[
+            frames / 2 + 1234,
+            777,
+            spec.sample_rate as u64 + 1,
+            frames.saturating_sub(5000),
+            0,
+        ] {
             let len = 4096usize.min((frames - target.min(frames)) as usize);
             let (at, got) = match decode_after_seek(&p, target, len) {
                 Ok(v) => v,
@@ -154,14 +184,22 @@ fn seek_is_sample_accurate() {
             };
             let want = &full[target as usize * ch..(target as usize + len) * ch];
             if at != target || got.len() != want.len() {
-                failures.push(format!("{}: seek to {target}: positioned at {at}, got {} of {} samples", fx.file, got.len(), want.len()));
+                failures.push(format!(
+                    "{}: seek to {target}: positioned at {at}, got {} of {} samples",
+                    fx.file,
+                    got.len(),
+                    want.len()
+                ));
                 continue;
             }
             let (m, s) = compare(&got, want);
             worst.0 = worst.0.max(m);
             worst.1 = worst.1.min(s);
         }
-        println!("seek {:<18} worst max_err {:.2e}  worst SNR {:6.1} dB", fx.file, worst.0, worst.1);
+        println!(
+            "seek {:<18} worst max_err {:.2e}  worst SNR {:6.1} dB",
+            fx.file, worst.0, worst.1
+        );
         // Exact formats must be bit identical; Opus decoder state only
         // converges during the pre-roll.
         // ffmpeg's AAC encoder uses perceptual noise substitution by
@@ -173,7 +211,10 @@ fn seek_is_sample_accurate() {
             _ => 90.0,
         };
         if worst.1 < need {
-            failures.push(format!("{}: seek output differs (SNR {:.1} dB)", fx.file, worst.1));
+            failures.push(format!(
+                "{}: seek output differs (SNR {:.1} dB)",
+                fx.file, worst.1
+            ));
         }
     }
     assert!(failures.is_empty(), "failures:\n{}", failures.join("\n"));

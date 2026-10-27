@@ -16,7 +16,10 @@ pub mod rng;
 pub mod schema;
 pub mod tween;
 
-pub use engine::{Engine, FilterView, FrameInput, FrameView, ImageRef, MotionBlur, SceneView, TransitionKind, TransitionView};
+pub use engine::{
+    Engine, FilterView, FrameInput, FrameView, ImageRef, MotionBlur, SceneView, TransitionKind,
+    TransitionView,
+};
 pub use particles::ParticleInstance;
 pub use preset::{Effect, Preset};
 pub use rng::Rng;

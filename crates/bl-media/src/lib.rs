@@ -179,8 +179,10 @@ pub struct MediaInfo {
 
 /// File extensions (lower case, without dot) the library scanner should
 /// consider.
-pub const SUPPORTED_EXTENSIONS: &[&str] =
-    &["mp3", "mp2", "flac", "ogg", "oga", "opus", "m4a", "m4b", "mp4", "aac", "wav", "wave", "aif", "aiff", "aifc", "mka", "webm"];
+pub const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "mp3", "mp2", "flac", "ogg", "oga", "opus", "m4a", "m4b", "mp4", "aac", "wav", "wave", "aif",
+    "aiff", "aifc", "mka", "webm",
+];
 
 pub fn is_supported_extension(ext: &str) -> bool {
     let e = ext.to_ascii_lowercase();
@@ -207,7 +209,11 @@ pub fn open(mut src: Box<dyn Source>, ext_hint: Option<&str>) -> Result<Box<dyn 
 
 /// Reads stream information and tags. Pictures are only extracted when
 /// `with_pictures` is true (they can be large).
-pub fn read_info(src: &mut dyn Source, ext_hint: Option<&str>, with_pictures: bool) -> Result<MediaInfo, Error> {
+pub fn read_info(
+    src: &mut dyn Source,
+    ext_hint: Option<&str>,
+    with_pictures: bool,
+) -> Result<MediaInfo, Error> {
     use probe::Format;
     let mut r = BufReader::with_capacity(32 * 1024, src);
     let format = probe::probe(&mut r, ext_hint)?;

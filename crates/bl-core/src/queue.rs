@@ -17,7 +17,12 @@ pub struct Queue {
 
 impl Queue {
     pub fn new(items: Vec<String>, current: Option<usize>, shuffle: bool, rng: &mut Rng) -> Queue {
-        let mut q = Queue { order: (0..items.len()).collect(), items, pos: None, shuffle: false };
+        let mut q = Queue {
+            order: (0..items.len()).collect(),
+            items,
+            pos: None,
+            shuffle: false,
+        };
         if let Some(c) = current.filter(|&c| c < q.items.len()) {
             q.pos = Some(c);
         }
@@ -83,6 +88,19 @@ impl Queue {
         self.current()
     }
 
+    /// The item `next` would advance to, without advancing.
+    pub fn peek_next(&self, repeat: Repeat) -> Option<&String> {
+        let n = self.order.len();
+        let p = match self.pos {
+            _ if n == 0 => return None,
+            None => 0,
+            Some(p) if p + 1 < n => p + 1,
+            Some(_) if repeat == Repeat::Queue => 0,
+            Some(_) => return None,
+        };
+        self.items.get(self.order[p])
+    }
+
     pub fn prev(&mut self, repeat: Repeat) -> Option<&String> {
         if self.order.is_empty() {
             return None;
@@ -101,7 +119,9 @@ impl Queue {
     pub fn has_next(&self, repeat: Repeat) -> bool {
         match self.pos {
             None => !self.order.is_empty(),
-            Some(p) => p + 1 < self.order.len() || (repeat == Repeat::Queue && !self.order.is_empty()),
+            Some(p) => {
+                p + 1 < self.order.len() || (repeat == Repeat::Queue && !self.order.is_empty())
+            }
         }
     }
 
@@ -199,7 +219,11 @@ impl Queue {
     pub fn replace(&mut self, items: Vec<String>, start: usize, rng: &mut Rng) {
         self.items = items;
         self.order = (0..self.items.len()).collect();
-        self.pos = if self.items.is_empty() { None } else { Some(start.min(self.items.len() - 1)) };
+        self.pos = if self.items.is_empty() {
+            None
+        } else {
+            Some(start.min(self.items.len() - 1))
+        };
         if self.shuffle {
             self.set_shuffle(true, rng);
         }
@@ -211,7 +235,12 @@ mod tests {
     use super::*;
 
     fn q(n: usize) -> Queue {
-        Queue::new((0..n).map(|i| i.to_string()).collect(), None, false, &mut Rng::new(1))
+        Queue::new(
+            (0..n).map(|i| i.to_string()).collect(),
+            None,
+            false,
+            &mut Rng::new(1),
+        )
     }
 
     #[test]

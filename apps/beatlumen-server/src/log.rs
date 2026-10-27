@@ -34,11 +34,19 @@ pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// Current UTC time as `YYYY-MM-DD hh:mm:ss.mmmZ`.
 pub fn timestamp() -> String {
-    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = d.as_secs();
     let (y, m, day) = civil_from_days((secs / 86_400) as i64);
     let rem = secs % 86_400;
-    format!("{y:04}-{m:02}-{day:02} {:02}:{:02}:{:02}.{:03}Z", rem / 3600, rem / 60 % 60, rem % 60, d.subsec_millis())
+    format!(
+        "{y:04}-{m:02}-{day:02} {:02}:{:02}:{:02}.{:03}Z",
+        rem / 3600,
+        rem / 60 % 60,
+        rem % 60,
+        d.subsec_millis()
+    )
 }
 
 /// Writes one log line (a single `eprintln!` call so lines do not interleave).

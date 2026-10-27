@@ -29,7 +29,10 @@ pub(crate) fn read_end_tags<R: Read + Seek + ?Sized>(
     file_len: u64,
     pictures: Option<&mut Vec<Picture>>,
 ) -> Result<EndTags, Error> {
-    let mut et = EndTags { audio_end: file_len, ..Default::default() };
+    let mut et = EndTags {
+        audio_end: file_len,
+        ..Default::default()
+    };
     if file_len >= 128 {
         r.seek(SeekFrom::Start(file_len - 128))?;
         let mut b = [0u8; 128];
@@ -83,7 +86,10 @@ pub(crate) fn parse_leading_uint(s: &str) -> Option<u32> {
     if digits.is_empty() {
         return None;
     }
-    digits.parse::<u64>().ok().map(|v| v.min(u32::MAX as u64) as u32)
+    digits
+        .parse::<u64>()
+        .ok()
+        .map(|v| v.min(u32::MAX as u64) as u32)
 }
 
 /// Extracts a year from strings like "2004", "2004-05-12", "12/05/2004".
@@ -111,7 +117,9 @@ pub(crate) fn parse_float(s: &str) -> Option<f32> {
     let s = s.trim();
     let end = s
         .char_indices()
-        .find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || c == ',' || ((c == '-' || c == '+') && i == 0)))
+        .find(|&(i, c)| {
+            !(c.is_ascii_digit() || c == '.' || c == ',' || ((c == '-' || c == '+') && i == 0))
+        })
         .map_or(s.len(), |(i, _)| i);
     let num = s[..end].replace(',', ".");
     let v: f32 = num.parse().ok()?;
@@ -124,7 +132,16 @@ pub(crate) fn parse_float(s: &str) -> Option<f32> {
 
 /// Normalises a tag key: upper case, spaces/dashes become underscores.
 fn norm_key(key: &str) -> String {
-    key.trim().chars().map(|c| if c == ' ' || c == '-' { '_' } else { c.to_ascii_uppercase() }).collect()
+    key.trim()
+        .chars()
+        .map(|c| {
+            if c == ' ' || c == '-' {
+                '_'
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
+        .collect()
 }
 
 /// Applies a generic key/value pair (Vorbis comment, APE, Matroska,
@@ -142,9 +159,8 @@ pub(crate) fn apply_common(tags: &mut Tags, key: &str, value: &str) -> bool {
             let g = resolve_id3_genre(value);
             set_str(&mut tags.genre, &g)
         }
-        "DATE" | "YEAR" | "DATE_RELEASED" | "DATE_RECORDED" | "ORIGINALDATE" | "ORIGINALYEAR" | "RELEASEDATE" => {
-            set_opt(&mut tags.year, parse_year(value))
-        }
+        "DATE" | "YEAR" | "DATE_RELEASED" | "DATE_RECORDED" | "ORIGINALDATE" | "ORIGINALYEAR"
+        | "RELEASEDATE" => set_opt(&mut tags.year, parse_year(value)),
         "TRACKNUMBER" | "TRACK" | "TRACKNUM" => {
             let (n, t) = parse_number_pair(value);
             set_opt(&mut tags.track, n);
@@ -230,33 +246,208 @@ pub(crate) fn normalise_mime(mime: &str, data: &[u8]) -> String {
 /// Builds a picture record.
 pub(crate) fn make_picture(mime: &str, kind: u8, description: &str, data: Vec<u8>) -> Picture {
     let mime = normalise_mime(mime, &data);
-    Picture { mime, kind, description: description.to_string(), data }
+    Picture {
+        mime,
+        kind,
+        description: description.to_string(),
+        data,
+    }
 }
 
 /// The ID3v1 genre list including the Winamp extensions (0..=191).
 pub(crate) const ID3V1_GENRES: [&str; 192] = [
-    "Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop", "Jazz", "Metal", "New Age",
-    "Oldies", "Other", "Pop", "R&B", "Rap", "Reggae", "Rock", "Techno", "Industrial", "Alternative", "Ska",
-    "Death Metal", "Pranks", "Soundtrack", "Euro-Techno", "Ambient", "Trip-Hop", "Vocal", "Jazz+Funk", "Fusion",
-    "Trance", "Classical", "Instrumental", "Acid", "House", "Game", "Sound Clip", "Gospel", "Noise", "AlternRock",
-    "Bass", "Soul", "Punk", "Space", "Meditative", "Instrumental Pop", "Instrumental Rock", "Ethnic", "Gothic",
-    "Darkwave", "Techno-Industrial", "Electronic", "Pop-Folk", "Eurodance", "Dream", "Southern Rock", "Comedy",
-    "Cult", "Gangsta", "Top 40", "Christian Rap", "Pop/Funk", "Jungle", "Native American", "Cabaret", "New Wave",
-    "Psychedelic", "Rave", "Showtunes", "Trailer", "Lo-Fi", "Tribal", "Acid Punk", "Acid Jazz", "Polka", "Retro",
-    "Musical", "Rock & Roll", "Hard Rock", "Folk", "Folk-Rock", "National Folk", "Swing", "Fast Fusion", "Bebop",
-    "Latin", "Revival", "Celtic", "Bluegrass", "Avantgarde", "Gothic Rock", "Progressive Rock", "Psychedelic Rock",
-    "Symphonic Rock", "Slow Rock", "Big Band", "Chorus", "Easy Listening", "Acoustic", "Humour", "Speech",
-    "Chanson", "Opera", "Chamber Music", "Sonata", "Symphony", "Booty Bass", "Primus", "Porn Groove", "Satire",
-    "Slow Jam", "Club", "Tango", "Samba", "Folklore", "Ballad", "Power Ballad", "Rhythmic Soul", "Freestyle",
-    "Duet", "Punk Rock", "Drum Solo", "A capella", "Euro-House", "Dance Hall", "Goa", "Drum & Bass", "Club-House",
-    "Hardcore Techno", "Terror", "Indie", "BritPop", "Negerpunk", "Polsk Punk", "Beat", "Christian Gangsta Rap",
-    "Heavy Metal", "Black Metal", "Crossover", "Contemporary Christian", "Christian Rock", "Merengue", "Salsa",
-    "Thrash Metal", "Anime", "Jpop", "Synthpop", "Abstract", "Art Rock", "Baroque", "Bhangra", "Big Beat",
-    "Breakbeat", "Chillout", "Downtempo", "Dub", "EBM", "Eclectic", "Electro", "Electroclash", "Emo",
-    "Experimental", "Garage", "Global", "IDM", "Illbient", "Industro-Goth", "Jam Band", "Krautrock", "Leftfield",
-    "Lounge", "Math Rock", "New Romantic", "Nu-Breakz", "Post-Punk", "Post-Rock", "Psytrance", "Shoegaze",
-    "Space Rock", "Trop Rock", "World Music", "Neoclassical", "Audiobook", "Audio Theatre", "Neue Deutsche Welle",
-    "Podcast", "Indie Rock", "G-Funk", "Dubstep", "Garage Rock", "Psybient",
+    "Blues",
+    "Classic Rock",
+    "Country",
+    "Dance",
+    "Disco",
+    "Funk",
+    "Grunge",
+    "Hip-Hop",
+    "Jazz",
+    "Metal",
+    "New Age",
+    "Oldies",
+    "Other",
+    "Pop",
+    "R&B",
+    "Rap",
+    "Reggae",
+    "Rock",
+    "Techno",
+    "Industrial",
+    "Alternative",
+    "Ska",
+    "Death Metal",
+    "Pranks",
+    "Soundtrack",
+    "Euro-Techno",
+    "Ambient",
+    "Trip-Hop",
+    "Vocal",
+    "Jazz+Funk",
+    "Fusion",
+    "Trance",
+    "Classical",
+    "Instrumental",
+    "Acid",
+    "House",
+    "Game",
+    "Sound Clip",
+    "Gospel",
+    "Noise",
+    "AlternRock",
+    "Bass",
+    "Soul",
+    "Punk",
+    "Space",
+    "Meditative",
+    "Instrumental Pop",
+    "Instrumental Rock",
+    "Ethnic",
+    "Gothic",
+    "Darkwave",
+    "Techno-Industrial",
+    "Electronic",
+    "Pop-Folk",
+    "Eurodance",
+    "Dream",
+    "Southern Rock",
+    "Comedy",
+    "Cult",
+    "Gangsta",
+    "Top 40",
+    "Christian Rap",
+    "Pop/Funk",
+    "Jungle",
+    "Native American",
+    "Cabaret",
+    "New Wave",
+    "Psychedelic",
+    "Rave",
+    "Showtunes",
+    "Trailer",
+    "Lo-Fi",
+    "Tribal",
+    "Acid Punk",
+    "Acid Jazz",
+    "Polka",
+    "Retro",
+    "Musical",
+    "Rock & Roll",
+    "Hard Rock",
+    "Folk",
+    "Folk-Rock",
+    "National Folk",
+    "Swing",
+    "Fast Fusion",
+    "Bebop",
+    "Latin",
+    "Revival",
+    "Celtic",
+    "Bluegrass",
+    "Avantgarde",
+    "Gothic Rock",
+    "Progressive Rock",
+    "Psychedelic Rock",
+    "Symphonic Rock",
+    "Slow Rock",
+    "Big Band",
+    "Chorus",
+    "Easy Listening",
+    "Acoustic",
+    "Humour",
+    "Speech",
+    "Chanson",
+    "Opera",
+    "Chamber Music",
+    "Sonata",
+    "Symphony",
+    "Booty Bass",
+    "Primus",
+    "Porn Groove",
+    "Satire",
+    "Slow Jam",
+    "Club",
+    "Tango",
+    "Samba",
+    "Folklore",
+    "Ballad",
+    "Power Ballad",
+    "Rhythmic Soul",
+    "Freestyle",
+    "Duet",
+    "Punk Rock",
+    "Drum Solo",
+    "A capella",
+    "Euro-House",
+    "Dance Hall",
+    "Goa",
+    "Drum & Bass",
+    "Club-House",
+    "Hardcore Techno",
+    "Terror",
+    "Indie",
+    "BritPop",
+    "Negerpunk",
+    "Polsk Punk",
+    "Beat",
+    "Christian Gangsta Rap",
+    "Heavy Metal",
+    "Black Metal",
+    "Crossover",
+    "Contemporary Christian",
+    "Christian Rock",
+    "Merengue",
+    "Salsa",
+    "Thrash Metal",
+    "Anime",
+    "Jpop",
+    "Synthpop",
+    "Abstract",
+    "Art Rock",
+    "Baroque",
+    "Bhangra",
+    "Big Beat",
+    "Breakbeat",
+    "Chillout",
+    "Downtempo",
+    "Dub",
+    "EBM",
+    "Eclectic",
+    "Electro",
+    "Electroclash",
+    "Emo",
+    "Experimental",
+    "Garage",
+    "Global",
+    "IDM",
+    "Illbient",
+    "Industro-Goth",
+    "Jam Band",
+    "Krautrock",
+    "Leftfield",
+    "Lounge",
+    "Math Rock",
+    "New Romantic",
+    "Nu-Breakz",
+    "Post-Punk",
+    "Post-Rock",
+    "Psytrance",
+    "Shoegaze",
+    "Space Rock",
+    "Trop Rock",
+    "World Music",
+    "Neoclassical",
+    "Audiobook",
+    "Audio Theatre",
+    "Neue Deutsche Welle",
+    "Podcast",
+    "Indie Rock",
+    "G-Funk",
+    "Dubstep",
+    "Garage Rock",
+    "Psybient",
 ];
 
 pub(crate) fn id3v1_genre(idx: usize) -> Option<&'static str> {
@@ -275,7 +466,11 @@ pub(crate) fn resolve_id3_genre(s: &str) -> String {
             if !after.is_empty() {
                 // Refinement text wins ("(4)Eurodisco"); "((" escapes a
                 // literal parenthesis.
-                return if let Some(lit) = after.strip_prefix('(') { format!("({lit}") } else { after.to_string() };
+                return if let Some(lit) = after.strip_prefix('(') {
+                    format!("({lit}")
+                } else {
+                    after.to_string()
+                };
             }
             if inner == "RX" {
                 return "Remix".into();
@@ -356,7 +551,10 @@ mod tests {
     #[test]
     fn base64() {
         assert_eq!(base64_decode(b"aGVsbG8=").unwrap(), b"hello");
-        assert_eq!(base64_decode(b"aGVs\nbG8gd29ybGQ=").unwrap(), b"hello world");
+        assert_eq!(
+            base64_decode(b"aGVs\nbG8gd29ybGQ=").unwrap(),
+            b"hello world"
+        );
         assert!(base64_decode(b"a*b").is_none());
     }
 }

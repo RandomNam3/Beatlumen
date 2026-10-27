@@ -10,11 +10,18 @@ pub struct Headers(pub Vec<(String, String)>);
 
 impl Headers {
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.0.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.0
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
     pub fn set(&mut self, name: &str, value: impl Into<String>) {
         let value = value.into();
-        if let Some(slot) = self.0.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(name)) {
+        if let Some(slot) = self
+            .0
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        {
             slot.1 = value;
         } else {
             self.0.push((name.to_string(), value));
@@ -24,10 +31,12 @@ impl Headers {
         self.0.push((name.to_string(), value.into()));
     }
     pub fn content_length(&self) -> Option<u64> {
-        self.get("content-length").and_then(|v| v.trim().parse().ok())
+        self.get("content-length")
+            .and_then(|v| v.trim().parse().ok())
     }
     pub fn is_chunked(&self) -> bool {
-        self.get("transfer-encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
+        self.get("transfer-encoding")
+            .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
     }
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
@@ -40,7 +49,14 @@ pub fn read_line<R: BufRead>(r: &mut R, limit: &mut usize) -> io::Result<Option<
     loop {
         let avail = r.fill_buf()?;
         if avail.is_empty() {
-            return if buf.is_empty() { Ok(None) } else { Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated line")) };
+            return if buf.is_empty() {
+                Ok(None)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated line",
+                ))
+            };
         }
         if let Some(i) = avail.iter().position(|&b| b == b'\n') {
             buf.extend_from_slice(&avail[..i]);
@@ -51,7 +67,10 @@ pub fn read_line<R: BufRead>(r: &mut R, limit: &mut usize) -> io::Result<Option<
         buf.extend_from_slice(avail);
         r.consume(n);
         if buf.len() > *limit {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "header too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "header too large",
+            ));
         }
     }
     *limit = limit.saturating_sub(buf.len() + 2);
@@ -65,12 +84,16 @@ pub fn read_line<R: BufRead>(r: &mut R, limit: &mut usize) -> io::Result<Option<
 pub fn read_headers<R: BufRead>(r: &mut R, limit: &mut usize) -> io::Result<Headers> {
     let mut h = Headers::default();
     loop {
-        let line = read_line(r, limit)?.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in headers"))?;
+        let line = read_line(r, limit)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in headers"))?;
         if line.is_empty() {
             return Ok(h);
         }
         if h.0.len() > 200 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "too many headers"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many headers",
+            ));
         }
         if let Some((k, v)) = line.split_once(':') {
             h.0.push((k.trim().to_string(), v.trim().to_string()));
@@ -87,7 +110,11 @@ pub struct ChunkedReader<R> {
 
 impl<R: BufRead> ChunkedReader<R> {
     pub fn new(inner: R) -> Self {
-        ChunkedReader { inner, remaining: 0, done: false }
+        ChunkedReader {
+            inner,
+            remaining: 0,
+            done: false,
+        }
     }
 }
 
@@ -98,9 +125,11 @@ impl<R: BufRead> Read for ChunkedReader<R> {
         }
         if self.remaining == 0 {
             let mut limit = 4096;
-            let line = read_line(&mut self.inner, &mut limit)?.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in chunk size"))?;
+            let line = read_line(&mut self.inner, &mut limit)?
+                .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in chunk size"))?;
             let size_str = line.split(';').next().unwrap_or("").trim();
-            let size = u64::from_str_radix(size_str, 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
+            let size = u64::from_str_radix(size_str, 16)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
             if size == 0 {
                 // Trailers.
                 let mut limit = MAX_HEAD;
@@ -162,7 +191,9 @@ pub fn percent_decode(s: &str, form: bool) -> String {
     while i < b.len() {
         match b[i] {
             b'%' if i + 2 < b.len() => {
-                let h = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|x| u8::from_str_radix(x, 16).ok());
+                let h = std::str::from_utf8(&b[i + 1..i + 3])
+                    .ok()
+                    .and_then(|x| u8::from_str_radix(x, 16).ok());
                 match h {
                     Some(v) => {
                         out.push(v);
@@ -217,7 +248,9 @@ pub fn parse_query(q: &str) -> Vec<(String, String)> {
 #[allow(clippy::result_unit_err)]
 pub fn parse_range(header: Option<&str>, len: u64) -> Result<Option<(u64, u64)>, ()> {
     let Some(h) = header else { return Ok(None) };
-    let Some(spec) = h.trim().strip_prefix("bytes=") else { return Ok(None) };
+    let Some(spec) = h.trim().strip_prefix("bytes=") else {
+        return Ok(None);
+    };
     if spec.contains(',') {
         return Ok(None);
     }
@@ -234,7 +267,11 @@ pub fn parse_range(header: Option<&str>, len: u64) -> Result<Option<(u64, u64)>,
         (len.saturating_sub(n), len - 1)
     } else {
         let start: u64 = a.parse().map_err(|_| ())?;
-        let end: u64 = if b.is_empty() { len - 1 } else { b.parse::<u64>().map_err(|_| ())?.min(len - 1) };
+        let end: u64 = if b.is_empty() {
+            len - 1
+        } else {
+            b.parse::<u64>().map_err(|_| ())?.min(len - 1)
+        };
         if start > end || start >= len {
             return Err(());
         }
@@ -293,7 +330,10 @@ mod tests {
         assert_eq!(parse_range(Some("bytes=0-99"), 1000), Ok(Some((0, 99))));
         assert_eq!(parse_range(Some("bytes=500-"), 1000), Ok(Some((500, 999))));
         assert_eq!(parse_range(Some("bytes=-100"), 1000), Ok(Some((900, 999))));
-        assert_eq!(parse_range(Some("bytes=990-2000"), 1000), Ok(Some((990, 999))));
+        assert_eq!(
+            parse_range(Some("bytes=990-2000"), 1000),
+            Ok(Some((990, 999)))
+        );
         assert_eq!(parse_range(Some("bytes=1000-"), 1000), Err(()));
         assert_eq!(parse_range(None, 1000), Ok(None));
     }
