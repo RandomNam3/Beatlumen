@@ -59,6 +59,7 @@ struct UiHost {
     start: std::time::Instant,
     next_http: u64,
     http_done: Vec<(u64, Result<HttpResponse, String>)>,
+    #[cfg(not(target_arch = "wasm32"))]
     use_ui_http: bool,
 }
 
@@ -302,7 +303,8 @@ pub unsafe extern "C" fn bl_core_new(data_dir: *const c_char, args_json: *const 
         start: std::time::Instant::now(),
         next_http: 0,
         http_done: Vec::new(),
-        use_ui_http: cfg!(target_arch = "wasm32"),
+        #[cfg(not(target_arch = "wasm32"))]
+        use_ui_http: false,
     };
     let core = Core::new(&mut host, launch, &cstr(language));
     Box::into_raw(Box::new(BlCore { host, core, gl: None }))

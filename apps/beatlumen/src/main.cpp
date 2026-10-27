@@ -11,6 +11,7 @@
 #include <QSurfaceFormat>
 
 #include "bridge.h"
+#include "web.h"
 
 int main(int argc, char *argv[])
 {
@@ -53,16 +54,27 @@ int main(int argc, char *argv[])
         }
     }
 
-    Bridge bridge(args);
-    qmlRegisterSingletonInstance("Beatlumen.Core", 1, 0, "Core", &bridge);
-
-    QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("startFullscreen"), args.contains(QStringLiteral("--fullscreen")));
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(1); }, Qt::QueuedConnection);
-    engine.loadFromModule("Beatlumen", "Main");
-    if (engine.rootObjects().isEmpty())
-        return 1;
-    if (auto *w = qobject_cast<QQuickWindow *>(engine.rootObjects().first()))
-        bridge.attachWindow(w);
+    // The browser build first loads its persistent storage (async).
+    QQmlApplicationEngine *engine = nullptr;
+    Bridge *bridge = nullptr;
+    auto start = [&]() {
+        bridge = new Bridge(args, &app);
+        qmlRegisterSingletonInstance("Beatlumen.Core", 1, 0, "Core", bridge);
+        engine = new QQmlApplicationEngine(&app);
+        engine->rootContext()->setContextProperty(QStringLiteral("startFullscreen"), args.contains(QStringLiteral("--fullscreen")));
+        QObject::connect(engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(1); }, Qt::QueuedConnection);
+        engine->loadFromModule("Beatlumen", "Main");
+        if (!engine->rootObjects().isEmpty()) {
+            if (auto *w = qobject_cast<QQuickWindow *>(engine->rootObjects().first()))
+                bridge->attachWindow(w);
+        }
+    };
+    web::initStorage(start);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
+        delete engine;
+        engine = nullptr;
+        delete bridge;
+        bridge = nullptr;
+    });
     return app.exec();
 }

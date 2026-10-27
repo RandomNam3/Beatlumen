@@ -382,7 +382,10 @@ impl Core {
                 ok()
             }
             "backgrounds.addFolder" => {
+                #[cfg(not(target_arch = "wasm32"))]
                 let images: Vec<String> = library::list_images(&s("path")).into_iter().map(|p| format!("{LOCAL_PREFIX}{p}")).collect();
+                #[cfg(target_arch = "wasm32")]
+                let images: Vec<String> = Vec::new();
                 let n = images.len();
                 self.add_backgrounds(host, images, false);
                 self.toast(format!("{n} {}", self.tr("images added")), false);

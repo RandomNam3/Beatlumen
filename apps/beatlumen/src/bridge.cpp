@@ -1,5 +1,6 @@
 #include "bridge.h"
 #include "audio.h"
+#include "web.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -59,7 +60,11 @@ uint32_t audioStartCallback(void *user)
 Bridge::Bridge(const QStringList &args, QObject *parent)
     : QObject(parent)
 {
+#if defined(Q_OS_WASM)
+    const QString dataDir = web::dataDir();
+#else
     const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+#endif
     QDir().mkpath(dataDir);
     QJsonArray jargs;
     for (const QString &a : args)
@@ -70,6 +75,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     BlCallbacks cb{};
     cb.user = this;
     cb.log = logCallback;
+#if defined(Q_OS_WASM)
+    cb.http_request = web::httpRequest;
+#endif
     AudioOutput::configure(cb);
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
@@ -81,8 +89,10 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::paletteChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
-        if (s != Qt::ApplicationActive && m_core)
+        if (s != Qt::ApplicationActive && m_core) {
             bl_core_save(m_core);
+            web::persistStorage();
+        }
     });
     tick();
 }
@@ -178,6 +188,12 @@ void Bridge::tick()
     if (!m_core)
         return;
     handleEvents(takeString(bl_core_tick(m_core)));
+#if defined(Q_OS_WASM)
+    // Settings are written by the core every few seconds; mirror the data
+    // directory to IndexedDB at a similar pace.
+    if (++m_persistCounter % 300 == 0)
+        web::persistStorage();
+#endif
     const double p = bl_core_position(m_core);
     if (p != m_position) {
         m_position = p;
@@ -336,4 +352,12 @@ void Bridge::requestMediaPermission()
 void Bridge::copyText(const QString &text)
 {
     QGuiApplication::clipboard()->setText(text);
+}
+
+void Bridge::pickFiles(const QString &accept, bool multiple)
+{
+    web::pickFiles(accept, multiple, [this](const QString &name, const QByteArray &data) {
+        if (m_core)
+            bl_core_open_data(m_core, name.toUtf8().constData(), reinterpret_cast<const uint8_t *>(data.constData()), size_t(data.size()));
+    });
 }

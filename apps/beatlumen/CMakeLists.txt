@@ -29,6 +29,11 @@ if(NOT BL_RUST_TARGET)
         set(BL_RUST_TARGET wasm32-unknown-emscripten)
     endif()
 endif()
+set(BL_CARGO_ENV "")
+if(EMSCRIPTEN)
+    # Qt for WebAssembly uses JavaScript exceptions; Rust panics must not unwind.
+    set(BL_CARGO_ENV "CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-C panic=abort")
+endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(BL_CARGO_PROFILE dev)
     set(BL_CARGO_DIR debug)
@@ -52,7 +57,7 @@ endif()
 file(GLOB_RECURSE BL_RUST_SOURCES CONFIGURE_DEPENDS "${BL_WORKSPACE}/crates/*.rs" "${BL_WORKSPACE}/crates/*.toml" "${BL_WORKSPACE}/crates/*.hfx")
 add_custom_command(
     OUTPUT "${BL_CORE_LIB}"
-    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${BL_CARGO_TARGET_DIR}
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${BL_CARGO_TARGET_DIR} ${BL_CARGO_ENV}
             ${BL_CARGO} build --profile ${BL_CARGO_PROFILE} -p bl-ffi ${BL_CARGO_TARGET_ARGS}
     WORKING_DIRECTORY "${BL_WORKSPACE}"
     DEPENDS ${BL_RUST_SOURCES}
@@ -69,6 +74,7 @@ qt_add_executable(beatlumen
     src/main.cpp
     src/bridge.cpp src/bridge.h
     src/audio.cpp src/audio.h
+    src/web.cpp src/web.h
     src/core.h
 )
 target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
@@ -110,7 +116,15 @@ elseif(ANDROID)
         QT_ANDROID_VERSION_NAME "${PROJECT_VERSION}"
         QT_ANDROID_VERSION_CODE 2)
 elseif(EMSCRIPTEN)
-    target_link_options(beatlumen PRIVATE -sGL_ENABLE_GET_PROC_ADDRESS=1 -sALLOW_MEMORY_GROWTH=1 -lidbfs.js)
+    find_package(Qt6 REQUIRED COMPONENTS Network)
+    target_link_libraries(beatlumen PRIVATE Qt6::Network)
+    enable_language(ASM)
+    target_sources(beatlumen PRIVATE src/wasm_eh_tag.s)
+    set_source_files_properties(src/wasm_eh_tag.s PROPERTIES LANGUAGE ASM COMPILE_OPTIONS "-mexception-handling")
+    # No eval: the server sends a Content-Security-Policy without unsafe-eval.
+    target_link_options(beatlumen PRIVATE -sDYNAMIC_EXECUTION=0 -sGL_ENABLE_GET_PROC_ADDRESS=1 -sALLOW_MEMORY_GROWTH=1 -lidbfs.js
+        "-sEXPORTED_FUNCTIONS=_main,_malloc,_free,_bl_web_storage_ready,_bl_web_file_picked"
+        "-sEXPORTED_RUNTIME_METHODS=UTF8ToString,stringToNewUTF8,HEAPU8,HEAPF32")
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(beatlumen PRIVATE Threads::Threads ${CMAKE_DL_LIBS} m)
