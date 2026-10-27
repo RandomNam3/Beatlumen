@@ -465,12 +465,14 @@ fn webp_variants() {
             Ok(i) => i,
             Err(e) => panic!("{name}: {e}"),
         };
-        let reference = if have_convert() { convert_rgba(&p, &[]) } else { ffmpeg_rgba(&p) };
+        // ImageMagick uses libwebp (bit-exact reference); ffmpeg's native
+        // decoder upsamples chroma differently, so allow more deviation.
+        let (reference, limit) = if have_convert() { (convert_rgba(&p, &[]), 1.5) } else { (ffmpeg_rgba(&p), 2.5) };
         let (w, h, reference) = reference.unwrap();
         assert_eq!((img.width, img.height), (w, h));
         let d = diff(&img.pixels, &reference);
         println!("{name}: mean {:.4} max {} psnr {:.1} dB", d.mean, d.max, d.psnr);
-        assert!(d.mean < 1.5, "{name}: mean {:.3}", d.mean);
+        assert!(d.mean < limit, "{name}: mean {:.3}", d.mean);
     }
 }
 
