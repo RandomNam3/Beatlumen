@@ -124,6 +124,12 @@ dependencies = [
 [[package]]
 name = "openchroma-android"
 version = "0.1.0"
+dependencies = [
+ "oc-app",
+ "oc-gl",
+ "oc-image",
+ "oc-media",
+]
 
 [[package]]
 name = "openchroma-server"

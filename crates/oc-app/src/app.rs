@@ -772,10 +772,6 @@ impl App {
 
     // ---- playback ------------------------------------------------------------
 
-    pub(crate) fn current_track_id(&self) -> Option<String> {
-        self.queue.current().cloned()
-    }
-
     /// Track metadata for a queue entry (library or a bare local path).
     pub(crate) fn track_for(&self, id: &str) -> Track {
         if let Some(t) = self.library.track(id) {
@@ -1879,6 +1875,14 @@ impl App {
     // Accessors used by platform layers.
     pub fn is_playing(&self) -> bool {
         self.player.state() == PlayState::Playing
+    }
+
+    /// Rescans the configured local library folders (e.g. after the
+    /// Android media permission was granted). No-op without folders.
+    pub fn rescan_local_library(&mut self) {
+        if !self.settings.library_folders.is_empty() {
+            self.rescan_local();
+        }
     }
 }
 

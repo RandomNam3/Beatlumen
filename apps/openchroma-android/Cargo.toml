@@ -1,10 +1,17 @@
 [package]
 name = "openchroma-android"
+description = "Beatlumen for Android (NativeActivity platform layer)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
+# Loaded by NativeActivity as libbeatlumen.so (android.app.lib_name).
+name = "beatlumen"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+oc-app = { path = "../../crates/oc-app" }
+oc-gl = { path = "../../crates/oc-gl" }
+oc-media = { path = "../../crates/oc-media" }
+oc-image = { path = "../../crates/oc-image" }
