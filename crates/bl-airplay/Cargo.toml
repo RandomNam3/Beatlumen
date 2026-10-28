@@ -1,6 +1,6 @@
 [package]
 name = "bl-airplay"
-description = "AirPlay (RAOP) audio receiver: service announcement, RTSP control and the audio stream"
+description = "AirPlay (RAOP) audio receiver and sender: service announcement and discovery, RTSP control and the audio stream"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -954,6 +954,7 @@ impl Core {
                 ok()
             }
             n if n.starts_with("vault.") => self.vault_command(host, n, c),
+            n if n.starts_with("outputs.") => self.outputs_command(host, n, c),
             n if n.starts_with("push.") => self.push_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }

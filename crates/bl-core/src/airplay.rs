@@ -320,6 +320,11 @@ impl Core {
         })
     }
 
+    /// The announced name of our own receiver (not offered as a speaker).
+    pub(crate) fn airplay_instance(&self) -> Option<String> {
+        self.airplay.receiver.as_ref().map(|r| r.instance_name())
+    }
+
     pub(crate) fn airplay_json(&self) -> Value {
         Value::object()
             .with("running", self.airplay.running())

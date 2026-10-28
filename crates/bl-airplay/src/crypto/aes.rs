@@ -1,5 +1,5 @@
-//! AES-128 decryption in CBC mode (FIPS 197), for the audio packets of
-//! encrypted RAOP streams. Each packet is decrypted on its own with the
+//! AES-128 in CBC mode (FIPS 197), for the audio packets of encrypted RAOP
+//! streams (decrypted when receiving, encrypted when sending). Each packet is decrypted on its own with the
 //! stream's IV; a trailing partial block is sent in the clear.
 
 const SBOX: [u8; 256] = {
@@ -108,6 +108,39 @@ impl Aes128 {
         add(block, &self.round_keys[0]);
     }
 
+    pub fn encrypt_block(&self, block: &mut [u8; 16]) {
+        add(block, &self.round_keys[0]);
+        for round in 1..10 {
+            for b in block.iter_mut() {
+                *b = SBOX[*b as usize];
+            }
+            shift_rows(block);
+            mix_columns(block);
+            add(block, &self.round_keys[round]);
+        }
+        for b in block.iter_mut() {
+            *b = SBOX[*b as usize];
+        }
+        shift_rows(block);
+        add(block, &self.round_keys[10]);
+    }
+
+    /// Encrypts the whole 16-byte blocks of `data` in CBC mode, leaving a
+    /// trailing partial block in the clear (as RAOP senders do).
+    pub fn encrypt_cbc(&self, iv: &[u8; 16], data: &mut [u8]) {
+        let mut prev = *iv;
+        let whole = data.len() / 16 * 16;
+        for chunk in data[..whole].chunks_exact_mut(16) {
+            let mut block: [u8; 16] = chunk.try_into().expect("16 bytes");
+            for i in 0..16 {
+                block[i] ^= prev[i];
+            }
+            self.encrypt_block(&mut block);
+            chunk.copy_from_slice(&block);
+            prev = block;
+        }
+    }
+
     /// Decrypts the whole 16-byte blocks of `data` in CBC mode; a trailing
     /// partial block stays as it is (RAOP sends it unencrypted).
     pub fn decrypt_cbc(&self, iv: &[u8; 16], data: &mut [u8]) {
@@ -137,6 +170,24 @@ fn inv_shift_rows(s: &mut [u8; 16]) {
         let row = [s[r], s[4 + r], s[8 + r], s[12 + r]];
         for c in 0..4 {
             s[((c + r) % 4) * 4 + r] = row[c];
+        }
+    }
+}
+
+fn shift_rows(s: &mut [u8; 16]) {
+    for r in 1..4 {
+        let row = [s[r], s[4 + r], s[8 + r], s[12 + r]];
+        for c in 0..4 {
+            s[c * 4 + r] = row[(c + r) % 4];
+        }
+    }
+}
+
+fn mix_columns(s: &mut [u8; 16]) {
+    for c in 0..4 {
+        let a = [s[c * 4], s[c * 4 + 1], s[c * 4 + 2], s[c * 4 + 3]];
+        for r in 0..4 {
+            s[c * 4 + r] = mul(a[r], 2) ^ mul(a[(r + 1) % 4], 3) ^ a[(r + 2) % 4] ^ a[(r + 3) % 4];
         }
     }
 }
@@ -182,6 +233,33 @@ mod tests {
             .unwrap();
         Aes128::new(&key).decrypt_block(&mut block);
         assert_eq!(block.to_vec(), bytes("00112233445566778899aabbccddeeff"));
+    }
+
+    #[test]
+    fn fips197_encrypt_and_cbc_roundtrip() {
+        let key: [u8; 16] = bytes("000102030405060708090a0b0c0d0e0f")
+            .try_into()
+            .unwrap();
+        let aes = Aes128::new(&key);
+        let mut block: [u8; 16] = bytes("00112233445566778899aabbccddeeff")
+            .try_into()
+            .unwrap();
+        aes.encrypt_block(&mut block);
+        assert_eq!(block.to_vec(), bytes("69c4e0d86a7b0430d8cdb78070b4c55a"));
+        // NIST SP 800-38A F.2.1 (CBC-AES128.Encrypt), plus a clear tail.
+        let key: [u8; 16] = bytes("2b7e151628aed2a6abf7158809cf4f3c")
+            .try_into()
+            .unwrap();
+        let iv: [u8; 16] = bytes("000102030405060708090a0b0c0d0e0f")
+            .try_into()
+            .unwrap();
+        let mut data =
+            bytes("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51abcd");
+        Aes128::new(&key).encrypt_cbc(&iv, &mut data);
+        assert_eq!(
+            data,
+            bytes("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2abcd")
+        );
     }
 
     #[test]

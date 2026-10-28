@@ -188,6 +188,7 @@ Item {
         Transport { Layout.alignment: Qt.AlignHCenter; big: 72 }
         RowLayout {
             Layout.fillWidth: true
+            OutputButton { fg: bar.fg }
             Item { Layout.fillWidth: true }
             IconButton {
                 iconName: "queue_music"; tip: Theme.tr("Queue"); iconColor: bar.fg
@@ -229,6 +230,7 @@ Item {
             Item { Layout.fillWidth: true }
             Transport { big: 52 }
             Item { Layout.fillWidth: true }
+            OutputButton { }
             IconButton {
                 iconName: Core.state.muted ? "volume_off" : "volume_up"
                 tip: Theme.tr("Mute")

@@ -26,6 +26,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
   and cover (Linux, Windows, Android; AirPlay 1 protocol).
+- **Play on AirPlay speakers**: music goes to AirPlay 1 receivers in the
+  network (AirPort Express, AV receivers, shairport-sync, …), encrypted
+  when the speaker supports it; the visuals stay in sync with the speaker.
 - System media controls and media keys: MPRIS on Linux, the media
   overlay on Windows, the media notification and lock screen on Android.
   After the app was closed, Android's media controls continue the last

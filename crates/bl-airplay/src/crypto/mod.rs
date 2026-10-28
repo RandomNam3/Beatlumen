@@ -52,6 +52,39 @@ pub fn rsa_decrypt_oaep(ct: &[u8]) -> Option<Vec<u8>> {
     (rest[one] == 1).then(|| rest[one + 1..].to_vec())
 }
 
+/// Wraps a stream key for a receiver (RSA-OAEP with SHA-1 and the
+/// protocol's public key, exponent 65537).
+pub fn rsa_encrypt_oaep(msg: &[u8]) -> Option<Vec<u8>> {
+    let k = key::N.len();
+    let h = 20;
+    if msg.len() + 2 * h + 2 > k {
+        return None;
+    }
+    let mut db = hash::sha1(b"").to_vec();
+    db.resize(k - h - 1 - msg.len() - 1, 0);
+    db.push(1);
+    db.extend_from_slice(msg);
+    let seed = random_bytes(h);
+    let masked_db: Vec<u8> = db
+        .iter()
+        .zip(mgf1(&seed, db.len()))
+        .map(|(a, b)| a ^ b)
+        .collect();
+    let masked_seed: Vec<u8> = seed
+        .iter()
+        .zip(mgf1(&masked_db, h))
+        .map(|(a, b)| a ^ b)
+        .collect();
+    let mut em = vec![0u8];
+    em.extend_from_slice(&masked_seed);
+    em.extend_from_slice(&masked_db);
+    let c = bigint::mod_pow(&em, &[0x01, 0x00, 0x01], &key::N);
+    // Left-pad to the modulus length.
+    let mut out = vec![0u8; k - c.len().min(k)];
+    out.extend_from_slice(&c[c.len().saturating_sub(k)..]);
+    Some(out)
+}
+
 fn mgf1(seed: &[u8], len: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(len + 20);
     let mut counter = 0u32;
@@ -125,6 +158,14 @@ pub fn random_bytes(n: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oaep_roundtrip() {
+        let key = random_bytes(16);
+        let wrapped = rsa_encrypt_oaep(&key).unwrap();
+        assert_eq!(wrapped.len(), 256);
+        assert_eq!(rsa_decrypt_oaep(&wrapped).unwrap(), key);
+    }
 
     #[test]
     fn base64_roundtrip() {

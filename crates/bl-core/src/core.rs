@@ -248,6 +248,7 @@ pub struct Core {
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
+    pub(crate) outputs: crate::outputs::Outputs,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -422,6 +423,7 @@ impl Core {
             time: 0.0,
             download_progress: None,
             airplay: Default::default(),
+            outputs: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -621,6 +623,7 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("airplay", self.airplay_json())
+            .with("outputs", self.outputs_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -2277,6 +2280,7 @@ impl Core {
             self.request_analysis_for_current_with(host);
         }
         self.update_airplay(host);
+        self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
             match ev {

@@ -30,5 +30,6 @@ ring = "=0.17.14"
 
 [dev-dependencies]
 bl-core = { path = "../../crates/bl-core" }
+bl-airplay = { path = "../../crates/bl-airplay" }
 # A software authenticator for the passkey tests.
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"] }

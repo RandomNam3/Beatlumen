@@ -303,6 +303,13 @@ pub struct Output {
     crossfade_ms: AtomicU32,
     skip_silence: AtomicBool,
     pub sample_rate: AtomicU32,
+    /// A speaker in the network plays instead of the device (the device
+    /// gets silence; the network output renders at full volume and sets the
+    /// speaker's own volume).
+    external: AtomicBool,
+    /// Counts resets (seeks, new tracks): a network output drops what the
+    /// speaker has buffered.
+    resets: AtomicU64,
 }
 
 impl Output {
@@ -324,7 +331,28 @@ impl Output {
             crossfade_ms: AtomicU32::new(0),
             skip_silence: AtomicBool::new(false),
             sample_rate: AtomicU32::new(48000),
+            external: AtomicBool::new(false),
+            resets: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn set_external(&self, on: bool) {
+        self.external.store(on, Ordering::Relaxed);
+    }
+
+    pub(crate) fn resets(&self) -> u64 {
+        self.resets.load(Ordering::Relaxed)
+    }
+
+    /// Paused and faded out.
+    pub(crate) fn is_silent(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+            && self.current_gain.lock().map(|g| *g <= 1e-4).unwrap_or(true)
+    }
+
+    /// Renders for a network output (see [`Output::set_external`]).
+    pub(crate) fn render_external(&self, out: &mut [f32], latency_frames: u32) {
+        self.render_frames(out, latency_frames);
     }
 
     fn queued_frames(&self) -> usize {
@@ -350,6 +378,7 @@ impl Output {
     }
 
     fn reset(&self, base_frame: u64) {
+        self.resets.fetch_add(1, Ordering::Relaxed);
         self.streaming.store(false, Ordering::Relaxed);
         if let Ok(mut r) = self.ring.lock() {
             r.samples.clear();
@@ -374,9 +403,21 @@ impl Output {
 
 impl AudioSource for Output {
     fn render(&self, out: &mut [f32], latency_frames: u32) {
+        if self.external.load(Ordering::Relaxed) {
+            out.fill(0.0);
+            return;
+        }
+        self.render_frames(out, latency_frames);
+    }
+}
+
+impl Output {
+    fn render_frames(&self, out: &mut [f32], latency_frames: u32) {
         self.latency.store(latency_frames, Ordering::Relaxed);
         let target = if self.paused.load(Ordering::Relaxed) {
             0.0
+        } else if self.external.load(Ordering::Relaxed) {
+            1.0
         } else {
             f32::from_bits(self.volume.load(Ordering::Relaxed))
         };
@@ -707,6 +748,10 @@ impl Player {
 
     pub fn device_rate(&self) -> u32 {
         self.device_rate
+    }
+
+    pub(crate) fn output(&self) -> Arc<Output> {
+        self.output.clone()
     }
 
     /// Stops playback and releases the track.

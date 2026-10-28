@@ -432,3 +432,173 @@ mod tests {
         assert!(answer(&rec, &q, false).is_none());
     }
 }
+
+// ---- browsing ----------------------------------------------------------------
+
+/// A service instance found in the local network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// Instance name (the first label, e.g. "0A1B2C3D4E5F@Kitchen").
+    pub instance: String,
+    pub addr: Ipv4Addr,
+    pub port: u16,
+    /// TXT strings ("key=value").
+    pub txt: Vec<String>,
+}
+
+impl Found {
+    /// A TXT value.
+    pub fn txt_value(&self, key: &str) -> Option<&str> {
+        self.txt.iter().find_map(|t| {
+            let (k, v) = t.split_once('=')?;
+            k.eq_ignore_ascii_case(key).then_some(v)
+        })
+    }
+}
+
+fn query(questions: &[(Vec<String>, u16)]) -> Vec<u8> {
+    let mut out = vec![0u8; 12];
+    out[4..6].copy_from_slice(&(questions.len() as u16).to_be_bytes());
+    for (name, ty) in questions {
+        out.extend(name_bytes(name));
+        out.extend_from_slice(&ty.to_be_bytes());
+        // Class IN, unicast response wanted ("QU").
+        out.extend_from_slice(&0x8001u16.to_be_bytes());
+    }
+    out
+}
+
+#[derive(Default)]
+struct Seen {
+    instances: Vec<Vec<String>>,
+    srv: Vec<(Vec<String>, u16, Vec<String>)>,
+    txt: Vec<(Vec<String>, Vec<String>)>,
+    a: Vec<(Vec<String>, Ipv4Addr)>,
+    /// Instance -> address the answer came from (when no A record follows).
+    from: Vec<(Vec<String>, Ipv4Addr)>,
+}
+
+fn parse_response(msg: &[u8], service: &[String], from: Ipv4Addr, seen: &mut Seen) -> Option<()> {
+    if msg.len() < 12 || msg[2] & 0x80 == 0 {
+        return None; // not a response
+    }
+    let count = |i: usize| u16::from_be_bytes([msg[i], msg[i + 1]]) as usize;
+    let (qd, records) = (count(4), count(6) + count(8) + count(10));
+    let mut pos = 12;
+    for _ in 0..qd.min(32) {
+        let (_, next) = read_name(msg, pos)?;
+        pos = next + 4;
+    }
+    for _ in 0..records.min(64) {
+        let (name, next) = read_name(msg, pos)?;
+        let ty = u16::from_be_bytes([*msg.get(next)?, *msg.get(next + 1)?]);
+        let len = u16::from_be_bytes([*msg.get(next + 8)?, *msg.get(next + 9)?]) as usize;
+        let start = next + 10;
+        let data = msg.get(start..start + len)?;
+        pos = start + len;
+        match ty {
+            T_PTR if same(&name, service) => {
+                let (inst, _) = read_name(msg, start)?;
+                if !seen.instances.iter().any(|i| same(i, &inst)) {
+                    seen.from.push((inst.clone(), from));
+                    seen.instances.push(inst);
+                }
+            }
+            T_SRV if len >= 7 => {
+                let port = u16::from_be_bytes([data[4], data[5]]);
+                let (target, _) = read_name(msg, start + 6)?;
+                seen.srv.retain(|(n, _, _)| !same(n, &name));
+                seen.srv.push((name, port, target));
+            }
+            T_TXT => {
+                let mut strings = Vec::new();
+                let mut i = 0;
+                while i < data.len() {
+                    let l = data[i] as usize;
+                    if let Some(s) = data.get(i + 1..i + 1 + l) {
+                        if !s.is_empty() {
+                            strings.push(String::from_utf8_lossy(s).into_owned());
+                        }
+                    }
+                    i += 1 + l;
+                }
+                seen.txt.retain(|(n, _)| !same(n, &name));
+                seen.txt.push((name, strings));
+            }
+            T_A if len == 4 => {
+                let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
+                seen.a.retain(|(n, _)| !same(n, &name));
+                seen.a.push((name, ip));
+            }
+            _ => {}
+        }
+    }
+    Some(())
+}
+
+/// Looks for instances of `service_type` (e.g. "_raop._tcp") in the local
+/// network for `wait`. The query goes out from an ordinary port, so
+/// responders answer by unicast (RFC 6762 6.7) and port 5353 may be used
+/// by the system's own responder.
+pub fn browse(service_type: &str, wait: Duration) -> std::io::Result<Vec<Found>> {
+    let service = labels(&format!("{service_type}.local"));
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_multicast_ttl_v4(255)?;
+    socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+    let group = SocketAddr::V4(SocketAddrV4::new(GROUP, PORT));
+    let start = Instant::now();
+    let mut seen = Seen::default();
+    let mut sends = [0u64, 400, 1200, 2500].into_iter().peekable();
+    let mut buf = [0u8; 9000];
+    while start.elapsed() < wait {
+        if let Some(&at) = sends.peek() {
+            if start.elapsed() >= Duration::from_millis(at) {
+                sends.next();
+                // The service, plus what is still missing of known instances.
+                let mut q = vec![(service.clone(), T_PTR)];
+                for inst in &seen.instances {
+                    if !seen.srv.iter().any(|(n, _, _)| same(n, inst)) {
+                        q.push((inst.clone(), T_SRV));
+                    }
+                    if !seen.txt.iter().any(|(n, _)| same(n, inst)) {
+                        q.push((inst.clone(), T_TXT));
+                    }
+                }
+                let _ = socket.send_to(&query(&q), group);
+            }
+        }
+        if let Ok((n, SocketAddr::V4(from))) = socket.recv_from(&mut buf) {
+            parse_response(&buf[..n], &service, *from.ip(), &mut seen);
+        }
+    }
+    let mut out = Vec::new();
+    for inst in &seen.instances {
+        let Some((_, port, target)) = seen.srv.iter().find(|(n, _, _)| same(n, inst)) else {
+            continue;
+        };
+        let addr = seen
+            .a
+            .iter()
+            .find(|(n, _)| same(n, target))
+            .map(|(_, ip)| *ip)
+            .or_else(|| {
+                seen.from
+                    .iter()
+                    .find(|(n, _)| same(n, inst))
+                    .map(|(_, ip)| *ip)
+            });
+        let Some(addr) = addr else { continue };
+        out.push(Found {
+            instance: inst.first().cloned().unwrap_or_default(),
+            addr,
+            port: *port,
+            txt: seen
+                .txt
+                .iter()
+                .find(|(n, _)| same(n, inst))
+                .map(|(_, t)| t.clone())
+                .unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}

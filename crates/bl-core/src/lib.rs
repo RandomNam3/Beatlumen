@@ -15,6 +15,7 @@ pub mod jobs;
 pub mod library;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+mod outputs;
 pub mod player;
 mod push;
 pub mod queue;
