@@ -10,7 +10,9 @@
 #include <QMutex>
 #include <QSemaphore>
 #include <QThread>
+#include <QTimer>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -72,6 +74,8 @@ class PullDevice : public QIODevice
 {
 public:
     QAudioSink *sink = nullptr;
+    // Time of the last read by the audio system (steady clock, ms).
+    std::atomic<qint64> lastRead{0};
 
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return 1 << 20; }
@@ -82,6 +86,7 @@ protected:
         const qint64 frames = maxlen / 8;
         if (frames <= 0)
             return 0;
+        lastRead = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         uint32_t latency = 0;
         if (sink) {
             const qint64 queued = sink->bufferSize() - sink->bytesFree();
@@ -103,8 +108,13 @@ struct AudioOutput::Impl
     QAudioSink *sink = nullptr;
     PullDevice *device = nullptr;
     QMediaDevices *devices = nullptr;
+    QTimer *reopenTimer = nullptr;
+    QTimer *watchdog = nullptr;
     NullClock nullClock;
+    // Chosen once: the core resamples to this rate, so it must not change
+    // when the output device does (the system mixer converts if needed).
     uint32_t rate = 0;
+    int failures = 0;
 
     // Runs on the audio thread.
     void open()
@@ -115,6 +125,8 @@ struct AudioOutput::Impl
             delete sink;
             sink = nullptr;
         }
+        if (device)
+            device->sink = nullptr;
         const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
         if (dev.isNull()) {
             rate = rate ? rate : 48000;
@@ -124,10 +136,14 @@ struct AudioOutput::Impl
         QAudioFormat fmt;
         fmt.setChannelCount(2);
         fmt.setSampleFormat(QAudioFormat::Float);
-        fmt.setSampleRate(dev.preferredFormat().sampleRate() > 0 ? dev.preferredFormat().sampleRate() : 48000);
-        if (!dev.isFormatSupported(fmt))
-            fmt.setSampleRate(48000);
-        rate = uint32_t(fmt.sampleRate());
+        if (!rate)
+            rate = 48000;
+        fmt.setSampleRate(int(rate));
+        if (!dev.isFormatSupported(fmt) && rate == 48000 && dev.preferredFormat().sampleRate() > 0) {
+            // First open only: take the device's rate if 48 kHz is refused.
+            fmt.setSampleRate(dev.preferredFormat().sampleRate());
+            rate = uint32_t(fmt.sampleRate());
+        }
         sink = new QAudioSink(dev, fmt);
         // ~80 ms buffer: low enough for tight visual sync.
         sink->setBufferSize(qsizetype(rate * 8 * 0.08));
@@ -136,13 +152,51 @@ struct AudioOutput::Impl
             device->open(QIODevice::ReadOnly);
         }
         device->sink = sink;
+        device->lastRead = nowMs();
+        QObject::connect(sink, &QAudioSink::stateChanged, worker, [this](QAudio::State st) {
+            // The stream died (device unplugged or rerouted, e.g. while
+            // Bluetooth headphones connect): open a new one shortly.
+            if (sink && st == QAudio::StoppedState && sink->error() != QAudio::NoError)
+                scheduleReopen();
+        });
         sink->start(device);
+        qInfo("audio output: %s, %u Hz%s", qPrintable(dev.description()), rate, sink->error() != QAudio::NoError ? " (failed)" : "");
         if (sink->error() != QAudio::NoError) {
             delete sink;
             sink = nullptr;
             device->sink = nullptr;
             nullClock.start(rate);
+            scheduleReopen();
         }
+    }
+
+    // Reopens after the device situation has settled (routing changes come
+    // in bursts); backs off while it keeps failing.
+    void scheduleReopen()
+    {
+        failures = std::min(failures + 1, 6);
+        reopenTimer->start(250 * failures);
+    }
+
+    static qint64 nowMs()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    // Periodic health check: a stream that stopped with an error, that no
+    // longer asks for data (some systems drop dead streams silently) or a
+    // missing stream while a device exists is replaced.
+    void check()
+    {
+        if (reopenTimer->isActive())
+            return;
+        const bool stalled = sink && device && nowMs() - device->lastRead > 1500;
+        const bool broken = sink ? sink->error() != QAudio::NoError || sink->state() == QAudio::StoppedState || stalled
+                                 : !QMediaDevices::defaultAudioOutput().isNull();
+        if (broken)
+            scheduleReopen();
+        else
+            failures = 0;
     }
 };
 
@@ -164,10 +218,23 @@ uint32_t AudioOutput::start()
         d->worker->moveToThread(&d->thread);
     }
     QMetaObject::invokeMethod(d->worker, [this]() {
+        if (!d->reopenTimer) {
+            d->reopenTimer = new QTimer(d->worker);
+            d->reopenTimer->setSingleShot(true);
+            QObject::connect(d->reopenTimer, &QTimer::timeout, d->worker, [this]() { d->open(); });
+            d->watchdog = new QTimer(d->worker);
+            QObject::connect(d->watchdog, &QTimer::timeout, d->worker, [this]() { d->check(); });
+            d->watchdog->start(1000);
+        }
         d->open();
         if (!d->devices) {
             d->devices = new QMediaDevices(d->worker);
-            QObject::connect(d->devices, &QMediaDevices::audioOutputsChanged, d->worker, [this]() { d->open(); });
+            // Device lists change in bursts (e.g. Bluetooth connecting):
+            // reopen once things have settled.
+            QObject::connect(d->devices, &QMediaDevices::audioOutputsChanged, d->worker, [this]() {
+                d->failures = 0;
+                d->reopenTimer->start(400);
+            });
         }
     }, Qt::BlockingQueuedConnection);
     return d->rate;
@@ -179,6 +246,10 @@ void AudioOutput::stop()
         return;
     QMetaObject::invokeMethod(d->worker, [this]() {
         d->nullClock.stop();
+        if (d->watchdog)
+            d->watchdog->stop();
+        if (d->reopenTimer)
+            d->reopenTimer->stop();
         if (d->sink)
             d->sink->stop();
         delete d->sink;

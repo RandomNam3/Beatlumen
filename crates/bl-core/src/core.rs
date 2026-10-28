@@ -204,6 +204,10 @@ pub struct Core {
     pub(crate) analysis_status: AnalysisStatus,
     pub(crate) analysis_box: Mailbox<(String, Result<Vec<u8>, String>)>,
     pub(crate) analysis_requested: bool,
+    /// Whether the app is on screen. In the background (phone locked,
+    /// another app in front) no visuals are drawn, so the track analysis
+    /// they need is put off until the app is visible again.
+    pub(crate) visible: bool,
     pub(crate) live: RealtimeAnalyzer,
     live_buf: Vec<f32>,
     last_live_pos: f64,
@@ -312,6 +316,7 @@ impl Core {
         let mut rng = Rng::new(host.random_seed());
         let mut player = Player::new();
         player.set_volume(if settings.muted { 0.0 } else { settings.volume });
+        player.set_transition(settings.crossfade, settings.skip_silence);
         let queue = Queue::new(
             settings.audio_queue.clone(),
             settings.audio_index,
@@ -371,6 +376,7 @@ impl Core {
             analysis_status: AnalysisStatus::None,
             analysis_box: Mailbox::default(),
             analysis_requested: false,
+            visible: true,
             live: RealtimeAnalyzer::new(48000, &analysis_cfg),
             live_buf: vec![0.0; 2048],
             last_live_pos: 0.0,
@@ -1535,6 +1541,11 @@ impl Core {
     }
 
     fn request_analysis_for_current_with(&mut self, host: &mut dyn Host) {
+        if !self.visible {
+            // Analysed when the visuals are shown again (saves battery).
+            self.analysis_requested = true;
+            return;
+        }
         self.analysis_requested = false;
         let Some(track) = self.current.clone() else {
             return;

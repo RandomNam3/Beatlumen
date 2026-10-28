@@ -133,6 +133,10 @@ pub struct Settings {
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
     pub normalize: bool,
+    /// Crossfade between tracks in seconds (0 = gapless).
+    pub crossfade: f32,
+    /// Skip silence at the end and start of tracks when moving on.
+    pub skip_silence: bool,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -171,6 +175,8 @@ impl Default for Settings {
             sync_offset_ms: 0.0,
             adaptive: true,
             normalize: false,
+            crossfade: 0.0,
+            skip_silence: true,
             ui: Value::object(),
         }
     }
@@ -229,6 +235,8 @@ impl Settings {
                 .clamp(-500.0, 500.0),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
+            crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
+            skip_silence: v.bool_or("skipSilence", d.skip_silence),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -270,6 +278,8 @@ impl Settings {
             .with("syncOffsetMs", self.sync_offset_ms)
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
+            .with("crossfade", self.crossfade)
+            .with("skipSilence", self.skip_silence)
             .with("ui", self.ui.clone())
     }
 }

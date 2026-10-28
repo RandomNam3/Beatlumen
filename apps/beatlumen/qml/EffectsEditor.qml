@@ -151,6 +151,9 @@ Item {
                 }
             }
             ScrollView {
+                // Vertical only: an (invisible) horizontal bar would catch taps
+                // along the bottom edge.
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 id: sv
                 Layout.fillWidth: true
                 Layout.fillHeight: true

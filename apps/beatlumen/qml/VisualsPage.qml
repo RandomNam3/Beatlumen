@@ -52,6 +52,9 @@ Item {
 
                 // ---- effects --------------------------------------------------
                 ScrollView {
+                    // Vertical only: an (invisible) horizontal bar would catch taps
+                    // along the bottom edge.
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                     id: fxScroll
                     clip: true
                     contentWidth: availableWidth

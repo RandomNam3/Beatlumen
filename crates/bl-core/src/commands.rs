@@ -910,6 +910,11 @@ impl Core {
                 self.overlay.alpha = n("alpha").clamp(0.0, 1.0) as f32;
                 ok()
             }
+            // The UI reports whether it is on screen (battery saving).
+            "app.visible" => {
+                self.visible = b("visible");
+                ok()
+            }
             "save" => {
                 self.save_settings(host);
                 ok()
@@ -943,6 +948,12 @@ impl Core {
         }
         if old.normalize != self.settings.normalize {
             self.apply_normalization(host);
+        }
+        if old.crossfade != self.settings.crossfade
+            || old.skip_silence != self.settings.skip_silence
+        {
+            self.player
+                .set_transition(self.settings.crossfade, self.settings.skip_silence);
         }
         if old.library_folders != self.settings.library_folders {
             self.rescan_local();

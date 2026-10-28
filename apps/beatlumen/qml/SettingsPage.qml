@@ -26,6 +26,12 @@ Item {
     }
 
     ScrollView {
+
+        // Vertical only: an (invisible) horizontal bar would catch taps
+
+        // along the bottom edge.
+
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         id: sv
         anchors.fill: parent
         clip: true
@@ -114,6 +120,44 @@ Item {
                 detail: Theme.tr("Plays all songs at a similar loudness. Each song is measured once when it is first played.")
                 on: page.settings.normalize === true
                 onSwitched: (on) => Core.call("settings.set", { key: "normalize", value: on })
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 0
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Crossfade"); color: Theme.text; font.pixelSize: 15 }
+                    Label {
+                        textFormat: Text.PlainText
+                        text: crossfadeSlider.value < 0.5 ? Theme.tr("Off") : Math.round(crossfadeSlider.value) + " s"
+                        color: Theme.textDim
+                    }
+                }
+                Slider {
+                    id: crossfadeSlider
+                    Layout.fillWidth: true
+                    from: 0; to: 12; stepSize: 1
+                    value: page.settings.crossfade || 0
+                    onMoved: Core.call("settings.set", { key: "crossfade", value: value })
+                    Accessible.name: Theme.tr("Crossfade")
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: Theme.tr("The next song fades in while the current one fades out.")
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                }
+            }
+            SwitchRow {
+                Layout.fillWidth: true
+                title: Theme.tr("Skip silence")
+                detail: Theme.tr("Moves on to the next song as soon as the current one has ended, without silent gaps.")
+                on: page.settings.skipSilence !== false
+                onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
             }
 
             // ---- library ----------------------------------------------------

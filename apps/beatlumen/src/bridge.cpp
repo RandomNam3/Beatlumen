@@ -113,10 +113,14 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
 #ifdef Q_OS_ANDROID
     // Background playback: media session, notification, foreground service.
     new AndroidMedia(this);
-    // With the screen off or the app in the background nothing is drawn;
-    // the core only needs to advance tracks and deliver state.
+    // With the screen off or the app in the background nothing is drawn
+    // (no visuals, no live analysis); the core puts off track analyses and
+    // only needs to deliver state a few times a second. Audio is decoded on
+    // its own thread and moves on to the next track by itself.
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
-        m_timer.setInterval(s == Qt::ApplicationActive ? 16 : 50);
+        const bool visible = s == Qt::ApplicationActive;
+        m_timer.setInterval(visible ? 16 : 250);
+        call(QStringLiteral("app.visible"), {{QStringLiteral("visible"), visible}});
     });
 #endif
     tick();

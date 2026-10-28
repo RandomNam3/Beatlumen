@@ -162,9 +162,21 @@ impl Pipeline {
                 }
                 self.out_frames += ((out.len() - before) / 2) as u64;
             }
-            None => out.extend_from_slice(&self.stereo),
+            None => {
+                out.extend_from_slice(&self.stereo);
+                self.in_frames += (self.stereo.len() / 2) as u64;
+                self.out_frames += (self.stereo.len() / 2) as u64;
+            }
         }
         Ok(more || !self.decoded.is_empty())
+    }
+
+    /// Output frames left until the end of the track (None if the length
+    /// is unknown).
+    pub fn remaining_frames(&self) -> Option<u64> {
+        let total =
+            self.decoder.total_frames()? * self.out_rate as u64 / self.in_rate.max(1) as u64;
+        Some(total.saturating_sub(self.out_frames))
     }
 
     /// Seeks to `seconds`; returns the actual position in seconds.
@@ -265,6 +277,10 @@ pub struct Output {
     /// True while a track is streaming (an empty ring is an underrun, not
     /// the start or the end of playback).
     streaming: AtomicBool,
+    /// Crossfade length in milliseconds (0 = gapless) and whether silence
+    /// at the end and start of tracks is skipped (read by the decoder).
+    crossfade_ms: AtomicU32,
+    skip_silence: AtomicBool,
     pub sample_rate: AtomicU32,
 }
 
@@ -284,6 +300,8 @@ impl Output {
             latency: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
             streaming: AtomicBool::new(false),
+            crossfade_ms: AtomicU32::new(0),
+            skip_silence: AtomicBool::new(false),
             sample_rate: AtomicU32::new(48000),
         }
     }
@@ -298,6 +316,16 @@ impl Output {
             .lock()
             .map(|r| r.next_frame + (r.samples.len() / 2) as u64)
             .unwrap_or(0)
+    }
+
+    /// Removes up to `frames` frames from the end of the queue (those not
+    /// played yet).
+    fn trim_tail(&self, frames: usize) {
+        if let Ok(mut r) = self.ring.lock() {
+            let n = (frames * 2).min(r.samples.len());
+            let keep = r.samples.len() - n;
+            r.samples.truncate(keep);
+        }
     }
 
     fn reset(&self, base_frame: u64) {
@@ -419,8 +447,8 @@ struct NativeTrack {
     events: std::sync::mpsc::Receiver<ThreadEvent>,
     /// Advances that became audible (the thread's index once it catches up).
     index: u64,
-    /// Next track already decoding, starting at output frame `.0`.
-    advance: Option<(u64, TrackInfo)>,
+    /// Next track already decoding: first output frame, info, start time.
+    advance: Option<(u64, TrackInfo, f64)>,
 }
 
 #[derive(Clone, Copy)]
@@ -449,10 +477,12 @@ enum ThreadEvent {
         channels: u16,
         codec: &'static str,
     },
-    /// The next track was opened; its first frame is output frame `at`.
+    /// The next track was opened; its first frame is output frame `at` and
+    /// it starts `start` seconds into the track (skipped silence).
     Advanced {
         at: u64,
         info: TrackInfo,
+        start: f64,
     },
     Seeked(f64),
     /// A seek for an earlier track arrived after the thread advanced.
@@ -580,6 +610,16 @@ impl Player {
                 }
             }
         }
+    }
+
+    /// Crossfade length between tracks (0 = gapless) and whether silence at
+    /// the end and start of tracks is skipped when moving on.
+    pub fn set_transition(&mut self, crossfade_secs: f32, skip_silence: bool) {
+        let ms = (crossfade_secs.clamp(0.0, 30.0) * 1000.0) as u32;
+        self.output.crossfade_ms.store(ms, Ordering::Relaxed);
+        self.output
+            .skip_silence
+            .store(skip_silence, Ordering::Relaxed);
     }
 
     /// Normalization gain of the preloaded next track (None = unknown, the
@@ -822,8 +862,8 @@ impl Player {
                             codec,
                         });
                     }
-                    ThreadEvent::Advanced { at, info } => {
-                        t.advance = Some((at, info));
+                    ThreadEvent::Advanced { at, info, start } => {
+                        t.advance = Some((at, info, start));
                         self.eof = false;
                     }
                     ThreadEvent::Seeked(actual) => {
@@ -843,7 +883,7 @@ impl Player {
                     }
                 }
             }
-            if let Some((at, info)) = t.advance {
+            if let Some((at, info, start)) = t.advance {
                 let lat = self.output.latency.load(Ordering::Relaxed) as u64;
                 if self
                     .output
@@ -855,7 +895,7 @@ impl Player {
                     t.advance = None;
                     t.index += 1;
                     self.track_offset = at;
-                    self.base_secs = 0.0;
+                    self.base_secs = start;
                     self.duration = info.duration;
                     self.events.push(PlayerEvent::Advanced {
                         duration: info.duration,
@@ -934,6 +974,91 @@ fn open_pipeline(opener: SourceOpener, out_rate: u32) -> Result<Pipeline, String
     Ok(Pipeline::new(dec, out_rate))
 }
 
+/// Level below which audio counts as silence (-50 dBFS).
+const SILENCE: f32 = 0.0032;
+/// Silence of this length within the last `END_REGION` seconds ends a
+/// track early (when skipping silence).
+const SILENT_END: f64 = 0.75;
+const END_REGION: f64 = 15.0;
+/// Most silence skipped at the start of the next track.
+const MAX_LEAD_SKIP: f64 = 10.0;
+
+/// The previous track while it fades out under the next one.
+struct FadeOut {
+    a: Pipeline,
+    buf: Vec<f32>,
+    done: usize,
+    len: usize,
+    /// Level correction for the outgoing track (the output already applies
+    /// the incoming track's normalization gain).
+    ratio: f32,
+}
+
+impl FadeOut {
+    /// Mixes the outgoing track into `b` (incoming, interleaved stereo)
+    /// with an equal-power fade.
+    fn mix(&mut self, b: &mut [f32]) {
+        let n = b.len() / 2;
+        let mut tmp = Vec::new();
+        while self.buf.len() < n * 2 && !self.a.eof {
+            tmp.clear();
+            if self.a.next(&mut tmp).is_err() {
+                self.a.eof = true;
+            }
+            self.buf.extend_from_slice(&tmp);
+        }
+        for i in 0..n {
+            let k = self.done + i;
+            if k >= self.len {
+                break;
+            }
+            let x = (k as f32 + 0.5) / self.len as f32 * std::f32::consts::FRAC_PI_2;
+            let (ga, gb) = (x.cos() * self.ratio, x.sin());
+            for c in 0..2 {
+                let a = self.buf.get(i * 2 + c).copied().unwrap_or(0.0);
+                b[i * 2 + c] = b[i * 2 + c] * gb + a * ga;
+            }
+        }
+        self.done += n;
+        let used = (n * 2).min(self.buf.len());
+        self.buf.drain(..used);
+    }
+}
+
+/// Number of silent frames at the end of `stereo`.
+fn trailing_silence(stereo: &[f32]) -> usize {
+    stereo
+        .chunks_exact(2)
+        .rev()
+        .take_while(|f| f[0].abs() < SILENCE && f[1].abs() < SILENCE)
+        .count()
+}
+
+/// Decodes past leading silence (up to `max` frames); the first audible
+/// samples are left in `out`. Returns the number of frames skipped.
+fn skip_leading_silence(p: &mut Pipeline, out: &mut Vec<f32>, max: usize) -> usize {
+    let mut skipped = 0;
+    while !p.eof && skipped < max {
+        out.clear();
+        if p.next(out).is_err() {
+            p.eof = true;
+            break;
+        }
+        let first = out
+            .chunks_exact(2)
+            .position(|f| f[0].abs() >= SILENCE || f[1].abs() >= SILENCE);
+        match first {
+            Some(i) => {
+                out.drain(..i * 2);
+                return skipped + i;
+            }
+            None => skipped += out.len() / 2,
+        }
+    }
+    out.clear();
+    skipped
+}
+
 fn decoder_thread(
     opener: SourceOpener,
     out_rate: u32,
@@ -955,6 +1080,7 @@ fn decoder_thread(
         channels: info.channels,
         codec: info.codec,
     });
+    let rate = out_rate.max(1) as f64;
     let max_queue = out_rate as usize; // one second
     let mut buf = Vec::with_capacity(8192);
     let mut eof_sent = false;
@@ -962,6 +1088,11 @@ fn decoder_thread(
     // Number of tracks advanced to (seeks name the track they are meant for).
     let mut index = 0u64;
     let mut wait = false;
+    // Silent frames at the end of what was decoded so far.
+    let mut silent_run = 0usize;
+    let mut fade: Option<FadeOut> = None;
+    // Samples of the current track decoded ahead (after skipped silence).
+    let mut pending: Vec<f32> = Vec::new();
     loop {
         // Commands (blocking briefly when there is nothing to decode).
         loop {
@@ -984,6 +1115,9 @@ fn decoder_thread(
                 Command::Next(o) => next = o,
                 Command::Seek(s, i) if i == index => {
                     let actual = pipeline.seek(s).unwrap_or(s);
+                    fade = None;
+                    pending.clear();
+                    silent_run = 0;
                     output.reset(0);
                     eof_sent = false;
                     let _ = events.send(ThreadEvent::Seeked(actual));
@@ -993,28 +1127,66 @@ fn decoder_thread(
                 }
             }
         }
-        if pipeline.eof {
-            if let Some(o) = next.take() {
-                // Continue with the next track right behind this one.
-                match open_pipeline(o, out_rate) {
-                    Ok(p) => {
-                        pipeline = p;
-                        index += 1;
-                        eof_sent = false;
-                        let at = output.end_frame();
-                        if let Ok(mut n) = output.norm.lock() {
-                            n.next_at = Some(at);
-                        }
-                        let _ = events.send(ThreadEvent::Advanced {
-                            at,
-                            info: TrackInfo::of(&pipeline),
-                        });
-                        continue;
+        // Move on to the next track: at the end, when the crossfade starts,
+        // or when the track has gone silent near its end.
+        if fade.is_none() && next.is_some() && pending.is_empty() {
+            let crossfade =
+                output.crossfade_ms.load(Ordering::Relaxed) as u64 * out_rate as u64 / 1000;
+            let skip = output.skip_silence.load(Ordering::Relaxed);
+            let remaining = pipeline.remaining_frames();
+            let silent_end = skip
+                && !pipeline.eof
+                && silent_run as f64 >= SILENT_END * rate
+                && remaining.is_some_and(|r| (r as f64) <= END_REGION * rate);
+            let fade_now =
+                crossfade > 0 && !pipeline.eof && remaining.is_some_and(|r| r <= crossfade);
+            if pipeline.eof || silent_end || fade_now {
+                let opener = next.take().expect("checked");
+                // On failure the track ends normally; loading the next one
+                // again reports the error.
+                if let Ok(mut b) = open_pipeline(opener, out_rate) {
+                    if silent_end {
+                        output.trim_tail(silent_run);
                     }
-                    // Ends normally; loading it again reports the error.
-                    Err(_) => {}
+                    let skipped = if skip {
+                        skip_leading_silence(&mut b, &mut pending, (MAX_LEAD_SKIP * rate) as usize)
+                    } else {
+                        0
+                    };
+                    let at = output.end_frame();
+                    let ratio = output
+                        .norm
+                        .lock()
+                        .ok()
+                        .and_then(|n| n.next.filter(|g| *g > 0.0).map(|g| n.target / g))
+                        .unwrap_or(1.0);
+                    if let Ok(mut n) = output.norm.lock() {
+                        n.next_at = Some(at);
+                    }
+                    let a = std::mem::replace(&mut pipeline, b);
+                    if fade_now && !silent_end {
+                        let len = remaining.unwrap_or(crossfade).min(crossfade) as usize;
+                        fade = Some(FadeOut {
+                            a,
+                            buf: Vec::new(),
+                            done: 0,
+                            len,
+                            ratio,
+                        });
+                    }
+                    index += 1;
+                    eof_sent = false;
+                    silent_run = 0;
+                    let _ = events.send(ThreadEvent::Advanced {
+                        at,
+                        info: TrackInfo::of(&pipeline),
+                        start: skipped as f64 / rate,
+                    });
+                    continue;
                 }
             }
+        }
+        if pipeline.eof && pending.is_empty() {
             if !eof_sent {
                 eof_sent = true;
                 output.streaming.store(false, Ordering::Relaxed);
@@ -1028,13 +1200,26 @@ fn decoder_thread(
             continue;
         }
         buf.clear();
-        match pipeline.next(&mut buf) {
-            Ok(_) => output.push(&buf),
-            Err(e) => {
-                let _ = events.send(ThreadEvent::Error(e));
-                pipeline.eof = true;
-            }
+        if !pending.is_empty() {
+            buf.append(&mut pending);
+        } else if let Err(e) = pipeline.next(&mut buf) {
+            let _ = events.send(ThreadEvent::Error(e));
+            pipeline.eof = true;
         }
+        if let Some(f) = &mut fade {
+            f.mix(&mut buf);
+            if f.done >= f.len {
+                fade = None;
+            }
+        } else {
+            let t = trailing_silence(&buf);
+            silent_run = if t == buf.len() / 2 {
+                silent_run + t
+            } else {
+                t
+            };
+        }
+        output.push(&buf);
     }
 }
 

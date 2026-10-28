@@ -5,6 +5,9 @@ import Beatlumen.Core
 
 // Background images shown behind the effects.
 ScrollView {
+    // Vertical only: an (invisible) horizontal bar would catch taps
+    // along the bottom edge.
+    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     id: view
     signal addImages()
     signal addImageFolder()

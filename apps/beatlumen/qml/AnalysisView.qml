@@ -5,6 +5,9 @@ import Beatlumen.Core
 
 // Analysis settings of the style plus live graphs of the current song.
 ScrollView {
+    // Vertical only: an (invisible) horizontal bar would catch taps
+    // along the bottom edge.
+    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     id: av
     clip: true
     contentWidth: availableWidth
