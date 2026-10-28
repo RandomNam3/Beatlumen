@@ -108,6 +108,7 @@ dependencies = [
  "bl-media",
  "bl-net",
  "bl-render",
+ "bl-upnp",
  "bl-vault",
 ]
 
@@ -187,6 +188,13 @@ version = "0.1.0"
 dependencies = [
  "bl-fx",
  "bl-gl",
+]
+
+[[package]]
+name = "bl-upnp"
+version = "0.1.0"
+dependencies = [
+ "bl-net",
 ]
 
 [[package]]

@@ -1,8 +1,11 @@
 //! Where the music plays: this device, or a speaker in the network
-//! (AirPlay 1 receivers). A network output takes the player's audio
-//! instead of the sound card: a thread renders it at the speaker's pace,
-//! resamples it to 44.1 kHz and streams it. The visuals stay in sync by
-//! reporting the speaker's delay as the output latency.
+//! (AirPlay 1 receivers, DLNA/UPnP renderers). A network output takes the
+//! player's audio instead of the sound card: a thread renders it at the
+//! speaker's pace, resamples it to 44.1 kHz and streams it. The visuals
+//! stay in sync by reporting the speaker's delay as the output latency.
+
+mod dlna;
+mod stream;
 
 use crate::core::Core;
 use crate::host::Host;
@@ -15,19 +18,36 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// How far ahead of the speaker's clock audio is sent (frames at 44.1 kHz).
+/// How far ahead of the speaker's clock AirPlay audio is sent (frames).
 const LEAD: u32 = SAMPLE_RATE / 4;
 
 #[derive(Clone, Debug, PartialEq)]
+enum Kind {
+    AirPlay {
+        addr: SocketAddr,
+        /// Supported encryptions ("et").
+        et: String,
+    },
+    Dlna(Box<bl_upnp::Renderer>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Device {
-    /// "airplay:<address>:<port>"
+    /// "airplay:<address>:<port>" or "dlna:<udn>"
     pub id: String,
     pub name: String,
     pub model: String,
-    addr: SocketAddr,
-    /// Supported encryptions ("et").
-    et: String,
+    kind: Kind,
     pub needs_password: bool,
+}
+
+impl Device {
+    fn kind_name(&self) -> &'static str {
+        match self.kind {
+            Kind::AirPlay { .. } => "airplay",
+            Kind::Dlna(_) => "dlna",
+        }
+    }
 }
 
 /// What the core tells the output thread.
@@ -42,6 +62,98 @@ struct Control {
 enum Report {
     Connected,
     Failed(String),
+}
+
+/// What an output thread works with.
+struct Job {
+    output: Arc<Output>,
+    device_rate: u32,
+    control: Arc<Mutex<Control>>,
+    stop: Arc<AtomicBool>,
+    reports: Mailbox<Report>,
+}
+
+impl Job {
+    fn take_control(&self) -> Control {
+        std::mem::take(&mut *self.control.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
+    }
+}
+
+/// Renders the player's audio as 44.1 kHz 16-bit stereo.
+struct Pump {
+    resampler: Option<bl_media::Resampler>,
+    device_rate: u32,
+    render: Vec<f32>,
+    resampled: Vec<f32>,
+    pcm: Vec<i16>,
+    resets: u64,
+}
+
+impl Pump {
+    fn new(job: &Job) -> Pump {
+        Pump {
+            resampler: (job.device_rate != SAMPLE_RATE)
+                .then(|| bl_media::Resampler::new(job.device_rate, SAMPLE_RATE, 2)),
+            device_rate: job.device_rate,
+            render: Vec::new(),
+            resampled: Vec::new(),
+            pcm: Vec::new(),
+            resets: job.output.resets(),
+        }
+    }
+
+    /// True once after a seek or a new track.
+    fn reset_seen(&mut self, output: &Output) -> bool {
+        let r = output.resets();
+        if r == self.resets {
+            return false;
+        }
+        self.resets = r;
+        if let Some(rs) = self.resampler.as_mut() {
+            rs.reset();
+        }
+        true
+    }
+
+    /// About `frames` frames (44.1 kHz); `latency` is the delay until they
+    /// are heard, in seconds.
+    fn take(&mut self, output: &Output, frames: usize, latency: f64) -> &[i16] {
+        let dev = (frames as u64 * self.device_rate as u64).div_ceil(SAMPLE_RATE as u64) as usize;
+        self.render.resize(dev * 2, 0.0);
+        output.render_external(&mut self.render, (latency * self.device_rate as f64) as u32);
+        let samples: &[f32] = match self.resampler.as_mut() {
+            Some(rs) => {
+                self.resampled.clear();
+                rs.process(&self.render, &mut self.resampled);
+                &self.resampled
+            }
+            None => &self.render,
+        };
+        self.pcm.clear();
+        self.pcm.extend(
+            samples
+                .iter()
+                .map(|v| (v.clamp(-1.0, 1.0) * 32767.0) as i16),
+        );
+        &self.pcm
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Outputs {
+    devices: Vec<Device>,
+    scanning: bool,
+    found: Mailbox<Vec<Device>>,
+    reports: Mailbox<Report>,
+    active: Option<Active>,
+    error: Option<String>,
+    /// What was last sent to the speaker (to send changes only).
+    sent_track: Option<String>,
+    sent_volume: Option<f32>,
 }
 
 struct Active {
@@ -61,20 +173,7 @@ impl Drop for Active {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct Outputs {
-    devices: Vec<Device>,
-    scanning: bool,
-    found: Mailbox<Vec<Device>>,
-    reports: Mailbox<Report>,
-    active: Option<Active>,
-    error: Option<String>,
-    /// What was last sent to the speaker (to send changes only).
-    sent_track: Option<String>,
-    sent_volume: Option<f32>,
-}
-
-fn device_from(f: &bl_airplay::mdns::Found) -> Device {
+fn airplay_device(f: &bl_airplay::mdns::Found) -> Device {
     // "MACADDRESS@Name"
     let name = f
         .instance
@@ -85,70 +184,77 @@ fn device_from(f: &bl_airplay::mdns::Found) -> Device {
         id: format!("airplay:{}:{}", f.addr, f.port),
         name,
         model: f.txt_value("am").unwrap_or("").to_string(),
-        addr: SocketAddr::new(f.addr.into(), f.port),
-        et: f.txt_value("et").unwrap_or("0").to_string(),
+        kind: Kind::AirPlay {
+            addr: SocketAddr::new(f.addr.into(), f.port),
+            et: f.txt_value("et").unwrap_or("0").to_string(),
+        },
         needs_password: f
             .txt_value("pw")
             .is_some_and(|v| v.eq_ignore_ascii_case("true")),
     }
 }
 
-/// A speaker given by address ("airplay:<ip>:<port>").
+fn dlna_device(r: bl_upnp::Renderer) -> Device {
+    Device {
+        id: format!("dlna:{}", r.udn),
+        name: r.name.clone(),
+        model: [r.manufacturer.as_str(), r.model.as_str()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" "),
+        kind: Kind::Dlna(Box::new(r)),
+        needs_password: false,
+    }
+}
+
+/// A speaker given by address: "airplay:<ip>:<port>" or
+/// "dlna:<description URL>".
 fn device_from_id(id: &str) -> Option<Device> {
+    if let Some(url) = id.strip_prefix("dlna:").filter(|u| u.starts_with("http")) {
+        return bl_upnp::Renderer::fetch(url).ok().map(dlna_device);
+    }
     let addr: SocketAddr = id.strip_prefix("airplay:")?.parse().ok()?;
     Some(Device {
         id: id.to_string(),
         name: addr.ip().to_string(),
         model: String::new(),
-        addr,
-        et: "0,1".into(),
+        kind: Kind::AirPlay {
+            addr,
+            et: "0,1".into(),
+        },
         needs_password: false,
     })
 }
 
-/// The output thread: connects, then streams what the player renders.
-#[allow(clippy::too_many_arguments)]
-fn run(
-    device: Device,
-    password: Option<String>,
-    name: String,
-    output: Arc<Output>,
-    device_rate: u32,
-    control: Arc<Mutex<Control>>,
-    stop: Arc<AtomicBool>,
-    reports: Mailbox<Report>,
-) {
+/// The AirPlay output thread: connects, then streams what the player renders.
+fn run_airplay(addr: SocketAddr, et: String, password: Option<String>, job: Job) {
     let opts = Options {
         password,
         encrypt: true,
-        name,
+        name: "Beatlumen".into(),
     };
-    let mut tx = match Sender::connect(device.addr, &device.et, &opts) {
+    let mut tx = match Sender::connect(addr, &et, &opts) {
         Ok(tx) => tx,
         Err(e) => {
             let msg = match e {
                 sender::Error::Auth => "password".to_string(),
                 e => e.to_string(),
             };
-            reports.post(Report::Failed(msg));
+            job.reports.post(Report::Failed(msg));
             return;
         }
     };
-    reports.post(Report::Connected);
-    output.set_external(true);
-    let mut resampler =
-        (device_rate != SAMPLE_RATE).then(|| bl_media::Resampler::new(device_rate, SAMPLE_RATE, 2));
-    // Heard this much later than rendered (device frames).
-    let latency =
-        ((sender::LATENCY + LEAD / 2) as u64 * device_rate as u64 / SAMPLE_RATE as u64) as u32;
-    let mut resets = output.resets();
+    job.reports.post(Report::Connected);
+    job.output.set_external(true);
+    let mut pump = Pump::new(&job);
+    // Heard this much later than rendered.
+    let latency = (sender::LATENCY + LEAD / 2) as f64 / SAMPLE_RATE as f64;
     let mut flushed = false;
-    let mut render = Vec::new();
-    let mut resampled = Vec::new();
-    let mut pcm: Vec<i16> = Vec::new();
     let mut failed = None;
-    while !stop.load(Ordering::Relaxed) {
-        let pending = std::mem::take(&mut *control.lock().unwrap_or_else(|e| e.into_inner()));
+    while !job.stopped() {
+        let pending = job.take_control();
         let result = (|| -> Result<(), sender::Error> {
             if let Some(v) = pending.volume {
                 tx.set_volume(v)?;
@@ -163,46 +269,21 @@ fn run(
                 tx.set_progress(pos, dur)?;
             }
             // A seek or a new track: drop what the speaker has buffered.
-            let r = output.resets();
-            if r != resets {
-                resets = r;
-                if !flushed {
-                    tx.flush()?;
-                }
-                if let Some(rs) = resampler.as_mut() {
-                    rs.reset();
-                }
+            if pump.reset_seen(&job.output) && !flushed {
+                tx.flush()?;
             }
-            if output.is_silent() {
+            if job.output.is_silent() {
                 if !flushed {
                     tx.flush()?;
                     flushed = true;
                 }
-                tx.keepalive()?;
-                return Ok(());
+                return tx.keepalive();
             }
             flushed = false;
             let due = tx.frames_due(LEAD);
             if due > 0 {
-                let frames =
-                    (due as u64 * device_rate as u64).div_ceil(SAMPLE_RATE as u64) as usize;
-                render.resize(frames * 2, 0.0);
-                output.render_external(&mut render, latency);
-                let samples: &[f32] = match resampler.as_mut() {
-                    Some(rs) => {
-                        resampled.clear();
-                        rs.process(&render, &mut resampled);
-                        &resampled
-                    }
-                    None => &render,
-                };
-                pcm.clear();
-                pcm.extend(
-                    samples
-                        .iter()
-                        .map(|v| (v.clamp(-1.0, 1.0) * 32767.0) as i16),
-                );
-                tx.send(&pcm)?;
+                let pcm = pump.take(&job.output, due, latency);
+                tx.send(pcm)?;
             }
             tx.keepalive()
         })();
@@ -212,9 +293,9 @@ fn run(
         }
         std::thread::sleep(Duration::from_millis(if flushed { 50 } else { 8 }));
     }
-    output.set_external(false);
+    job.output.set_external(false);
     if let Some(e) = failed {
-        reports.post(Report::Failed(e));
+        job.reports.post(Report::Failed(e));
     }
 }
 
@@ -228,15 +309,24 @@ impl Core {
         let mailbox = self.outputs.found.clone();
         let own = self.airplay_instance();
         host.spawn(Box::new(move || {
-            let found =
-                bl_airplay::mdns::browse("_raop._tcp", Duration::from_secs(3)).unwrap_or_default();
-            mailbox.post(
-                found
+            let wait = Duration::from_secs(3);
+            let dlna = std::thread::spawn(move || {
+                let answers = bl_upnp::ssdp::discover(bl_upnp::ssdp::MEDIA_RENDERER, wait)
+                    .unwrap_or_default();
+                answers
                     .iter()
-                    .filter(|f| Some(&f.instance) != own.as_ref())
-                    .map(device_from)
-                    .collect(),
-            );
+                    .filter_map(|a| bl_upnp::Renderer::fetch(&a.location).ok())
+                    .map(dlna_device)
+                    .collect::<Vec<_>>()
+            });
+            let mut found: Vec<Device> = bl_airplay::mdns::browse("_raop._tcp", wait)
+                .unwrap_or_default()
+                .iter()
+                .filter(|f| Some(&f.instance) != own.as_ref())
+                .map(airplay_device)
+                .collect();
+            found.extend(dlna.join().unwrap_or_default());
+            mailbox.post(found);
         }));
     }
 
@@ -257,14 +347,21 @@ impl Core {
         };
         let stop = Arc::new(AtomicBool::new(false));
         let control = Arc::new(Mutex::new(Control::default()));
-        let (output, rate) = (self.player.output(), self.player.device_rate());
-        let (s, c, r) = (stop.clone(), control.clone(), self.outputs.reports.clone());
-        let d = device.clone();
+        let job = Job {
+            output: self.player.output(),
+            device_rate: self.player.device_rate(),
+            control: control.clone(),
+            stop: stop.clone(),
+            reports: self.outputs.reports.clone(),
+        };
         let password = Some(password.to_string()).filter(|p| !p.is_empty());
-        let name = "Beatlumen".to_string();
+        let kind = device.kind.clone();
         let thread = std::thread::Builder::new()
             .name("bl-output".into())
-            .spawn(move || run(d, password, name, output, rate, c, s, r))
+            .spawn(move || match kind {
+                Kind::AirPlay { addr, et } => run_airplay(addr, et, password, job),
+                Kind::Dlna(r) => dlna::run(*r, job),
+            })
             .ok();
         if thread.is_none() {
             return;
@@ -376,7 +473,7 @@ impl Core {
                             Value::object()
                                 .with("id", d.id.as_str())
                                 .with("name", d.name.as_str())
-                                .with("kind", "airplay")
+                                .with("kind", d.kind_name())
                                 .with("model", d.model.as_str())
                                 .with("needsPassword", d.needs_password)
                         })
