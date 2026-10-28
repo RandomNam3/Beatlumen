@@ -4,8 +4,11 @@
 //! speaker's pace, resamples it to 44.1 kHz and streams it. The visuals
 //! stay in sync by reporting the speaker's delay as the output latency.
 
+#[cfg(not(target_arch = "wasm32"))]
 mod cast;
+#[cfg(not(target_arch = "wasm32"))]
 mod dlna;
+#[cfg(not(target_arch = "wasm32"))]
 mod stream;
 
 use crate::core::Core;
@@ -29,10 +32,10 @@ enum Kind {
         /// Supported encryptions ("et").
         et: String,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     Dlna(Box<bl_upnp::Renderer>),
-    Cast {
-        addr: SocketAddr,
-    },
+    #[cfg(not(target_arch = "wasm32"))]
+    Cast { addr: SocketAddr },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,7 +52,9 @@ impl Device {
     fn kind_name(&self) -> &'static str {
         match self.kind {
             Kind::AirPlay { .. } => "airplay",
+            #[cfg(not(target_arch = "wasm32"))]
             Kind::Dlna(_) => "dlna",
+            #[cfg(not(target_arch = "wasm32"))]
             Kind::Cast { .. } => "cast",
         }
     }
@@ -199,6 +204,7 @@ fn airplay_device(f: &bl_airplay::mdns::Found) -> Device {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn dlna_device(r: bl_upnp::Renderer) -> Device {
     Device {
         id: format!("dlna:{}", r.udn),
@@ -214,6 +220,7 @@ fn dlna_device(r: bl_upnp::Renderer) -> Device {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn cast_device(f: &bl_airplay::mdns::Found) -> Device {
     Device {
         id: format!("cast:{}:{}", f.addr, f.port),
@@ -232,9 +239,11 @@ fn cast_device(f: &bl_airplay::mdns::Found) -> Device {
 /// A speaker given by address: "airplay:<ip>:<port>", "cast:<ip>:<port>"
 /// or "dlna:<description URL>".
 fn device_from_id(id: &str) -> Option<Device> {
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(url) = id.strip_prefix("dlna:").filter(|u| u.starts_with("http")) {
         return bl_upnp::Renderer::fetch(url).ok().map(dlna_device);
     }
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(addr) = id
         .strip_prefix("cast:")
         .and_then(|a| a.parse::<SocketAddr>().ok())
@@ -331,6 +340,42 @@ fn run_airplay(addr: SocketAddr, et: String, password: Option<String>, job: Job)
     }
 }
 
+/// AirPlay, DLNA and Cast devices in the network (a few seconds).
+fn discover(own: Option<String>) -> Vec<Device> {
+    let wait = Duration::from_secs(3);
+    #[cfg(not(target_arch = "wasm32"))]
+    let dlna = std::thread::spawn(move || {
+        let answers =
+            bl_upnp::ssdp::discover(bl_upnp::ssdp::MEDIA_RENDERER, wait).unwrap_or_default();
+        answers
+            .iter()
+            .filter_map(|a| bl_upnp::Renderer::fetch(&a.location).ok())
+            .map(dlna_device)
+            .collect::<Vec<_>>()
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    let cast = std::thread::spawn(move || {
+        bl_airplay::mdns::browse("_googlecast._tcp", wait)
+            .unwrap_or_default()
+            .iter()
+            .map(cast_device)
+            .collect::<Vec<_>>()
+    });
+    #[allow(unused_mut)]
+    let mut found: Vec<Device> = bl_airplay::mdns::browse("_raop._tcp", wait)
+        .unwrap_or_default()
+        .iter()
+        .filter(|f| Some(&f.instance) != own.as_ref())
+        .map(airplay_device)
+        .collect();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        found.extend(dlna.join().unwrap_or_default());
+        found.extend(cast.join().unwrap_or_default());
+    }
+    found
+}
+
 impl Core {
     /// Looks for speakers in the network (a few seconds).
     pub(crate) fn outputs_scan(&mut self, host: &mut dyn Host) {
@@ -340,34 +385,7 @@ impl Core {
         self.outputs.scanning = true;
         let mailbox = self.outputs.found.clone();
         let own = self.airplay_instance();
-        host.spawn(Box::new(move || {
-            let wait = Duration::from_secs(3);
-            let dlna = std::thread::spawn(move || {
-                let answers = bl_upnp::ssdp::discover(bl_upnp::ssdp::MEDIA_RENDERER, wait)
-                    .unwrap_or_default();
-                answers
-                    .iter()
-                    .filter_map(|a| bl_upnp::Renderer::fetch(&a.location).ok())
-                    .map(dlna_device)
-                    .collect::<Vec<_>>()
-            });
-            let cast = std::thread::spawn(move || {
-                bl_airplay::mdns::browse("_googlecast._tcp", wait)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(cast_device)
-                    .collect::<Vec<_>>()
-            });
-            let mut found: Vec<Device> = bl_airplay::mdns::browse("_raop._tcp", wait)
-                .unwrap_or_default()
-                .iter()
-                .filter(|f| Some(&f.instance) != own.as_ref())
-                .map(airplay_device)
-                .collect();
-            found.extend(dlna.join().unwrap_or_default());
-            found.extend(cast.join().unwrap_or_default());
-            mailbox.post(found);
-        }));
+        host.spawn(Box::new(move || mailbox.post(discover(own))));
     }
 
     /// Plays on a speaker ("local": this device again).
@@ -400,7 +418,9 @@ impl Core {
             .name("bl-output".into())
             .spawn(move || match kind {
                 Kind::AirPlay { addr, et } => run_airplay(addr, et, password, job),
+                #[cfg(not(target_arch = "wasm32"))]
                 Kind::Dlna(r) => dlna::run(*r, job),
+                #[cfg(not(target_arch = "wasm32"))]
                 Kind::Cast { addr } => cast::run(addr, job),
             })
             .ok();
