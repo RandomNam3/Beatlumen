@@ -102,6 +102,9 @@ pub struct Settings {
     pub render_scale: f32,
     pub server_url: String,
     pub server_token: String,
+    /// SHA-256 fingerprint (hex) of the server's TLS certificate the user
+    /// chose to trust (self-signed certificates on home servers).
+    pub server_cert_pin: String,
     pub use_server: bool,
     /// Local library folders (native platforms).
     pub library_folders: Vec<String>,
@@ -151,6 +154,7 @@ impl Default for Settings {
             render_scale: 1.0,
             server_url: String::new(),
             server_token: String::new(),
+            server_cert_pin: String::new(),
             use_server: false,
             library_folders: Vec::new(),
             preset: "Balanced".into(),
@@ -205,6 +209,7 @@ impl Settings {
             render_scale: v.f32_or("renderScale", 1.0).clamp(0.25, 1.0),
             server_url: v.str_or("serverUrl", "").to_string(),
             server_token: v.str_or("serverToken", "").to_string(),
+            server_cert_pin: v.str_or("serverCertPin", "").to_string(),
             use_server: v.bool_or("useServer", false),
             library_folders: strs(v.get("libraryFolders")),
             preset: v.str_or("preset", &d.preset).to_string(),
@@ -254,6 +259,7 @@ impl Settings {
             .with("renderScale", self.render_scale)
             .with("serverUrl", self.server_url.as_str())
             .with("serverToken", self.server_token.as_str())
+            .with("serverCertPin", self.server_cert_pin.as_str())
             .with("useServer", self.use_server)
             .with("libraryFolders", self.library_folders.clone())
             .with("preset", self.preset.as_str())

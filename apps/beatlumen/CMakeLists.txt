@@ -5,7 +5,7 @@ project(beatlumen VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg OpenGL)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg OpenGL Network)
 find_package(Qt6 6.5 QUIET COMPONENTS Multimedia)
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -76,6 +76,7 @@ qt_add_executable(beatlumen
     src/audio.cpp src/audio.h
     src/web.cpp src/web.h
     src/testhooks.cpp src/testhooks.h
+    src/tls.cpp src/tls.h
     src/core.h
 )
 target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
@@ -113,7 +114,7 @@ qt_add_qml_module(beatlumen
 )
 
 target_link_libraries(beatlumen PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::OpenGL
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::OpenGL Qt6::Network
     beatlumen_core)
 if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN)
     target_link_libraries(beatlumen PRIVATE Qt6::Multimedia)
@@ -151,8 +152,6 @@ elseif(ANDROID)
         QT_ANDROID_VERSION_CODE ${BL_ANDROID_VERSION_CODE}
         QT_ANDROID_LEGACY_PACKAGING ${BL_ANDROID_COMPRESS_LIBS})
 elseif(EMSCRIPTEN)
-    find_package(Qt6 REQUIRED COMPONENTS Network)
-    target_link_libraries(beatlumen PRIVATE Qt6::Network)
     enable_language(ASM)
     target_sources(beatlumen PRIVATE src/wasm_eh_tag.s)
     set_source_files_properties(src/wasm_eh_tag.s PROPERTIES LANGUAGE ASM COMPILE_OPTIONS "-mexception-handling")

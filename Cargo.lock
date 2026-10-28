@@ -45,6 +45,7 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-net",
 ]
 
 [[package]]

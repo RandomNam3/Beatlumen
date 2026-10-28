@@ -11,6 +11,7 @@
 #include <QSurfaceFormat>
 
 #include "bridge.h"
+#include "tls.h"
 #include "web.h"
 
 namespace {
@@ -93,6 +94,9 @@ int main(int argc, char *argv[])
         bridge = new Bridge(args, &app);
         qmlRegisterSingletonInstance("Beatlumen.Core", 1, 0, "Core", bridge);
         engine = new QQmlApplicationEngine(&app);
+        if (auto *f = tls::qmlNetworkFactory())
+            engine->setNetworkAccessManagerFactory(f);
+        tls::addImageProvider(engine);
         engine->rootContext()->setContextProperty(QStringLiteral("startFullscreen"), args.contains(QStringLiteral("--fullscreen")));
         QObject::connect(engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(1); }, Qt::QueuedConnection);
         engine->loadFromModule("Beatlumen", "Main");

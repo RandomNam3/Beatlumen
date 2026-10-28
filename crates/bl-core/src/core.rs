@@ -411,6 +411,8 @@ impl Core {
         };
         core.engine.set_intensity(core.settings.intensity);
         core.engine.set_adaptive(core.settings.adaptive);
+        // Native apps load server images through the core's HTTP client.
+        core.server.image_provider = host.platform() != "web";
         core.refresh_preset_list(host);
         let wanted = core
             .launch
@@ -504,6 +506,16 @@ impl Core {
             ServerState::NeedsLogin(i) => ("login", i.name.clone(), String::new()),
             ServerState::Error(e) => ("error", String::new(), e.clone()),
         };
+        // A certificate the system does not trust: its fingerprint, so the
+        // user can compare it and choose to trust it.
+        let (server_error, untrusted_cert) =
+            match server_error.split_once(bl_net::client::UNTRUSTED_CERT_MARKER) {
+                Some((msg, rest)) => (
+                    msg.trim_end().to_string(),
+                    rest.split(']').next().unwrap_or("").to_string(),
+                ),
+                None => (server_error, String::new()),
+            };
         // Source code of the connected server (AGPL section 13), else ours.
         let source_url = match &self.server.state {
             ServerState::Connected(i) | ServerState::NeedsLogin(i) if !i.source_url.is_empty() => {
@@ -551,6 +563,7 @@ impl Core {
             .with("serverError", server_error)
             .with("serverUrl", self.server.base.as_str())
             .with("sourceUrl", source_url)
+            .with("serverUntrustedCertificate", untrusted_cert)
             .with("preset", self.preset.name.as_str())
             .with("presetOrigin", self.preset_origin.name())
             .with("presetDirty", self.preset_dirty)
@@ -599,6 +612,13 @@ impl Core {
         if host.platform() != "web" && self.server.base.is_empty() {
             self.server.state = ServerState::Disabled;
             return;
+        }
+        if let Ok(u) = bl_net::client::Url::parse(&self.server.base) {
+            let pin = &self.settings.server_cert_pin;
+            bl_net::client::set_certificate_pin(
+                &format!("{}:{}", u.host, u.port),
+                Some(pin.as_str()).filter(|p| !p.is_empty()),
+            );
         }
         self.server.state = ServerState::Connecting;
         let id = self.server.request_info(host);
@@ -1654,7 +1674,7 @@ impl Core {
             String::new()
         } else if t.has_cover && self.server.is_connected() {
             self.server
-                .media_url(&bl_net::api::paths::track_cover(&t.id, 512))
+                .image_url(&bl_net::api::paths::track_cover(&t.id, 512))
         } else {
             String::new()
         }

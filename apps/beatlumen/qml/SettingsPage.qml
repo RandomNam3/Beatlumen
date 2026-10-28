@@ -229,13 +229,43 @@ Item {
                 Button { visible: page.server === "connected" && page.settings.serverToken !== ""; text: Theme.tr("Log out"); flat: true; icon.source: Theme.icon("logout"); onClicked: Core.call("server.logout") }
                 Button { visible: Core.platform !== "web" && page.server !== "disabled"; text: Theme.tr("Disconnect"); flat: true; icon.source: Theme.icon("cloud_off"); onClicked: Core.call("server.disconnect") }
             }
+            // Self-signed certificate (home server): show its fingerprint so
+            // the user can compare it before trusting it.
+            ColumnLayout {
+                readonly property string fp: Core.state.serverUntrustedCertificate || ""
+                visible: fp.length === 64
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 4
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: Theme.tr("The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:")
+                    wrapMode: Text.WordWrap
+                    color: Theme.text
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: parent.fp.toUpperCase().match(/../g) ? parent.fp.toUpperCase().match(/../g).join(":") : ""
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.textDim
+                }
+                Button {
+                    text: Theme.tr("Trust this certificate")
+                    onClicked: Core.call("server.trustCertificate", { fingerprint: parent.fp })
+                }
+            }
             Label {
                 textFormat: Text.PlainText
                 visible: page.insecureRemote(url.text)
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                text: Theme.tr("Warning: this address is outside your home network and the connection is not encrypted. Use a VPN.")
+                text: Theme.tr("Warning: this address is outside your home network and the connection is not encrypted. Use https:// or a VPN.")
                 wrapMode: Text.WordWrap
                 color: Theme.danger
             }
@@ -244,7 +274,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                text: Theme.tr("Only connections to this server are made. Outside your home network, connect through a VPN (e.g. WireGuard).")
+                text: Theme.tr("Only connections to this server are made. Outside your home network, use an https:// address or a VPN.")
                 wrapMode: Text.WordWrap
                 color: Theme.textFaint
                 font.pixelSize: 12

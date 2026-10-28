@@ -1,14 +1,54 @@
-//! Minimal blocking HTTP/1.1 client (plain HTTP over TCP).
+//! Minimal blocking HTTP/1.1 client.
 //!
-//! Used by native clients to talk to the configured Beatlumen server. HTTPS
-//! is not implemented in this crate; native platforms may provide TLS via
-//! system facilities (see the application's `Host` implementations) or the
-//! server can be reached through a VPN/LAN.
+//! Used by native clients to talk to the configured Beatlumen server. Plain
+//! HTTP runs over TCP; HTTPS uses a TLS connector registered by the
+//! application ([`set_tls_connector`]), backed by the platform's TLS
+//! (the crate itself contains no cryptography).
 
 use crate::http::{read_headers, read_line, ChunkedReader, Headers, MAX_HEAD};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::OnceLock;
 use std::time::Duration;
+
+/// A connection to a server: TCP or a TLS stream.
+pub trait Conn: Read + Write + Send {}
+impl<T: Read + Write + Send> Conn for T {}
+
+/// Opens a TLS connection to `host:port` with the given connect/IO
+/// timeout. The certificate must be trusted by the system and match the
+/// host name, or have the SHA-256 fingerprint `pin` (hex) if one is given
+/// (a self-signed certificate the user chose to trust).
+pub type TlsConnector =
+    fn(host: &str, port: u16, timeout: Duration, pin: Option<&str>) -> io::Result<Box<dyn Conn>>;
+
+static TLS: OnceLock<TlsConnector> = OnceLock::new();
+/// Trusted certificate fingerprints by "host:port".
+static PINS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Trusts the certificate with this SHA-256 fingerprint (hex) for
+/// `host:port` in addition to system-trusted ones (None removes it).
+pub fn set_certificate_pin(host_port: &str, fingerprint: Option<&str>) {
+    let mut p = PINS.lock().unwrap_or_else(|e| e.into_inner());
+    p.retain(|(h, _)| !h.eq_ignore_ascii_case(host_port));
+    if let Some(f) = fingerprint.filter(|f| !f.is_empty()) {
+        p.push((host_port.to_ascii_lowercase(), f.to_ascii_lowercase()));
+    }
+}
+
+/// Marker in TLS errors for an untrusted certificate, followed by its
+/// SHA-256 fingerprint (hex) and `]`.
+pub const UNTRUSTED_CERT_MARKER: &str = "[sha256:";
+
+/// Registers the TLS implementation used for `https://` URLs.
+pub fn set_tls_connector(f: TlsConnector) {
+    let _ = TLS.set(f);
+}
+
+/// Whether `https://` URLs can be used.
+pub fn tls_available() -> bool {
+    TLS.get().is_some()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Url {
@@ -128,12 +168,27 @@ impl Default for Options {
     }
 }
 
-fn connect(url: &Url, opts: &Options) -> io::Result<TcpStream> {
-    if url.scheme != "http" {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "HTTPS is not supported by the built-in client",
-        ));
+fn connect(url: &Url, opts: &Options) -> io::Result<Box<dyn Conn>> {
+    if url.scheme == "https" {
+        let tls = TLS.get().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "HTTPS is not available on this platform",
+            )
+        })?;
+        let key = format!("{}:{}", url.host.to_ascii_lowercase(), url.port);
+        let pin = PINS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(h, _)| *h == key)
+            .map(|(_, f)| f.clone());
+        return tls(
+            &url.host,
+            url.port,
+            opts.io_timeout.min(opts.connect_timeout * 4),
+            pin.as_deref(),
+        );
     }
     let mut last = io::Error::new(io::ErrorKind::NotFound, "host not found");
     for addr in (url.host.as_str(), url.port).to_socket_addrs()? {
@@ -142,7 +197,7 @@ fn connect(url: &Url, opts: &Options) -> io::Result<TcpStream> {
                 s.set_read_timeout(Some(opts.io_timeout))?;
                 s.set_write_timeout(Some(opts.io_timeout))?;
                 let _ = s.set_nodelay(true);
-                return Ok(s);
+                return Ok(Box::new(s));
             }
             Err(e) => last = e,
         }
@@ -151,7 +206,7 @@ fn connect(url: &Url, opts: &Options) -> io::Result<TcpStream> {
 }
 
 fn write_request(
-    stream: &mut TcpStream,
+    stream: &mut dyn Write,
     method: &str,
     url: &Url,
     headers: &[(String, String)],
@@ -292,7 +347,7 @@ pub struct HttpStream {
     opts: Options,
     len: u64,
     pos: u64,
-    conn: Option<(Body<BufReader<TcpStream>>, u64)>,
+    conn: Option<(Body<BufReader<Box<dyn Conn>>>, u64)>,
 }
 
 impl HttpStream {

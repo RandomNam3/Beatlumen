@@ -20,6 +20,10 @@ typedef struct BlCallbacks {
     void (*audio_clear)(void *user);
     void (*audio_set_paused)(void *user, int32_t paused);
     void (*audio_set_gain)(void *user, float gain);
+    int64_t (*tls_open)(const char *host, uint16_t port, uint32_t timeout_ms, const char *pin, char *err, size_t err_len);
+    int64_t (*tls_read)(int64_t handle, uint8_t *buf, size_t len, uint32_t timeout_ms);
+    int64_t (*tls_write)(int64_t handle, const uint8_t *buf, size_t len, uint32_t timeout_ms);
+    void (*tls_close)(int64_t handle);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);
@@ -36,6 +40,10 @@ void bl_core_open_data(BlCore *c, const char *name, const uint8_t *data, size_t 
 void bl_core_save(BlCore *c);
 void bl_audio_render(float *out, size_t frames, uint32_t latency_frames);
 void bl_string_free(char *s);
+// Fetches a URL with the core's HTTP client (TLS included), from any
+// thread; returns the body or null. Free with bl_bytes_free.
+uint8_t *bl_http_fetch(const char *url, size_t *out_len);
+void bl_bytes_free(uint8_t *p, size_t len);
 
 #ifdef __cplusplus
 }

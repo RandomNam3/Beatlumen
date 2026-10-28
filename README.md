@@ -85,6 +85,12 @@ crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
 The Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned
 features (lyrics, user accounts, sharing, provider integrations).
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security model (input limits,
+server protections, HTTPS and certificate trust) and how to report a
+vulnerability.
+
 ## License
 
 GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).

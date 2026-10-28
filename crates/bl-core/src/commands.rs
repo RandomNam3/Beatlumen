@@ -626,7 +626,7 @@ impl Core {
                             .with(
                                 "thumb",
                                 self.server
-                                    .media_url(&bl_net::api::paths::image(&i.id, 384)),
+                                    .image_url(&bl_net::api::paths::image(&i.id, 384)),
                             )
                     })
                     .collect(),
@@ -866,10 +866,23 @@ impl Core {
                 if url != self.server.base {
                     self.server.token.clear();
                     self.settings.server_token.clear();
+                    self.settings.server_cert_pin.clear();
                 }
                 self.server.base = url.clone();
                 self.settings.server_url = url;
                 self.settings.use_server = !self.server.base.is_empty();
+                self.settings_changed();
+                self.connect_server(host);
+                ok()
+            }
+            // Trusts the server's (self-signed) certificate with this
+            // fingerprint, after the user compared it.
+            "server.trustCertificate" => {
+                let f = s("fingerprint").to_ascii_lowercase();
+                if f.len() != 64 || !f.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return err("invalid fingerprint".to_string());
+                }
+                self.settings.server_cert_pin = f;
                 self.settings_changed();
                 self.connect_server(host);
                 ok()
@@ -1137,7 +1150,7 @@ impl Core {
                 .unwrap_or_else(|| id.to_string());
             (
                 name,
-                self.server.media_url(&bl_net::api::paths::image(id, 384)),
+                self.server.image_url(&bl_net::api::paths::image(id, 384)),
             )
         } else if let Some(tid) = src.strip_prefix("cover:") {
             let t = self.track_for(tid);

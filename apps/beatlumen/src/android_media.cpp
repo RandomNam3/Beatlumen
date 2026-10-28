@@ -1,5 +1,6 @@
 #include "android_media.h"
 #include "bridge.h"
+#include "tls.h"
 
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -157,6 +158,15 @@ void AndroidMedia::sync(bool force)
     m_posClock.restart();
 
     QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    // The cover may come from an https server with a certificate the user
+    // trusts by fingerprint: hand that to the Java loader.
+    const QUrl coverUrl(s.cover);
+    if (coverUrl.scheme() == QLatin1String("https")) {
+        const QString key = coverUrl.host() + QLatin1Char(':') + QString::number(coverUrl.port(443));
+        QJniObject::callStaticMethod<void>(kJavaClass, "setCertificatePin", "(Ljava/lang/String;Ljava/lang/String;)V",
+                                           QJniObject::fromString(key).object<jstring>(),
+                                           QJniObject::fromString(QString::fromLatin1(tls::pinFor(key))).object<jstring>());
+    }
     QJniObject::callStaticMethod<void>(
         kJavaClass, "update",
         "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJI)V",

@@ -217,11 +217,12 @@ static web client itself is public so that it can show its login screen.
 
 * **No TLS is built in.** Passwords, tokens and music travel in plain text.
   On a trusted home LAN this may be acceptable; for anything else use a VPN
-  (e.g. WireGuard, Tailscale). The desktop and Android apps currently speak
-  plain HTTP only, so outside the LAN they need the VPN; the web app can
-  also be used through a reverse proxy with HTTPS, with the server bound to
-  localhost (`--bind 127.0.0.1:7878`) and the proxy's domain allowed
-  (`--allow-host music.example.org`). Caddy:
+  (e.g. WireGuard, Tailscale) or a reverse proxy with HTTPS, with the server
+  bound to localhost (`--bind 127.0.0.1:7878`) and the proxy's domain
+  allowed (`--allow-host music.example.org`). The apps and the web app then
+  connect to `https://music.example.org`; with a self-signed certificate
+  the apps show its SHA-256 fingerprint and connect after you compared and
+  trusted it. Caddy:
 
   ```
   music.example.org {

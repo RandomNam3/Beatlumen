@@ -19,8 +19,12 @@
 #                                          used and generated when missing.
 #   MAVEN_CENTRAL_MIRROR                   Maven Central mirror for Gradle, e.g.
 #                                          https://maven-central.storage-download.googleapis.com/maven2/
+#   PATCH_QT_QML=1                         Ship Qt's QML library built with
+#                                          apps/beatlumen/android/qt-patches (no executable
+#                                          memory probe, see SECURITY.md); built once and
+#                                          cached in build/qt-patched. 0 = official library.
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 set -euo pipefail
 
@@ -100,6 +104,13 @@ step "configure ($abi_list, $BUILD_TYPE)"
 # ---- 2. APK (androiddeployqt + Gradle) -------------------------------------------
 # Gradle downloads its dependencies on the first run; retry on network errors
 # (Maven Central answers 429 when rate limiting).
+if [ "${PATCH_QT_QML:-1}" = 1 ]; then
+    step "patched Qt QML library"
+    for abi in $ABIS; do
+        QT_ROOT="$QT_ROOT" "$ROOT/apps/beatlumen/android/qt-patches/build-qml.sh" "$abi"
+    done
+fi
+
 step "build native libraries and package the APK"
 # androiddeployqt never removes libraries from earlier builds (e.g. Qt
 # plugins no longer imported) and Gradle packages everything it finds.
@@ -113,6 +124,18 @@ for attempt in 1 2 3; do
     echo "APK build failed (attempt $attempt), retrying in 20 s..." >&2
     sleep 20
 done
+
+if [ "${PATCH_QT_QML:-1}" = 1 ]; then
+    # Replace the official library deployed by androiddeployqt and package
+    # again (Gradle only redoes the packaging steps).
+    step "package with the patched Qt QML library"
+    for abi in $ABIS; do
+        cp "$ROOT/build/qt-patched/$abi/libQt6Qml_$abi.so" "$BUILD_DIR/android-build/libs/$abi/libQt6Qml_$abi.so"
+    done
+    gradle_task=assembleRelease
+    [ "$BUILD_TYPE" = Debug ] && gradle_task=assembleDebug
+    (cd "$BUILD_DIR/android-build" && ./gradlew --no-daemon -q "$gradle_task") || die "Gradle packaging failed"
+fi
 
 unsigned="$(ls -t "$BUILD_DIR"/android-build/build/outputs/apk/*/*.apk 2>/dev/null | head -n 1)"
 [ -f "$unsigned" ] || die "no APK produced under $BUILD_DIR/android-build/build/outputs/apk"

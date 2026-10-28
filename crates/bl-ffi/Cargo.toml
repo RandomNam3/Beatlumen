@@ -14,6 +14,7 @@ bl-core = { path = "../bl-core" }
 bl-gl = { path = "../bl-gl" }
 bl-json = { path = "../bl-json" }
 bl-media = { path = "../bl-media" }
+bl-net = { path = "../bl-net" }
 
 [dev-dependencies]
 bl-image = { path = "../bl-image" }

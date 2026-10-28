@@ -1,6 +1,7 @@
 #include "bridge.h"
 #include "audio.h"
 #include "testhooks.h"
+#include "tls.h"
 #include "web.h"
 
 #include <QClipboard>
@@ -86,6 +87,7 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     cb.http_request = web::httpRequest;
 #endif
     AudioOutput::configure(cb);
+    tls::configure(cb);
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
@@ -250,6 +252,12 @@ void Bridge::handleEvents(const QByteArray &json)
         if (type == QLatin1String("state")) {
             const int underrunsBefore = m_state.value(QStringLiteral("underruns")).toInt();
             m_state = e.value(QStringLiteral("state")).toObject().toVariantMap();
+            // Certificate the user trusts for the server (Qt's own requests).
+            const QVariantMap settings = m_state.value(QStringLiteral("settings")).toMap();
+            const QUrl server(settings.value(QStringLiteral("serverUrl")).toString());
+            if (server.scheme() == QLatin1String("https"))
+                tls::setPin(server.host() + QLatin1Char(':') + QString::number(server.port(443)),
+                            settings.value(QStringLiteral("serverCertPin")).toString().toLatin1());
             if (!qEnvironmentVariableIsEmpty("BEATLUMEN_TEST_DUMP")) {
                 const int u = m_state.value(QStringLiteral("underruns")).toInt();
                 if (u != underrunsBefore)

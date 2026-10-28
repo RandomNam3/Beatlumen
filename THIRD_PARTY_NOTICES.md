@@ -55,6 +55,9 @@ SOFTWARE.
 ## Qt and Material Symbols
 
 The application user interface uses [Qt 6](https://www.qt.io/) under the GNU
-LGPL v3 (dynamically linked on desktop platforms). The icons in
+LGPL v3 (dynamically linked). The Android app ships a modified Qt QML
+library (`libQt6Qml`): it is built from the official Qt source with the
+patches in `apps/beatlumen/android/qt-patches/` by `build-qml.sh` there, and
+can be replaced by any compatible build of the library. The icons in
 `apps/beatlumen/icons` are [Material Symbols](https://github.com/google/material-design-icons)
 by Google, licensed under the Apache License 2.0.

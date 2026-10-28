@@ -134,6 +134,13 @@ jobs:
       - name: Android SDK packages
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" > /dev/null
+      # Qt's QML library built with apps/beatlumen/android/qt-patches (see
+      # SECURITY.md); takes a while, so it is cached per patch set.
+      - name: Cache patched Qt QML library
+        uses: actions/cache@v4
+        with:
+          path: build/qt-patched/*/libQt6Qml_*
+          key: qt-qml-patched-${{ env.QT_VERSION }}-${{ hashFiles('apps/beatlumen/android/qt-patches/**') }}
       - name: Build
         run: |
           sudo apt-get install -y ninja-build

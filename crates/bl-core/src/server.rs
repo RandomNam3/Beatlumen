@@ -17,6 +17,9 @@ pub struct ServerClient {
     pub base: String,
     pub token: String,
     pub state: ServerState,
+    /// Images are loaded by the UI's "server" image provider (native apps:
+    /// through this crate's HTTP client and its TLS), not by Qt's network.
+    pub image_provider: bool,
 }
 
 impl ServerClient {
@@ -25,6 +28,17 @@ impl ServerClient {
             base: base.trim().trim_end_matches('/').to_string(),
             token: token.to_string(),
             state: ServerState::Disabled,
+            image_provider: false,
+        }
+    }
+
+    /// URL of a server image for the UI.
+    pub fn image_url(&self, path: &str) -> String {
+        let u = self.media_url(path);
+        if self.image_provider {
+            format!("image://server/{}", bl_net::http::percent_encode(&u))
+        } else {
+            u
         }
     }
 

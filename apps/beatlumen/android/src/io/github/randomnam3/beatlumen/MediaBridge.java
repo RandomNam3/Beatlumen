@@ -247,12 +247,84 @@ public final class MediaBridge
         });
     }
 
+    // Certificates (SHA-256 fingerprints, hex) the user chose to trust, by
+    // "host:port" (self-signed certificates of home servers).
+    private static final java.util.Map<String, String> sPins = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static void setCertificatePin(String hostPort, String fingerprint)
+    {
+        if (fingerprint == null || fingerprint.isEmpty())
+            sPins.remove(hostPort.toLowerCase(java.util.Locale.ROOT));
+        else
+            sPins.put(hostPort.toLowerCase(java.util.Locale.ROOT), fingerprint.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    private static String sha256Hex(byte[] der) throws java.security.NoSuchAlgorithmException
+    {
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(der);
+        StringBuilder sb = new StringBuilder();
+        for (byte b : d)
+            sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    // HTTPS with the system's trust, or else the trusted fingerprint.
+    private static void applyPin(javax.net.ssl.HttpsURLConnection c, URL url) throws Exception
+    {
+        final String pin = sPins.get(url.getHost().toLowerCase(java.util.Locale.ROOT) + ":" + (url.getPort() > 0 ? url.getPort() : 443));
+        if (pin == null)
+            return;
+        javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init((java.security.KeyStore) null);
+        final javax.net.ssl.X509TrustManager system = (javax.net.ssl.X509TrustManager) tmf.getTrustManagers()[0];
+        javax.net.ssl.X509TrustManager pinned = new javax.net.ssl.X509TrustManager() {
+            @Override public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String auth) throws java.security.cert.CertificateException
+            {
+                throw new java.security.cert.CertificateException("not a server");
+            }
+            @Override public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String auth) throws java.security.cert.CertificateException
+            {
+                try {
+                    system.checkServerTrusted(chain, auth);
+                } catch (java.security.cert.CertificateException e) {
+                    try {
+                        if (chain.length == 0 || !pin.equals(sha256Hex(chain[0].getEncoded())))
+                            throw e;
+                    } catch (java.security.NoSuchAlgorithmException n) {
+                        throw e;
+                    }
+                }
+            }
+            @Override public java.security.cert.X509Certificate[] getAcceptedIssuers()
+            {
+                return system.getAcceptedIssuers();
+            }
+        };
+        javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
+        ctx.init(null, new javax.net.ssl.TrustManager[] { pinned }, null);
+        c.setSSLSocketFactory(ctx.getSocketFactory());
+        final javax.net.ssl.HostnameVerifier standard = javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier();
+        c.setHostnameVerifier((host, session) -> {
+            if (standard.verify(host, session))
+                return true;
+            try {
+                java.security.cert.Certificate[] certs = session.getPeerCertificates();
+                return certs.length > 0 && pin.equals(sha256Hex(certs[0].getEncoded()));
+            } catch (Exception e) {
+                return false;
+            }
+        });
+    }
+
     private static Bitmap decodeCover(String source)
     {
         try {
             byte[] data;
             if (source.startsWith("http://") || source.startsWith("https://")) {
-                HttpURLConnection c = (HttpURLConnection) new URL(source).openConnection();
+                URL url = new URL(source);
+                HttpURLConnection c = (HttpURLConnection) url.openConnection();
+                if (c instanceof javax.net.ssl.HttpsURLConnection)
+                    applyPin((javax.net.ssl.HttpsURLConnection) c, url);
                 c.setConnectTimeout(5000);
                 c.setReadTimeout(10000);
                 try (InputStream in = c.getInputStream()) {

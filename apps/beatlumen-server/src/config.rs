@@ -108,8 +108,8 @@ OPTIONS:
     -V, --version           Print the version
 
 The server never opens outgoing network connections. It does not provide TLS:
-for access over the internet use a VPN, or (web app only) a reverse proxy
-with HTTPS together with --allow-host.
+for access over the internet use a VPN, or a reverse proxy with HTTPS
+together with --allow-host.
 ";
 
 fn path_list(v: &Value, base: &Path) -> Result<Vec<PathBuf>, String> {

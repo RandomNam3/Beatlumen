@@ -46,8 +46,10 @@ issue.
   `nosniff`, `frame-ancestors 'none'` and no CORS headers.
 * Files: track and image ids are opaque hashes; static files, presets and
   uploads are confined to their folders with sanitized names.
-* **No TLS.** Use it on a home network or through a VPN. The web app can
-  also be served through an HTTPS reverse proxy (see the server README).
+* **TLS through a reverse proxy.** The server itself speaks plain HTTP (home
+  network, VPN); for access from elsewhere put an HTTPS reverse proxy in
+  front of it (see the server README). The apps and the web app connect to
+  `https://` addresses.
 
 ## Apps
 
@@ -60,11 +62,16 @@ issue.
 * Android: only the launcher activity is exported; files picked with the
   system picker are copied into app storage under sanitized names with
   size limits.
+* `https://` servers: certificates must be trusted by the system and match
+  the host name (Android: the system's TLS; desktop: Qt's TLS backend). A
+  self-signed certificate (common on home servers) is only accepted after
+  the user compared and trusted its SHA-256 fingerprint; the trust applies
+  to that one certificate and server address. Server images are loaded by
+  the app's own HTTP client so the same rules apply to them.
 * The app warns when a server outside the home network is used without
   encryption.
 
 ## Known limitations
 
-* The desktop and Android apps speak plain HTTP only (no TLS yet).
 * Tokens appear in media URLs (`?token=`) because `<audio>`/`<img>` cannot
   send headers; reverse proxies may log them.
