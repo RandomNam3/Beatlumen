@@ -37,6 +37,8 @@ const MAX_IP_FAILURES: u32 = 20;
 const FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
 const FAILURE_DELAY: Duration = Duration::from_millis(300);
 const SESSION_LIFETIME: u64 = 90 * 24 * 3600;
+/// Sessions in use are renewed after this time.
+const SESSION_RENEW: u64 = 24 * 3600;
 const MAX_SESSIONS: usize = 10_000;
 /// Largest encrypted file.
 const MAX_FILE: u64 = 4 << 30;
@@ -631,17 +633,30 @@ impl Vault {
         Ok(token)
     }
 
-    /// The user a request is logged in as.
+    /// The user a request is logged in as. Sessions in use are renewed
+    /// (daily), so they end after `SESSION_LIFETIME` without use.
     pub fn session_user(&self, req: &Request) -> Option<String> {
         let t = crate::auth::Auth::request_token(req)?;
         let d = crate::sha256::sha256(t.as_bytes());
-        let s = self.sessions.read().unwrap_or_else(|e| e.into_inner());
-        let s = s.get(&d)?;
-        let users = self.users.read().unwrap_or_else(|e| e.into_inner());
-        let u = users.get(&s.user)?;
-        (u.generation == s.generation
-            && util::now_secs().saturating_sub(s.issued) < SESSION_LIFETIME)
-            .then(|| s.user.clone())
+        let now = util::now_secs();
+        let (user, renew) = {
+            let s = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+            let s = s.get(&d)?;
+            let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+            let u = users.get(&s.user)?;
+            if u.generation != s.generation || now.saturating_sub(s.issued) >= SESSION_LIFETIME {
+                return None;
+            }
+            (s.user.clone(), now.saturating_sub(s.issued) > SESSION_RENEW)
+        };
+        if renew {
+            let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = s.get_mut(&d) {
+                e.issued = now;
+                self.save_sessions(&s);
+            }
+        }
+        Some(user)
     }
 
     /// Whether the request's session was opened with a passkey moments ago.

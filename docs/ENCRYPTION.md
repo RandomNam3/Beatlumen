@@ -162,6 +162,27 @@ Where passkeys and password managers are used:
 * The **web client** opens the sign-in page in a small window and gets
   the result the same way.
 
+## Staying unlocked on a device
+
+By default an app keeps the unlocked account (master key, key bundle and
+session token) in the platform's protected store, so the password or
+passkey is needed once per device:
+
+* **Android**: encrypted with an AES-256-GCM key in the Android Keystore
+  (usually in secure hardware; the key never leaves it). The ciphertext lives
+  in the app's private storage, which is excluded from backups.
+* **Windows**: DPAPI, bound to the Windows account.
+* **Linux**: the Secret Service (GNOME Keyring, KWallet, KeePassXC); the
+  keyring may ask to be unlocked.
+* **Web**: not offered (a browser has no comparable store).
+
+Whoever can use the device unlocked (or the operating system account) can
+then open the files, which is why it can be switched off ("Stay unlocked on
+this device"). "Lock" forgets the stored account. Sessions end after 90 days
+without use, and a password change ends the sessions of all other devices;
+a device whose session the server refuses forgets its stored account and
+asks to sign in again.
+
 ## Encrypted files
 
 Each file has a random 256-bit **file key**.

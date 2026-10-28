@@ -15,6 +15,8 @@ Item {
     readonly property var vault: Core.state.vault || ({})
     readonly property string vstate: vault.state || "locked"
     readonly property bool ready: vstate === "ready"
+    // Opening the account kept on this device.
+    readonly property bool restoring: vault.restoring === true && !ready
     readonly property int rev: vault.rev || 0
     readonly property bool connected: Core.state.server === "connected" || Core.state.server === "login"
     property var files: []
@@ -92,12 +94,12 @@ Item {
         }
 
         RowLayout {
-            visible: page.vstate === "busy"
+            visible: page.vstate === "busy" || page.restoring
             Layout.fillWidth: true
             Layout.leftMargin: 16
             spacing: 12
             BusyIndicator { running: parent.visible; implicitWidth: 32; implicitHeight: 32 }
-            Label { textFormat: Text.PlainText; text: page.vault.busy || ""; color: Theme.textDim }
+            Label { textFormat: Text.PlainText; text: page.restoring ? Theme.tr("Unlocking…") : (page.vault.busy || ""); color: Theme.textDim }
         }
         Label {
             textFormat: Text.PlainText
@@ -120,7 +122,7 @@ Item {
             text: Theme.tr("Connect to a Beatlumen server in the settings first.")
         }
         ScrollView {
-            visible: page.connected && !page.ready
+            visible: page.connected && !page.ready && !page.restoring
             Layout.fillWidth: true
             Layout.fillHeight: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -460,13 +462,23 @@ Item {
                     Button { Layout.leftMargin: 16; text: Theme.tr("Passkeys and password"); icon.source: Theme.icon("key"); onClicked: Core.call("vault.manageInBrowser") }
                     Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("Change password"); icon.source: Theme.icon("key"); onClicked: changePw.open() }
                     Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("New recovery code"); icon.source: Theme.icon("refresh"); onClicked: newCode.open() }
+                    SwitchRow {
+                        visible: page.vault.canRemember === true
+                        Layout.fillWidth: true
+                        title: Theme.tr("Stay unlocked on this device")
+                        detail: Theme.tr("The keys are kept in this device's protected storage, so you sign in only once here. Anyone who can use this device unlocked can then open your files.")
+                        on: page.vault.remember !== false
+                        onSwitched: (on) => Core.call("vault.remember", { value: on })
+                    }
                     Button { Layout.leftMargin: 16; text: Theme.tr("Lock"); flat: true; icon.source: Theme.icon("lock"); onClicked: Core.call("vault.logout") }
                     Label {
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
                         Layout.leftMargin: 16
                         Layout.rightMargin: 16
-                        text: Theme.tr("The keys stay in memory only while unlocked. After a restart the password is needed again.")
+                        text: page.vault.canRemember === true && page.vault.remember !== false
+                              ? Theme.tr("Lock forgets the keys on this device; you then sign in again.")
+                              : Theme.tr("The keys stay in memory only while unlocked. After a restart the password is needed again.")
                         wrapMode: Text.WordWrap
                         color: Theme.textFaint
                         font.pixelSize: 12

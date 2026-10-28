@@ -122,11 +122,13 @@ if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN AND NOT ANDROID)
     target_compile_definitions(beatlumen PRIVATE BL_HAVE_MULTIMEDIA)
 endif()
 
+# "Stay unlocked on this device": the platform's protected store.
+target_sources(beatlumen PRIVATE src/secrets.cpp src/secrets.h)
 # The desktop's media controls and media keys (media_desktop.cpp).
 if(WIN32)
     target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_SMTC)
-    target_link_libraries(beatlumen PRIVATE runtimeobject shcore)
+    target_link_libraries(beatlumen PRIVATE runtimeobject shcore crypt32)
 elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
     find_package(Qt6 QUIET COMPONENTS DBus)
     if(TARGET Qt6::DBus)

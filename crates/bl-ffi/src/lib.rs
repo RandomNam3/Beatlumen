@@ -97,6 +97,14 @@ pub struct BlCallbacks {
     pub credential_request: Option<
         unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
     >,
+    /// The platform's protected store (see `Host::secret_store`): keeps
+    /// `len` bytes under `key` (0 bytes: deletes).
+    pub secret_store: Option<
+        unsafe extern "C" fn(user: *mut c_void, key: *const c_char, data: *const u8, len: usize),
+    >,
+    /// Reads `key`; the value comes back as the `vault.secret` command.
+    /// Non-zero when the read was started.
+    pub secret_load: Option<unsafe extern "C" fn(user: *mut c_void, key: *const c_char) -> i32>,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -604,6 +612,27 @@ impl Host for UiHost {
         let u = CString::new(url.replace('\0', "")).unwrap_or_default();
         // SAFETY: UI callback contract.
         unsafe { f(self.cb.user, u.as_ptr()) != 0 }
+    }
+
+    fn has_secret_store(&self) -> bool {
+        self.cb.secret_store.is_some() && self.cb.secret_load.is_some()
+    }
+
+    fn secret_store(&mut self, key: &str, value: &[u8]) {
+        if let Some(f) = self.cb.secret_store {
+            let k = CString::new(key.replace('\0', "")).unwrap_or_default();
+            // SAFETY: UI callback contract; `value` outlives the call.
+            unsafe { f(self.cb.user, k.as_ptr(), value.as_ptr(), value.len()) }
+        }
+    }
+
+    fn secret_load(&mut self, key: &str) -> bool {
+        let Some(f) = self.cb.secret_load else {
+            return false;
+        };
+        let k = CString::new(key.replace('\0', "")).unwrap_or_default();
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr()) != 0 }
     }
 
     fn credential_request(&mut self, kind: &str, json: &str) -> bool {

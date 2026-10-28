@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod native;
+mod remember;
 
 /// Queue ids of encrypted files: `vault:<file id>`.
 pub const ID_PREFIX: &str = "vault:";
@@ -191,6 +192,12 @@ pub(crate) struct Vault {
     native: Option<native::Native>,
     /// User and password to offer to the password manager once accepted.
     save_password: Option<(String, String)>,
+    /// Digest of what was last put in the platform's store.
+    remembered: Option<[u8; 32]>,
+    /// The store was asked for this server's account (once per start).
+    restore_asked: String,
+    /// Waiting for the store since then.
+    restoring: Option<f64>,
 }
 
 fn b64(b: &[u8]) -> Value {
@@ -267,6 +274,7 @@ impl Vault {
     fn lock(&mut self) {
         let user = std::mem::take(&mut self.user);
         let expect = self.expect_upload;
+        let asked = std::mem::take(&mut self.restore_asked);
         *self = Vault {
             jobs: self.jobs.clone(),
             browser_box: self.browser_box.clone(),
@@ -276,6 +284,7 @@ impl Vault {
         };
         self.user = user;
         self.expect_upload = expect;
+        self.restore_asked = asked;
     }
 
     pub fn plain(&self, id: &str) -> Option<Arc<Vec<u8>>> {
@@ -547,6 +556,7 @@ impl Core {
     }
 
     pub(crate) fn vault_logout(&mut self, host: &mut dyn Host) {
+        self.vault_forget(host);
         if !self.vault.token.is_empty() {
             self.vault_request(host, "POST", "/api/vault/logout", None, VaultReq::Logout);
         }
@@ -741,6 +751,7 @@ impl Core {
         }
         self.vault.rev += 1;
         self.offer_password(host);
+        self.vault_remember(host);
         self.vault_refresh(host);
         self.push_start(host);
     }
@@ -1121,6 +1132,7 @@ impl Core {
     // ---- results ---------------------------------------------------------
 
     pub(crate) fn poll_vault(&mut self, host: &mut dyn Host) {
+        self.vault_restore(host);
         for path in self.vault.browser_box.take() {
             self.vault_browser_result(host, &path);
         }
@@ -1290,6 +1302,7 @@ impl Core {
             return;
         }
         if status == 401 && !auth_request && !matches!(req, VaultReq::Logout) {
+            self.vault_forget(host);
             self.vault_lock(host);
             self.vault.error = self.tr("The session ended: unlock again").into();
             return;
@@ -1426,6 +1439,7 @@ impl Core {
                             self.vault.busy = None;
                             self.vault.rev += 1;
                             self.offer_password(host);
+                            self.vault_remember(host);
                         } else {
                             self.vault_logged_in(host, token, a, None);
                         }
@@ -1643,6 +1657,9 @@ impl Core {
             .with("pairingCode", self.vault.browser.as_ref().map(|b| b.key.pairing_code()))
             .with("passwordOff", self.vault.password_off)
             .with("platformCredentials", self.platform_credentials(host))
+            .with("remember", self.settings.vault_remember)
+            .with("canRemember", self.vault_can_remember(host))
+            .with("restoring", self.vault.restoring.is_some())
             .with("passkeys", matches!(&self.server.state, crate::server::ServerState::Connected(i) | crate::server::ServerState::NeedsLogin(i) if i.passkeys))
     }
 
@@ -1732,6 +1749,8 @@ impl Core {
             "vault.browserResult" => self.vault_browser_result(host, &s("url")),
             "vault.manageInBrowser" => self.vault_manage_in_browser(host),
             "vault.nativeSignIn" => self.vault_native_sign_in(host),
+            "vault.secret" => self.vault_secret(host, &s("key"), &s("value")),
+            "vault.remember" => self.vault_set_remember(host, c.bool_or("value", true)),
             "vault.addPasskey" => self.vault_add_passkey(host, &s("password"), &s("name")),
             "vault.credentialResult" => {
                 let ok = c.bool_or("ok", false);

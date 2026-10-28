@@ -1,6 +1,7 @@
 #include "bridge.h"
 #include "audio.h"
 #include "testhooks.h"
+#include "secrets.h"
 #include "tls.h"
 #include "web.h"
 
@@ -292,6 +293,7 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
     cb.open_url = openUrlCallback;
+    secrets::configure(cb, this);
 #ifdef Q_OS_ANDROID
     cb.service_register = serviceRegister;
     cb.service_unregister = serviceUnregister;

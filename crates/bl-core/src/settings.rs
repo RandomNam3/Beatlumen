@@ -149,6 +149,8 @@ pub struct Settings {
     /// Push notifications (UnifiedPush) when files are shared.
     pub notifications: bool,
     pub vault_user: String,
+    /// Keep the vault unlocked on this device (platform's protected store).
+    pub vault_remember: bool,
     pub airplay_name: String,
     /// Password AirPlay senders must enter (empty = none).
     pub airplay_password: String,
@@ -199,6 +201,7 @@ impl Default for Settings {
             airplay: false,
             airplay_name: String::new(),
             vault_user: String::new(),
+            vault_remember: true,
             notifications: true,
             airplay_password: String::new(),
             airplay_id: String::new(),
@@ -267,6 +270,7 @@ impl Settings {
             airplay: v.bool_or("airplay", false),
             airplay_name: v.str_or("airplayName", "").chars().take(48).collect(),
             vault_user: v.str_or("vaultUser", "").chars().take(32).collect(),
+            vault_remember: v.bool_or("vaultRemember", true),
             notifications: v.bool_or("notifications", true),
             airplay_password: v.str_or("airplayPassword", "").chars().take(64).collect(),
             airplay_id: v.str_or("airplayId", "").to_string(),
@@ -318,6 +322,7 @@ impl Settings {
             .with("airplay", self.airplay)
             .with("airplayName", self.airplay_name.as_str())
             .with("vaultUser", self.vault_user.as_str())
+            .with("vaultRemember", self.vault_remember)
             .with("notifications", self.notifications)
             .with("airplayPassword", self.airplay_password.as_str())
             .with("airplayId", self.airplay_id.as_str())

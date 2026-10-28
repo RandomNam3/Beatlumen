@@ -38,6 +38,11 @@ typedef struct BlCallbacks {
     // "save" with JSON; results come back as "vault.credentialResult".
     // Non-zero when the request was started.
     int32_t (*credential_request)(void *user, const char *kind, const char *json);
+    // The platform's protected store (Android Keystore, Windows DPAPI,
+    // Secret Service): keeps len bytes under key (0 bytes: deletes); load
+    // answers with the "vault.secret" command, non-zero when started.
+    void (*secret_store)(void *user, const char *key, const uint8_t *data, size_t len);
+    int32_t (*secret_load)(void *user, const char *key);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);

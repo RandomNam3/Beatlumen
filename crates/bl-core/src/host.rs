@@ -194,4 +194,19 @@ pub trait Host {
     fn credential_request(&mut self, _kind: &str, _json: &str) -> bool {
         false
     }
+
+    /// Whether the platform keeps secrets protected for this app (Android
+    /// Keystore, Windows DPAPI, the Secret Service on Linux).
+    fn has_secret_store(&self) -> bool {
+        false
+    }
+
+    /// Keeps `value` under `key` in that store; empty deletes it.
+    fn secret_store(&mut self, _key: &str, _value: &[u8]) {}
+
+    /// Reads `key` from that store; the value arrives later as the
+    /// `vault.secret` command ({"key", "value": base64, empty if none}).
+    fn secret_load(&mut self, _key: &str) -> bool {
+        false
+    }
 }

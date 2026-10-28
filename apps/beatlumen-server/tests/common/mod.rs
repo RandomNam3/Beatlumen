@@ -22,6 +22,10 @@ pub struct TestHost {
     pub android: bool,
     /// Requests to the credential manager: (kind, JSON).
     pub credentials: Arc<Mutex<Vec<(String, String)>>>,
+    /// A protected store (None: the platform has none).
+    pub secrets: Option<Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>>,
+    /// Reads waiting to be answered (`App::state` answers them).
+    pub secret_reads: Arc<Mutex<Vec<String>>>,
 }
 
 impl Host for TestHost {
@@ -105,6 +109,23 @@ impl Host for TestHost {
         }
         self.android
     }
+    fn has_secret_store(&self) -> bool {
+        self.secrets.is_some()
+    }
+    fn secret_store(&mut self, key: &str, value: &[u8]) {
+        if let Some(s) = &self.secrets {
+            let mut s = s.lock().unwrap();
+            if value.is_empty() {
+                s.remove(key);
+            } else {
+                s.insert(key.to_string(), value.to_vec());
+            }
+        }
+    }
+    fn secret_load(&mut self, key: &str) -> bool {
+        self.secret_reads.lock().unwrap().push(key.to_string());
+        self.secrets.is_some()
+    }
     fn log(&self, msg: &str) {
         eprintln!("[core] {msg}");
     }
@@ -133,6 +154,8 @@ impl App {
             opened: Default::default(),
             android: false,
             credentials: Default::default(),
+            secrets: None,
+            secret_reads: Default::default(),
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }
@@ -144,6 +167,21 @@ impl App {
 
     pub fn state(&mut self) -> Value {
         self.core.tick(&mut self.host);
+        let reads: Vec<String> = std::mem::take(&mut *self.host.secret_reads.lock().unwrap());
+        for key in reads {
+            let value = self
+                .host
+                .secrets
+                .as_ref()
+                .and_then(|s| s.lock().unwrap().get(&key).cloned())
+                .unwrap_or_default();
+            self.cmd(
+                Value::object()
+                    .with("cmd", "vault.secret")
+                    .with("key", key)
+                    .with("value", bl_net::base64_encode(&value)),
+            );
+        }
         self.core.state(&self.host)
     }
 
