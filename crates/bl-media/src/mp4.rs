@@ -585,6 +585,12 @@ impl SampleTable {
                 raw.sizes[i]
             }
         };
+        // Hostile tables (huge counts, chunks reusing the same bytes) must
+        // not build billions of entries: all samples together fit in the
+        // file, and there are no more than the timing table describes.
+        let timed: u64 = raw.stts.iter().map(|&(c, _)| c as u64).sum();
+        let n = n.min(timed.min(file_len) as usize);
+        let mut total_bytes = 0u64;
         let mut offsets = Vec::new();
         let mut sizes = Vec::new();
         let mut stsc_i = 0usize;
@@ -603,6 +609,10 @@ impl SampleTable {
                 let s = size_of(i);
                 if o.saturating_add(s as u64) > file_len {
                     break 'chunks; // truncated file: stop at the last complete sample
+                }
+                total_bytes += s as u64;
+                if total_bytes > file_len {
+                    break 'chunks;
                 }
                 offsets.push(o);
                 sizes.push(s);
@@ -840,6 +850,24 @@ impl Decoder for Mp4Decoder {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hostile_sample_tables_stay_small() {
+        // ~4 billion one-byte samples per chunk, 20000 chunks at offset 0.
+        let raw = RawTables {
+            stts: vec![(u32::MAX, 1)],
+            stsc: vec![(1, u32::MAX)],
+            const_size: 1,
+            sizes: Vec::new(),
+            count: u32::MAX,
+            chunk_offsets: vec![0; 20_000],
+        };
+        let t = std::time::Instant::now();
+        let table = SampleTable::build(&raw, 100_000).unwrap();
+        assert!(table.offsets.len() <= 100_000);
+        assert!(t.elapsed().as_secs() < 2);
+    }
+
     use super::*;
 
     #[test]

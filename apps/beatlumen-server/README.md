@@ -201,21 +201,27 @@ and `/api/login` requires `Authorization: Bearer <token>` or `?token=<token>`
 static web client itself is public so that it can show its login screen.
 
 * Tokens are 128-bit random values from the OS (`/dev/urandom`,
-  `BCryptGenRandom` on Windows). They do not expire; `POST /api/logout`
-  revokes one. Only their SHA-256 digests are stored.
+  `BCryptGenRandom` on Windows). They expire after 180 days;
+  `POST /api/logout` revokes one. Only their SHA-256 digests are stored
+  (`tokens.json`, readable by the server user only).
 * The password is compared in constant time. Changing the password
   invalidates all tokens.
-* Failed logins are delayed by 300 ms; after 10 failures from one address
-  within 5 minutes logins from that address are refused with 429. Behind a
-  reverse proxy on the same machine the address is taken from
-  `X-Forwarded-For` / `X-Real-IP`.
+* Password checks run one at a time. A failed login costs 300 ms, rising to
+  3 s while many logins fail (from any address); after 10 failures from one
+  address (IPv6: one /64) within 5 minutes logins from there are refused
+  with 429. Behind a reverse proxy on the same machine the address is taken
+  from `X-Forwarded-For` / `X-Real-IP`. Use a long password (12+ characters)
+  if the server can be reached from the internet.
 
 ## Security notes
 
 * **No TLS is built in.** Passwords, tokens and music travel in plain text.
   On a trusted home LAN this may be acceptable; for anything else use a VPN
-  (e.g. WireGuard, Tailscale) or put the server behind a reverse proxy with
-  HTTPS and bind it to localhost (`--bind 127.0.0.1:7878`). Caddy:
+  (e.g. WireGuard, Tailscale). The desktop and Android apps currently speak
+  plain HTTP only, so outside the LAN they need the VPN; the web app can
+  also be used through a reverse proxy with HTTPS, with the server bound to
+  localhost (`--bind 127.0.0.1:7878`) and the proxy's domain allowed
+  (`--allow-host music.example.org`). Caddy:
 
   ```
   music.example.org {
@@ -237,7 +243,13 @@ static web client itself is public so that it can show its login screen.
 
 * Without `--password` anyone who can reach the port can read the library,
   edit playlists and presets and upload images (the server logs a warning
-  when listening on a non-loopback address without a password).
+  when listening on a non-loopback address without a password). Web pages
+  cannot use the server through the visitor's browser: requests for unknown
+  host names (DNS rebinding) and cross-site writes are refused.
+* Limits against overload: request bodies 4 MiB (image uploads 50 MiB),
+  read as they arrive and at a minimum rate; 10 s for request headers;
+  256 connections, 32 per client address (local reverse proxies excepted);
+  images up to 32 megapixels.
 * Files are only addressed by ids; request paths never reach the file system
   except for the static web client, whose path segments are validated.
 * Responses carry `X-Content-Type-Options: nosniff`,

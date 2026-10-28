@@ -83,9 +83,9 @@ Item {
             Layout.leftMargin: 8
             Layout.rightMargin: 8
             Layout.topMargin: -10
-            Label { text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { textFormat: Text.PlainText; text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
             Item { Layout.fillWidth: true }
-            Label { text: Theme.fmtTime(bar.duration); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { textFormat: Text.PlainText; text: Theme.fmtTime(bar.duration); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
         }
     }
 
@@ -102,6 +102,7 @@ Item {
             Layout.fillWidth: true
             spacing: 2
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: bar.cur ? bar.cur.title : Theme.tr("Nothing playing")
                 font.pixelSize: 15
@@ -110,6 +111,7 @@ Item {
                 color: Theme.text
             }
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: bar.cur ? (bar.cur.artist || Theme.tr("Unknown artist")) : Theme.tr("Pick something from your library")
                 font.pixelSize: 13
@@ -218,6 +220,7 @@ Item {
                 coverSize: 52
             }
             Label {
+                textFormat: Text.PlainText
                 text: Theme.fmtTime(Core.position) + " / " + Theme.fmtTime(bar.duration)
                 color: Theme.textDim
                 font.pixelSize: 12

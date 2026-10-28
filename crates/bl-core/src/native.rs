@@ -75,11 +75,7 @@ impl NativeServices {
         let Some(path) = key_path(&self.data_dir, key) else {
             return false;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let tmp = path.with_extension("tmp~");
-        std::fs::write(&tmp, data).is_ok() && std::fs::rename(&tmp, &path).is_ok()
+        crate::host::write_private(&path, data)
     }
 
     pub fn storage_delete(&self, key: &str) {

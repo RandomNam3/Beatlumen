@@ -28,8 +28,18 @@ Dialog {
         delegate: ItemDelegate {
             width: ListView.view.width
             height: Theme.row - 8
-            text: modelData.name + (modelData.count >= 0 ? "  ·  " + modelData.count : "")
-            icon.source: Theme.icon(modelData.id === "" ? "add" : "queue_music")
+            // Names may come from a server: shown as plain text.
+            contentItem: RowLayout {
+                spacing: 16
+                Icon { name: modelData.id === "" ? "add" : "queue_music"; color: Theme.text }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: modelData.name + (modelData.count >= 0 ? "  ·  " + modelData.count : "")
+                    elide: Text.ElideRight
+                    color: Theme.text
+                }
+            }
             onClicked: {
                 if (modelData.id === "") {
                     newPrompt.open()

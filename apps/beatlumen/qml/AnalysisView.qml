@@ -73,6 +73,7 @@ ScrollView {
             Layout.leftMargin: 8
             Button { text: Theme.tr("Reset to defaults"); icon.source: Theme.icon("refresh"); flat: true; onClicked: Core.call("analysis.reset") }
             Label {
+                textFormat: Text.PlainText
                 text: Core.state.analysis === "working" ? Theme.tr("Analysing…") : Core.state.analysis === "ready" ? "" : Theme.tr("No analysis yet")
                 color: Theme.textDim
             }

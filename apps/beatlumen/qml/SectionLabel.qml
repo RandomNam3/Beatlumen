@@ -3,6 +3,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 Label {
+    textFormat: Text.PlainText
     Layout.fillWidth: true
     Layout.leftMargin: 16
     Layout.topMargin: 8

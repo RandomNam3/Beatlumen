@@ -126,6 +126,9 @@ pub struct Settings {
     pub waveform_thickness: f32,
     /// Global effect intensity multiplier (0 = calm, 1 = as designed, 2 = wild).
     pub intensity: f32,
+    /// Shifts the effects against the audio in milliseconds (positive =
+    /// earlier), for outputs with unreported latency (e.g. Bluetooth).
+    pub sync_offset_ms: f32,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
@@ -165,6 +168,7 @@ impl Default for Settings {
             bar_gap: 5.0,
             waveform_thickness: 0.3,
             intensity: 1.0,
+            sync_offset_ms: 0.0,
             adaptive: true,
             normalize: false,
             ui: Value::object(),
@@ -220,6 +224,9 @@ impl Settings {
                 .f32_or("waveformThickness", d.waveform_thickness)
                 .clamp(0.0, 0.99),
             intensity: v.f32_or("intensity", d.intensity).clamp(0.0, 2.0),
+            sync_offset_ms: v
+                .f32_or("syncOffsetMs", d.sync_offset_ms)
+                .clamp(-500.0, 500.0),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
             ui: if v.get("ui").as_object().is_some() {
@@ -260,6 +267,7 @@ impl Settings {
             .with("barGap", self.bar_gap)
             .with("waveformThickness", self.waveform_thickness)
             .with("intensity", self.intensity)
+            .with("syncOffsetMs", self.sync_offset_ms)
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
             .with("ui", self.ui.clone())

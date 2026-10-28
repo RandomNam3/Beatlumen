@@ -35,6 +35,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 2
                 Label {
+                    textFormat: Text.PlainText
                     Layout.fillWidth: true
                     text: np.cur ? np.cur.title : ""
                     color: "white"
@@ -47,6 +48,7 @@ Item {
                     styleColor: Qt.rgba(0, 0, 0, 0.35)
                 }
                 Label {
+                    textFormat: Text.PlainText
                     Layout.fillWidth: true
                     text: np.cur ? [np.cur.artist || Theme.tr("Unknown artist"), np.cur.album].filter(x => x).join(" · ") : ""
                     color: Qt.rgba(1, 1, 1, 0.82)

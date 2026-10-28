@@ -176,8 +176,8 @@ Item {
                                     placeholder: "album"
                                     source: modelData.coverTrack ? Covers.url(modelData.coverTrack, modelData.cover) : modelData.cover
                                 }
-                                Label { Layout.fillWidth: true; text: (!modelData.title || modelData.title === "Unknown Album") ? Theme.tr("Unknown album") : modelData.title; font.weight: Font.DemiBold; elide: Text.ElideRight; color: Theme.text }
-                                Label { Layout.fillWidth: true; text: (!modelData.artist || modelData.artist === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.artist; elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
+                                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: (!modelData.title || modelData.title === "Unknown Album") ? Theme.tr("Unknown album") : modelData.title; font.weight: Font.DemiBold; elide: Text.ElideRight; color: Theme.text }
+                                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: (!modelData.artist || modelData.artist === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.artist; elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
                             }
                         }
                     }
@@ -196,13 +196,13 @@ Item {
                                 Rectangle {
                                     Layout.preferredWidth: 44; Layout.preferredHeight: 44; radius: 22
                                     color: Qt.alpha(Theme.accent, 0.18)
-                                    Label { anchors.centerIn: parent; text: (modelData.name || "?").charAt(0).toUpperCase(); color: Theme.accent; font.weight: Font.Bold; font.pixelSize: 18 }
+                                    Label { textFormat: Text.PlainText; anchors.centerIn: parent; text: (modelData.name || "?").charAt(0).toUpperCase(); color: Theme.accent; font.weight: Font.Bold; font.pixelSize: 18 }
                                 }
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 2
-                                    Label { Layout.fillWidth: true; text: (!modelData.name || modelData.name === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
-                                    Label { text: modelData.tracks + " " + Theme.tr("songs") + " · " + modelData.albums + " " + Theme.tr("albums"); color: Theme.textDim; font.pixelSize: 13 }
+                                    Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: (!modelData.name || modelData.name === "Unknown Artist") ? Theme.tr("Unknown artist") : modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
+                                    Label { textFormat: Text.PlainText; text: modelData.tracks + " " + Theme.tr("songs") + " · " + modelData.albums + " " + Theme.tr("albums"); color: Theme.textDim; font.pixelSize: 13 }
                                 }
                                 Icon { name: "chevron_right"; color: Theme.textFaint }
                             }
@@ -246,8 +246,8 @@ Item {
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 2
-                                        Label { Layout.fillWidth: true; text: modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
-                                        Label { text: modelData.count + " " + Theme.tr("songs") + (modelData.server ? " · " + Theme.tr("Server") : ""); color: Theme.textDim; font.pixelSize: 13 }
+                                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
+                                        Label { textFormat: Text.PlainText; text: modelData.count + " " + Theme.tr("songs") + (modelData.server ? " · " + Theme.tr("Server") : ""); color: Theme.textDim; font.pixelSize: 13 }
                                     }
                                     IconButton { iconName: "play_arrow"; tip: Theme.tr("Play"); onClicked: Core.call("playlist.play", { id: modelData.id }) }
                                 }
@@ -297,8 +297,8 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 4
-                Label { Layout.fillWidth: true; text: dh.title; font.pixelSize: 22; font.weight: Font.Bold; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; color: Theme.text }
-                Label { Layout.fillWidth: true; text: dh.subtitle; color: Theme.textDim; elide: Text.ElideRight }
+                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: dh.title; font.pixelSize: 22; font.weight: Font.Bold; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight; color: Theme.text }
+                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: dh.subtitle; color: Theme.textDim; elide: Text.ElideRight }
                 RowLayout {
                     spacing: 4
                     AccentButton {

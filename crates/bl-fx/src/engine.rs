@@ -346,7 +346,16 @@ pub struct Engine {
     energy_peak: f32,
     /// Smoothed, normalised loudness of the current section (0..1).
     energy_level: f32,
+    /// Per-track novelty scales and the analysis they belong to.
+    nov_scale: [f32; 3],
+    nov_key: (usize, usize),
+    /// Analysis time read last frame (novelty peaks in between count).
+    nov_read: Option<f64>,
 }
+
+/// Visuals are computed this much ahead of the audible position: the frame
+/// reaches the screen about one refresh later.
+const DISPLAY_LEAD: f64 = 0.02;
 
 fn easing_of(v: &Value, key: &str, default: Easing) -> Easing {
     v.get(key)
@@ -412,6 +421,9 @@ impl Engine {
             adaptive: false,
             energy_peak: 0.0,
             energy_level: 0.5,
+            nov_scale: [1.0; 3],
+            nov_key: (0, 0),
+            nov_read: None,
         };
         e.scene = e.new_scene(None, CamPos::default());
         e
@@ -426,6 +438,12 @@ impl Engine {
     /// section of the track (quiet parts calmer, drops stronger).
     pub fn set_adaptive(&mut self, on: bool) {
         self.adaptive = on;
+    }
+
+    /// Current audio driven filter levels (type, primary amount), for
+    /// diagnostics and timing tests.
+    pub fn filter_levels(&self) -> Vec<(String, f32)> {
+        self.filters.iter().map(|(t, s)| (t.clone(), s.a)).collect()
     }
 
     /// Smoothed loudness of the current section (0..1), for diagnostics.
@@ -839,19 +857,38 @@ impl Engine {
         }
     }
 
-    fn novelty(&self, input: &FrameInput) -> [f32; 3] {
+    /// Novelty per band since the last frame: the strongest analysis value
+    /// between the previous and the current position (short peaks are not
+    /// skipped at low frame rates), scaled to the track.
+    fn novelty(&mut self, input: &FrameInput) -> [f32; 3] {
         match input.analysis {
             Some(a) if !a.novelty.is_empty() => {
-                let f = a.frame_at(input.position);
+                let key = (a as *const TrackAnalysis as usize, a.frame_count());
+                if key != self.nov_key {
+                    self.nov_key = key;
+                    let s = a.novelty_scales();
+                    self.nov_scale = [0, 1, 2].map(|i| s.get(i).copied().unwrap_or(1.0));
+                    self.nov_read = None;
+                }
+                let t = input.position + DISPLAY_LEAD;
+                let f1 = a.novelty_frame_at(t);
+                // The current analysis frame plus any skipped since the last
+                // render frame (moving forward normally).
+                let f0 = match self.nov_read {
+                    Some(prev) if prev <= t && t - prev < 0.25 => {
+                        (a.novelty_frame_at(prev) + 1).min(f1)
+                    }
+                    _ => f1,
+                };
+                self.nov_read = Some(t);
                 let mut out = [0.0; 3];
                 for (i, o) in out.iter_mut().enumerate() {
-                    *o = a
-                        .novelty
-                        .get(i)
-                        .and_then(|c| c.get(f))
-                        .copied()
-                        .unwrap_or(0.0)
-                        .clamp(0.0, 1.0);
+                    if let Some(c) = a.novelty.get(i) {
+                        let m = (f0..=f1)
+                            .filter_map(|f| c.get(f))
+                            .fold(0.0f32, |m, v| m.max(*v));
+                        *o = (m * self.nov_scale[i]).clamp(0.0, 1.0);
+                    }
                 }
                 out
             }
@@ -894,8 +931,18 @@ impl Engine {
             let threshold = e.trig("threshold");
             let y =
                 ((if v >= threshold { v } else { 0.0 }) * e.trig("sensitivity") * gain).min(1.0);
+            // Fast attack (a hit shows at once), configured smoothing only
+            // for the release.
             let s = e.trig("smoothing").clamp(0.0, 1.0).powf(frames);
-            let smooth = |prev: f32, target: f32| prev * s + target * (1.0 - s);
+            let attack = 0.3f32.powf(frames);
+            let smooth = |prev: f32, target: f32| {
+                let k = if target.abs() > prev.abs() {
+                    attack.min(s)
+                } else {
+                    s
+                };
+                prev * k + target * (1.0 - k)
+            };
             let lerp_t = |key: &str| e.cfg(key) + (e.trig(key) - e.cfg(key)) * y;
             match (e.effect_type.as_str(), e.ty.as_str()) {
                 ("Camera", "Shake") if band.is_some() => {
@@ -1240,6 +1287,90 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::preset;
+
+    /// One bass hit per second, each a single analysis frame long.
+    fn analysis_with_hits() -> TrackAnalysis {
+        let frames = 48000 * 20 / 2048;
+        let hit = |f: usize| f % 23 == 11;
+        TrackAnalysis {
+            sample_rate: 48000,
+            hop_size: 2048,
+            energy: vec![0.5; frames],
+            novelty: vec![
+                (0..frames)
+                    .map(|f| {
+                        if hit(f) {
+                            0.5
+                        } else if f % 3 == 0 {
+                            0.005
+                        } else {
+                            0.0
+                        }
+                    })
+                    .collect(),
+                vec![0.0; frames],
+                vec![0.0; frames],
+            ],
+            transitions: vec![0.0; frames.div_ceil(10)],
+            transition_down_sampling: 10,
+        }
+    }
+
+    /// Bloom level per rendered frame at `fps` with the Balanced preset.
+    fn bloom_levels(fps: f64) -> Vec<(f64, f32)> {
+        let a = analysis_with_hits();
+        let mut rng = Rng::new(3);
+        let mut e = Engine::new(3);
+        e.set_preset(preset::builtin("Balanced", &mut rng));
+        let mut out = Vec::new();
+        let mut t = 0.0;
+        while t < 19.0 {
+            let input = FrameInput {
+                dt: 1.0 / fps,
+                playing: true,
+                position: t,
+                analysis: Some(&a),
+                live_novelty: [0.0; 3],
+                live_energy: 0.0,
+                view_aspect: 1.0,
+                menu_blur: 0.0,
+            };
+            e.update(&input);
+            let bloom = e
+                .filter_levels()
+                .iter()
+                .find(|(n, _)| n == "Bloom")
+                .map_or(0.0, |l| l.1);
+            out.push((t, bloom));
+            t += 1.0 / fps;
+        }
+        out
+    }
+
+    #[test]
+    fn every_hit_shows_promptly_at_any_frame_rate() {
+        for fps in [24.0, 30.0, 60.0, 144.0] {
+            let levels = bloom_levels(fps);
+            let base = levels.iter().map(|l| l.1).fold(f32::MAX, f32::min);
+            let peak = levels.iter().map(|l| l.1).fold(base, f32::max);
+            assert!(peak > base + 0.2, "{fps} fps: no visible reaction");
+            // Each hit (frame 11 + 23k, heard 1.5 hops later) reaches most of
+            // the peak within 1.5 frames of being heard.
+            for k in 0..15 {
+                let heard = ((11 + 23 * k) as f64 + 1.5) * 2048.0 / 48000.0;
+                let reached = levels
+                    .iter()
+                    .find(|(t, v)| *t >= heard - 0.05 && *v >= base + 0.6 * (peak - base));
+                let (t, _) =
+                    reached.unwrap_or_else(|| panic!("{fps} fps: hit {k} at {heard:.3} s missed"));
+                assert!(
+                    *t - heard < 1.5 / fps + 0.03,
+                    "{fps} fps: hit {k} late by {:.0} ms",
+                    (*t - heard) * 1000.0
+                );
+            }
+        }
+    }
 
     fn analysis_with_peaks() -> TrackAnalysis {
         let frames: usize = 44100 * 60 / 2048;

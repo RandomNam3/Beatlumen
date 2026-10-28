@@ -247,10 +247,17 @@ pub fn request(
         write_request(&mut stream, method, &u, headers, body).map_err(|e| format!("send: {e}"))?;
         let mut r = BufReader::with_capacity(64 * 1024, stream);
         let (status, h) = read_head(&mut r).map_err(|e| format!("receive: {e}"))?;
-        if matches!(status, 301 | 302 | 303 | 307 | 308) {
-            if let Some(loc) = h.get("location") {
-                url_s = u.join(loc);
-                continue;
+        // Redirects are only followed for reads on the same server: the
+        // headers (login token) and a body (password) must never be sent
+        // to another host.
+        if matches!(status, 301 | 302 | 303 | 307 | 308) && matches!(method, "GET" | "HEAD") {
+            if let Some(next) = h.get("location").map(|loc| u.join(loc)) {
+                if Url::parse(&next).is_ok_and(|n| {
+                    n.host.eq_ignore_ascii_case(&u.host) && n.port == u.port && n.scheme == u.scheme
+                }) {
+                    url_s = next;
+                    continue;
+                }
             }
         }
         let mut reader = body_reader(r, method, status, &h);

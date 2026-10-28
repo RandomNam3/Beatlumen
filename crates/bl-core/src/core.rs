@@ -2210,7 +2210,8 @@ impl Core {
         let frame_input = FrameInput {
             dt,
             playing,
-            position,
+            // The effects may run ahead of (or behind) the reported position.
+            position: (position + self.settings.sync_offset_ms as f64 / 1000.0).max(0.0),
             analysis: None,
             live_novelty: live,
             live_energy: self.live.energy(),

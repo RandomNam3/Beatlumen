@@ -85,7 +85,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.leftMargin: 16
                             Layout.rightMargin: 16
-                            Label { text: Theme.tr("Calm"); color: Theme.textDim }
+                            Label { textFormat: Text.PlainText; text: Theme.tr("Calm"); color: Theme.textDim }
                             Slider {
                                 Layout.fillWidth: true
                                 from: 0; to: 2; stepSize: 0.05
@@ -93,7 +93,35 @@ Item {
                                 onMoved: Core.call("settings.set", { key: "intensity", value: value })
                                 Accessible.name: Theme.tr("Intensity")
                             }
-                            Label { text: Theme.tr("Wild"); color: Theme.textDim }
+                            Label { textFormat: Text.PlainText; text: Theme.tr("Wild"); color: Theme.textDim }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 16
+                            Layout.rightMargin: 16
+                            spacing: 0
+                            Label { textFormat: Text.PlainText; text: Theme.tr("Sync with the music"); color: Theme.text }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { textFormat: Text.PlainText; text: Theme.tr("Later"); color: Theme.textDim }
+                                Slider {
+                                    id: syncSlider
+                                    Layout.fillWidth: true
+                                    from: -300; to: 300; stepSize: 10
+                                    value: page.settings.syncOffsetMs || 0
+                                    onMoved: Core.call("settings.set", { key: "syncOffsetMs", value: value })
+                                    Accessible.name: Theme.tr("Sync with the music")
+                                }
+                                Label { textFormat: Text.PlainText; text: Theme.tr("Earlier"); color: Theme.textDim }
+                            }
+                            Label {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                text: (syncSlider.value > 0 ? "+" : "") + Math.round(syncSlider.value) + " ms · " + Theme.tr("Move the effects earlier if they come after the beat (e.g. with Bluetooth headphones).")
+                                color: Theme.textFaint
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
                         }
                         SwitchRow {
                             Layout.fillWidth: true
@@ -133,8 +161,8 @@ Item {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 2
-                                    Label { text: Theme.tr("Advanced editor"); font.pixelSize: 15; font.weight: Font.Medium; color: Theme.text }
-                                    Label { Layout.fillWidth: true; text: Theme.tr("Customize every effect of the current style."); color: Theme.textDim; font.pixelSize: 13; wrapMode: Text.WordWrap }
+                                    Label { textFormat: Text.PlainText; text: Theme.tr("Advanced editor"); font.pixelSize: 15; font.weight: Font.Medium; color: Theme.text }
+                                    Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Customize every effect of the current style."); color: Theme.textDim; font.pixelSize: 13; wrapMode: Text.WordWrap }
                                 }
                                 Icon { name: "chevron_right"; color: Theme.textFaint }
                             }

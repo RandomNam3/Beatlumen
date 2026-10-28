@@ -257,7 +257,12 @@ impl Preset {
             return Err("preset must be a JSON object".into());
         }
         let effects = match v.get("effects") {
-            Value::Array(a) => a.iter().filter_map(|e| Effect::from_json(e, rng)).collect(),
+            // Presets can come from servers: a sane upper bound per preset.
+            Value::Array(a) => a
+                .iter()
+                .take(MAX_EFFECTS)
+                .filter_map(|e| Effect::from_json(e, rng))
+                .collect(),
             Value::Null => Vec::new(),
             _ => return Err("\"effects\" must be an array".into()),
         };
@@ -349,6 +354,9 @@ impl Preset {
 }
 
 /// Built-in presets shipped with the application (name, JSON source).
+/// Most effects a preset may have.
+pub const MAX_EFFECTS: usize = 256;
+
 pub const BUILTIN: &[(&str, &str)] = &[
     ("Balanced", include_str!("../../../presets/balanced.hfx")),
     ("Energetic", include_str!("../../../presets/energetic.hfx")),

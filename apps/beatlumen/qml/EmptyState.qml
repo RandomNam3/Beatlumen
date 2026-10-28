@@ -18,6 +18,7 @@ ColumnLayout {
         color: Theme.textFaint
     }
     Label {
+        textFormat: Text.PlainText
         Layout.fillWidth: true
         horizontalAlignment: Text.AlignHCenter
         text: e.title
@@ -27,6 +28,7 @@ ColumnLayout {
         color: Theme.text
     }
     Label {
+        textFormat: Text.PlainText
         Layout.fillWidth: true
         visible: e.text !== ""
         horizontalAlignment: Text.AlignHCenter

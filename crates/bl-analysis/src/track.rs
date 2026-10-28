@@ -171,6 +171,40 @@ impl TrackAnalysis {
         }
         ((seconds.max(0.0) * self.frame_rate()) as usize).min(n - 1)
     }
+    /// Novelty frame describing the sound at playback time `seconds`.
+    ///
+    /// A novelty value is the change from one spectral frame to the next
+    /// and frames are labelled by the start of their window, so an onset
+    /// shows up about 1.5 hops before it is heard (measured on real music:
+    /// median 69 ms early at 4096/48 kHz). This compensates for that.
+    pub fn novelty_frame_at(&self, seconds: f64) -> usize {
+        self.frame_at(seconds - 1.5 * self.hop_size as f64 / self.sample_rate.max(1) as f64)
+    }
+
+    /// Per novelty curve, the factor that maps the 75th percentile of its
+    /// peaks to 0.75: trigger thresholds then mean roughly "the strongest
+    /// quarter of this track's hits" whatever the mix and loudness.
+    pub fn novelty_scales(&self) -> Vec<f32> {
+        self.novelty
+            .iter()
+            .map(|c| {
+                let mut peaks: Vec<f32> = (1..c.len().saturating_sub(1))
+                    .filter(|&i| c[i] > 0.0 && c[i] >= c[i - 1] && c[i] > c[i + 1])
+                    .map(|i| c[i])
+                    .collect();
+                if peaks.len() < 8 {
+                    return 1.0;
+                }
+                peaks.sort_by(|a, b| a.total_cmp(b));
+                let p75 = peaks[peaks.len() * 3 / 4];
+                if p75 > 0.0 {
+                    (0.75 / p75).clamp(0.2, 8.0)
+                } else {
+                    1.0
+                }
+            })
+            .collect()
+    }
     /// Time in seconds of chroma frame `i` of the transition curve.
     pub fn transition_time(&self, i: usize) -> f64 {
         (i * self.transition_down_sampling * self.hop_size) as f64 / self.sample_rate as f64

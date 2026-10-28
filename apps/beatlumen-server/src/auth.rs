@@ -14,7 +14,7 @@ use crate::sha256::{sha256, sha256_parts};
 use crate::util::{self, ct_eq};
 use bl_json::Value;
 use bl_net::server::Request;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
@@ -26,12 +26,21 @@ const FAILURE_WINDOW: Duration = Duration::from_secs(300);
 const FAILURE_DELAY: Duration = Duration::from_millis(300);
 /// Upper bound for stored tokens (oldest are dropped).
 const MAX_TOKENS: usize = 10_000;
+/// Logins expire after this time (clients then ask for the password again).
+const TOKEN_LIFETIME: u64 = 180 * 24 * 3600;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
 
 /// Token digests in issue order (for trimming) plus a set for lookups.
 #[derive(Default)]
 struct TokenStore {
     order: Vec<[u8; 32]>,
-    set: HashSet<[u8; 32]>,
+    /// Digest -> issue time (seconds since the Unix epoch).
+    set: HashMap<[u8; 32], u64>,
 }
 
 pub struct Auth {
@@ -77,17 +86,23 @@ impl Auth {
                 check.as_bytes(),
             )
         {
+            // "digest:issued" (older files: digest only, counted from now).
+            let now = unix_now();
             for t in stored.get("tokens").as_array().into_iter().flatten() {
-                if let Some(d) = t
-                    .as_str()
-                    .and_then(util::unhex)
-                    .and_then(|v| <[u8; 32]>::try_from(v).ok())
-                {
-                    list.push(d);
+                let Some(t) = t.as_str() else { continue };
+                let (hex, issued) = match t.split_once(':') {
+                    Some((h, i)) => (h, i.parse().unwrap_or(now)),
+                    None => (t, now),
+                };
+                if let Some(d) = util::unhex(hex).and_then(|v| <[u8; 32]>::try_from(v).ok()) {
+                    if now.saturating_sub(issued) < TOKEN_LIFETIME {
+                        list.push((d, issued));
+                    }
                 }
             }
         }
-        let set = list.iter().copied().collect();
+        let set: HashMap<[u8; 32], u64> = list.iter().copied().collect();
+        let list: Vec<[u8; 32]> = list.into_iter().map(|(d, _)| d).collect();
         let auth = Auth {
             password_digest,
             path,
@@ -98,7 +113,7 @@ impl Auth {
             check_lock: Mutex::new(()),
         };
         if password.is_some() {
-            auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()).order);
+            auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()));
         }
         auth
     }
@@ -107,13 +122,25 @@ impl Auth {
         self.password_digest.is_some()
     }
 
-    fn save(&self, list: &[[u8; 32]]) {
+    fn save(&self, store: &TokenStore) {
         let v = Value::object()
             .with("salt", self.salt.as_str())
             .with("passwordCheck", self.check.as_str())
             .with(
                 "tokens",
-                Value::Array(list.iter().map(|d| Value::from(util::hex(d))).collect()),
+                Value::Array(
+                    store
+                        .order
+                        .iter()
+                        .map(|d| {
+                            Value::from(format!(
+                                "{}:{}",
+                                util::hex(d),
+                                store.set.get(d).copied().unwrap_or(0)
+                            ))
+                        })
+                        .collect(),
+                ),
             );
         match util::write_atomic(&self.path, v.to_json_pretty().as_bytes()) {
             Ok(()) => util::make_private(&self.path),
@@ -150,7 +177,8 @@ impl Auth {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .set
-            .contains(&d)
+            .get(&d)
+            .is_some_and(|issued| unix_now().saturating_sub(*issued) < TOKEN_LIFETIME)
     }
 
     /// Checks the password and issues a new token.
@@ -207,12 +235,12 @@ impl Auth {
         let d = sha256(token.as_bytes());
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
         g.order.push(d);
-        g.set.insert(d);
+        g.set.insert(d, unix_now());
         if g.order.len() > MAX_TOKENS {
             let old = g.order.remove(0);
             g.set.remove(&old);
         }
-        self.save(&g.order);
+        self.save(&g);
         Ok(token)
     }
 
@@ -223,9 +251,9 @@ impl Auth {
         };
         let d = sha256(t.as_bytes());
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
-        if g.set.remove(&d) {
+        if g.set.remove(&d).is_some() {
             g.order.retain(|x| *x != d);
-            self.save(&g.order);
+            self.save(&g);
         }
     }
 }

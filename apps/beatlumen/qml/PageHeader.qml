@@ -23,6 +23,7 @@ RowLayout {
         Layout.leftMargin: h.back ? 0 : 8
         spacing: 0
         Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             text: h.title
             font.pixelSize: 26
@@ -31,6 +32,7 @@ RowLayout {
             elide: Text.ElideRight
         }
         Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             visible: h.subtitle !== ""
             text: h.subtitle

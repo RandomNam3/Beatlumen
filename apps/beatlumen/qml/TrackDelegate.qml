@@ -28,6 +28,7 @@ ItemDelegate {
         anchors.rightMargin: 4
         spacing: 12
         Label {
+            textFormat: Text.PlainText
             visible: d.number >= 0 && !d.showCover
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
@@ -46,6 +47,7 @@ ItemDelegate {
             Layout.fillWidth: true
             spacing: 2
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: d.track.title || ""
                 color: d.current ? Theme.accent : Theme.text
@@ -54,6 +56,7 @@ ItemDelegate {
                 elide: Text.ElideRight
             }
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: [d.track.artist || Theme.tr("Unknown artist"), d.track.album].filter(x => x).join(" · ")
                 color: Theme.textDim
@@ -62,6 +65,7 @@ ItemDelegate {
             }
         }
         Label {
+            textFormat: Text.PlainText
             text: d.track.duration > 0 ? Theme.fmtTime(d.track.duration) : ""
             color: Theme.textFaint
             font.pixelSize: 13

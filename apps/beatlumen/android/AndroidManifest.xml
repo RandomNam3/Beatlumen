@@ -35,7 +35,7 @@
         android:label="-- %%INSERT_APP_NAME%% --"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="false">
 

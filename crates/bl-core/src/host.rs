@@ -60,6 +60,29 @@ pub struct DirEntry {
 }
 
 /// Services provided by the platform.
+/// Writes a file readable only by the user (settings hold the server
+/// login token); replaces an existing file atomically.
+pub fn write_private(path: &std::path::Path, data: &[u8]) -> bool {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("tmp~");
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let ok = opts
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(data).and_then(|_| f.sync_all()))
+        .is_ok();
+    ok && std::fs::rename(&tmp, path).is_ok()
+}
+
 pub trait Host {
     /// Monotonic time in seconds.
     fn now(&self) -> f64;

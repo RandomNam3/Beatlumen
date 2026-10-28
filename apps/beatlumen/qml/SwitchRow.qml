@@ -17,8 +17,8 @@ ItemDelegate {
             id: col
             Layout.fillWidth: true
             spacing: 2
-            Label { Layout.fillWidth: true; text: r.title; font.pixelSize: 15; color: Theme.text; wrapMode: Text.WordWrap }
-            Label { Layout.fillWidth: true; visible: r.detail !== ""; text: r.detail; font.pixelSize: 13; color: Theme.textDim; wrapMode: Text.WordWrap }
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: r.title; font.pixelSize: 15; color: Theme.text; wrapMode: Text.WordWrap }
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; visible: r.detail !== ""; text: r.detail; font.pixelSize: 13; color: Theme.textDim; wrapMode: Text.WordWrap }
         }
         Switch {
             checked: r.on

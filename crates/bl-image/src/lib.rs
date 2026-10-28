@@ -83,9 +83,12 @@ impl Image {
     }
 }
 
-/// Largest number of pixels a decoder will allocate (256 Mpixel = 1 GiB of
-/// RGBA). Larger images are rejected with [`Error::Unsupported`].
-pub const MAX_PIXELS: u64 = 1 << 28;
+/// Largest number of pixels a decoder will allocate (32 Mpixel = 128 MiB
+/// of RGBA, e.g. 8192 × 4096): enough for covers and backgrounds, while a
+/// tiny file claiming a huge size ("decompression bomb") cannot exhaust
+/// the memory of a phone or a small server. Larger images are rejected
+/// with [`Error::Unsupported`].
+pub const MAX_PIXELS: u64 = 1 << 25;
 
 /// Checks the dimensions against [`MAX_PIXELS`] and allocates an image.
 pub(crate) fn alloc_image(width: u32, height: u32) -> Result<Image, Error> {

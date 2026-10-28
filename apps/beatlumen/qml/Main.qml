@@ -298,6 +298,7 @@ ApplicationWindow {
                 radius: 12
                 color: model.error ? Theme.danger : Theme.surfaceStrong
                 Label {
+                    textFormat: Text.PlainText
                     id: toastText
                     anchors.centerIn: parent
                     width: Math.min(win.width - 64, implicitWidth)

@@ -275,7 +275,8 @@ public final class MediaBridge
             o.inSampleSize = sample;
             return BitmapFactory.decodeByteArray(data, 0, data.length, o);
         } catch (Exception | OutOfMemoryError e) {
-            Log.w(TAG, "cover not loaded: " + e);
+            // Only the error type: messages may contain the URL with the login token.
+            Log.w(TAG, "cover not loaded: " + e.getClass().getSimpleName());
             return null;
         }
     }

@@ -58,6 +58,7 @@ Rectangle {
                         }
                     }
                     Label {
+                        textFormat: Text.PlainText
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: modelData.label
                         font.pixelSize: 12

@@ -144,11 +144,7 @@ impl Host for UiHost {
         let Some(path) = key_path(&self.data_dir, key) else {
             return false;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let tmp = path.with_extension("tmp~");
-        std::fs::write(&tmp, data).is_ok() && std::fs::rename(&tmp, &path).is_ok()
+        bl_core::host::write_private(&path, data)
     }
     fn storage_delete(&self, key: &str) {
         if let Some(p) = key_path(&self.data_dir, key) {

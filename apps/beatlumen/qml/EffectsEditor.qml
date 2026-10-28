@@ -89,8 +89,8 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 2
-                                Label { Layout.fillWidth: true; text: modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
-                                Label { Layout.fillWidth: true; text: modelData.typeLabel + (modelData.trigger ? " · " + modelData.trigger : ""); color: Theme.textDim; font.pixelSize: 13; elide: Text.ElideRight }
+                                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.name; font.pixelSize: 15; font.weight: Font.Medium; elide: Text.ElideRight; color: Theme.text }
+                                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.typeLabel + (modelData.trigger ? " · " + modelData.trigger : ""); color: Theme.textDim; font.pixelSize: 13; elide: Text.ElideRight }
                             }
                             IconButton {
                                 id: m

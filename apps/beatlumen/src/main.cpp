@@ -13,8 +13,32 @@
 #include "bridge.h"
 #include "web.h"
 
+namespace {
+
+QtMessageHandler previousHandler = nullptr;
+
+// Removes login tokens from log messages (e.g. URLs in image load errors),
+// which on Android end up in the system log. (No QRegularExpression: its
+// JIT would allocate executable memory.)
+void redactingHandler(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
+{
+    QString clean = msg;
+    const QLatin1StringView key("token=");
+    for (qsizetype i = clean.indexOf(key); i >= 0; i = clean.indexOf(key, i + 1)) {
+        qsizetype end = i + key.size();
+        while (end < clean.size() && clean[end] != u'&' && !clean[end].isSpace() && clean[end] != u'"' && clean[end] != u'\'')
+            ++end;
+        clean.replace(i + key.size(), end - i - key.size(), QStringLiteral("…"));
+    }
+    if (previousHandler)
+        previousHandler(type, ctx, clean);
+}
+
+} // namespace
+
 int main(int argc, char *argv[])
 {
+    previousHandler = qInstallMessageHandler(redactingHandler);
     // The core and the visualizer live on the GUI thread; render there too.
     qputenv("QSG_RENDER_LOOP", "basic");
 #if defined(Q_OS_ANDROID)
@@ -22,6 +46,8 @@ int main(int argc, char *argv[])
     // avoids JIT pages that hardened Android builds (GrapheneOS) report as
     // dynamic code loading.
     qputenv("QV4_FORCE_INTERPRETER", "1");
+    // Same for the PCRE2 JIT behind QRegularExpression.
+    qputenv("QT_ENABLE_REGEXP_JIT", "0");
 #endif
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();

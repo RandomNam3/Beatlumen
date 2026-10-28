@@ -9,6 +9,9 @@ use crate::easing::Easing;
 use crate::rng::Rng;
 use crate::tween::Tween;
 
+/// Upper bound for particles across all groups of a preset.
+const MAX_PARTICLES: usize = 200_000;
+
 /// Per-instance data uploaded to the GPU (9 floats).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[repr(C)]
@@ -116,7 +119,11 @@ impl Particles {
         self.opacity.clear();
         for cfg in unique {
             let start = self.base.len();
-            let amount = cfg.amount.min(100_000);
+            // Per group and in total (a preset may come from a server).
+            let amount = cfg
+                .amount
+                .min(100_000)
+                .min(MAX_PARTICLES.saturating_sub(start));
             for _ in 0..amount {
                 self.base.push([
                     -self.width / 2.0 + rng.f32() * self.width,

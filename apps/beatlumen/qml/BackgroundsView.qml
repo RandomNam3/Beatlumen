@@ -61,6 +61,7 @@ ScrollView {
         }
 
         Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             Layout.leftMargin: 16
             Layout.rightMargin: 16

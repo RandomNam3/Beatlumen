@@ -40,6 +40,7 @@ AbstractButton {
     }
     contentItem: Item {
         Label {
+            textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -53,6 +54,7 @@ AbstractButton {
             elide: Text.ElideRight
         }
         Label {
+            textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.margins: 12

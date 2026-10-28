@@ -53,7 +53,7 @@ Dialog {
                     if (isRoot || !parentPath) { dlg.path = ""; dlg.entries = [] } else dlg.go(parentPath)
                 }
             }
-            Label { Layout.fillWidth: true; text: dlg.path; elide: Text.ElideLeft; color: Theme.textDim }
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: dlg.path; elide: Text.ElideLeft; color: Theme.textDim }
         }
         ListView {
             Layout.fillWidth: true
@@ -64,8 +64,18 @@ Dialog {
             delegate: ItemDelegate {
                 width: ListView.view.width
                 height: Theme.row - 8
-                text: modelData.label || modelData.name
-                icon.source: Theme.icon(dlg.path === "" ? "storage" : "folder")
+                contentItem: RowLayout {
+                    spacing: 16
+                    Icon { name: dlg.path === "" ? "storage" : "folder"; color: Theme.text }
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        text: modelData.label || modelData.name
+                        elide: Text.ElideMiddle
+                        color: Theme.text
+                    }
+                }
+                Accessible.name: modelData.label || modelData.name
                 onClicked: dlg.go(modelData.path)
             }
         }

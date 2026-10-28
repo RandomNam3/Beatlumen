@@ -12,6 +12,19 @@ Item {
     readonly property var ui: settings.ui || ({})
     readonly property string server: Core.state.server || "disabled"
 
+    // Plain HTTP is fine at home; elsewhere the password and the login
+    // would travel unencrypted.
+    function insecureRemote(url) {
+        const m = /^http:\/\/(\[[^\]]+\]|[^/:]+)/i.exec((url || "").trim())
+        if (!m)
+            return false
+        const h = m[1].toLowerCase()
+        return !(h === "localhost" || /\.(local|lan|home\.arpa|internal)$/.test(h)
+                 || /^(10|127)\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+                 || /^169\.254\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)
+                 || /^\[(::1|f[cd]|fe80)/.test(h) || !h.includes("."))
+    }
+
     ScrollView {
         id: sv
         anchors.fill: parent
@@ -29,7 +42,7 @@ Item {
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
                 spacing: 4
-                Label { text: Theme.tr("Theme"); color: Theme.text }
+                Label { textFormat: Text.PlainText; text: Theme.tr("Theme"); color: Theme.text }
                 Flow {
                     Layout.fillWidth: true
                     spacing: 8
@@ -51,7 +64,7 @@ Item {
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
                 spacing: 8
-                Label { text: Theme.tr("Accent colour"); color: Theme.text }
+                Label { textFormat: Text.PlainText; text: Theme.tr("Accent colour"); color: Theme.text }
                 Flow {
                     Layout.fillWidth: true
                     spacing: 10
@@ -83,7 +96,7 @@ Item {
             RowLayout {
                 Layout.leftMargin: 16
                 spacing: 8
-                Label { text: Theme.tr("Language"); color: Theme.text; Layout.preferredWidth: 120 }
+                Label { textFormat: Text.PlainText; text: Theme.tr("Language"); color: Theme.text; Layout.preferredWidth: 120 }
                 ComboBox {
                     model: [{ v: "de", l: "Deutsch" }, { v: "en", l: "English" }]
                     textRole: "l"
@@ -112,7 +125,7 @@ Item {
                     height: Theme.row - 8
                     contentItem: RowLayout {
                         Icon { name: "folder"; color: Theme.accent }
-                        Label { Layout.fillWidth: true; text: modelData; elide: Text.ElideMiddle; color: Theme.text }
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData; elide: Text.ElideMiddle; color: Theme.text }
                         IconButton { iconName: "close"; tip: Theme.tr("Remove"); onClicked: Core.call("library.removeFolder", { path: modelData }) }
                     }
                 }
@@ -136,6 +149,7 @@ Item {
             // ---- server -----------------------------------------------------
             SectionLabel { text: Theme.tr("Server") }
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
@@ -172,10 +186,21 @@ Item {
                 Button { visible: Core.platform !== "web" && page.server !== "disabled"; text: Theme.tr("Disconnect"); flat: true; icon.source: Theme.icon("cloud_off"); onClicked: Core.call("server.disconnect") }
             }
             Label {
+                textFormat: Text.PlainText
+                visible: page.insecureRemote(url.text)
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                text: Theme.tr("Only connections to this server are made. Use a VPN or reverse proxy with HTTPS outside your home network.")
+                text: Theme.tr("Warning: this address is outside your home network and the connection is not encrypted. Use a VPN.")
+                wrapMode: Text.WordWrap
+                color: Theme.danger
+            }
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                text: Theme.tr("Only connections to this server are made. Outside your home network, connect through a VPN (e.g. WireGuard).")
                 wrapMode: Text.WordWrap
                 color: Theme.textFaint
                 font.pixelSize: 12
@@ -187,14 +212,14 @@ Item {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                Label { text: Theme.tr("Render resolution"); color: Theme.text }
+                Label { textFormat: Text.PlainText; text: Theme.tr("Render resolution"); color: Theme.text }
                 Slider {
                     Layout.fillWidth: true
                     from: 0.25; to: 1; stepSize: 0.05
                     value: page.settings.renderScale || 1
                     onMoved: Core.call("settings.set", { key: "renderScale", value: value })
                 }
-                Label { text: Math.round((page.settings.renderScale || 1) * 100) + " %"; color: Theme.textDim }
+                Label { textFormat: Text.PlainText; text: Math.round((page.settings.renderScale || 1) * 100) + " %"; color: Theme.textDim }
             }
 
             // ---- about --------------------------------------------------------
@@ -205,8 +230,8 @@ Item {
                 Image { source: "qrc:/qt/qml/Beatlumen/assets/icon.png"; sourceSize: Qt.size(64, 64); Layout.preferredWidth: 64; Layout.preferredHeight: 64 }
                 ColumnLayout {
                     spacing: 2
-                    Label { text: "Beatlumen " + Core.version; font.pixelSize: 18; font.weight: Font.Bold; color: Theme.text }
-                    Label { text: "GNU AGPL v3.0 or later"; color: Theme.textDim }
+                    Label { textFormat: Text.PlainText; text: "Beatlumen " + Core.version; font.pixelSize: 18; font.weight: Font.Bold; color: Theme.text }
+                    Label { textFormat: Text.PlainText; text: "GNU AGPL v3.0 or later"; color: Theme.textDim }
                 }
             }
             // AGPL: users get the source code of the version they use.
@@ -215,6 +240,7 @@ Item {
                 Layout.leftMargin: 16
                 Layout.rightMargin: 8
                 Label {
+                    textFormat: Text.PlainText
                     Layout.fillWidth: true
                     text: Theme.tr("Source code") + ": " + (Core.state.sourceUrl || "")
                     color: Theme.textDim
@@ -228,6 +254,7 @@ Item {
                 }
             }
             Label {
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16

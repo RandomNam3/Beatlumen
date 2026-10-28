@@ -24,12 +24,14 @@ ColumnLayout {
         Layout.leftMargin: 16
         Layout.rightMargin: 8
         Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             text: fc.field.label || ""
             color: Theme.text
             elide: Text.ElideRight
         }
         Label {
+            textFormat: Text.PlainText
             visible: fc.numeric
             text: fc.fmt(slider.pressed ? slider.value : fc.field.value)
             color: Theme.textDim

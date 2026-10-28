@@ -27,6 +27,7 @@ ColumnLayout {
             onClicked: fv.path = fv.path.slice(0, -1)
         }
         Label {
+            textFormat: Text.PlainText
             Layout.fillWidth: true
             text: fv.current.replace(/^server:/, Theme.tr("Server") + " / ")
             elide: Text.ElideLeft
@@ -58,8 +59,8 @@ ColumnLayout {
                     contentItem: RowLayout {
                         spacing: 12
                         Icon { name: modelData.path.startsWith("server:") && fv.path.length === 0 ? "cloud" : "folder"; color: Theme.accent }
-                        Label { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 15 }
-                        Label { text: modelData.count; color: Theme.textFaint }
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 15 }
+                        Label { textFormat: Text.PlainText; text: modelData.count; color: Theme.textFaint }
                         Icon { name: "chevron_right"; color: Theme.textFaint }
                     }
                 }
