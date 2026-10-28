@@ -54,7 +54,22 @@ stream and allows analysing it.
   - Import of Spotify playlists as lists of titles, matched against the
     own library (metadata only).
   - Remote control and "now playing" display for a Spotify Connect device,
-    without visuals (owner needs Premium, at most five users per app key).
+    without visuals (owner needs Premium, at most five users per app key;
+    with an open-source app each user can register their own app key).
+
+  Beatlumen as a Spotify Connect device (listed in the account like a
+  speaker, as smart speakers and assistants are): officially only through
+  Spotify's embedded SDK, which is limited to companies with an NDA,
+  certification and a distribution agreement. The unofficial route,
+  librespot (Rust, MIT), would hand Beatlumen the decoded audio, but it
+  needs Premium, breaks Spotify's terms of use (reverse engineering; any
+  analysis, however limited, is still analysis), risks the user's account,
+  and in October 2026 Spotify refuses its audio keys for some Premium
+  accounts. Not planned.
+
+  Practical combination: the official Spotify app plays, Beatlumen
+  visualises the system audio (below) and can show title and cover through
+  the user's own Web API key.
 - **Self-hosted servers (best fit):** OpenSubsonic API (Navidrome, Airsonic,
   Gonic, …) and Jellyfin: full audio streams, open APIs, no DRM. Configured by
   the user, accessed through the Beatlumen server or, for app-only use, from
