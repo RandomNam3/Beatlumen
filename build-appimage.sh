@@ -97,6 +97,12 @@ export LINUXDEPLOY_OUTPUT_VERSION="$(sed -n 's/^project(.*VERSION \([0-9.]*\).*/
 "$TOOLS_DIR/linuxdeploy-x86_64.AppImage" --appdir "$APPDIR" \
     --desktop-file "$APPDIR/usr/share/applications/$APP_ID.desktop" \
     --icon-file "$APPDIR/usr/share/icons/hicolor/512x512/apps/$APP_ID.png" \
-    --plugin qt --output appimage
+    --plugin qt
+# The Qt plugin's start hook forces the gtk2 platform theme on GNOME/XFCE,
+# which is not bundled and would hide Qt's own light/dark and accent
+# detection; keep Qt's choice instead.
+echo "# Qt picks its platform theme itself (light/dark mode, accent colour)." \
+    > "$APPDIR/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"
+"$TOOLS_DIR/linuxdeploy-x86_64.AppImage" --appdir "$APPDIR" --output appimage
 
 echo "==> $LDAI_OUTPUT ($(du -h "$LDAI_OUTPUT" | cut -f1))"
