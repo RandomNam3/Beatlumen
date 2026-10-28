@@ -18,9 +18,17 @@ ScrollView {
     readonly property int imagesRev: Core.state.imagesRev || 0
     property var items: []
     property var serverImages: []
+    // Images from the vault (decrypted thumbnails, in memory only).
+    property var vaultImages: []
+    readonly property bool vaultOpen: Core.state.vault && Core.state.vault.state === "ready"
+    function loadImages() {
+        serverImages = Core.call("images.list") || []
+        vaultImages = vaultOpen ? (Core.call("vault.images") || []) : []
+    }
     onRevChanged: items = Core.call("backgrounds.list") || []
-    onImagesRevChanged: serverImages = Core.call("images.list") || []
-    Component.onCompleted: { items = Core.call("backgrounds.list") || []; serverImages = Core.call("images.list") || [] }
+    onImagesRevChanged: loadImages()
+    onVaultOpenChanged: loadImages()
+    Component.onCompleted: { items = Core.call("backgrounds.list") || []; loadImages() }
 
     component Thumb: AbstractButton {
         id: t
@@ -132,6 +140,27 @@ ScrollView {
                     thumb: modelData.thumb
                     label: modelData.name
                     onClicked: Core.call("backgrounds.add", { sources: [modelData.source], show: true })
+                }
+            }
+        }
+        SectionLabel { text: Theme.tr("Encrypted images"); visible: view.vaultImages.length > 0 }
+        GridLayout {
+            visible: view.vaultImages.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            columns: Math.max(2, Math.floor(width / 150))
+            columnSpacing: 8
+            rowSpacing: 8
+            Repeater {
+                model: view.vaultImages
+                delegate: Thumb {
+                    Layout.fillWidth: true
+                    thumb: modelData.thumb
+                    label: modelData.name
+                    onClicked: Core.call("backgrounds.add", { sources: [modelData.source], show: true })
+                    ToolTip.text: modelData.name
+                    ToolTip.visible: hovered && !Core.mobile
                 }
             }
         }

@@ -25,8 +25,10 @@ use bl_vault::{sealed, Secret};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod images;
 mod native;
 mod remember;
+pub(crate) use images::BG_PREFIX;
 
 /// Queue ids of encrypted files: `vault:<file id>`.
 pub const ID_PREFIX: &str = "vault:";
@@ -59,6 +61,11 @@ pub(crate) enum VaultReq {
     PushInfo,
     PushSubscribed,
     Native(native::NativeReq),
+    /// An image: for its thumbnail or as the background.
+    Image {
+        id: String,
+        thumb: bool,
+    },
     /// Answer not needed.
     Quiet,
 }
@@ -96,6 +103,10 @@ enum Done {
     UploadFailed {
         serial: u64,
         msg: String,
+    },
+    Thumb {
+        id: String,
+        url: String,
     },
     /// The password proved for adding a passkey.
     Proof {
@@ -198,6 +209,9 @@ pub(crate) struct Vault {
     restore_asked: String,
     /// Waiting for the store since then.
     restoring: Option<f64>,
+    /// Thumbnails of images (data: URLs), in memory only.
+    thumbs: HashMap<String, String>,
+    thumbs_pending: std::collections::HashSet<String>,
 }
 
 fn b64(b: &[u8]) -> Value {
@@ -572,6 +586,7 @@ impl Core {
     /// Forgets the keys and stops playing encrypted files.
     pub(crate) fn vault_lock(&mut self, host: &mut dyn Host) {
         self.vault.lock();
+        self.vault_backgrounds_locked(host);
         if self
             .current
             .as_ref()
@@ -1243,6 +1258,14 @@ impl Core {
                 }
                 Done::UploadFailed { serial, msg } => self.vault_upload_failed(serial, msg),
                 Done::Proof { name, proof } => self.native_create_options(host, name, proof),
+                Done::Thumb { id, url } => {
+                    self.vault.thumbs_pending.remove(&id);
+                    if !url.is_empty() && self.vault.file(&id).is_some() {
+                        self.vault.thumbs.insert(id, url);
+                    }
+                    self.revs.images += 1;
+                    self.revs.backgrounds += 1;
+                }
                 Done::Failed { account, msg } => {
                     if let Some(a) = account {
                         self.vault.account = Some(a);
@@ -1293,6 +1316,7 @@ impl Core {
                     | VaultReq::Files
                     | VaultReq::Changed(_)
                     | VaultReq::Download { .. }
+                    | VaultReq::Image { .. }
             )
         {
             return;
@@ -1308,6 +1332,10 @@ impl Core {
             return;
         }
         match req {
+            VaultReq::Image { id, thumb } => {
+                let body = res.ok().filter(|r| r.status == 200).map(|r| r.body);
+                self.vault_image_data(host, id, thumb, body)
+            }
             VaultReq::Native(n) => {
                 let e = server_error();
                 self.native_http(host, n, status, &json, e)
@@ -1516,6 +1544,8 @@ impl Core {
                 self.vault.quota = json.get("quota").as_u64().unwrap_or(0);
                 self.vault.rev += 1;
                 self.revs.queue += 1;
+                self.revs.images += 1;
+                self.vault_backgrounds_ready(host);
             }
             VaultReq::Create(serial) => {
                 if status == 201 {
@@ -1682,6 +1712,10 @@ impl Core {
                         .with("size", f.size)
                         .with("complete", f.complete)
                         .with("audio", audio && f.problem.is_none() && f.complete)
+                        .with(
+                            "image",
+                            images::is_image(f) && !audio && f.problem.is_none() && f.complete,
+                        )
                         .with("problem", f.problem.clone())
                         .with(
                             "recipients",
@@ -1757,6 +1791,7 @@ impl Core {
                 self.vault_credential_result(host, &s("kind"), ok, &s("json"))
             }
             "vault.files" => return self.vault_files_json(),
+            "vault.images" => return self.vault_images(host),
             "vault.contacts" => return self.vault_contacts_json(),
             "vault.upload" => {
                 let paths = c

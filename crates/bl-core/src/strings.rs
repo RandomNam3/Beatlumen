@@ -24,6 +24,7 @@ fn de(s: &str) -> Option<&'static str> {
         "This passkey is not registered on this server" => "Dieser Passkey ist auf diesem Server nicht registriert",
         "The passkey sign-in could not be verified" => "Die Anmeldung mit dem Passkey konnte nicht bestätigt werden",
         "Passkey added" => "Passkey hinzugefügt",
+        "Encrypted image" => "Verschlüsseltes Bild",
         "Lock and sign in with your passkey again to confirm" => "Sperre und melde dich zur Bestätigung erneut mit deinem Passkey an",
         "This passkey is registered already" => "Dieser Passkey ist bereits registriert",
         "The sign-in from the browser could not be opened" => "Die Anmeldung aus dem Browser konnte nicht geöffnet werden",

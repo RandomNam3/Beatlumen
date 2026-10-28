@@ -18,6 +18,10 @@ Item {
     // Opening the account kept on this device.
     readonly property bool restoring: vault.restoring === true && !ready
     readonly property int rev: vault.rev || 0
+    function useAsBackground(f) {
+        Core.call("backgrounds.add", { sources: [f.id], show: true })
+        Core.call("toast", { text: Theme.tr("Shown as background") })
+    }
     readonly property bool connected: Core.state.server === "connected" || Core.state.server === "login"
     property var files: []
     property var contacts: []
@@ -357,11 +361,16 @@ Item {
                         required property int index
                         width: fileList.width
                         height: 68
-                        onClicked: if (modelData.audio) Core.call("play", { ids: page.files.filter(f => f.audio).map(f => f.id), start: page.files.filter(f => f.audio).findIndex(f => f.id === modelData.id) })
+                        onClicked: {
+                            if (modelData.audio)
+                                Core.call("play", { ids: page.files.filter(f => f.audio).map(f => f.id), start: page.files.filter(f => f.audio).findIndex(f => f.id === modelData.id) })
+                            else if (modelData.image)
+                                page.useAsBackground(modelData)
+                        }
                         contentItem: RowLayout {
                             spacing: 14
                             Icon {
-                                name: row.modelData.problem ? "warning" : row.modelData.mine ? "lock" : "share"
+                                name: row.modelData.problem ? "warning" : row.modelData.image ? "image" : row.modelData.mine ? "lock" : "share"
                                 size: 24
                                 color: row.modelData.problem ? Theme.danger : Theme.textDim
                             }
@@ -502,6 +511,7 @@ Item {
         }
         MenuItem { text: Theme.tr("Play"); icon.source: Theme.icon("play_arrow"); enabled: fileMenu.file.audio === true; onTriggered: Core.call("play", { ids: [fileMenu.file.id], start: 0 }) }
         MenuItem { text: Theme.tr("Add to queue"); icon.source: Theme.icon("queue_music"); enabled: fileMenu.file.audio === true; onTriggered: Core.call("enqueue", { ids: [fileMenu.file.id] }) }
+        MenuItem { text: Theme.tr("Use as background"); icon.source: Theme.icon("wallpaper"); visible: fileMenu.file.image === true; height: visible ? implicitHeight : 0; onTriggered: page.useAsBackground(fileMenu.file) }
         MenuItem { text: Theme.tr("Share…"); icon.source: Theme.icon("share"); visible: fileMenu.file.mine === true && fileMenu.file.complete === true && !fileMenu.file.problem; height: visible ? implicitHeight : 0; onTriggered: shareDialog.show(fileMenu.file) }
         Repeater {
             model: fileMenu.file.mine ? fileMenu.file.recipients : []

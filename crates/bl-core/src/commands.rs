@@ -545,6 +545,11 @@ impl Core {
                 ok()
             }
 
+            "toast" => {
+                self.toast(s("text"), b("error"));
+                ok()
+            }
+
             // ---- backgrounds ----------------------------------------------
             "backgrounds.list" => {
                 let cur = self.bg_queue.position();
@@ -1183,6 +1188,8 @@ impl Core {
                 name,
                 self.server.image_url(&bl_net::api::paths::image(id, 384)),
             )
+        } else if let Some(id) = src.strip_prefix(crate::vault::BG_PREFIX) {
+            self.vault_background_info(id)
         } else if let Some(tid) = src.strip_prefix("cover:") {
             let t = self.track_for(tid);
             (t.title.clone(), self.cover_url_cached(&t))

@@ -1871,7 +1871,7 @@ impl Core {
 
     // ---- backgrounds -----------------------------------------------------------
 
-    fn decode_background_async(
+    pub(crate) fn decode_background_async(
         &mut self,
         host: &mut dyn Host,
         key: String,
@@ -1942,6 +1942,12 @@ impl Core {
         } else if let Some(id) = source.strip_prefix("srv:") {
             let rid = self.server.get(host, &bl_net::api::paths::image(id, 2560));
             self.requests.insert(rid, Req::BgImage(source.to_string()));
+        } else if let Some(id) = source.strip_prefix(crate::vault::BG_PREFIX) {
+            // Locked or not listed yet: shown once the vault opens.
+            if !self.vault_load_background(host, id) {
+                self.bg_pending = None;
+                self.load_background(host, DEFAULT_BG);
+            }
         } else if let Some(name) = source.strip_prefix("mem:") {
             if let Some(data) = self.memory_files.get(name).cloned() {
                 self.decode_background_async(host, source.to_string(), data, animate);
