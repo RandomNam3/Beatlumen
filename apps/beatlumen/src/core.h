@@ -24,6 +24,10 @@ typedef struct BlCallbacks {
     int64_t (*tls_read)(int64_t handle, uint8_t *buf, size_t len, uint32_t timeout_ms);
     int64_t (*tls_write)(int64_t handle, const uint8_t *buf, size_t len, uint32_t timeout_ms);
     void (*tls_close)(int64_t handle);
+    // Announces a network service through the platform (Android NsdManager);
+    // txt is a JSON array of "key=value" strings. 0 = not available.
+    int32_t (*service_register)(void *user, const char *instance, const char *service_type, uint16_t port, const char *txt);
+    void (*service_unregister)(void *user);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);

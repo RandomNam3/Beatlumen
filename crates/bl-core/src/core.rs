@@ -241,6 +241,7 @@ pub struct Core {
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
+    pub(crate) airplay: crate::airplay::AirplayState,
     started: bool,
 }
 
@@ -407,6 +408,7 @@ impl Core {
             last_dt: 0.0,
             time: 0.0,
             download_progress: None,
+            airplay: Default::default(),
             started: false,
         };
         core.engine.set_intensity(core.settings.intensity);
@@ -489,10 +491,16 @@ impl Core {
                 "backgroundIndex",
                 "serverToken",
                 "version",
+                "airplayPassword",
+                "airplayId",
             ] {
                 m.remove(k);
             }
         }
+        v.set(
+            "airplayPasswordSet",
+            !self.settings.airplay_password.is_empty(),
+        );
         v
     }
 
@@ -588,6 +596,7 @@ impl Core {
             .with("imagesRev", self.revs.images)
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
+            .with("airplay", self.airplay_json())
             .with("settings", self.settings_json())
     }
 
@@ -1096,6 +1105,15 @@ impl Core {
     }
 
     /// Starts playing the queue's current item.
+    /// True while an AirPlay sender's stream is the current track.
+    pub(crate) fn playing_airplay(&self) -> bool {
+        self.airplay.active
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|t| t.id.starts_with(crate::airplay::ID_PREFIX))
+    }
+
     pub(crate) fn play_current(&mut self, host: &mut dyn Host, autoplay: bool) {
         self.start_current(host, autoplay, true);
     }
@@ -1103,6 +1121,7 @@ impl Core {
     /// Makes the queue's current item the current track; `load` starts its
     /// playback (false when the player already advanced to it gaplessly).
     fn start_current(&mut self, host: &mut dyn Host, autoplay: bool, load: bool) {
+        self.release_airplay(host);
         self.revs.queue += 1;
         let Some(id) = self.queue.current().cloned() else {
             self.player.stop(host);
@@ -1496,6 +1515,11 @@ impl Core {
     }
 
     pub(crate) fn toggle_play(&mut self, host: &mut dyn Host) {
+        if self.playing_airplay() {
+            // A speaker cannot pause its sender: stop receiving.
+            self.release_airplay(host);
+            return;
+        }
         match self.player.state() {
             PlayState::Stopped => {
                 if self.queue.current().is_none() && !self.queue.is_empty() {
@@ -1547,6 +1571,9 @@ impl Core {
 
     /// Playback position in seconds.
     pub fn position(&self, host: &dyn Host) -> f64 {
+        if let Some(p) = self.airplay_position() {
+            return p;
+        }
         self.player.position(host)
     }
 
@@ -1572,6 +1599,10 @@ impl Core {
         let Some(track) = self.current.clone() else {
             return;
         };
+        if track.id.starts_with(crate::airplay::ID_PREFIX) {
+            // Live stream: the visuals follow the audio as it plays.
+            return;
+        }
         let cfg = self.preset.analysis_config();
         let key = format!(
             "{}|{}|{}|{:016x}",
@@ -1667,7 +1698,9 @@ impl Core {
     /// URL of a track's cover for the UI, if known without blocking:
     /// server URL, extracted local file, or "" (none / not yet extracted).
     pub(crate) fn cover_url_cached(&self, t: &Track) -> String {
-        if library::is_local(&t.id) {
+        if t.id.starts_with(crate::airplay::ID_PREFIX) {
+            self.airplay.cover_url().to_string()
+        } else if library::is_local(&t.id) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
                 _ => String::new(),
@@ -2142,9 +2175,12 @@ impl Core {
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);
         }
+        self.update_airplay(host);
         self.player.update(host);
         for ev in self.player.take_events() {
             match ev {
+                // A live AirPlay stream ends through the receiver.
+                PlayerEvent::Ended if self.playing_airplay() => {}
                 PlayerEvent::Ended => self.on_track_ended(host),
                 PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
                 PlayerEvent::Reload(at) => {

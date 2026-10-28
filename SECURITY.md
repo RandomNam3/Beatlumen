@@ -73,6 +73,27 @@ issue.
 * The app warns when a server outside the home network is used without
   encryption.
 
+## AirPlay receiver
+
+* Off by default; when switched on, the app listens in the local network
+  for AirPlay senders (RTSP over TCP and three UDP ports for the stream)
+  and announces itself through mDNS (Android: the system's NsdManager).
+* An optional password (HTTP digest, as AirPlay senders use it) keeps
+  others in the same network from playing on the device. Without one,
+  anyone in the network can stream to it, as with any AirPlay speaker.
+* Everything read from the network is bounded: request headers (16 KB),
+  bodies (4 MB, cover art), at most eight control connections, at most
+  eight seconds of buffered audio; UDP packets are only accepted from the
+  sender of the current stream. A new sender replaces the current one.
+* The audio is decrypted with the per-stream AES key that the sender wraps
+  with the RSA key of AirPlay 1 receivers. That key is public (published
+  in 2011 and used by all open-source receivers), so it protects nothing
+  against an attacker in the network; it only serves compatibility. The
+  RSA code is not constant time for that reason, as it only ever uses
+  this public key.
+* Received audio is played and analysed live, never stored. Cover art is
+  kept as a single file in the app's storage while a stream plays.
+
 ## Known limitations
 
 * Tokens appear in media URLs (`?token=`) because `<audio>`/`<img>` cannot

@@ -33,6 +33,7 @@ version = "0.1.0"
 name = "bl-core"
 version = "0.1.0"
 dependencies = [
+ "bl-airplay",
  "bl-analysis",
  "bl-fx",
  "bl-gl",

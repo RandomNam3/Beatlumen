@@ -281,6 +281,75 @@ Item {
             }
 
             // ---- performance ----------------------------------------------
+            // ---- AirPlay ----------------------------------------------------
+            SectionLabel { text: "AirPlay"; visible: Core.platform !== "web" }
+            SwitchRow {
+                visible: Core.platform !== "web"
+                Layout.fillWidth: true
+                title: Theme.tr("Receive AirPlay")
+                detail: Theme.tr("This device appears as a speaker on iPhone, iPad and Mac; what they play is shown with visuals here.")
+                on: page.settings.airplay === true
+                onSwitched: (on) => Core.call("settings.set", { key: "airplay", value: on })
+            }
+            ColumnLayout {
+                readonly property var ap: Core.state.airplay || ({})
+                visible: Core.platform !== "web" && page.settings.airplay === true
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: parent.ap.error ? Theme.tr("AirPlay is not available") + ": " + parent.ap.error
+                        : parent.ap.active ? Theme.tr("Receiving from") + " " + parent.ap.client
+                        : parent.ap.running ? Theme.tr("Ready, visible as") + " „" + parent.ap.name + "“"
+                        : Theme.tr("Starting…")
+                    color: parent.ap.error ? Theme.danger : Theme.textDim
+                    wrapMode: Text.WordWrap
+                }
+                TextField {
+                    id: airplayName
+                    Layout.fillWidth: true
+                    placeholderText: Theme.tr("Speaker name") + " (Beatlumen)"
+                    text: page.settings.airplayName || ""
+                    maximumLength: 48
+                    onEditingFinished: if (text !== (page.settings.airplayName || "")) Core.call("settings.set", { key: "airplayName", value: text })
+                }
+                TextField {
+                    id: airplayPassword
+                    Layout.fillWidth: true
+                    placeholderText: page.settings.airplayPasswordSet ? Theme.tr("Password set (enter a new one to change it)") : Theme.tr("Password (optional)")
+                    echoMode: TextInput.Password
+                    maximumLength: 64
+                    inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhSensitiveData
+                    onAccepted: if (text.length > 0) { Core.call("settings.set", { key: "airplayPassword", value: text }); text = "" }
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Button {
+                        visible: airplayPassword.text.length > 0
+                        text: Theme.tr("Set password")
+                        onClicked: { Core.call("settings.set", { key: "airplayPassword", value: airplayPassword.text }); airplayPassword.text = "" }
+                    }
+                    Button {
+                        visible: page.settings.airplayPasswordSet === true
+                        flat: true
+                        text: Theme.tr("Remove password")
+                        onClicked: Core.call("settings.set", { key: "airplayPassword", value: "" })
+                    }
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: Theme.tr("Only reachable in the local network. Without a password anyone in this network can play music on this device.")
+                    color: Theme.textFaint
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                }
+            }
+
             SectionLabel { text: Theme.tr("Performance") }
             RowLayout {
                 Layout.fillWidth: true

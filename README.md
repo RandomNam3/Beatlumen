@@ -23,6 +23,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - Library with songs, albums, artists, folders, playlists and a play queue;
   artist and title are guessed from file names when tags are missing.
 - Background images from your folders, the server or the album cover.
+- **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
+  iPad and Mac and plays and visualises what they send, with title, artist
+  and cover (Linux, Windows, Android; AirPlay 1 protocol).
 - Light/dark mode and accent colour follow your system.
 - **Beatlumen Server** shares a music folder on your network and serves the
   web version of the app.
@@ -83,10 +86,11 @@ crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
                         bl-opus, bl-vorbis, bl-flac, bl-ogg
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
+crates/bl-airplay       AirPlay (RAOP) receiver: RTSP, audio stream, mDNS
 ```
 
 The Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned
-features (lyrics, user accounts, sharing, provider integrations).
+features (lyrics, user accounts, sharing, music sources, devices).
 
 ## Security
 

@@ -14,6 +14,9 @@ const DEFAULT_LATENCY: Duration = Duration::from_secs(2);
 const MAX_BUFFER_SECS: f64 = 8.0;
 /// Waiting slice of the player-side reader (keeps the player responsive).
 const WAIT: Duration = Duration::from_millis(20);
+/// Audio handed to the player ahead of time, so its buffer bridges
+/// scheduling hiccups.
+const CUSHION: Duration = Duration::from_millis(250);
 /// How long a missing packet may be late (retransmission) before silence
 /// takes its place.
 const MISSING_GRACE: Duration = Duration::from_millis(100);
@@ -40,7 +43,10 @@ struct State {
     first_packet: Option<Instant>,
     last_packet: Option<Instant>,
     /// Delay between handing audio to the player and hearing it.
-    lead: Duration,
+    out_latency: Duration,
+    /// Whether output of the current run started (the first frame waits
+    /// for its time; later ones are handed over `CUSHION` ahead).
+    started: bool,
     gain: f32,
     current_gain: f32,
     ended: bool,
@@ -115,7 +121,8 @@ impl LiveStream {
                     anchor: None,
                     first_packet: None,
                     last_packet: None,
-                    lead: Duration::from_millis(400),
+                    out_latency: Duration::ZERO,
+                    started: false,
                     gain: 1.0,
                     current_gain: 1.0,
                     ended: true,
@@ -141,6 +148,7 @@ impl LiveStream {
         st.anchor = None;
         st.first_packet = None;
         st.last_packet = None;
+        st.started = false;
         st.ended = false;
         st.gain = 1.0;
         st.current_gain = 1.0;
@@ -221,6 +229,7 @@ impl LiveStream {
         st.next = None;
         st.anchor = None;
         st.first_packet = None;
+        st.started = false;
         self.shared.cv.notify_all();
     }
 
@@ -233,7 +242,7 @@ impl LiveStream {
     /// buffer target plus the device's output latency).
     pub fn set_output_latency(&self, secs: f64) {
         let secs = secs.clamp(0.0, 1.5);
-        self.lock().lead = Duration::from_secs_f64(0.25 + secs);
+        self.lock().out_latency = Duration::from_secs_f64(secs);
     }
 
     /// A decoder that plays this stream until it ends.
@@ -332,12 +341,20 @@ impl bl_media::Decoder for LiveDecoder {
             drop(self.wait(st, WAIT));
             return Ok(true);
         };
-        let lead = st.lead;
+        // The first frame of a run is handed over when it is due (the
+        // player starts playing at once); after that, audio goes ahead by
+        // the cushion, which then stays in the player's buffer.
+        let lead = if st.started {
+            st.out_latency + CUSHION
+        } else {
+            st.out_latency
+        };
         let release = play_at.checked_sub(lead).unwrap_or(play_at);
         if now < release {
             drop(self.wait(st, release - now));
             return Ok(true);
         }
+        st.started = true;
         // Far behind (e.g. after a stall): continue with what is due now.
         if now > release + Duration::from_millis(500) {
             let behind = (now - release).as_secs_f64();
@@ -364,6 +381,7 @@ impl bl_media::Decoder for LiveDecoder {
                 st.next = None;
                 st.anchor = None;
                 st.first_packet = None;
+                st.started = false;
                 drop(self.wait(st, WAIT));
                 return Ok(true);
             }
@@ -409,8 +427,8 @@ mod tests {
         let s = LiveStream::new();
         let g = s.begin(fmt());
         s.set_output_latency(0.0);
-        // Frame 100 is to be heard 300 ms from now; with 250 ms lead it is
-        // released after about 50 ms.
+        // Frame 100 is to be heard 300 ms from now: it is handed over then,
+        // the next one right after (cushion).
         let start = Instant::now();
         s.sync(g, 100, start + Duration::from_millis(300));
         s.push(g, 110, vec![0.5; 20]);
@@ -420,7 +438,7 @@ mod tests {
         while out.is_empty() {
             d.next_chunk(&mut out).unwrap();
         }
-        assert!(start.elapsed() >= Duration::from_millis(40));
+        assert!(start.elapsed() >= Duration::from_millis(280));
         while out.len() < 40 {
             d.next_chunk(&mut out).unwrap();
         }

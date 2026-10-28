@@ -140,6 +140,14 @@ pub struct Settings {
     pub crossfade: f32,
     /// Skip silence at the end and start of tracks when moving on.
     pub skip_silence: bool,
+    /// Offer this device as an AirPlay speaker in the local network.
+    pub airplay: bool,
+    /// Name shown on AirPlay senders (empty = "Beatlumen").
+    pub airplay_name: String,
+    /// Password AirPlay senders must enter (empty = none).
+    pub airplay_password: String,
+    /// Random device ID announced instead of a hardware address (hex).
+    pub airplay_id: String,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -181,6 +189,10 @@ impl Default for Settings {
             normalize: false,
             crossfade: 0.0,
             skip_silence: true,
+            airplay: false,
+            airplay_name: String::new(),
+            airplay_password: String::new(),
+            airplay_id: String::new(),
             ui: Value::object(),
         }
     }
@@ -242,6 +254,10 @@ impl Settings {
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
+            airplay: v.bool_or("airplay", false),
+            airplay_name: v.str_or("airplayName", "").chars().take(48).collect(),
+            airplay_password: v.str_or("airplayPassword", "").chars().take(64).collect(),
+            airplay_id: v.str_or("airplayId", "").to_string(),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -286,6 +302,10 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("airplay", self.airplay)
+            .with("airplayName", self.airplay_name.as_str())
+            .with("airplayPassword", self.airplay_password.as_str())
+            .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
     }
 }

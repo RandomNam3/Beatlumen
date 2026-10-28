@@ -23,6 +23,14 @@ Full texts: `crates/bl-opus/NOTICE`, `crates/bl-vorbis/NOTICE`,
 `crates/bl-image/NOTICE`, `apps/beatlumen/assets/Inter-OFL.txt`, and the MIT texts
 below.
 
+The AirPlay receiver (`bl-airplay`) is an independent implementation of the
+AirPlay 1 (RAOP) protocol for interoperability. It contains the RSA key of
+AirPlay 1 receivers (the "AirPort Express key", public since 2011 and
+distributed with open-source receivers such as
+[Shairport Sync](https://github.com/mikebrady/shairport-sync)); no code of
+those projects is used. AirPlay is a trademark of Apple Inc.; Beatlumen is
+not affiliated with or certified by Apple.
+
 Beatlumen reads and writes Hyperchroma's `.hfx` preset format for
 compatibility. It contains no code or assets from Hyperchroma.
 

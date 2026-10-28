@@ -63,6 +63,27 @@ uint32_t audioStartCallback(void *user)
     return AudioOutput::instance()->start();
 }
 
+#ifdef Q_OS_ANDROID
+// AirPlay announcement through Android's NsdManager (ServiceAnnouncer.java).
+constexpr const char *kAnnouncer = "io/github/randomnam3/beatlumen/ServiceAnnouncer";
+
+int32_t serviceRegister(void *, const char *instance, const char *type, uint16_t port, const char *txt)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    const jboolean ok = QJniObject::callStaticMethod<jboolean>(
+        kAnnouncer, "register", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)Z",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>(),
+        QJniObject::fromString(QString::fromUtf8(type)).object<jstring>(), jint(port),
+        QJniObject::fromString(QString::fromUtf8(txt)).object<jstring>());
+    return ok ? 1 : 0;
+}
+
+void serviceUnregister(void *)
+{
+    QJniObject::callStaticMethod<void>(kAnnouncer, "unregister", "()V");
+}
+#endif
+
 } // namespace
 
 Bridge::Bridge(const QStringList &args, QObject *parent)
@@ -90,6 +111,10 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     tls::configure(cb);
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
+#ifdef Q_OS_ANDROID
+    cb.service_register = serviceRegister;
+    cb.service_unregister = serviceUnregister;
+#endif
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
 
     // Files picked through content URIs are copied into the cache; drop

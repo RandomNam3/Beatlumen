@@ -155,7 +155,12 @@ impl Core {
                 ok()
             }
             "pause" => {
-                self.player.pause(host);
+                if self.playing_airplay() {
+                    // A speaker cannot pause its sender: stop receiving.
+                    self.release_airplay(host);
+                } else {
+                    self.player.pause(host);
+                }
                 ok()
             }
             "toggle" => {
@@ -163,6 +168,7 @@ impl Core {
                 ok()
             }
             "stop" => {
+                self.release_airplay(host);
                 self.player.stop(host);
                 ok()
             }
@@ -946,6 +952,10 @@ impl Core {
         v.set(key, value);
         let new = Settings::from_json(&v);
         let old = std::mem::replace(&mut self.settings, new);
+        if key.starts_with("airplay") {
+            // Retry starting the receiver with the new settings.
+            self.airplay.error = None;
+        }
         if (old.volume - self.settings.volume).abs() > 1e-6 || old.muted != self.settings.muted {
             self.player.set_volume(if self.settings.muted {
                 0.0

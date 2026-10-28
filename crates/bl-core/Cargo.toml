@@ -14,3 +14,4 @@ bl-fx = { path = "../bl-fx" }
 bl-gl = { path = "../bl-gl" }
 bl-render = { path = "../bl-render" }
 bl-net = { path = "../bl-net" }
+bl-airplay = { path = "../bl-airplay" }

@@ -28,6 +28,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Add to background queue" => "Zur Hintergrund-Warteschlange",
         "Add to playlist" => "Zur Playlist hinzufügen",
         "Add to playlist…" => "Zur Playlist hinzufügen…",
+        "AirPlay" => "AirPlay",
+        "AirPlay from" => "AirPlay von",
         "Add to queue" => "Zur Warteschlange",
         "Add tracks from the library with the context menu (right click or long press)." => "Füge Titel aus der Bibliothek über das Kontextmenü hinzu (Rechtsklick oder lange drücken).",
         "Added to the background queue" => "Zur Hintergrund-Warteschlange hinzugefügt",

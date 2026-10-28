@@ -66,6 +66,19 @@ pub struct BlCallbacks {
         unsafe extern "C" fn(handle: i64, buf: *const u8, len: usize, timeout_ms: u32) -> i64,
     >,
     pub tls_close: Option<unsafe extern "C" fn(handle: i64)>,
+    /// Announces a network service through the platform (Android's
+    /// NsdManager); `txt` is a JSON array of "key=value" strings. Returns
+    /// non-zero on success; null or zero lets the core answer mDNS itself.
+    pub service_register: Option<
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            instance: *const c_char,
+            service_type: *const c_char,
+            port: u16,
+            txt: *const c_char,
+        ) -> i32,
+    >,
+    pub service_unregister: Option<unsafe extern "C" fn(user: *mut c_void)>,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -524,6 +537,35 @@ impl Host for UiHost {
                 unsafe { f(self.cb.user, c.as_ptr()) }
             }
             None => eprintln!("{msg}"),
+        }
+    }
+
+    fn service_register(
+        &mut self,
+        instance: &str,
+        service_type: &str,
+        port: u16,
+        txt: &[String],
+    ) -> bool {
+        let Some(f) = self.cb.service_register else {
+            return false;
+        };
+        let txt = bl_json::Value::Array(
+            txt.iter()
+                .map(|t| bl_json::Value::from(t.as_str()))
+                .collect(),
+        )
+        .to_json();
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (i, t, x) = (c(instance), c(service_type), c(&txt));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, i.as_ptr(), t.as_ptr(), port, x.as_ptr()) != 0 }
+    }
+
+    fn service_unregister(&mut self) {
+        if let Some(f) = self.cb.service_unregister {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user) }
         }
     }
 }

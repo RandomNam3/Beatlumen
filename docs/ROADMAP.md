@@ -48,13 +48,17 @@ with a PIN.
 
 - **DLNA/UPnP renderer:** see Music sources; covers many Android apps
   (BubbleUPnP, Fritz!App …), Windows "Play to" and TVs/receivers.
-- **AirPlay (audio)** from iPhone, iPad and Mac (AirPlay 2 and 1).
-  - Desktop and server first, through Shairport Sync as an external program
-    whose audio Beatlumen reads (pipe output).
-  - A built-in receiver for Android later.
-  - AirPlay buffers about two seconds, which gives the analysis look-ahead.
-  - The protocol is re-implemented (as in Shairport Sync), not certified by
-    Apple.
+- **AirPlay (audio)** from iPhone, iPad and Mac.
+  - Done: AirPlay 1 (RAOP) receiver built into the app on Linux, Windows
+    and Android (`crates/bl-airplay`), with title, artist, cover, progress
+    and sender volume. Browsers cannot accept network connections, so the
+    web version cannot be a receiver.
+  - Next: use the roughly two seconds the sender sends ahead for look-ahead
+    analysis (effects that anticipate beats, as with files).
+  - Later: AirPlay 2 (needs HomeKit-style pairing: SRP, Ed25519, X25519,
+    ChaCha20-Poly1305), for multi-room groups with other AirPlay 2
+    speakers. Senders still stream to AirPlay 1 receivers.
+  - The protocol is re-implemented, not certified by Apple.
 - **Share target:** "Share" on Android and "Open with" on desktop send files
   and links to this or another Beatlumen device (through the server).
 - **Google Cast (Chromecast): not possible.** Cast senders check a

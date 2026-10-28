@@ -152,4 +152,20 @@ pub trait Host {
 
     /// Logs a message (stderr, logcat or the browser console).
     fn log(&self, msg: &str);
+
+    /// Announces a network service through the platform (Android's
+    /// NsdManager). Returns false where the platform has no registration
+    /// of its own; the core then answers mDNS queries itself.
+    fn service_register(
+        &mut self,
+        _instance: &str,
+        _service_type: &str,
+        _port: u16,
+        _txt: &[String],
+    ) -> bool {
+        false
+    }
+
+    /// Withdraws the service announced with [`Host::service_register`].
+    fn service_unregister(&mut self) {}
 }

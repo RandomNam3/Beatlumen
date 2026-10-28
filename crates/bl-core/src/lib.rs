@@ -6,6 +6,7 @@
 //! visualizer with [`Core::render`]. Platform services come in through
 //! [`host::Host`].
 
+mod airplay;
 mod commands;
 pub mod core;
 pub mod host;
