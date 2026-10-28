@@ -184,4 +184,14 @@ pub trait Host {
     fn open_url(&mut self, _url: &str) -> bool {
         false
     }
+
+    /// Asks the platform's credential manager (Android) for a passkey or
+    /// password (`kind` "get": {"publicKey": WebAuthn options JSON or "",
+    /// "password": bool}), to create a passkey ("create": {"publicKey",
+    /// "user"}) or to save a password ("save": {"user", "password"}).
+    /// "get" and "create" answer later with the `vault.credentialResult`
+    /// command. Returns false where there is none.
+    fn credential_request(&mut self, _kind: &str, _json: &str) -> bool {
+        false
+    }
 }

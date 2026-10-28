@@ -25,6 +25,8 @@ use bl_vault::{sealed, Secret};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod native;
+
 /// Queue ids of encrypted files: `vault:<file id>`.
 pub const ID_PREFIX: &str = "vault:";
 /// Upload part size (the server accepts up to 4 MB per request).
@@ -55,6 +57,7 @@ pub(crate) enum VaultReq {
     },
     PushInfo,
     PushSubscribed,
+    Native(native::NativeReq),
     /// Answer not needed.
     Quiet,
 }
@@ -92,6 +95,11 @@ enum Done {
     UploadFailed {
         serial: u64,
         msg: String,
+    },
+    /// The password proved for adding a passkey.
+    Proof {
+        name: String,
+        proof: Value,
     },
 }
 
@@ -179,6 +187,10 @@ pub(crate) struct Vault {
     browser_box: Mailbox<String>,
     /// The account works with passkeys only.
     pub password_off: bool,
+    /// A request to the platform's credential manager.
+    native: Option<native::Native>,
+    /// User and password to offer to the password manager once accepted.
+    save_password: Option<(String, String)>,
 }
 
 fn b64(b: &[u8]) -> Value {
@@ -360,6 +372,8 @@ impl Core {
         self.vault.error = msg.into();
         self.vault.pending_password = None;
         self.vault.pending_keys = None;
+        self.vault.native = None;
+        self.vault.save_password = None;
         self.vault.rev += 1;
     }
 
@@ -389,6 +403,7 @@ impl Core {
         }
         self.vault_busy("Unlocking…");
         self.vault.pending_password = Some(password.to_string());
+        self.vault.save_password = Some((user.clone(), password.to_string()));
         let body = Value::object().with("user", user.as_str());
         self.vault_request(
             host,
@@ -414,6 +429,7 @@ impl Core {
             return self.vault_fail(self.tr("Use a password of at least 10 characters"));
         }
         self.vault_busy("Creating keys…");
+        self.vault.save_password = Some((user.clone(), password.to_string()));
         let (invite, password) = (invite.trim().to_string(), password.to_string());
         self.vault_job(host, move || match Account::register(&user, &password) {
             Ok((account, reg, code)) => Done::Registered {
@@ -457,6 +473,7 @@ impl Core {
             Some(Value::object().with("recoveryAuth", b64(rauth.as_bytes())));
         self.vault.pending_code = Some(code);
         self.vault.pending_password = Some(password.to_string());
+        self.vault.save_password = Some((user.clone(), password.to_string()));
         self.vault.user = user.clone();
         let body = Value::object()
             .with("user", user.as_str())
@@ -475,6 +492,9 @@ impl Core {
             return self.vault_fail(self.tr("Use a password of at least 10 characters"));
         }
         self.vault_change(host, current, Some(new.to_string()), false);
+        if self.vault.busy.is_some() {
+            self.vault.save_password = Some((self.vault.user.clone(), new.to_string()));
+        }
     }
 
     pub(crate) fn vault_new_recovery_code(&mut self, host: &mut dyn Host, current: &str) {
@@ -720,6 +740,7 @@ impl Core {
             self.connect_server(host);
         }
         self.vault.rev += 1;
+        self.offer_password(host);
         self.vault_refresh(host);
         self.push_start(host);
     }
@@ -1209,6 +1230,7 @@ impl Core {
                     );
                 }
                 Done::UploadFailed { serial, msg } => self.vault_upload_failed(serial, msg),
+                Done::Proof { name, proof } => self.native_create_options(host, name, proof),
                 Done::Failed { account, msg } => {
                     if let Some(a) = account {
                         self.vault.account = Some(a);
@@ -1273,6 +1295,10 @@ impl Core {
             return;
         }
         match req {
+            VaultReq::Native(n) => {
+                let e = server_error();
+                self.native_http(host, n, status, &json, e)
+            }
             VaultReq::Prelogin { user } => {
                 let salt: Option<[u8; 16]> =
                     unb64(json.get("salt")).and_then(|s| s.try_into().ok());
@@ -1399,6 +1425,7 @@ impl Core {
                             self.vault.account = Some(a);
                             self.vault.busy = None;
                             self.vault.rev += 1;
+                            self.offer_password(host);
                         } else {
                             self.vault_logged_in(host, token, a, None);
                         }
@@ -1615,6 +1642,7 @@ impl Core {
             .with("push", self.push_json())
             .with("pairingCode", self.vault.browser.as_ref().map(|b| b.key.pairing_code()))
             .with("passwordOff", self.vault.password_off)
+            .with("platformCredentials", self.platform_credentials(host))
             .with("passkeys", matches!(&self.server.state, crate::server::ServerState::Connected(i) | crate::server::ServerState::NeedsLogin(i) if i.passkeys))
     }
 
@@ -1703,6 +1731,12 @@ impl Core {
             "vault.browserCancel" => self.vault_browser_cancel(),
             "vault.browserResult" => self.vault_browser_result(host, &s("url")),
             "vault.manageInBrowser" => self.vault_manage_in_browser(host),
+            "vault.nativeSignIn" => self.vault_native_sign_in(host),
+            "vault.addPasskey" => self.vault_add_passkey(host, &s("password"), &s("name")),
+            "vault.credentialResult" => {
+                let ok = c.bool_or("ok", false);
+                self.vault_credential_result(host, &s("kind"), ok, &s("json"))
+            }
             "vault.files" => return self.vault_files_json(),
             "vault.contacts" => return self.vault_contacts_json(),
             "vault.upload" => {

@@ -244,11 +244,29 @@ Item {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     spacing: 6
+                    // Android: the system's credential manager first.
+                    Button {
+                        Layout.fillWidth: true
+                        visible: page.vault.platformCredentials === true && (page.vault.pairingCode || "") === ""
+                        text: Theme.tr("Passkey or saved password")
+                        icon.source: Theme.icon("key")
+                        onClicked: Core.call("vault.nativeSignIn")
+                    }
+                    Label {
+                        visible: page.vault.platformCredentials === true && (page.vault.pairingCode || "") === ""
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textFaint
+                        font.pixelSize: 12
+                        text: Theme.tr("Uses your password manager, e.g. Google Password Manager or Bitwarden.")
+                    }
                     Button {
                         Layout.fillWidth: true
                         visible: (page.vault.pairingCode || "") === ""
-                        text: Theme.tr("Sign in with a passkey")
-                        icon.source: Theme.icon("key")
+                        flat: page.vault.platformCredentials === true
+                        text: page.vault.platformCredentials === true ? Theme.tr("Sign in in the browser") : Theme.tr("Sign in with a passkey")
+                        icon.source: Theme.icon(page.vault.platformCredentials === true ? "login" : "key")
                         onClicked: Core.call("vault.browserSignIn")
                     }
                     Label {
@@ -438,6 +456,7 @@ Item {
                         on: push.enabled === true
                         onSwitched: (on) => Core.call("settings.set", { key: "notifications", value: on })
                     }
+                    Button { Layout.leftMargin: 16; visible: page.vault.platformCredentials === true && page.vault.passkeys === true; text: Theme.tr("Add a passkey on this device"); icon.source: Theme.icon("key"); onClicked: addPasskey.open() }
                     Button { Layout.leftMargin: 16; text: Theme.tr("Passkeys and password"); icon.source: Theme.icon("key"); onClicked: Core.call("vault.manageInBrowser") }
                     Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("Change password"); icon.source: Theme.icon("key"); onClicked: changePw.open() }
                     Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("New recovery code"); icon.source: Theme.icon("refresh"); onClicked: newCode.open() }
@@ -656,6 +675,37 @@ Item {
                 text: Theme.tr("Change password")
                 enabled: cur.text.length > 0 && np.text.length >= 10 && np.text === np2.text
                 onClicked: { Core.call("vault.changePassword", { current: cur.text, password: np.text }); changePw.close() }
+            }
+        }
+    }
+
+    // A passkey in the system's credential manager (Android).
+    Dialog {
+        id: addPasskey
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(420, page.width - 32)
+        title: Theme.tr("Add a passkey on this device")
+        standardButtons: Dialog.Cancel
+        onOpened: { pkPw.clear(); pkName.text = Theme.tr("Passkey on this device"); (page.vault.passwordOff ? pkName : pkPw).forceActiveFocus() }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("Your password manager stores the passkey; it then unlocks your encrypted files without the password.")
+            }
+            TextField { id: pkPw; visible: !page.vault.passwordOff; Layout.fillWidth: true; placeholderText: Theme.tr("Current password"); echoMode: TextInput.Password }
+            TextField { id: pkName; Layout.fillWidth: true; placeholderText: Theme.tr("Name"); maximumLength: 64 }
+            AccentButton {
+                Layout.alignment: Qt.AlignRight
+                highlighted: true
+                text: Theme.tr("Add")
+                enabled: page.vault.passwordOff || pkPw.text.length > 0
+                onClicked: { Core.call("vault.addPasskey", { password: pkPw.text, name: pkName.text }); pkPw.clear(); addPasskey.close() }
             }
         }
     }

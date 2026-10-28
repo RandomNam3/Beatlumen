@@ -148,9 +148,17 @@ Where passkeys and password managers are used:
   that started the sign-in.
 * **Android** additionally uses the system's Credential Manager directly
   (Android 14+): passkeys and saved passwords from the user's provider
-  (Google Password Manager, Bitwarden, …) without leaving the app. The
-  server publishes `/.well-known/assetlinks.json` for the app, which
-  Android requires before an app may use passkeys of a web domain.
+  (Google Password Manager, Bitwarden, …) without leaving the app, and
+  passkeys can be added there too. The provider signs with the app's
+  origin (`android:apk-key-hash:…`), which the server accepts only for the
+  signing certificates it knows (`--android-cert`; official builds are
+  built in). The server publishes `/.well-known/assetlinks.json` for the
+  app, which Android requires before an app may use passkeys of a web
+  domain. A password typed into the app is offered to the password
+  manager after it was accepted; one that came from the manager is not.
+  The app checks everything the provider returns exactly as the sign-in
+  page does: the PRF output stays on the device and only unwraps the
+  master key there.
 * The **web client** opens the sign-in page in a small window and gets
   the result the same way.
 
@@ -265,6 +273,7 @@ beatlumen-server release-keygen
 4. Web client integrity (done): manifest and signing in CI, server
    self-check, Subresource Integrity and the WebAssembly hash check,
    verification in the apps.
-5. Passkeys (in progress): WebAuthn with PRF on the server, the sign-in
-   page, the hand-over to the apps, Android's Credential Manager, the
-   password switch.
+5. Passkeys (done): WebAuthn with PRF on the server, the sign-in page,
+   the hand-over to the apps, Android's Credential Manager
+   (`bl-core/src/vault/native.rs`, `Credentials.java`), the password
+   switch.

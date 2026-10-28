@@ -611,7 +611,9 @@ impl Core {
             .with(
                 "serverWebIntegrity",
                 match &self.server.state {
-                    ServerState::Connected(i) | ServerState::NeedsLogin(i) => i.web_integrity.clone(),
+                    ServerState::Connected(i) | ServerState::NeedsLogin(i) => {
+                        i.web_integrity.clone()
+                    }
                     _ => String::new(),
                 },
             )
@@ -1395,7 +1397,8 @@ impl Core {
             let Some(opener) = self.vault_opener(host, id) else {
                 return;
             };
-            let job = move || mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))));
+            let job =
+                move || mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))));
             if host.has_threads() {
                 host.spawn(Box::new(job));
             } else {

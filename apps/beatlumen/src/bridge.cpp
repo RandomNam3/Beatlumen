@@ -151,6 +151,49 @@ void JNICALL nativeFailed(JNIEnv *env, jclass, jstring instance, jstring reason)
         { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("reason"), jstr(env, reason) } });
 }
 
+// Passkeys and saved passwords through Android's Credential Manager
+// (Credentials.java); results come back on the main thread as
+// "vault.credentialResult".
+constexpr const char *kCredentials = "io/github/randomnam3/beatlumen/Credentials";
+
+int32_t credentialRequest(void *, const char *kind, const char *json)
+{
+    const QJsonObject o = QJsonDocument::fromJson(QByteArray(json)).object();
+    QJniObject activity = QtAndroidPrivate::activity();
+    if (!activity.isValid())
+        return 0;
+    const QByteArray k(kind);
+    auto str = [&](const char *key) { return QJniObject::fromString(o.value(QLatin1String(key)).toString()); };
+    if (k == "get") {
+        QJniObject::callStaticMethod<void>(kCredentials, "get", "(Landroid/app/Activity;Ljava/lang/String;Z)V",
+            activity.object(), str("publicKey").object<jstring>(), jboolean(o.value(QStringLiteral("password")).toBool()));
+    } else if (k == "create") {
+        QJniObject::callStaticMethod<void>(kCredentials, "createPasskey", "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+            activity.object(), str("publicKey").object<jstring>(), str("user").object<jstring>());
+    } else if (k == "save") {
+        QJniObject::callStaticMethod<void>(kCredentials, "savePassword", "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+            activity.object(), str("user").object<jstring>(), str("password").object<jstring>());
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+void JNICALL nativeCredentialResult(JNIEnv *env, jclass, jstring kind, jboolean ok, jstring json)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("vault.credentialResult") },
+        { QStringLiteral("kind"), jstr(env, kind) }, { QStringLiteral("ok"), bool(ok) }, { QStringLiteral("json"), jstr(env, json) } });
+}
+
+void setupCredentials()
+{
+    const JNINativeMethod methods[] = {
+        { "nativeResult", "(Ljava/lang/String;ZLjava/lang/String;)V", reinterpret_cast<void *>(nativeCredentialResult) },
+    };
+    QJniEnvironment env;
+    env.registerNativeMethods(kCredentials, methods, 1);
+}
+
 // beatlumen://auth?state=…&result=… opened by the sign-in page in the
 // browser (passkeys), while the app runs or when the link starts it.
 struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
@@ -224,7 +267,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     cb.service_unregister = serviceUnregister;
     cb.push_register = pushRegister;
     cb.push_unregister = pushUnregister;
+    cb.credential_request = credentialRequest;
     setupPush(this);
+    setupCredentials();
     setupAuthLinks(this);
 #endif
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);

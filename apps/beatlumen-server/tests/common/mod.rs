@@ -1,6 +1,8 @@
 //! A headless app core for tests (host services from `bl_core::native`).
 #![allow(dead_code)]
 
+pub mod authenticator;
+
 use bl_core::host::{AudioDeviceInfo, AudioSource, DirEntry, Host, HttpRequest, HttpResponse};
 use bl_core::native::NativeServices;
 use bl_core::{Core, LaunchArgs};
@@ -16,6 +18,10 @@ pub struct TestHost {
     pub push: Arc<Mutex<Option<(String, String)>>>,
     /// The last URL the core asked to open in the browser.
     pub opened: Arc<Mutex<Option<String>>>,
+    /// Plays Android: a platform credential manager.
+    pub android: bool,
+    /// Requests to the credential manager: (kind, JSON).
+    pub credentials: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Host for TestHost {
@@ -29,7 +35,11 @@ impl Host for TestHost {
         self.svc.random_seed()
     }
     fn platform(&self) -> &'static str {
-        "linux"
+        if self.android {
+            "android"
+        } else {
+            "linux"
+        }
     }
     fn storage_read(&self, key: &str) -> Option<Vec<u8>> {
         self.svc.storage_read(key)
@@ -88,6 +98,13 @@ impl Host for TestHost {
         *self.push.lock().unwrap() = Some((instance.to_string(), vapid.to_string()));
         1
     }
+    fn credential_request(&mut self, kind: &str, json: &str) -> bool {
+        if self.android {
+            let r = (kind.to_string(), json.to_string());
+            self.credentials.lock().unwrap().push(r);
+        }
+        self.android
+    }
     fn log(&self, msg: &str) {
         eprintln!("[core] {msg}");
     }
@@ -114,6 +131,8 @@ impl App {
             audio: Default::default(),
             push: Default::default(),
             opened: Default::default(),
+            android: false,
+            credentials: Default::default(),
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }

@@ -92,6 +92,11 @@ pub struct BlCallbacks {
     pub push_unregister: Option<unsafe extern "C" fn(user: *mut c_void, instance: *const c_char)>,
     /// Opens a web page in the system browser; non-zero on success.
     pub open_url: Option<unsafe extern "C" fn(user: *mut c_void, url: *const c_char) -> i32>,
+    /// The platform's credential manager (see `Host::credential_request`);
+    /// non-zero when the request was started.
+    pub credential_request: Option<
+        unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
+    >,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -599,6 +604,16 @@ impl Host for UiHost {
         let u = CString::new(url.replace('\0', "")).unwrap_or_default();
         // SAFETY: UI callback contract.
         unsafe { f(self.cb.user, u.as_ptr()) != 0 }
+    }
+
+    fn credential_request(&mut self, kind: &str, json: &str) -> bool {
+        let Some(f) = self.cb.credential_request else {
+            return false;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (k, j) = (c(kind), c(json));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
     }
 
     fn push_unregister(&mut self, instance: &str) {
