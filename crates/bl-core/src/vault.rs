@@ -140,6 +140,12 @@ struct Upload {
     error: Option<String>,
 }
 
+/// A sign-in in the browser: the one-time key the result is sealed to.
+pub(crate) struct BrowserSignIn {
+    key: bl_vault::handoff::HandoffKey,
+    state: String,
+}
+
 #[derive(Default)]
 pub(crate) struct Vault {
     pub user: String,
@@ -168,6 +174,11 @@ pub(crate) struct Vault {
     /// The next file handed over as bytes (browser) is uploaded here.
     pub expect_upload: bool,
     plain: Vec<(String, Arc<Vec<u8>>)>,
+    /// A sign-in in the browser waiting for its result.
+    browser: Option<BrowserSignIn>,
+    browser_box: Mailbox<String>,
+    /// The account works with passkeys only.
+    pub password_off: bool,
 }
 
 fn b64(b: &[u8]) -> Value {
@@ -212,7 +223,8 @@ fn bundle_from(v: &Value) -> Option<KeyBundle> {
     Some(KeyBundle {
         salt: unb64(v.get("salt"))?.try_into().ok()?,
         params: params_from(v.get("params"))?,
-        master_by_password: unb64(v.get("masterByPassword"))?,
+        // Missing while the password is off (passkeys only).
+        master_by_password: unb64(v.get("masterByPassword")).unwrap_or_default(),
         master_by_recovery: unb64(v.get("masterByRecovery"))?,
         identity: unb64(v.get("identity"))?,
         public: PublicIdentity::from_bytes(&unb64(v.get("public"))?).ok()?,
@@ -245,6 +257,7 @@ impl Vault {
         let expect = self.expect_upload;
         *self = Vault {
             jobs: self.jobs.clone(),
+            browser_box: self.browser_box.clone(),
             next_serial: self.next_serial,
             rev: self.rev + 1,
             ..Default::default()
@@ -535,6 +548,145 @@ impl Core {
             .is_some_and(|t| t.id.starts_with(ID_PREFIX))
         {
             self.player.stop(host);
+        }
+    }
+
+    /// Signs in through the server's sign-in page in the browser
+    /// (passkeys, password managers). The result comes back sealed to a
+    /// one-time key: through a local callback (desktop), the app's link
+    /// (Android) or a message between tabs (web client).
+    pub(crate) fn vault_browser_sign_in(&mut self, host: &mut dyn Host) {
+        if !self.vault_ready() {
+            return self.vault_fail(self.tr("Not connected to a server"));
+        }
+        let Ok(key) = bl_vault::handoff::HandoffKey::generate() else {
+            return self.vault_fail("no random numbers");
+        };
+        let mut s = [0u8; 16];
+        if bl_vault::random(&mut s).is_err() {
+            return;
+        }
+        let state = hex(&s);
+        let (mode, redirect) = match host.platform() {
+            "web" => ("web", String::new()),
+            "android" => ("app", "beatlumen://auth".to_string()),
+            _ => match self.browser_callback(&state) {
+                Ok(r) => ("app", r),
+                Err(e) => return self.vault_fail(e),
+            },
+        };
+        let url = format!(
+            "{}/auth/?mode={mode}&state={state}&key={}&redirect={}",
+            self.server.base,
+            bl_vault::webpush::base64url(&key.public()),
+            bl_net::http::percent_encode(&redirect)
+        );
+        if !host.open_url(&url) {
+            return self.vault_fail(self.tr("Could not open the browser"));
+        }
+        self.vault.browser = Some(BrowserSignIn { key, state });
+        self.vault.error.clear();
+        self.vault.rev += 1;
+    }
+
+    /// A local web server for the browser's redirect (one request).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn browser_callback(&self, state: &str) -> Result<String, String> {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        let mailbox = self.vault.browser_box.clone();
+        let expected = format!("state={state}");
+        let page = format!(
+            "<!doctype html><meta charset=utf-8><title>Beatlumen</title><body style=\"font:1.2rem system-ui;padding:2rem\">{}</body>",
+            self.tr("Signed in. You can close this window and return to Beatlumen.")
+        );
+        std::thread::Builder::new()
+            .name("sign-in callback".into())
+            .spawn(move || {
+                let _ = listener.set_nonblocking(false);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15 * 60);
+                for conn in listener.incoming() {
+                    if std::time::Instant::now() > deadline {
+                        break;
+                    }
+                    let Ok(mut conn) = conn else { continue };
+                    let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+                    let mut line = String::new();
+                    let _ = BufReader::new(&conn).read_line(&mut line);
+                    let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let ok = path.starts_with("/callback?") && path.split(['?', '&']).any(|p| p == expected);
+                    let (status, body) = if ok { ("200 OK", page.as_str()) } else { ("404 Not Found", "") };
+                    let _ = write!(
+                        conn,
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
+                        body.len()
+                    );
+                    if ok {
+                        mailbox.post(path);
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(format!("http://127.0.0.1:{port}/callback"))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn browser_callback(&self, _state: &str) -> Result<String, String> {
+        Err("not available".into())
+    }
+
+    /// The result of a browser sign-in (a callback URL or its query).
+    pub(crate) fn vault_browser_result(&mut self, host: &mut dyn Host, url: &str) {
+        let query = url.split_once('?').map_or(url, |(_, q)| q);
+        let get = |k: &str| {
+            query
+                .split('&')
+                .find_map(|p| p.strip_prefix(&format!("{k}=")))
+                .map(|v| bl_net::http::percent_decode(v, false))
+                .unwrap_or_default()
+        };
+        let Some(b) = self.vault.browser.as_ref() else {
+            return;
+        };
+        if get("state") != b.state {
+            return;
+        }
+        let opened = bl_net::base64_decode(&get("result"))
+            .and_then(|sealed| b.key.open(&b.state, &sealed).ok())
+            .and_then(|plain| bl_json::parse_bytes(&plain).ok());
+        self.vault.browser = None;
+        let Some(v) = opened else {
+            return self.vault_fail(self.tr("The sign-in from the browser could not be opened"));
+        };
+        let account = bundle_from(v.get("bundle")).and_then(|bundle| {
+            let master = bl_net::base64_decode(v.str_or("master", ""))?;
+            let master = Secret::from_bytes(master.try_into().ok()?);
+            Account::from_master(v.str_or("user", ""), master, &bundle)
+                .ok()
+                .map(|a| (a, bundle))
+        });
+        match account {
+            Some((a, bundle)) => {
+                self.vault.password_off = v.get("bundle").bool_or("passwordOff", false);
+                let token = v.str_or("token", "").to_string();
+                self.vault_logged_in(host, token, a, Some(bundle));
+            }
+            None => self.vault_fail(self.tr("The server sent invalid account keys")),
+        }
+    }
+
+    pub(crate) fn vault_browser_cancel(&mut self) {
+        self.vault.browser = None;
+        self.vault.rev += 1;
+    }
+
+    /// Passkeys and the password switch are managed on the sign-in page.
+    pub(crate) fn vault_manage_in_browser(&mut self, host: &mut dyn Host) {
+        let url = format!("{}/auth/", self.server.base);
+        if !host.open_url(&url) {
+            self.toast(self.tr("Could not open the browser"), true);
         }
     }
 
@@ -948,6 +1100,9 @@ impl Core {
     // ---- results ---------------------------------------------------------
 
     pub(crate) fn poll_vault(&mut self, host: &mut dyn Host) {
+        for path in self.vault.browser_box.take() {
+            self.vault_browser_result(host, &path);
+        }
         for done in self.vault.jobs.take() {
             match done {
                 Done::Keys { user, keys } => {
@@ -1458,6 +1613,9 @@ impl Core {
             )
             .with("web", host.platform() == "web")
             .with("push", self.push_json())
+            .with("pairingCode", self.vault.browser.as_ref().map(|b| b.key.pairing_code()))
+            .with("passwordOff", self.vault.password_off)
+            .with("passkeys", matches!(&self.server.state, crate::server::ServerState::Connected(i) | crate::server::ServerState::NeedsLogin(i) if i.passkeys))
     }
 
     pub(crate) fn vault_files_json(&self) -> Value {
@@ -1541,6 +1699,10 @@ impl Core {
                 self.vault.rev += 1;
             }
             "vault.refresh" => self.vault_refresh(host),
+            "vault.browserSignIn" => self.vault_browser_sign_in(host),
+            "vault.browserCancel" => self.vault_browser_cancel(),
+            "vault.browserResult" => self.vault_browser_result(host, &s("url")),
+            "vault.manageInBrowser" => self.vault_manage_in_browser(host),
             "vault.files" => return self.vault_files_json(),
             "vault.contacts" => return self.vault_contacts_json(),
             "vault.upload" => {

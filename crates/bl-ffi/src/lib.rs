@@ -83,9 +83,15 @@ pub struct BlCallbacks {
     /// distributor, 0 not available. The endpoint comes back as the
     /// `push.endpoint` command.
     pub push_register: Option<
-        unsafe extern "C" fn(user: *mut c_void, instance: *const c_char, vapid: *const c_char) -> i32,
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            instance: *const c_char,
+            vapid: *const c_char,
+        ) -> i32,
     >,
     pub push_unregister: Option<unsafe extern "C" fn(user: *mut c_void, instance: *const c_char)>,
+    /// Opens a web page in the system browser; non-zero on success.
+    pub open_url: Option<unsafe extern "C" fn(user: *mut c_void, url: *const c_char) -> i32>,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -584,6 +590,15 @@ impl Host for UiHost {
         let (i, v) = (c(instance), c(vapid));
         // SAFETY: UI callback contract.
         unsafe { f(self.cb.user, i.as_ptr(), v.as_ptr()) }
+    }
+
+    fn open_url(&mut self, url: &str) -> bool {
+        let Some(f) = self.cb.open_url else {
+            return false;
+        };
+        let u = CString::new(url.replace('\0', "")).unwrap_or_default();
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, u.as_ptr()) != 0 }
     }
 
     fn push_unregister(&mut self, instance: &str) {

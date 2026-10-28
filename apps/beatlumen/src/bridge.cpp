@@ -5,6 +5,7 @@
 #include "web.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -57,6 +58,16 @@ const void *getProc(void *ctx, const char *name)
 void logCallback(void *user, const char *msg)
 {
     static_cast<Bridge *>(user)->log(QString::fromUtf8(msg));
+}
+
+int32_t openUrlCallback(void *, const char *url)
+{
+#if defined(Q_OS_WASM)
+    web::openUrl(QString::fromUtf8(url));
+    return 1;
+#else
+    return QDesktopServices::openUrl(QUrl(QString::fromUtf8(url))) ? 1 : 0;
+#endif
 }
 
 uint32_t audioStartCallback(void *user)
@@ -140,6 +151,32 @@ void JNICALL nativeFailed(JNIEnv *env, jclass, jstring instance, jstring reason)
         { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("reason"), jstr(env, reason) } });
 }
 
+// beatlumen://auth?state=…&result=… opened by the sign-in page in the
+// browser (passkeys), while the app runs or when the link starts it.
+struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
+    Bridge *bridge = nullptr;
+    bool handleNewIntent(JNIEnv *, jobject intent) override
+    {
+        QJniObject i(intent);
+        QJniObject uri = i.callObjectMethod("getData", "()Landroid/net/Uri;");
+        if (!uri.isValid())
+            return false;
+        const QString url = uri.callObjectMethod("toString", "()Ljava/lang/String;").toString();
+        if (!url.startsWith(QStringLiteral("beatlumen://auth")))
+            return false;
+        QPointer<Bridge> b = bridge;
+        QMetaObject::invokeMethod(bridge, [b, url]() { if (b) b->call(QStringLiteral("vault.browserResult"), { { QStringLiteral("url"), url } }); }, Qt::QueuedConnection);
+        return true;
+    }
+};
+
+void setupAuthLinks(Bridge *bridge)
+{
+    static AuthLinkListener listener;
+    listener.bridge = bridge;
+    QtAndroidPrivate::registerNewIntentListener(&listener);
+}
+
 void setupPush(Bridge *bridge)
 {
     g_pushBridge = bridge;
@@ -181,14 +218,19 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     tls::configure(cb);
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
+    cb.open_url = openUrlCallback;
 #ifdef Q_OS_ANDROID
     cb.service_register = serviceRegister;
     cb.service_unregister = serviceUnregister;
     cb.push_register = pushRegister;
     cb.push_unregister = pushUnregister;
     setupPush(this);
+    setupAuthLinks(this);
 #endif
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
+#if defined(Q_OS_WASM)
+    web::listenAuth([this](const QString &query) { call(QStringLiteral("vault.browserResult"), { { QStringLiteral("url"), query } }); });
+#endif
 
     // Files picked through content URIs are copied into the cache; drop
     // copies older than a week (they are only needed while playing).

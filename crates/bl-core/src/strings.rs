@@ -12,6 +12,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
 fn de(s: &str) -> Option<&'static str> {
     Some(match s {
         "(copy)" => "(Kopie)",
+        "Signed in. You can close this window and return to Beatlumen." => "Angemeldet. Du kannst dieses Fenster schließen und zu Beatlumen zurückkehren.",
+        "Could not open the browser" => "Der Browser konnte nicht geöffnet werden",
+        "The sign-in from the browser could not be opened" => "Die Anmeldung aus dem Browser konnte nicht geöffnet werden",
         "shared a file with you" => "hat eine Datei mit dir geteilt",
         "The server's web app has no integrity manifest" => "Die Web-App des Servers hat kein Integritätsmanifest",
         "The manifest is not signed with the release key" => "Das Manifest ist nicht mit dem Release-Schlüssel signiert",

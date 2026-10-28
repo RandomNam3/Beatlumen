@@ -14,6 +14,8 @@ pub struct TestHost {
     pub audio: Arc<Mutex<Option<Arc<dyn AudioSource>>>>,
     /// The last UnifiedPush registration: (instance, VAPID key).
     pub push: Arc<Mutex<Option<(String, String)>>>,
+    /// The last URL the core asked to open in the browser.
+    pub opened: Arc<Mutex<Option<String>>>,
 }
 
 impl Host for TestHost {
@@ -78,6 +80,10 @@ impl Host for TestHost {
             channels: 2,
         })
     }
+    fn open_url(&mut self, url: &str) -> bool {
+        *self.opened.lock().unwrap() = Some(url.to_string());
+        true
+    }
     fn push_register(&mut self, instance: &str, vapid: &str) -> i32 {
         *self.push.lock().unwrap() = Some((instance.to_string(), vapid.to_string()));
         1
@@ -107,6 +113,7 @@ impl App {
             svc: NativeServices::new(dir.clone()),
             audio: Default::default(),
             push: Default::default(),
+            opened: Default::default(),
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }

@@ -14,7 +14,8 @@ label span { display: block; font-size: .85rem; color: var(--dim); margin-bottom
 input { width: 100%; padding: .7rem .8rem; border-radius: .6rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; }
 input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
 button { width: 100%; padding: .75rem 1rem; margin: .5rem 0; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+a.button { display: block; text-align: center; text-decoration: none; padding: .75rem 1rem; margin: .5rem 0; border-radius: 999px; font-weight: 600; }
+a.button.primary, button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:disabled { opacity: .5; cursor: default; }
 button.small { width: auto; padding: .35rem .8rem; margin: 0; font-weight: 500; }
 .or { text-align: center; color: var(--dim); margin: 1rem 0 0; font-size: .9rem; }

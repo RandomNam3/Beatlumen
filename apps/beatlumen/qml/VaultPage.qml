@@ -235,6 +235,48 @@ Item {
                         repeat.clear()
                     }
                 }
+                // Passkeys, password managers and browser extensions work on
+                // the server's sign-in page; the result comes back sealed.
+                ColumnLayout {
+                    visible: page.form === 0
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    spacing: 6
+                    Button {
+                        Layout.fillWidth: true
+                        visible: (page.vault.pairingCode || "") === ""
+                        text: Theme.tr("Sign in with a passkey")
+                        icon.source: Theme.icon("key")
+                        onClicked: Core.call("vault.browserSignIn")
+                    }
+                    Label {
+                        visible: (page.vault.pairingCode || "") === ""
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textFaint
+                        font.pixelSize: 12
+                        text: Theme.tr("Opens the sign-in page in the browser, where passkeys, password managers and browser extensions can be used.")
+                    }
+                    Rectangle {
+                        visible: (page.vault.pairingCode || "") !== ""
+                        Layout.fillWidth: true
+                        implicitHeight: pairCol.implicitHeight + 24
+                        radius: 12
+                        color: Theme.surfaceVariant
+                        ColumnLayout {
+                            id: pairCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 4
+                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.text; text: Theme.tr("Continue in the browser. It must show this code:") }
+                            Label { textFormat: Text.PlainText; Layout.alignment: Qt.AlignHCenter; text: page.vault.pairingCode || ""; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: Theme.accent }
+                            Button { Layout.alignment: Qt.AlignRight; flat: true; text: Theme.tr("Cancel"); onClicked: Core.call("vault.browserCancel") }
+                        }
+                    }
+                }
             }
         }
 
@@ -396,8 +438,9 @@ Item {
                         on: push.enabled === true
                         onSwitched: (on) => Core.call("settings.set", { key: "notifications", value: on })
                     }
-                    Button { Layout.leftMargin: 16; text: Theme.tr("Change password"); icon.source: Theme.icon("key"); onClicked: changePw.open() }
-                    Button { Layout.leftMargin: 16; text: Theme.tr("New recovery code"); icon.source: Theme.icon("refresh"); onClicked: newCode.open() }
+                    Button { Layout.leftMargin: 16; text: Theme.tr("Passkeys and password"); icon.source: Theme.icon("key"); onClicked: Core.call("vault.manageInBrowser") }
+                    Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("Change password"); icon.source: Theme.icon("key"); onClicked: changePw.open() }
+                    Button { Layout.leftMargin: 16; visible: !page.vault.passwordOff; text: Theme.tr("New recovery code"); icon.source: Theme.icon("refresh"); onClicked: newCode.open() }
                     Button { Layout.leftMargin: 16; text: Theme.tr("Lock"); flat: true; icon.source: Theme.icon("lock"); onClicked: Core.call("vault.logout") }
                     Label {
                         textFormat: Text.PlainText

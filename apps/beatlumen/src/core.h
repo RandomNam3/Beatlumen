@@ -32,6 +32,8 @@ typedef struct BlCallbacks {
     // available; the endpoint comes back as the "push.endpoint" command.
     int32_t (*push_register)(void *user, const char *instance, const char *vapid);
     void (*push_unregister)(void *user, const char *instance);
+    // Opens a web page in the system browser; non-zero on success.
+    int32_t (*open_url)(void *user, const char *url);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);

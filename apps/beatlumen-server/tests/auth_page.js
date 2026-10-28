@@ -2,7 +2,7 @@
 // supports PRF (run by tests/auth_page.rs).
 // Usage: node auth_page.js BASE USER PASSWORD APP_URL
 const { chromium } = require('playwright');
-const [base, user, password, appUrl] = process.argv.slice(2);
+const [base, user, password, appUrl, coreUrl] = process.argv.slice(2);
 
 (async () => {
   const browser = await chromium.launch();
@@ -59,6 +59,18 @@ const [base, user, password, appUrl] = process.argv.slice(2);
   await page.click('#passkey');
   await nav.catch(async (e) => { throw new Error(e.message + ' / status: ' + await status()); });
   step('redirected');
+  // 6. The app core's own browser sign-in (local callback).
+  if (coreUrl) {
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false });
+    await page.goto(coreUrl);
+    await page.waitForSelector('#pairing:not([hidden])');
+    step('core pairing code ' + await page.textContent('#code'));
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: true });
+    const nav2 = page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\/callback/, { timeout: 30000 });
+    await page.click('#passkey');
+    await nav2;
+    step('core page: ' + await page.textContent('body'));
+  }
   const { credentials } = await cdp.send('WebAuthn.getCredentials', { authenticatorId });
   step('credentials on the authenticator: ' + credentials.length);
   if (errors.length) console.log('errors: ' + JSON.stringify(errors));

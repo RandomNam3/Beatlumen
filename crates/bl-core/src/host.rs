@@ -179,4 +179,9 @@ pub trait Host {
     }
 
     fn push_unregister(&mut self, _instance: &str) {}
+
+    /// Opens a web page in the system's browser.
+    fn open_url(&mut self, _url: &str) -> bool {
+        false
+    }
 }

@@ -80,6 +80,10 @@ QtObject {
 
     readonly property var de: ({
         "Now playing": "Wiedergabe",
+        "Sign in with a passkey": "Mit Passkey anmelden",
+        "Opens the sign-in page in the browser, where passkeys, password managers and browser extensions can be used.": "Öffnet die Anmeldeseite im Browser, wo Passkeys, Passwortmanager und Browser-Erweiterungen genutzt werden können.",
+        "Continue in the browser. It must show this code:": "Fahre im Browser fort. Er muss diesen Code zeigen:",
+        "Passkeys and password": "Passkeys und Passwort",
         "Notify me about shared files": "Bei neuen Freigaben benachrichtigen",
         "On, through UnifiedPush. Messages are end-to-end encrypted; no phone number or e-mail address is needed.": "Aktiv über UnifiedPush. Nachrichten sind Ende-zu-Ende-verschlüsselt; Telefonnummer oder E-Mail-Adresse werden nicht gebraucht.",
         "No UnifiedPush app found. Install one, e.g. ntfy (F-Droid or Play Store), then lock and unlock again.": "Keine UnifiedPush-App gefunden. Installiere eine, z. B. ntfy (F-Droid oder Play Store), dann sperren und erneut entsperren.",

@@ -62,9 +62,33 @@ fn sign_in_page_with_passkeys() {
         bl_vault::webpush::base64url(&key.public()),
         bl_net::http::percent_encode(&redirect)
     );
+    // A second app (the real core) signs in through the browser too.
+    let mut app2 = common::App::new("auth-page-2");
+    app2.connect(base);
+    app2.cmd(Value::object().with("cmd", "vault.browserSignIn"));
+    let core_url = app2
+        .host
+        .opened
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("browser opened");
+    let code2 = app2
+        .state()
+        .get("vault")
+        .str_or("pairingCode", "")
+        .to_string();
+    assert_eq!(code2.len(), 7);
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/auth_page.js");
     let mut child = std::process::Command::new("node")
-        .args([script, base, "alice", "alice password 1", &app_url])
+        .args([
+            script,
+            base,
+            "alice",
+            "alice password 1",
+            &app_url,
+            &core_url,
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -150,6 +174,21 @@ fn sign_in_page_with_passkeys() {
     );
     let acc = Account::from_master(v.str_or("user", ""), master, &bundle).unwrap();
     assert_eq!(acc.identity.public().fingerprint(), fingerprint);
-    drop(app);
+    // The core got its result through the local callback and is unlocked.
+    assert!(log.contains(&format!("core pairing code {code2}")), "{log}");
+    assert!(
+        log.contains("Signed in. You can close this window"),
+        "{log}"
+    );
+    let s = app2.ready();
+    assert_eq!(
+        s.get("vault").str_or("state", ""),
+        "ready",
+        "{}",
+        s.get("vault").to_json()
+    );
+    assert_eq!(s.get("vault").str_or("fingerprint", ""), fingerprint);
+    assert!(s.get("vault").bool_or("passwordOff", false));
+    drop((app, app2));
     let _ = std::fs::remove_dir_all(&data);
 }

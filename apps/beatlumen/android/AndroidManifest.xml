@@ -60,6 +60,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Return from the sign-in page in the browser (passkeys); the
+                 result is sealed to the app's one-time key. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="beatlumen" android:host="auth" />
+            </intent-filter>
 
             <meta-data
                 android:name="android.app.lib_name"

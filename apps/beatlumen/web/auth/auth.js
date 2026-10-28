@@ -53,6 +53,7 @@
     'The passwords do not match.': 'Die Passwörter stimmen nicht überein.',
     'last used': 'zuletzt benutzt',
     'Signed out.': 'Abgemeldet.',
+    'Back to the app': 'Zurück zur App',
     'Turn the password off? Only your passkeys and the recovery code will unlock the account.': 'Passwort ausschalten? Dann entsperren nur deine Passkeys und der Wiederherstellungscode das Konto.',
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('de') ? 'de' : 'en';
@@ -198,10 +199,20 @@
       const sealed = call('bl_handoff_seal', fixed(appKey), state, payload);
       if (mode === 'app') {
         const sep = redirect.includes('?') ? '&' : '?';
+        const target = redirect + sep + 'state=' + encodeURIComponent(state) + '&result=' + b64u(sealed);
         showFinished(tr('Signed in. You can return to the app now.'));
-        location.replace(redirect + sep + 'state=' + encodeURIComponent(state) + '&result=' + b64u(sealed));
+        // Browsers may ask before opening an app link: offer it as a button.
+        if (redirect.startsWith('beatlumen://')) {
+          const back = document.createElement('a');
+          back.href = target;
+          back.className = 'button primary';
+          back.textContent = tr('Back to the app');
+          $('finished').appendChild(back);
+        }
+        location.replace(target);
       } else {
-        window.opener.postMessage({ type: 'beatlumen-auth', state, result: b64u(sealed) }, location.origin);
+        // To the web client in another tab of this server (same origin).
+        new BroadcastChannel('beatlumen-auth').postMessage({ state, result: b64u(sealed) });
         showFinished(tr('Signed in.'));
         window.close();
       }
@@ -305,15 +316,15 @@
       const key = appKeyText ? unb64(appKeyText) : null;
       // Results go only to the app on this device (local callback or the
       // app's own link) or to the web client that opened this page.
-      const okRedirect = mode === 'web' ? !!window.opener
-        : /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+\//.test(redirect) || redirect.startsWith('beatlumen://');
+      const okRedirect = mode === 'web'
+        || /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+\//.test(redirect) || redirect.startsWith('beatlumen://');
       if (!key || key.length !== 32 || !state || !okRedirect) {
         status(tr('This sign-in link is not valid.'), true);
         return;
       }
       appKey = key;
       $('code').textContent = new TextDecoder().decode(call('bl_pairing_code', fixed(appKey)));
-      $('pairing').hidden = mode !== 'app';
+      $('pairing').hidden = false;
     }
     $('signin').hidden = false;
     $('pwform').onsubmit = (e) => {
