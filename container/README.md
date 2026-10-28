@@ -1,8 +1,18 @@
 # Beatlumen Server in a container
 
-The server runs in a minimal image: one static binary (`/beatlumen-server`),
-no shell, no package manager, running as the unprivileged user `10001`. It
-works with Docker and Podman (rootful and rootless).
+The server runs in a minimal image built `FROM scratch` (no base image, not
+even a distroless one). It contains only what the server needs, about 14 MB:
+
+| Path | Why |
+|---|---|
+| `/beatlumen-server` | The server: a static binary (no libraries) with the web client embedded, gzip-compressed |
+| `/data/` | Empty data folder owned by the server's user, so a new volume on it is writable |
+| `/usr/share/doc/beatlumen/` | License texts, which the AGPL requires to accompany the program |
+
+There is no shell, no package manager, no CA certificates (the server opens
+no outgoing connections) and no user database: the server runs as the
+numeric user `10001`. It works with Docker and Podman (rootful and
+rootless).
 
 | File | Purpose |
 |---|---|
@@ -28,7 +38,9 @@ The **web client** (`http://<server>:7878/` in a browser) is embedded when
 shows a placeholder page; the apps work either way.
 
 Build argument `RUST_IMAGE` selects the Rust build image (default
-`docker.io/library/rust:1.99-alpine3.22`). The image builds for the
+`docker.io/library/rust:1.99-alpine3.22`; it is only used for building and
+is not part of the result). When Docker Hub limits anonymous pulls, use a
+mirror: `--build-arg RUST_IMAGE=mirror.gcr.io/library/rust:1.99-alpine3.22`. The image builds for the
 platform of the build host (x86-64, arm64, …); `docker buildx build
 --platform linux/arm64` builds for another one.
 
@@ -126,7 +138,7 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_RESCAN_INTERVAL` | `600` | Seconds between library rescans, `0` = off |
 | `BEATLUMEN_ANALYSIS_MAX_MINUTES` | `20` | Longest track analysed on the server, `0` = unlimited |
 | `BEATLUMEN_SCAN_THREADS` | `0` (automatic) | Threads reading tags during scans |
-| `BEATLUMEN_WEB_DIR` | embedded | Web client from a mounted folder instead of the embedded one |
+| `BEATLUMEN_WEB_DIR` | embedded | Web client from a mounted folder instead of the embedded one (a `x.gz` next to a file is sent to browsers that accept gzip) |
 | `BEATLUMEN_VERBOSE` | `false` | `true`: log every request and per-file tag problems |
 
 Without a password the server accepts every client in the network. Set one

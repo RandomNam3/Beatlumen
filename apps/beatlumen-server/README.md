@@ -84,6 +84,11 @@ The static web client is served from, in this order:
    embedded and the build does not need the web client),
 4. a small built-in placeholder page.
 
+A pre-compressed copy next to a file (`beatlumen.wasm.gz`, written by
+`build-web.sh`) is sent to browsers that accept gzip. Embedded builds keep
+only the compressed copy of such files and decompress it for the rare
+client without gzip support.
+
 `/` serves `index.html`; extension-less unknown paths fall back to
 `index.html` (client-side routes). Paths containing `..`, `.`-prefixed
 segments, backslashes, `:` or control characters are rejected.

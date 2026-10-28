@@ -161,6 +161,12 @@ jobs:
           docker exec bl /beatlumen-server --health-check
           curl -fsS http://127.0.0.1:7878/api/info
           curl -fsS http://127.0.0.1:7878/ | grep -qi "<html"
+          # Web client: gzip for browsers, decompressed for other clients.
+          curl -fsS -H 'Accept-Encoding: gzip' -o w.gz http://127.0.0.1:7878/beatlumen.wasm
+          curl -fsS -o w.raw http://127.0.0.1:7878/beatlumen.wasm
+          gunzip -c w.gz | cmp - w.raw
+          cmp w.raw dist/web/beatlumen.wasm
+          docker image ls beatlumen-server:ci
           docker logs bl
           docker rm -f bl
       - name: AppArmor profile syntax

@@ -7,8 +7,10 @@
 # dist/web exists (./build-web.sh, or the "beatlumen-web" CI artifact
 # unpacked to dist/web); otherwise the server shows a placeholder page.
 #
-# The result is a static binary in an otherwise empty image: no shell, no
-# package manager, running as an unprivileged user. See container/README.md.
+# The result holds only what the server needs: the static binary (with the
+# web client, compressed), its data folder owned by the server's user, and
+# the license texts the AGPL requires to accompany it. No shell, no package
+# manager, no libraries, no base image. See container/README.md.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -23,16 +25,16 @@ ENV CARGO_PROFILE_RELEASE_STRIP=true
 RUN set -eu; \
     if [ -f dist/web/index.html ]; then export BEATLUMEN_EMBED_WEB=/src/dist/web; fi; \
     cargo build --release --locked -p beatlumen-server; \
-    mkdir -p /out/data /out/music /out/images /out/doc; \
+    mkdir -p /out/data /out/doc; \
     cp target/release/beatlumen-server /out/; \
     cp LICENSE THIRD_PARTY_NOTICES.md /out/doc/
 
 FROM scratch
 COPY --from=build /out/beatlumen-server /beatlumen-server
 COPY --from=build /out/doc/ /usr/share/doc/beatlumen/
+# Owned by the server's user, so a new named volume on /data is writable.
+# (Docker and Podman create the mount points /music and /images.)
 COPY --from=build --chown=10001:10001 /out/data /data
-COPY --from=build /out/music /music
-COPY --from=build /out/images /images
 
 LABEL org.opencontainers.image.title="Beatlumen Server" \
       org.opencontainers.image.description="Serves music folders to Beatlumen apps and the web client" \
