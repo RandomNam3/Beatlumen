@@ -123,6 +123,9 @@ if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN AND NOT ANDROID)
 endif()
 
 if(WIN32)
+    # Icon and version information of beatlumen.exe.
+    configure_file(windows/beatlumen.rc.in "${CMAKE_CURRENT_BINARY_DIR}/beatlumen.rc" @ONLY)
+    target_sources(beatlumen PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/beatlumen.rc")
     target_link_libraries(beatlumen PRIVATE ws2_32 userenv bcrypt ntdll advapi32 synchronization)
     set_target_properties(beatlumen PROPERTIES WIN32_EXECUTABLE ON)
 elseif(ANDROID)

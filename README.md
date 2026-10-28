@@ -34,8 +34,8 @@ server makes no outgoing connections at all. No accounts, no tracking.
 
 | Platform | Build |
 |---|---|
-| Linux | `apps/beatlumen` (Qt 6, CMake) |
-| Windows | same, built by CI with MSVC (`windeployqt`) |
+| Linux | `apps/beatlumen` (Qt 6, CMake); `./build-appimage.sh` → `dist/linux/Beatlumen-x86_64.AppImage` |
+| Windows | same, built by CI with MSVC (`windeployqt`) → installer `Beatlumen-Setup-x64.exe` (Inno Setup, `apps/beatlumen/windows/beatlumen.iss`) and a portable zip |
 | Android | `./build-android.sh` → `dist/android/beatlumen.apk` |
 | Web | `./build-web.sh` → `dist/web`, served by the server |
 | Server | `cargo build --release -p beatlumen-server` |
@@ -58,6 +58,9 @@ cargo build --release -p beatlumen-server
 
 # Web version (needs emsdk 4.0.7 and Qt for WebAssembly, single-threaded)
 EMSDK_DIR=~/emsdk ./build-web.sh
+
+# Linux AppImage (downloads pinned linuxdeploy releases into build/tools)
+./build-appimage.sh
 
 # Android (needs the Android SDK/NDK and Qt for Android)
 ./build-android.sh

@@ -28,8 +28,10 @@ jobs:
           path: target/release/beatlumen-server
 
   linux:
-    name: Linux app
-    runs-on: ubuntu-24.04
+    name: Linux app (AppImage)
+    # Oldest supported Ubuntu: the AppImage runs on systems with this glibc
+    # or newer.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
@@ -38,15 +40,17 @@ jobs:
           modules: qtmultimedia qtshadertools qtimageformats
           cache: true
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev ninja-build
-      - name: Build
         run: |
-          cmake -S apps/beatlumen -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/linux
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+            libwayland-client0 libwayland-cursor0 libwayland-egl1 libpulse0
+      - name: Build
+        run: QT_ROOT="$QT_ROOT_DIR" ./build-appimage.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: beatlumen-linux-x86_64
-          path: build/linux/beatlumen
+          name: beatlumen-linux-x86_64-appimage
+          path: dist/linux/Beatlumen-x86_64.AppImage
 
   windows:
     name: Windows app
@@ -71,10 +75,27 @@ jobs:
           windeployqt --release --qmldir apps/beatlumen/qml --no-translations dist/windows/beatlumen.exe
           cargo build --release -p beatlumen-server
           Copy-Item target/release/beatlumen-server.exe dist/windows/
+          # Visual C++ runtime next to the programs (no separate install).
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" dist/windows/
+          Remove-Item -Force -ErrorAction SilentlyContinue dist/windows/vc_redist*.exe
+      - name: Installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path apps/beatlumen/CMakeLists.txt -Pattern 'project\(beatlumen VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q "/DAppVersion=$version" apps/beatlumen/windows/beatlumen.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path dist/windows/* -DestinationPath dist/Beatlumen-portable-x64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: beatlumen-windows-x64
-          path: dist/windows
+          name: beatlumen-windows-x64-setup
+          path: dist/Beatlumen-Setup-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-windows-x64-portable
+          path: dist/Beatlumen-portable-x64.zip
 
   web:
     name: Web app (WebAssembly)

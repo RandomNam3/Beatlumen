@@ -35,3 +35,35 @@ explicitly enables it for app-only use.
 - With a connected and logged-in server, heavy processes can run on the server
   instead (analysis is already supported; later: lyrics recognition,
   downloads, transcoding, library indexing).
+
+## Third-party services
+
+Evaluated October 2026. The visuals need the audio itself (beat and
+spectrum analysis), so a service only fits fully if it hands out the audio
+stream and allows analysing it.
+
+- **Spotify: not as a music source.** The Web API gives metadata, library,
+  playlists and remote control (Spotify Connect), never the audio; playback
+  in third-party apps runs through DRM-protected players (Web Playback SDK,
+  Premium only). The Developer Policy forbids analysing Spotify content and
+  synchronising recordings with visual media (section III.6 and III.13), and
+  the audio analysis endpoints are closed to new apps since November 2024.
+  Since February 2026, Development Mode apps need a Premium account of the
+  app owner and allow five users; extended quota is only for organisations
+  with 250k monthly users. What would remain possible:
+  - Import of Spotify playlists as lists of titles, matched against the
+    own library (metadata only).
+  - Remote control and "now playing" display for a Spotify Connect device,
+    without visuals (owner needs Premium, at most five users per app key).
+- **Self-hosted servers (best fit):** OpenSubsonic API (Navidrome, Airsonic,
+  Gonic, …) and Jellyfin: full audio streams, open APIs, no DRM. Configured by
+  the user, accessed through the Beatlumen server or, for app-only use, from
+  the app.
+- **Internet radio:** Icecast/Shoutcast streams and the Radio Browser
+  directory; streams can be analysed live like local files.
+- **Storage:** Nextcloud/WebDAV (see Server).
+- **System audio (independent of services):** visualising whatever the
+  device plays (PulseAudio/PipeWire monitor on Linux, WASAPI loopback on
+  Windows, Android's playback capture with user consent where the playing
+  app allows it), so any player can drive the visuals. Live input only: no
+  look-ahead analysis, so effects react instead of anticipating beats.
