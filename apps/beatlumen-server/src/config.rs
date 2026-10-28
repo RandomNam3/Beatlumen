@@ -224,7 +224,8 @@ ENVIRONMENT:
     BEATLUMEN_SCAN_THREADS, BEATLUMEN_VERBOSE
     They override the --config file; command line flags override them.
 
-The server never opens outgoing network connections. It does not provide TLS:
+The server connects only to remote sources you configure (no update checks,
+telemetry or metadata lookups). It does not provide TLS:
 for access over the internet use a VPN, or a reverse proxy with HTTPS
 together with --allow-host.
 ";

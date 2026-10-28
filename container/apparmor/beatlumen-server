@@ -1,8 +1,9 @@
 # AppArmor profile for the Beatlumen Server container (Docker and Podman).
 #
-# Stricter than the runtimes' default profile: the server may listen on TCP,
-# read the music and image folders, write only its data folder, and has no
-# capabilities, no raw sockets, no mounts and no ptrace.
+# Stricter than the runtimes' default profile: the server may listen on TCP
+# and connect to the remote sources it is configured for (TCP, DNS over
+# UDP), read the music and image folders, write only its data folder, and
+# has no capabilities, no raw or packet sockets, no mounts and no ptrace.
 #
 #   sudo cp container/apparmor/beatlumen-server /etc/apparmor.d/
 #   sudo apparmor_parser -r -W /etc/apparmor.d/beatlumen-server
@@ -20,16 +21,16 @@ include <tunables/global>
 profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
   include <abstractions/base>
 
-  # Network: TCP only (the server listens; the health check connects to
-  # it). No UDP, raw or packet sockets: the server makes no DNS lookups
-  # and no outgoing connections.
+  # Network: TCP (listening, the health check, remote sources such as
+  # WebDAV or SFTP) and UDP for DNS lookups of those sources. No raw or
+  # packet sockets.
   network inet stream,
   network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
   network unix stream,
   deny network raw,
   deny network packet,
-  deny network inet dgram,
-  deny network inet6 dgram,
 
   # The process runs as an unprivileged user and needs no capability.
   deny capability,
@@ -50,6 +51,13 @@ profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
   /run/secrets/ r,
   /run/secrets/* r,
   /usr/share/doc/beatlumen/** r,
+  # Name resolution and certificate authorities (provided by the runtime
+  # or mounted) for connections to remote sources.
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  /etc/nsswitch.conf r,
+  /etc/ssl/certs/ r,
+  /etc/ssl/certs/** r,
   # Optional: web client from a mounted folder (BEATLUMEN_WEB_DIR=/web).
   /web/ r,
   /web/** r,

@@ -16,8 +16,10 @@ issue.
 * **Few dependencies.** Decoders, the HTTP stack, JSON and image codecs are
   part of this repository (Rust, `#![forbid(unsafe_code)]` where possible)
   rather than large third-party libraries; Qt is the only external runtime.
-* **No connections except the configured server.** The apps contact only
-  the server the user entered; the server opens no outgoing connections.
+* **No connections except the configured ones.** The apps contact only
+  the server the user entered; the server connects only to remote sources
+  its admin configures (none today): no update checks, telemetry or
+  metadata services.
 * **Untrusted input is bounded.** Every parser limits sizes before
   allocating (sample tables, image dimensions up to 32 megapixels, JSON
   nesting, preset effects and particles). Panics in the server are caught

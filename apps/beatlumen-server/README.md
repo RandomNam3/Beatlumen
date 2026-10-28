@@ -5,8 +5,10 @@ apps and the browser web client) over HTTP: library index, audio streaming
 with byte ranges, cover thumbnails, server-side track analysis, shared
 playlists, shared effect presets and background images.
 
-The server **never opens outgoing network connections**: there are no update
-checks, metadata or cover lookups, telemetry, or anything similar. It uses
+The server connects **only to remote sources its admin configures** (none by
+default; planned: WebDAV/Nextcloud, SFTP, Jellyfin, Subsonic, internet
+radio): there are no update checks, metadata or cover lookups, telemetry,
+or anything similar. It uses
 only the standard library and Beatlumen's own crates.
 
 ## Usage

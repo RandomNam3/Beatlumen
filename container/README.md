@@ -9,9 +9,10 @@ even a distroless one). It contains only what the server needs, about 14 MB:
 | `/data/` | Empty data folder owned by the server's user, so a new volume on it is writable |
 | `/usr/share/doc/beatlumen/` | License texts, which the AGPL requires to accompany the program |
 
-There is no shell, no package manager, no CA certificates (the server opens
-no outgoing connections) and no user database: the server runs as the
-numeric user `10001`. It works with Docker and Podman (rootful and
+There is no shell, no package manager and no user database: the server
+runs as the numeric user `10001`. CA certificates will be added once the
+server connects to HTTPS remote sources itself (see `docs/ROADMAP.md`);
+until then they would be unused. It works with Docker and Podman (rootful and
 rootless).
 
 | File | Purpose |
@@ -93,9 +94,12 @@ For a rootless service that runs without a login session:
 | Port | Protocol | Direction | Purpose |
 |---|---|---|---|
 | `7878` | TCP | incoming | HTTP: API for the apps, audio streaming, web client |
+| as configured | TCP, UDP 53 (DNS) | outgoing | Only to remote sources the admin configures (planned: WebDAV/Nextcloud, SFTP, Jellyfin, Subsonic, internet radio) |
 
-That is the only port. The server opens **no outgoing connections** and
-uses no UDP (no DNS lookups, no update checks, no metadata services).
+`7878` is the only port to publish. Outgoing connections go only to
+sources the admin configured: no update checks, telemetry or metadata
+services. Without remote sources (the current state) the server opens none;
+a network policy may then block all outgoing traffic of the container.
 AirPlay is a feature of the apps, not of the server.
 
 The server speaks plain HTTP. For access from the internet put a reverse
@@ -200,9 +204,10 @@ The examples run the container with:
 ### AppArmor (Ubuntu, Debian, openSUSE, …)
 
 `apparmor/beatlumen-server` is stricter than the runtimes' default profile:
-TCP sockets only (no UDP, raw or packet sockets), no capabilities, read
-access to `/music`, `/images`, `/run/secrets` and the image's documentation,
-write access to `/data` only, no mounts, no ptrace.
+TCP and UDP sockets only (listening, remote sources, DNS; no raw or packet
+sockets), no capabilities, read access to `/music`, `/images`,
+`/run/secrets`, name resolution files and the image's documentation, write
+access to `/data` only, no mounts, no ptrace.
 
 ```sh
 sudo cp container/apparmor/beatlumen-server /etc/apparmor.d/

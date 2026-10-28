@@ -21,7 +21,8 @@
 (block beatlumen_server
     ; Base container rules: its own files, /proc, CPU information.
     (blockinherit container)
-    ; TCP/UDP sockets: listening on the published port (7878) and the
-    ; container's own health check on the loopback interface.
+    ; TCP/UDP sockets: listening on the published port (7878), the
+    ; container's own health check, and connections to configured remote
+    ; sources (with DNS).
     (blockinherit net_container)
 )

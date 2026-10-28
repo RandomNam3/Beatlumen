@@ -31,7 +31,8 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   web version of the app.
 
 **Privacy:** the apps only ever connect to the server you configure; the
-server makes no outgoing connections at all. No accounts, no tracking.
+server connects only to remote sources its admin sets up (none by default).
+No tracking, no telemetry.
 
 ## Platforms and downloads
 
