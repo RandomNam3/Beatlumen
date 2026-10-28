@@ -42,8 +42,8 @@ server makes no outgoing connections at all. No accounts, no tracking.
 
 ## Building
 
-Requirements: Rust (stable), CMake ≥ 3.21, Ninja, Qt 6.11 with Qt Multimedia,
-Qt Shader Tools and Qt Image Formats.
+Requirements: Rust (stable), CMake ≥ 3.21, Ninja, Qt 6.11 with Qt Multimedia
+(desktop; Android plays through AAudio), Qt Shader Tools and Qt Image Formats.
 
 ```sh
 # Desktop app (Linux / Windows)

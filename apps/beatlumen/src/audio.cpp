@@ -1,6 +1,190 @@
 #include "audio.h"
 
-#if defined(BL_HAVE_MULTIMEDIA)
+#if defined(__ANDROID__)
+
+// Android: AAudio directly. The stream is opened for the default device
+// (no fixed device id), marked as music playback, so Android routes it to
+// whatever output is active (speaker, wired or Bluetooth headphones) and
+// moves it when that changes. A watchdog reopens it when Android drops it
+// (e.g. while Bluetooth renegotiates) and measures the real output latency
+// (Bluetooth adds 100-300 ms) for in-sync visuals.
+
+#include <aaudio/AAudio.h>
+#include <dlfcn.h>
+#include <time.h>
+
+#include <QtGlobal>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
+namespace {
+
+// AAudioStreamBuilder_setUsage/setContentType exist from API 28.
+using SetI32 = void (*)(AAudioStreamBuilder *, int32_t);
+
+int64_t monotonicNs()
+{
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return int64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+}
+
+} // namespace
+
+struct AudioOutput::Impl
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::thread watchdog;
+    AAudioStream *stream = nullptr;
+    std::atomic<bool> broken{false};
+    std::atomic<uint32_t> latency{0};
+    bool quit = false;
+    uint32_t rate = 48000;
+
+    static aaudio_data_callback_result_t onData(AAudioStream *, void *user, void *audio, int32_t frames)
+    {
+        auto *self = static_cast<Impl *>(user);
+        bl_audio_render(static_cast<float *>(audio), size_t(frames), self->latency.load(std::memory_order_relaxed));
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
+
+    // Called on an AAudio thread: the stream must not be closed here.
+    static void onError(AAudioStream *, void *user, aaudio_result_t)
+    {
+        auto *self = static_cast<Impl *>(user);
+        self->broken = true;
+        self->cv.notify_all();
+    }
+
+    void close()
+    {
+        if (stream) {
+            AAudioStream_requestStop(stream);
+            AAudioStream_close(stream);
+            stream = nullptr;
+        }
+    }
+
+    bool open()
+    {
+        close();
+        AAudioStreamBuilder *b = nullptr;
+        if (AAudio_createStreamBuilder(&b) != AAUDIO_OK)
+            return false;
+        AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+        AAudioStreamBuilder_setChannelCount(b, 2);
+        AAudioStreamBuilder_setSampleRate(b, int32_t(rate));
+        AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+        // Power saving over low latency: the visuals compensate the latency.
+        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
+        static const auto setUsage = reinterpret_cast<SetI32>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setUsage"));
+        static const auto setContentType = reinterpret_cast<SetI32>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setContentType"));
+        if (setUsage)
+            setUsage(b, 1); // AAUDIO_USAGE_MEDIA
+        if (setContentType)
+            setContentType(b, 2); // AAUDIO_CONTENT_TYPE_MUSIC
+        AAudioStreamBuilder_setDataCallback(b, &Impl::onData, this);
+        AAudioStreamBuilder_setErrorCallback(b, &Impl::onError, this);
+        const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &stream);
+        AAudioStreamBuilder_delete(b);
+        if (r != AAUDIO_OK) {
+            qWarning("audio output: AAudio open failed: %s", AAudio_convertResultToText(r));
+            stream = nullptr;
+            return false;
+        }
+        broken = false;
+        if (AAudioStream_requestStart(stream) != AAUDIO_OK) {
+            close();
+            return false;
+        }
+        qInfo("audio output: AAudio device %d, %d Hz, burst %d", AAudioStream_getDeviceId(stream),
+              AAudioStream_getSampleRate(stream), AAudioStream_getFramesPerBurst(stream));
+        return true;
+    }
+
+    // Frames written but not yet heard (buffer + device + e.g. Bluetooth).
+    void measureLatency()
+    {
+        if (!stream)
+            return;
+        int64_t pos = 0, timeNs = 0;
+        if (AAudioStream_getTimestamp(stream, CLOCK_MONOTONIC, &pos, &timeNs) != AAUDIO_OK)
+            return;
+        const int64_t written = AAudioStream_getFramesWritten(stream);
+        const int64_t heardNow = pos + (monotonicNs() - timeNs) * int64_t(rate) / 1000000000;
+        const int64_t lat = written - heardNow;
+        if (lat >= 0 && lat < int64_t(rate) * 2)
+            latency = uint32_t(lat);
+    }
+
+    void run()
+    {
+        int failures = 0;
+        std::unique_lock<std::mutex> lock(mutex);
+        while (!quit) {
+            cv.wait_for(lock, std::chrono::milliseconds(failures ? 250 * failures : 500));
+            if (quit)
+                break;
+            const bool dead = !stream || broken
+                || AAudioStream_getState(stream) == AAUDIO_STREAM_STATE_DISCONNECTED;
+            if (dead) {
+                // Give the routing a moment to settle, then open a new stream.
+                lock.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                lock.lock();
+                if (quit)
+                    break;
+                failures = open() ? 0 : std::min(failures + 1, 8);
+            } else {
+                measureLatency();
+            }
+        }
+        close();
+    }
+};
+
+AudioOutput *AudioOutput::instance()
+{
+    static AudioOutput out;
+    return &out;
+}
+
+void AudioOutput::configure(BlCallbacks &) {}
+
+uint32_t AudioOutput::start()
+{
+    if (!d) {
+        d = new Impl;
+        {
+            std::lock_guard<std::mutex> lock(d->mutex);
+            d->open();
+        }
+        d->watchdog = std::thread([this]() { d->run(); });
+    }
+    return d->rate;
+}
+
+void AudioOutput::stop()
+{
+    if (!d)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        d->quit = true;
+    }
+    d->cv.notify_all();
+    if (d->watchdog.joinable())
+        d->watchdog.join();
+}
+
+#elif defined(BL_HAVE_MULTIMEDIA)
 
 #include <QAudioDevice>
 #include <QAudioFormat>

@@ -45,7 +45,9 @@ int main(int argc, char *argv[])
 #if defined(Q_OS_ANDROID)
     // QML is compiled ahead of time; the interpreter covers the rest. This
     // avoids JIT pages that hardened Android builds (GrapheneOS) report as
-    // dynamic code loading.
+    // dynamic code loading. BeatlumenApplication.java sets the same before
+    // Qt is loaded (Qt's Android plugin uses QRegularExpression earlier);
+    // repeated here for launches without it.
     qputenv("QV4_FORCE_INTERPRETER", "1");
     // Same for the PCRE2 JIT behind QRegularExpression.
     qputenv("QT_ENABLE_REGEXP_JIT", "0");

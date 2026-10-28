@@ -1,22 +1,32 @@
 import QtQuick
 import QtQuick.Effects
 
-// Rounded cover art with a placeholder icon.
+// Rounded cover art with a placeholder icon. With a `seed` (e.g. the album
+// name) the placeholder gets its own colour, so covers without art can
+// still be told apart.
 Item {
     id: root
     property string source
     property string placeholder: "music_note"
     property real radius: Theme.smallRadius
+    property string seed
+    readonly property bool loaded: img.status === Image.Ready
 
     Rectangle {
         anchors.fill: parent
         radius: root.radius
-        color: Theme.surfaceVariant
+        color: root.seed ? Theme.seedColor(root.seed, 0.30) : Theme.surfaceVariant
+        gradient: root.seed ? tint : null
+        Gradient {
+            id: tint
+            GradientStop { position: 0; color: Theme.seedColor(root.seed, 0.36) }
+            GradientStop { position: 1; color: Theme.seedColor(root.seed, 0.20) }
+        }
         Icon {
             anchors.centerIn: parent
             name: root.placeholder
             size: Math.max(16, Math.min(root.width, root.height) * 0.42)
-            color: Theme.textFaint
+            color: root.seed ? Theme.seedColor(root.seed, 0.75) : Theme.textFaint
             visible: img.status !== Image.Ready
         }
     }

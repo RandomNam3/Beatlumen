@@ -27,21 +27,37 @@ ItemDelegate {
         anchors.leftMargin: 12
         anchors.rightMargin: 4
         spacing: 12
-        Label {
-            textFormat: Text.PlainText
+        Item {
             visible: d.number >= 0 && !d.showCover
             Layout.preferredWidth: 28
-            horizontalAlignment: Text.AlignRight
-            text: d.number >= 0 ? d.number : ""
-            color: d.current ? Theme.accent : Theme.textFaint
-            font.features: { "tnum": 1 }
+            Layout.preferredHeight: 28
+            Label {
+                textFormat: Text.PlainText
+                anchors.fill: parent
+                visible: !d.current
+                horizontalAlignment: Text.AlignRight
+                verticalAlignment: Text.AlignVCenter
+                text: d.number >= 0 ? d.number : ""
+                color: Theme.textFaint
+                font.features: { "tnum": 1 }
+            }
+            Icon { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; visible: d.current; name: "graphic_eq"; size: 20; color: Theme.accent }
         }
         CoverImage {
             visible: d.showCover
             Layout.preferredWidth: 44
             Layout.preferredHeight: 44
             source: Covers.url(d.track.id, d.track.cover)
+            seed: d.track.album || d.track.title || ""
             radius: 8
+            // Playing: the cover is dimmed behind an equalizer icon.
+            Rectangle {
+                anchors.fill: parent
+                radius: 8
+                visible: d.current
+                color: Qt.rgba(0, 0, 0, 0.45)
+                Icon { anchors.centerIn: parent; name: "graphic_eq"; size: 22; color: "white" }
+            }
         }
         ColumnLayout {
             Layout.fillWidth: true

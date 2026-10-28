@@ -116,7 +116,8 @@ qt_add_qml_module(beatlumen
 target_link_libraries(beatlumen PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Svg Qt6::OpenGL Qt6::Network
     beatlumen_core)
-if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN)
+# Android plays through AAudio directly (see audio.cpp).
+if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN AND NOT ANDROID)
     target_link_libraries(beatlumen PRIVATE Qt6::Multimedia)
     target_compile_definitions(beatlumen PRIVATE BL_HAVE_MULTIMEDIA)
 endif()
@@ -126,18 +127,17 @@ if(WIN32)
     set_target_properties(beatlumen PROPERTIES WIN32_EXECUTABLE ON)
 elseif(ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
-    target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android)
+    target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android aaudio)
     # Background playback (MediaSession, foreground service): the Java side
     # lives in android/src.
     target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h)
-    # Deploy only the plugins the app uses: audio goes through QAudioSink
-    # (no FFmpeg backend), no QML debugging, TLS or network information.
+    # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
+    # through AAudio), no QML debugging, TLS or network information.
     qt_import_plugins(beatlumen
         INCLUDE_BY_TYPE
-            multimedia Qt6::QAndroidMediaPlugin
             imageformats Qt6::QJpegPlugin Qt6::QWebpPlugin Qt6::QGifPlugin Qt6::QSvgPlugin
         EXCLUDE Qt6::QOffscreenIntegrationPlugin
-        EXCLUDE_BY_TYPE qmltooling tls networkinformation)
+        EXCLUDE_BY_TYPE qmltooling tls networkinformation multimedia)
     set(BL_ANDROID_VERSION_CODE 3 CACHE STRING "android:versionCode")
     # Compressed native libraries: the APK is sideloaded, so its download
     # size matters more than the extraction at install time.

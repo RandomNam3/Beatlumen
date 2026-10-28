@@ -34,6 +34,16 @@ QtObject {
         return l > 0.179 ? "#1b1a20" : "#ffffff"
     }
 
+    // A stable colour for a name (placeholders, avatars); `strength` from
+    // 0 (background) to 1 (foreground).
+    function seedColor(seed, strength) {
+        let h = 0
+        for (let i = 0; i < seed.length; ++i)
+            h = (h * 31 + seed.charCodeAt(i)) % 360
+        const l = dark ? 0.16 + 0.56 * strength : 0.90 - 0.50 * strength
+        return Qt.hsla(h / 360, dark ? 0.42 : 0.50, l, 1)
+    }
+
     // Touch friendly metrics (device independent pixels).
     readonly property int touch: 48
     readonly property int row: 64
@@ -91,6 +101,9 @@ QtObject {
         "Remove": "Entfernen",
         "Remove from queue": "Aus Warteschlange entfernen",
         "Clear": "Leeren",
+        "No results": "Keine Treffer",
+        "Try a different title, artist or album.": "Versuche einen anderen Titel, Interpreten oder ein anderes Album.",
+        "Collect songs with “Add to playlist…” in a song's menu.": "Sammle Titel über „Zur Playlist hinzufügen…“ im Menü eines Titels.",
         "Clear queue": "Warteschlange leeren",
         "Save as playlist": "Als Playlist speichern",
         "Unknown artist": "Unbekannter Interpret",

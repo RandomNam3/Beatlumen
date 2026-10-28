@@ -23,8 +23,10 @@ issue.
   nesting, preset effects and particles). Panics in the server are caught
   per request.
 * **No dynamic code.** The Android app runs QML in the interpreter
-  (`QV4_FORCE_INTERPRETER`) and disables the regular expression JIT, so no
-  code is generated at run time. Qt's QML engine still probes once at start
+  (`QV4_FORCE_INTERPRETER`) and disables the regular expression JIT
+  (`QT_ENABLE_REGEXP_JIT=0`), so no code is generated at run time. Both are
+  set by `BeatlumenApplication.java` before any Qt library is loaded, since
+  Qt's Android plugin already uses regular expressions before `main()`. Qt's QML engine still probes once at start
   whether executable memory could be allocated, which hardened systems such
   as GrapheneOS report as dynamic code loading;
   `apps/beatlumen/android/qt-patches/` removes that probe from a rebuilt

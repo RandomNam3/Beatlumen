@@ -1,5 +1,5 @@
 // Audio output. Native platforms pull audio from the core on a dedicated
-// thread (Qt Multimedia); the browser build pushes it into Web Audio.
+// thread (AAudio on Android, Qt Multimedia elsewhere); the browser build pushes it into Web Audio.
 #pragma once
 
 #include <cstdint>

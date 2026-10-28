@@ -7,20 +7,26 @@ import Beatlumen.Core
 Item {
     id: page
     readonly property int rev: Core.state.queueRev || 0
+    // Position of the current song; the rows follow it without a reload.
+    readonly property int current: Core.state.queueIndex ?? -1
     property var items: []
-    // Reloading replaces the model, which would scroll the list back to
-    // the top: keep the position, and bring a newly current song into view.
+    property string signature: ""
+    // Replacing the model scrolls the list back to the top, so it is only
+    // replaced when the songs or their order changed (not when another song
+    // becomes current), and the position is restored in the same frame.
     function reload() {
+        const next = Core.call("queue.list") || []
+        const sig = JSON.stringify(next.map(t => { const c = Object.assign({}, t); delete c.current; return c }))
+        if (sig === signature)
+            return
         const y = list.contentY
-        const before = items.findIndex(t => t.current)
-        items = Core.call("queue.list") || []
-        Qt.callLater(() => {
-            list.contentY = Math.max(list.originY, Math.min(y, list.originY + list.contentHeight - list.height))
-            const now = items.findIndex(t => t.current)
-            if (now >= 0 && now !== before)
-                list.positionViewAtIndex(now, ListView.Contain)
-        })
+        signature = sig
+        items = next
+        list.forceLayout()
+        list.contentY = Math.max(list.originY, Math.min(y, list.originY + list.contentHeight - list.height))
     }
+    // Brings a newly current song into view (only if it is not visible).
+    onCurrentChanged: if (current >= 0 && current < items.length) list.positionViewAtIndex(current, ListView.Contain)
     onRevChanged: reload()
     Component.onCompleted: reload()
 
@@ -81,9 +87,8 @@ Item {
                     id: positionTimer
                     interval: 50
                     onTriggered: {
-                        const i = page.items.findIndex(t => t.current)
-                        if (i >= 0)
-                            list.positionViewAtIndex(i, ListView.Center)
+                        if (page.current >= 0 && page.current < page.items.length)
+                            list.positionViewAtIndex(page.current, ListView.Center)
                     }
                 }
 
@@ -94,7 +99,8 @@ Item {
                     width: ListView.view.width
                     height: Theme.row
                     padding: 0
-                    highlighted: modelData.current
+                    readonly property bool isCurrent: index === page.current
+                    highlighted: isCurrent
                     opacity: list.dragFrom === index ? 0.4 : 1
                     onClicked: Core.call("queue.play", { pos: modelData.pos })
                     onPressAndHold: songMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])
@@ -151,7 +157,7 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 2
-                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: row.modelData.title; elide: Text.ElideRight; color: row.modelData.current ? Theme.accent : Theme.text; font.pixelSize: 15; font.weight: row.modelData.current ? Font.DemiBold : Font.Medium }
+                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: row.modelData.title; elide: Text.ElideRight; color: row.isCurrent ? Theme.accent : Theme.text; font.pixelSize: 15; font.weight: row.isCurrent ? Font.DemiBold : Font.Medium }
                             Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: row.modelData.artist || Theme.tr("Unknown artist"); elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: 13 }
                         }
                         Label { textFormat: Text.PlainText; text: row.modelData.duration > 0 ? Theme.fmtTime(row.modelData.duration) : ""; color: Theme.textFaint; font.pixelSize: 13 }
