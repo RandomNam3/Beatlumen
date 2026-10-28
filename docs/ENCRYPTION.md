@@ -236,6 +236,22 @@ signature: Ed25519(owner, SHA-256(header ‖ SHA-256(meta) ‖ SHA-256("key comm
 * **Groups** (e.g. a family) are a list of recipients; there is no group
   key the server could hand out.
 
+## Playing on network speakers
+
+Decrypted audio leaves the app when it plays on a speaker in the network:
+
+* **AirPlay**: the stream is AES-encrypted to the speaker when it supports
+  that (the key is wrapped with the protocol's public RSA key, which every
+  AirPlay 1 receiver shares, so this protects against passive listeners in
+  the network, not against the speaker).
+* **DLNA and Chromecast**: the device fetches an uncompressed live stream
+  from the app over plain HTTP in the local network, under a random URL
+  (128 bits) that is only told to that device. Renderers cannot decrypt, so
+  anyone who can watch the local network traffic could listen along.
+
+The files on the server stay end-to-end encrypted either way; only what is
+being played crosses the home network.
+
 ## Web client integrity
 
 The browser version comes from the server, so it can only be as
