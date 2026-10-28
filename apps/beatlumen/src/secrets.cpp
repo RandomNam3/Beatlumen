@@ -29,6 +29,7 @@ QPointer<Bridge> g_bridge;
 
 // ---- Android: SecretStore.java (AES key in the Android Keystore) -----------
 
+#include <QCoreApplication>
 #include <QJniEnvironment>
 #include <QJniObject>
 
