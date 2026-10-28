@@ -1,0 +1,51 @@
+import QtQuick
+import QtQuick.Dialogs
+import Beatlumen.Core
+
+// File and folder pickers on desktop platforms (Qt Quick Dialogs, which
+// use the native dialogs of the system).
+Item {
+    signal musicFolderChosen(string path)
+    signal imageFolderChosen(string path)
+
+    function openAudio() { audioDialog.open() }
+    function openImages() { imageDialog.open() }
+    function addMusicFolder() { folderDialog.open() }
+    function addImageFolder() { imageFolderDialog.open() }
+
+    FolderDialog {
+        id: folderDialog
+        title: Theme.tr("Add music folder")
+        onAccepted: {
+            const p = Core.localPaths([selectedFolder])
+            if (p.length > 0)
+                Core.call("library.addFolder", { path: p[0] })
+        }
+    }
+    FolderDialog {
+        id: imageFolderDialog
+        title: Theme.tr("Add folder")
+        onAccepted: {
+            const p = Core.localPaths([selectedFolder])
+            if (p.length > 0)
+                Core.call("backgrounds.addFolder", { path: p[0] })
+        }
+    }
+    FileDialog {
+        id: audioDialog
+        title: Theme.tr("Open files")
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "Styles (*.hfx)", "* (*)"]
+        onAccepted: Core.openUrls(selectedFiles)
+    }
+    FileDialog {
+        id: imageDialog
+        title: Theme.tr("Add images")
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["Images (*.jpg *.jpeg *.png *.webp *.gif *.bmp)"]
+        onAccepted: {
+            const paths = Core.localPaths(selectedFiles)
+            Core.call("backgrounds.add", { sources: paths, show: true })
+        }
+    }
+}

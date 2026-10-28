@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.11.3"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust core and server (tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg and ImageMagick (test fixtures and references)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick
+      - name: Test
+        run: cargo test --workspace --release
+      - name: Server binary
+        run: cargo build --release -p beatlumen-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-server-linux-x86_64
+          path: target/release/beatlumen-server
+
+  linux:
+    name: Linux app (AppImage)
+    # Oldest supported Ubuntu: the AppImage runs on systems with this glibc
+    # or newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtmultimedia qtshadertools qtimageformats
+          cache: true
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+            libwayland-client0 libwayland-cursor0 libwayland-egl1 libpulse0
+      - name: Build
+        run: QT_ROOT="$QT_ROOT_DIR" ./build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-linux-x86_64-appimage
+          path: dist/linux/Beatlumen-x86_64.AppImage
+
+  windows:
+    name: Windows app
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      # aqtinstall does not know the Qt 6.11 Windows repository layout yet.
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.3"
+          arch: win64_msvc2022_64
+          modules: qtmultimedia qtshadertools qtimageformats
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S apps/beatlumen -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/windows
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          Copy-Item build/windows/beatlumen.exe dist/windows/
+          windeployqt --release --qmldir apps/beatlumen/qml --qmldir build/windows/qml --no-translations dist/windows/beatlumen.exe
+          cargo build --release -p beatlumen-server
+          Copy-Item target/release/beatlumen-server.exe dist/windows/
+          # Visual C++ runtime next to the programs (no separate install).
+          $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          Copy-Item "$($crt.FullName)\*.dll" dist/windows/
+          Remove-Item -Force -ErrorAction SilentlyContinue dist/windows/vc_redist*.exe
+      - name: Installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path apps/beatlumen/CMakeLists.txt -Pattern 'project\(beatlumen VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q "/DAppVersion=$version" apps/beatlumen/windows/beatlumen.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path dist/windows/* -DestinationPath dist/Beatlumen-portable-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-windows-x64-setup
+          path: dist/Beatlumen-Setup-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-windows-x64-portable
+          path: dist/Beatlumen-portable-x64.zip
+
+  web:
+    name: Web app (WebAssembly)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.7
+      - name: Rust target
+        run: rustup target add wasm32-unknown-emscripten
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: wasm
+          arch: wasm_singlethread
+          modules: qtshadertools qtimageformats
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtshadertools
+          cache: true
+          set-env: false
+          dir: ${{ runner.temp }}/qt-host
+      - name: Build
+        run: |
+          sudo apt-get install -y ninja-build
+          QT_WASM="$(dirname "$(dirname "$(find "$RUNNER_WORKSPACE/Qt" -path '*wasm_singlethread/bin/qt-cmake' | head -1)")")" \
+          QT_HOST="$(dirname "$(dirname "$(find "$RUNNER_TEMP/qt-host" -path '*gcc_64/bin/qmake' | head -1)")")" \
+          ./build-web.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-web
+          path: dist/web
+
+  android:
+    name: Android app (APK)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Install Qt (host and Android)
+        run: |
+          pip install aqtinstall
+          aqt install-qt linux desktop $QT_VERSION linux_gcc_64 -O "$RUNNER_TEMP/Qt" -m qtshadertools
+          for a in android_arm64_v8a android_x86_64; do
+            aqt install-qt all_os android $QT_VERSION $a -O "$RUNNER_TEMP/Qt" -m qtshadertools qtimageformats
+          done
+          chmod +x "$RUNNER_TEMP"/Qt/$QT_VERSION/*/bin/* || true
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" > /dev/null
+      # Qt's QML library built with apps/beatlumen/android/qt-patches (see
+      # SECURITY.md); takes a while, so it is cached per patch set.
+      - name: Cache patched Qt QML library
+        uses: actions/cache@v4
+        with:
+          path: build/qt-patched/*/libQt6Qml_*
+          key: qt-qml-patched-${{ env.QT_VERSION }}-${{ hashFiles('apps/beatlumen/android/qt-patches/**') }}
+      - name: Build
+        run: |
+          sudo apt-get install -y ninja-build
+          QT_ROOT="$RUNNER_TEMP/Qt/$QT_VERSION" ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/27.2.12479018" ./build-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beatlumen-android
+          path: dist/android/beatlumen.apk

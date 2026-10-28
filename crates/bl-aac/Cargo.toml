@@ -1,0 +1,8 @@
+[package]
+name = "bl-aac"
+description = "AAC (LC, optionally HE-AAC) audio decoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

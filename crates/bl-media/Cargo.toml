@@ -1,0 +1,15 @@
+[package]
+name = "bl-media"
+description = "Audio container demuxing, tag reading and decoder facade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-ogg = { path = "../bl-ogg" }
+bl-mp3 = { path = "../bl-mp3" }
+bl-flac = { path = "../bl-flac" }
+bl-vorbis = { path = "../bl-vorbis" }
+bl-opus = { path = "../bl-opus" }
+bl-aac = { path = "../bl-aac" }

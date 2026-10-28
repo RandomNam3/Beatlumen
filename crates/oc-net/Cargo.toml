@@ -1,9 +1,0 @@
-[package]
-name = "oc-net"
-description = "HTTP/1.1 client and server primitives and API types"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-oc-json = { path = "../oc-json" }

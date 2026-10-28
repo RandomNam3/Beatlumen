@@ -1,0 +1,10 @@
+[package]
+name = "bl-fx"
+description = "Effect engine: presets, triggers, camera, particles, transitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }
+bl-analysis = { path = "../bl-analysis" }

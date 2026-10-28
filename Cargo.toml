@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "apps/*"]
+members = ["crates/*", "apps/beatlumen-server"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "GPL-3.0-or-later"
-repository = "https://example.invalid/openchroma"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/RandomNam3/Beatlumen"
 rust-version = "1.80"
 
 [profile.dev]

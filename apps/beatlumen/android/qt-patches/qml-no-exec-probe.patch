@@ -1,0 +1,15 @@
+--- a/src/3rdparty/masm/wtf/OSAllocatorPosix.cpp
++++ b/src/3rdparty/masm/wtf/OSAllocatorPosix.cpp
+@@ -299,6 +299,12 @@
+ 
+ bool OSAllocator::canAllocateExecutableMemory()
+ {
++    // Beatlumen: with the JIT disabled by QV4_FORCE_INTERPRETER, do not even
++    // probe for executable memory. The probe (an executable memfd page) is
++    // reported as dynamic code loading by hardened Android systems.
++    if (getenv("QV4_FORCE_INTERPRETER"))
++        return false;
++
+     int flags = MAP_PRIVATE;
+ #if OS(DARWIN)
+     flags |= MAP_JIT;
