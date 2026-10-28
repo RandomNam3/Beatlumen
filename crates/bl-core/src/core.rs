@@ -181,6 +181,9 @@ fn parse_loudness(s: &str) -> Option<Loudness> {
 pub struct Core {
     pub settings: Settings,
     pub(crate) settings_dirty_at: Option<f64>,
+    /// Position in the restored current track, used by the first play.
+    resume_at: Option<f64>,
+    position_saved_at: f64,
     pub(crate) rng: Rng,
     pub(crate) gfx: Option<Gfx>,
     pub(crate) engine: Engine,
@@ -356,9 +359,13 @@ impl Core {
             .clone()
             .unwrap_or_else(|| settings.server_url.clone());
         let server = ServerClient::new(&server_url, &settings.server_token);
+        let resume_at =
+            Some(settings.audio_position).filter(|p| *p > 1.0 && settings.audio_index.is_some());
         let mut core = Core {
             settings,
             settings_dirty_at: None,
+            resume_at,
+            position_saved_at: 0.0,
             engine: Engine::new(rng.next_u64()),
             rng,
             gfx: None,
@@ -482,6 +489,13 @@ impl Core {
 
     pub fn save_settings(&mut self, host: &mut dyn Host) {
         self.sync_settings_state();
+        if self.resume_at.is_none() {
+            self.settings.audio_position = if self.current.is_some() {
+                self.player.position(host)
+            } else {
+                0.0
+            };
+        }
         host.storage_write(
             Settings::STORAGE_KEY,
             self.settings.to_json().to_json_pretty().as_bytes(),
@@ -496,6 +510,7 @@ impl Core {
             for k in [
                 "audioQueue",
                 "audioIndex",
+                "audioPosition",
                 "backgrounds",
                 "backgroundIndex",
                 "serverToken",
@@ -1151,6 +1166,7 @@ impl Core {
     /// Makes the queue's current item the current track; `load` starts its
     /// playback (false when the player already advanced to it gaplessly).
     fn start_current(&mut self, host: &mut dyn Host, autoplay: bool, load: bool) {
+        self.resume_at = None;
         self.release_airplay(host);
         self.revs.queue += 1;
         let Some(id) = self.queue.current().cloned() else {
@@ -1574,7 +1590,12 @@ impl Core {
                     self.queue.set_position(0);
                 }
                 if self.queue.current().is_some() {
+                    let resume = self.resume_at.take();
                     self.play_current(host, true);
+                    // Continue the track that played when the app closed.
+                    if let Some(p) = resume {
+                        self.player.seek(host, p);
+                    }
                 }
             }
             _ => self.player.toggle(host),
@@ -2277,6 +2298,11 @@ impl Core {
             }
         }
         self.sync_preload(host);
+        // The position survives the app being closed while playing.
+        if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
+            self.position_saved_at = self.time;
+            self.settings_dirty_at.get_or_insert(self.time);
+        }
         if let Some(t) = self.settings_dirty_at {
             if self.time - t > 2.0 {
                 self.save_settings(host);

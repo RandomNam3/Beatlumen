@@ -97,6 +97,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Playback resumption: the system's media controls keep the last
+             track after the app was closed (ResumeService.java). -->
+        <service
+            android:name="io.github.randomnam3.beatlumen.ResumeService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name="io.github.randomnam3.beatlumen.MediaPlaybackService"
             android:exported="false"

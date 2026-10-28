@@ -198,6 +198,20 @@ void setupCredentials()
     env.registerNativeMethods(kCredentials, methods, 1);
 }
 
+// Opened from the system's media controls after the app was closed
+// (ResumeService / MediaBridge.resumeInApp): play on. The flag is taken so
+// that a recreated activity does not play again.
+bool takeResume(QJniObject &intent)
+{
+    if (!intent.isValid())
+        return false;
+    const QJniObject key = QJniObject::fromString(QStringLiteral("io.github.randomnam3.beatlumen.RESUME"));
+    if (!intent.callMethod<jboolean>("getBooleanExtra", "(Ljava/lang/String;Z)Z", key.object<jstring>(), jboolean(false)))
+        return false;
+    intent.callMethod<void>("removeExtra", "(Ljava/lang/String;)V", key.object<jstring>());
+    return true;
+}
+
 // beatlumen://auth?state=…&result=… opened by the sign-in page in the
 // browser (passkeys), while the app runs or when the link starts it.
 struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
@@ -205,6 +219,11 @@ struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
     bool handleNewIntent(JNIEnv *, jobject intent) override
     {
         QJniObject i(intent);
+        if (takeResume(i)) {
+            QPointer<Bridge> b = bridge;
+            QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("play")); }, Qt::QueuedConnection);
+            return true;
+        }
         QJniObject uri = i.callObjectMethod("getData", "()Landroid/net/Uri;");
         if (!uri.isValid())
             return false;
@@ -222,6 +241,13 @@ void setupAuthLinks(Bridge *bridge)
     static AuthLinkListener listener;
     listener.bridge = bridge;
     QtAndroidPrivate::registerNewIntentListener(&listener);
+    QJniObject activity = QtAndroidPrivate::activity();
+    QJniObject intent = activity.isValid() ? activity.callObjectMethod("getIntent", "()Landroid/content/Intent;") : QJniObject();
+    if (takeResume(intent)) {
+        QPointer<Bridge> b = bridge;
+        // After the core restored the queue.
+        QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("play")); });
+    }
 }
 
 void setupPush(Bridge *bridge)

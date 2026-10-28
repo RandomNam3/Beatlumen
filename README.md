@@ -26,6 +26,13 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
   and cover (Linux, Windows, Android; AirPlay 1 protocol).
+- System media controls and media keys: MPRIS on Linux, the media
+  overlay on Windows, the media notification and lock screen on Android.
+  After the app was closed, Android's media controls continue the last
+  track where it stopped.
+- **Encrypted files on the server** (end-to-end): only you and the people
+  you share with can open them; sign in with a password, passkeys or your
+  password manager (`docs/ENCRYPTION.md`).
 - Light/dark mode and accent colour follow your system.
 - **Beatlumen Server** shares a music folder on your network and serves the
   web version of the app.

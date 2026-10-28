@@ -111,6 +111,8 @@ pub struct Settings {
     pub preset: String,
     pub audio_queue: Vec<String>,
     pub audio_index: Option<usize>,
+    /// Where the current track was (seconds), to continue after a restart.
+    pub audio_position: f64,
     pub shuffle: bool,
     pub repeat: Repeat,
     pub backgrounds: Vec<String>,
@@ -172,6 +174,7 @@ impl Default for Settings {
             preset: "Balanced".into(),
             audio_queue: Vec::new(),
             audio_index: None,
+            audio_position: 0.0,
             shuffle: false,
             repeat: Repeat::None,
             backgrounds: Vec::new(),
@@ -233,6 +236,7 @@ impl Settings {
             preset: v.str_or("preset", &d.preset).to_string(),
             audio_queue: strs(v.get("audioQueue")),
             audio_index: idx("audioIndex"),
+            audio_position: v.f64_or("audioPosition", 0.0).max(0.0),
             shuffle: v.bool_or("shuffle", false),
             repeat: Repeat::parse(v.str_or("repeat", "None")),
             backgrounds: strs(v.get("backgrounds")),
@@ -289,6 +293,7 @@ impl Settings {
             .with("preset", self.preset.as_str())
             .with("audioQueue", self.audio_queue.clone())
             .with("audioIndex", self.audio_index)
+            .with("audioPosition", self.audio_position)
             .with("shuffle", self.shuffle)
             .with("repeat", self.repeat.name())
             .with("backgrounds", self.backgrounds.clone())

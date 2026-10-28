@@ -147,7 +147,10 @@ impl Core {
             // ---- playback -------------------------------------------------
             "play" => {
                 let ids = strs(c.get("ids"));
-                if ids.is_empty() {
+                if ids.is_empty() && self.player.state() == crate::player::PlayState::Stopped {
+                    // Nothing loaded (e.g. after a restart): the queue's track.
+                    self.toggle_play(host);
+                } else if ids.is_empty() {
                     self.player.play(host);
                 } else {
                     self.play_tracks(host, ids, idx("start"));
