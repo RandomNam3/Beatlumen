@@ -37,6 +37,8 @@ installed) or add the server in an Beatlumen app.
 | `--vault-pepper-file FILE` | `<data>/vault/pepper` | Secret (32+ bytes) mixed into the account verifiers; keep it outside the data folder, e.g. as a container secret |
 | `--vault-quota-mb MB` | `10240` | Encrypted storage per account, `0` = unlimited |
 | `--registration MODE` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
+| `--public-url URL` | none | The server's `https://` address as users reach it (reverse proxy); enables passkeys, with this host as WebAuthn relying party |
+| `--android-cert SHA256` | official app | Signing certificate fingerprint of an Android app that may use passkeys for this server (repeatable); published in `/.well-known/assetlinks.json` |
 | `--push-allow-private` | off | Allow push services (UnifiedPush) in private networks and over plain http, e.g. ntfy at home |
 | `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
 | `-h`, `--help` / `-V`, `--version` | | |
@@ -50,6 +52,7 @@ secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
 `BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
 `BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`, `BEATLUMEN_REGISTRATION`,
 `BEATLUMEN_PUSH_ALLOW_PRIVATE`, `BEATLUMEN_CA_FILE` (extra root certificates, PEM, for outgoing TLS),
+`BEATLUMEN_PUBLIC_URL`, `BEATLUMEN_ANDROID_CERTS` (comma separated),
 `BEATLUMEN_VERBOSE`. A container image, `compose.yml` and AppArmor/SELinux
 profiles are in [`container/`](../../container/README.md).
 
@@ -279,9 +282,23 @@ password-protected server. Binary values are base64 in JSON.
 | `POST /api/vault/files/{id}/keys` | `{"user", "key"}` → 204: share (owner) |
 | `DELETE /api/vault/files/{id}/keys/{user}` | revoke (owner) or leave (recipient) → 204 |
 | `DELETE /api/vault/files/{id}` | 204 (owner) |
+| `POST /api/vault/passkeys/options` | `{"purpose": "login"}` (public) or `"register"` (signed in) → `{"challengeId", "publicKey"}`: WebAuthn options in their JSON form, with the PRF extension |
+| `POST /api/vault/passkeys/login` | `{"challengeId", "credentialId", "clientDataJSON", "authenticatorData", "signature"}` (base64url) → `{"token", "user", "bundle", "credentialId", "masterByPasskey"}` |
+| `GET /api/vault/passkeys` | `{"passkeys": [{"id", "name", "created", "lastUsed"}], "passwordOff", "available"}` |
+| `POST /api/vault/passkeys` | `{"challengeId", "clientDataJSON", "attestationObject", "name", "masterByPasskey", "proof"}` → 201 `{"id"}` |
+| `DELETE /api/vault/passkeys/{id}` | `{"proof"}` → 204; 409 for the last passkey while the password is off |
 | `GET /api/vault/push` | `{"vapidKey", "subscriptions": [{"id", "name", "created"}]}` |
 | `POST /api/vault/push` | `{"endpoint", "p256dh", "auth", "name"}` (a UnifiedPush/Web Push subscription) → 201 `{"id"}`; the same endpoint again updates it |
 | `DELETE /api/vault/push/{id}` | 204 |
+
+**Passkeys** need `--public-url` (an `https://` address; `http://localhost`
+for testing). Sign-in requires user verification; the server checks the
+signature (ES256, EdDSA, RS256) and the signature counter, and returns
+the master key wrapped for that passkey, which only the passkey's PRF
+output unwraps. `"proof": {"session": true}` is accepted for ten minutes
+after a passkey sign-in. `PUT /api/vault/account/keys` with
+`"passwordOff": true` turns the password off (at least one passkey);
+setting a new password turns it on again.
 
 **Push notifications** (UnifiedPush): when a file is shared with a user,
 the server sends `{"type": "share", "from", "file"}` to each of the user's

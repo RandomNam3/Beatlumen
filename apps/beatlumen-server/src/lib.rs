@@ -37,6 +37,7 @@ pub mod tls;
 pub mod util;
 pub mod vault;
 pub mod web;
+pub mod webauthn;
 
 pub use config::Config;
 
@@ -172,6 +173,7 @@ impl State {
             revision: idx.revision,
             source_url: self.config.source_url.clone(),
             web_integrity: self.web.integrity.status.to_string(),
+            passkeys: self.vault.rp.is_some(),
         }
     }
 
@@ -436,6 +438,10 @@ pub fn start(config: Config) -> Result<Server, String> {
 
     let web = web::WebClient::resolve(config.web_dir.as_deref());
     tls::install();
+    let rp = match &config.public_url {
+        Some(url) => Some(webauthn::RelyingParty::new(url, &config.name, &config.all_android_certs())?),
+        None => None,
+    };
     let push = push::Push::open(
         &data.root.join("vault"),
         &config.source_url,
@@ -447,6 +453,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         config.vault_quota_mb.saturating_mul(1024 * 1024),
         config.registration,
         push,
+        rp,
     )?;
     let state = Arc::new(State {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),

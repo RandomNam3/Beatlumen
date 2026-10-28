@@ -116,6 +116,11 @@ fn route(state: &State, req: &Request) -> Response {
         return Response::error(400, "invalid path");
     }
     let segs = req.segments();
+    // Android lets the app use passkeys of this domain only when the domain
+    // names the app (Digital Asset Links).
+    if segs == [".well-known", "assetlinks.json"] && matches!(req.method.as_str(), "GET" | "HEAD") {
+        return assetlinks(state);
+    }
     match segs.first() {
         Some(&"api") => api(state, req, &segs[1..]),
         _ => state.web.serve(req, &segs),
@@ -454,4 +459,36 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
         }
         Err(msg) => Response::error(500, &format!("cannot decode image: {msg}")),
     }
+}
+
+fn assetlinks(state: &State) -> Response {
+    let certs = state.config.all_android_certs();
+    if certs.is_empty() || state.vault.rp.is_none() {
+        return Response::error(404, "not found");
+    }
+    let fingerprints: Vec<Value> = certs
+        .iter()
+        .map(|c| {
+            let pairs: Vec<String> = (0..c.len() / 2)
+                .map(|i| c[i * 2..i * 2 + 2].to_ascii_uppercase())
+                .collect();
+            Value::from(pairs.join(":"))
+        })
+        .collect();
+    let v = Value::Array(vec![Value::object()
+        .with(
+            "relation",
+            Value::Array(vec![
+                Value::from("delegate_permission/common.handle_all_urls"),
+                Value::from("delegate_permission/common.get_login_creds"),
+            ]),
+        )
+        .with(
+            "target",
+            Value::object()
+                .with("namespace", "android_app")
+                .with("package_name", "io.github.randomnam3.beatlumen")
+                .with("sha256_cert_fingerprints", Value::Array(fingerprints)),
+        )]);
+    Response::json(200, &v).with_header("Cache-Control", "public, max-age=3600")
 }

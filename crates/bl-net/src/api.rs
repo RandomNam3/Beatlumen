@@ -49,6 +49,8 @@ pub struct ServerInfo {
     /// manifest, all files match), "unsigned" (files match an unsigned
     /// manifest), "modified", "unchecked" (no manifest), "none".
     pub web_integrity: String,
+    /// Passkeys can be used (the server knows its public https address).
+    pub passkeys: bool,
 }
 
 impl ServerInfo {
@@ -63,6 +65,7 @@ impl ServerInfo {
             .with("revision", self.revision)
             .with("sourceUrl", self.source_url.as_str())
             .with("webIntegrity", self.web_integrity.as_str())
+            .with("passkeys", self.passkeys)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -75,6 +78,7 @@ impl ServerInfo {
             revision: u(v, "revision"),
             source_url: s(v, "sourceUrl"),
             web_integrity: s(v, "webIntegrity"),
+            passkeys: v.bool_or("passkeys", false),
         }
     }
 }

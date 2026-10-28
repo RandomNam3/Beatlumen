@@ -12,6 +12,7 @@
 
 pub mod aead;
 pub mod file;
+pub mod handoff;
 pub mod identity;
 pub mod keys;
 pub mod manifest;

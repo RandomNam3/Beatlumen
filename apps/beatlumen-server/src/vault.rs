@@ -117,6 +117,57 @@ struct User {
     /// Raised when the password changes: older sessions end.
     generation: u64,
     created: u64,
+    /// The password is turned off (only passkeys and the recovery code).
+    password_off: bool,
+    passkeys: Vec<Passkey>,
+}
+
+/// A passkey of a user.
+#[derive(Clone)]
+struct Passkey {
+    id: Vec<u8>,
+    key: crate::webauthn::PublicKey,
+    count: u32,
+    name: String,
+    created: u64,
+    last_used: u64,
+    /// The master key wrapped with the passkey's PRF output.
+    master: Vec<u8>,
+}
+
+impl Passkey {
+    fn to_json(&self) -> Value {
+        Value::object()
+            .with("id", b64(&self.id))
+            .with("key", self.key.to_storage())
+            .with("count", self.count as u64)
+            .with("name", self.name.as_str())
+            .with("created", self.created)
+            .with("lastUsed", self.last_used)
+            .with("master", b64(&self.master))
+    }
+
+    fn from_json(v: &Value) -> Option<Passkey> {
+        Some(Passkey {
+            id: base64_decode(v.str_or("id", "")).filter(|i| !i.is_empty())?,
+            key: crate::webauthn::PublicKey::from_storage(v.str_or("key", ""))?,
+            count: v.get("count").as_u64().unwrap_or(0) as u32,
+            name: v.str_or("name", "").to_string(),
+            created: v.get("created").as_u64().unwrap_or(0),
+            last_used: v.get("lastUsed").as_u64().unwrap_or(0),
+            master: base64_decode(v.str_or("master", ""))
+                .filter(|m| m.len() == WRAPPED_MASTER_LEN)?,
+        })
+    }
+
+    /// As listed to the user.
+    fn entry(&self) -> Value {
+        Value::object()
+            .with("id", bl_vault::webpush::base64url(&self.id))
+            .with("name", self.name.as_str())
+            .with("created", self.created)
+            .with("lastUsed", self.last_used)
+    }
 }
 
 impl User {
@@ -133,16 +184,34 @@ impl User {
             .with("public", b64(&self.public))
             .with("generation", self.generation)
             .with("created", self.created)
+            .with("passwordOff", self.password_off)
+            .with(
+                "passkeys",
+                Value::Array(self.passkeys.iter().map(Passkey::to_json).collect()),
+            )
     }
 
     fn from_json(v: &Value) -> Result<User, Failure> {
+        let password_off = v.bool_or("passwordOff", false);
         Ok(User {
             name: user_name(v, "name")?,
             salt: array(v, "salt")?,
             params: params_from(v.get("params"))?,
             verifier: array(v, "verifier")?,
             recovery_verifier: array(v, "recoveryVerifier")?,
-            master_by_password: bytes(v, "masterByPassword", Some(WRAPPED_MASTER_LEN))?,
+            master_by_password: if password_off {
+                Vec::new()
+            } else {
+                bytes(v, "masterByPassword", Some(WRAPPED_MASTER_LEN))?
+            },
+            password_off,
+            passkeys: v
+                .get("passkeys")
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Passkey::from_json)
+                .collect(),
             master_by_recovery: bytes(v, "masterByRecovery", Some(WRAPPED_MASTER_LEN))?,
             identity: bytes(v, "identity", Some(WRAPPED_IDENTITY_LEN))?,
             public: bytes(v, "public", Some(128))?,
@@ -154,6 +223,8 @@ impl User {
     /// What the app needs to unlock the account.
     fn bundle(&self) -> Value {
         Value::object()
+            .with("passwordOff", self.password_off)
+            .with("passkeys", self.passkeys.len() as u64)
             .with("salt", b64(&self.salt))
             .with("params", params_json(self.params))
             .with("masterByPassword", b64(&self.master_by_password))
@@ -258,7 +329,22 @@ struct Session {
     user: String,
     issued: u64,
     generation: u64,
+    /// Until then the session itself proves the user (just signed in with
+    /// a passkey, which has no password to repeat). Not persisted.
+    fresh_until: u64,
 }
+
+/// A WebAuthn challenge waiting for its answer.
+struct Challenge {
+    bytes: [u8; 32],
+    /// Registration: for this user; sign-in: None.
+    user: Option<String>,
+    created: Instant,
+}
+
+const CHALLENGE_LIFETIME: Duration = Duration::from_secs(5 * 60);
+const FRESH_SESSION: u64 = 10 * 60;
+const MAX_PASSKEYS: usize = 20;
 
 pub struct Vault {
     users_dir: PathBuf,
@@ -275,6 +361,9 @@ pub struct Vault {
     files: RwLock<HashMap<String, FileRec>>,
     sessions: RwLock<HashMap<[u8; 32], Session>>,
     failures: Mutex<HashMap<String, (u32, Instant)>>,
+    /// Passkeys: the relying party (None without `--public-url`).
+    pub rp: Option<crate::webauthn::RelyingParty>,
+    challenges: Mutex<HashMap<String, Challenge>>,
 }
 
 fn invites_dir(data: &Path) -> PathBuf {
@@ -367,6 +456,7 @@ impl Vault {
         quota: u64,
         open_registration: bool,
         push: crate::push::Push,
+        rp: Option<crate::webauthn::RelyingParty>,
     ) -> Result<Vault, String> {
         let dir = data.join("vault");
         let users_dir = dir.join("users");
@@ -461,6 +551,7 @@ impl Vault {
                         user: user.to_string(),
                         issued,
                         generation,
+                        fresh_until: 0,
                     },
                 );
             }
@@ -485,6 +576,8 @@ impl Vault {
             files: RwLock::new(files),
             sessions: RwLock::new(sessions),
             failures: Mutex::new(HashMap::new()),
+            rp,
+            challenges: Mutex::new(HashMap::new()),
         })
     }
 
@@ -508,6 +601,12 @@ impl Vault {
     }
 
     fn new_session(&self, user: &User) -> Result<String, Failure> {
+        self.new_session_with(user, false)
+    }
+
+    /// A session; `fresh`: it proves the user for a few minutes (passkey
+    /// sign-in, where there is no password to type again).
+    fn new_session_with(&self, user: &User, fresh: bool) -> Result<String, Failure> {
         let token = crate::random::hex(16).map_err(|e| (500, format!("no random source: {e}")))?;
         let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
         if s.len() >= MAX_SESSIONS {
@@ -521,6 +620,11 @@ impl Vault {
                 user: user.name.clone(),
                 issued: util::now_secs(),
                 generation: user.generation,
+                fresh_until: if fresh {
+                    util::now_secs() + FRESH_SESSION
+                } else {
+                    0
+                },
             },
         );
         self.save_sessions(&s);
@@ -538,6 +642,19 @@ impl Vault {
         (u.generation == s.generation
             && util::now_secs().saturating_sub(s.issued) < SESSION_LIFETIME)
             .then(|| s.user.clone())
+    }
+
+    /// Whether the request's session was opened with a passkey moments ago.
+    fn session_fresh(&self, req: &Request) -> bool {
+        let Some(t) = crate::auth::Auth::request_token(req) else {
+            return false;
+        };
+        let d = crate::sha256::sha256(t.as_bytes());
+        self.sessions
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&d)
+            .is_some_and(|s| s.fresh_until > util::now_secs())
     }
 
     fn end_session(&self, req: &Request) {
@@ -619,6 +736,8 @@ impl Vault {
             ["prelogin" | "register" | "login" | "recover"] => {
                 return fail(405, "method not allowed")
             }
+            ["passkeys", "options"] if post => return self.passkey_options(req),
+            ["passkeys", "login"] if post => return self.passkey_login(req, ip),
             _ => {}
         }
         let Some(me) = self.session_user(req) else {
@@ -642,6 +761,22 @@ impl Vault {
             }
             ["account"] if m == "DELETE" => self.delete_account(req, &me, ip),
             ["account", "keys"] if m == "PUT" => self.change_keys(req, &me, ip),
+            ["passkeys"] if get => {
+                let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+                let u = users.get(&me).ok_or((401, "no such user".to_string()))?;
+                Ok(Response::json(
+                    200,
+                    &Value::object()
+                        .with(
+                            "passkeys",
+                            Value::Array(u.passkeys.iter().map(Passkey::entry).collect()),
+                        )
+                        .with("passwordOff", u.password_off)
+                        .with("available", self.rp.is_some()),
+                ))
+            }
+            ["passkeys"] if post => self.passkey_register(req, &me, ip),
+            ["passkeys", id] if m == "DELETE" => self.passkey_delete(req, &me, id, ip),
             ["users"] if get => {
                 let users = self.users.read().unwrap_or_else(|e| e.into_inner());
                 let mut list: Vec<&User> = users.values().collect();
@@ -720,6 +855,305 @@ impl Vault {
         }
     }
 
+    fn rp(&self) -> Result<&crate::webauthn::RelyingParty, Failure> {
+        self.rp.as_ref().ok_or((
+            404,
+            "passkeys are not set up on this server (--public-url)".to_string(),
+        ))
+    }
+
+    fn new_challenge(&self, user: Option<String>) -> Result<(String, [u8; 32]), Failure> {
+        let mut bytes = [0u8; 32];
+        crate::random::fill(&mut bytes).map_err(|e| (500, e.to_string()))?;
+        let id = crate::random::hex(16).map_err(|e| (500, e.to_string()))?;
+        let mut c = self.challenges.lock().unwrap_or_else(|e| e.into_inner());
+        c.retain(|_, ch| ch.created.elapsed() < CHALLENGE_LIFETIME);
+        if c.len() >= 1000 {
+            return fail(503, "too many sign-ins at once; try again shortly");
+        }
+        c.insert(
+            id.clone(),
+            Challenge {
+                bytes,
+                user,
+                created: Instant::now(),
+            },
+        );
+        Ok((id, bytes))
+    }
+
+    /// Takes a challenge (each one answers once).
+    fn take_challenge(&self, id: &str) -> Option<Challenge> {
+        self.challenges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id)
+            .filter(|c| c.created.elapsed() < CHALLENGE_LIFETIME)
+    }
+
+    fn url64(v: &Value, key: &str) -> Result<Vec<u8>, Failure> {
+        base64_decode(v.str_or(key, ""))
+            .ok_or_else(|| (400, format!("missing or invalid \"{key}\"")))
+    }
+
+    /// Options for `navigator.credentials.create/get` (binary values as
+    /// base64url, as in the WebAuthn JSON form).
+    fn passkey_options(&self, req: &Request) -> Result<Response, Failure> {
+        use bl_vault::webpush::base64url;
+        let rp = self.rp()?;
+        let v = body(req)?;
+        let prf = Value::object().with(
+            "prf",
+            Value::object().with(
+                "eval",
+                Value::object().with("first", base64url(&keys::passkey_prf_input())),
+            ),
+        );
+        let public_key = match v.str_or("purpose", "login") {
+            "login" => {
+                let (id, ch) = self.new_challenge(None)?;
+                return Ok(Response::json(
+                    200,
+                    &Value::object().with("challengeId", id).with(
+                        "publicKey",
+                        Value::object()
+                            .with("challenge", base64url(&ch))
+                            .with("rpId", rp.id.as_str())
+                            .with("timeout", 300_000u64)
+                            .with("userVerification", "required")
+                            .with("allowCredentials", Value::Array(Vec::new()))
+                            .with("extensions", prf),
+                    ),
+                ));
+            }
+            "register" => {
+                let me = self
+                    .session_user(req)
+                    .ok_or((401, "authentication required".to_string()))?;
+                let exclude: Vec<Value> = {
+                    let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+                    let u = users.get(&me).ok_or((401, "no such user".to_string()))?;
+                    u.passkeys
+                        .iter()
+                        .map(|p| {
+                            Value::object()
+                                .with("type", "public-key")
+                                .with("id", base64url(&p.id))
+                        })
+                        .collect()
+                };
+                let (id, ch) = self.new_challenge(Some(me.clone()))?;
+                let handle = &sha(&[b"beatlumen user handle v1\0", me.as_bytes()])[..16];
+                let alg = |a: i64| Value::object().with("type", "public-key").with("alg", a);
+                (
+                    id,
+                    Value::object()
+                        .with("challenge", base64url(&ch))
+                        .with(
+                            "rp",
+                            Value::object()
+                                .with("id", rp.id.as_str())
+                                .with("name", rp.name.as_str()),
+                        )
+                        .with(
+                            "user",
+                            Value::object()
+                                .with("id", base64url(handle))
+                                .with("name", me.as_str())
+                                .with("displayName", me.as_str()),
+                        )
+                        .with(
+                            "pubKeyCredParams",
+                            Value::Array(vec![alg(-7), alg(-8), alg(-257)]),
+                        )
+                        .with("timeout", 300_000u64)
+                        .with("attestation", "none")
+                        .with(
+                            "authenticatorSelection",
+                            Value::object()
+                                .with("residentKey", "required")
+                                .with("requireResidentKey", true)
+                                .with("userVerification", "required"),
+                        )
+                        .with("excludeCredentials", Value::Array(exclude))
+                        .with("extensions", prf),
+                )
+            }
+            _ => return fail(400, "unknown purpose"),
+        };
+        let (id, pk) = public_key;
+        Ok(Response::json(
+            200,
+            &Value::object()
+                .with("challengeId", id)
+                .with("publicKey", pk),
+        ))
+    }
+
+    fn passkey_register(
+        &self,
+        req: &Request,
+        me: &str,
+        ip: Option<IpAddr>,
+    ) -> Result<Response, Failure> {
+        let rp = self.rp()?;
+        let v = body(req)?;
+        let mut user = {
+            let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+            users
+                .get(me)
+                .cloned()
+                .ok_or((401, "no such user".to_string()))?
+        };
+        self.check_proof(req, &v, &user, ip)?;
+        let ch = self
+            .take_challenge(v.str_or("challengeId", ""))
+            .filter(|c| c.user.as_deref() == Some(me))
+            .ok_or((400, "unknown or expired challenge".to_string()))?;
+        let (id, key, count) = rp
+            .register(
+                &Self::url64(&v, "clientDataJSON")?,
+                &Self::url64(&v, "attestationObject")?,
+                &ch.bytes,
+            )
+            .map_err(|e| (400, e.to_string()))?;
+        let master = bytes(&v, "masterByPasskey", Some(WRAPPED_MASTER_LEN))?;
+        if user.passkeys.len() >= MAX_PASSKEYS {
+            return fail(507, "too many passkeys");
+        }
+        let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
+        if users
+            .values()
+            .any(|u| u.passkeys.iter().any(|p| p.id == id))
+        {
+            return fail(409, "this passkey is registered already");
+        }
+        let name: String = v
+            .str_or("name", "")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(64)
+            .collect();
+        let now = util::now_secs();
+        user.passkeys.push(Passkey {
+            id: id.clone(),
+            key,
+            count,
+            name: if name.trim().is_empty() {
+                "Passkey".into()
+            } else {
+                name
+            },
+            created: now,
+            last_used: now,
+            master,
+        });
+        save_json(&self.users_dir.join(format!("{me}.json")), &user.to_json())?;
+        users.insert(me.to_string(), user);
+        drop(users);
+        crate::info!("vault: {me} added a passkey");
+        Ok(Response::json(
+            201,
+            &Value::object().with("id", bl_vault::webpush::base64url(&id)),
+        ))
+    }
+
+    fn passkey_login(&self, req: &Request, ip: Option<IpAddr>) -> Result<Response, Failure> {
+        let rp = self.rp()?;
+        let v = body(req)?;
+        self.check_limits(ip, None)?;
+        let ch = self
+            .take_challenge(v.str_or("challengeId", ""))
+            .filter(|c| c.user.is_none())
+            .ok_or((400, "unknown or expired challenge".to_string()))?;
+        let cred = Self::url64(&v, "credentialId")?;
+        let found = {
+            let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+            users.values().find_map(|u| {
+                u.passkeys
+                    .iter()
+                    .position(|p| p.id == cred)
+                    .map(|i| (u.clone(), i))
+            })
+        };
+        let Some((mut user, i)) = found else {
+            self.failed(ip, None);
+            return fail(401, "unknown passkey");
+        };
+        let count = match rp.authenticate(
+            &user.passkeys[i].key,
+            user.passkeys[i].count,
+            &Self::url64(&v, "clientDataJSON")?,
+            &Self::url64(&v, "authenticatorData")?,
+            &Self::url64(&v, "signature")?,
+            &ch.bytes,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                crate::warn!("vault: passkey sign-in for {} refused: {e}", user.name);
+                self.failed(ip, Some(&user.name));
+                return fail(401, "the passkey sign-in could not be verified");
+            }
+        };
+        user.passkeys[i].count = count;
+        user.passkeys[i].last_used = util::now_secs();
+        let master = user.passkeys[i].master.clone();
+        {
+            let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
+            // Keep changes made in the meantime; only the counter is new.
+            if let Some(u) = users.get_mut(&user.name) {
+                if let Some(p) = u.passkeys.iter_mut().find(|p| p.id == cred) {
+                    p.count = count;
+                    p.last_used = user.passkeys[i].last_used;
+                }
+                let _ = save_json(
+                    &self.users_dir.join(format!("{}.json", u.name)),
+                    &u.to_json(),
+                );
+            }
+        }
+        let token = self.new_session_with(&user, true)?;
+        Ok(Response::json(
+            200,
+            &Value::object()
+                .with("token", token)
+                .with("user", user.name.as_str())
+                .with("bundle", user.bundle())
+                .with("credentialId", bl_vault::webpush::base64url(&cred))
+                .with("masterByPasskey", b64(&master)),
+        ))
+    }
+
+    fn passkey_delete(
+        &self,
+        req: &Request,
+        me: &str,
+        id: &str,
+        ip: Option<IpAddr>,
+    ) -> Result<Response, Failure> {
+        let v = body(req).unwrap_or_else(|_| Value::object());
+        let cred = base64_decode(id).ok_or((404, "no such passkey".to_string()))?;
+        let mut user = {
+            let users = self.users.read().unwrap_or_else(|e| e.into_inner());
+            users
+                .get(me)
+                .cloned()
+                .ok_or((401, "no such user".to_string()))?
+        };
+        self.check_proof(req, &v, &user, ip)?;
+        if !user.passkeys.iter().any(|p| p.id == cred) {
+            return fail(404, "no such passkey");
+        }
+        if user.password_off && user.passkeys.len() == 1 {
+            return fail(409, "this is the last passkey: turn the password on first");
+        }
+        user.passkeys.retain(|p| p.id != cred);
+        let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
+        save_json(&self.users_dir.join(format!("{me}.json")), &user.to_json())?;
+        users.insert(me.to_string(), user);
+        Ok(Response::new(204))
+    }
+
     fn prelogin(&self, req: &Request) -> Result<Response, Failure> {
         let v = body(req)?;
         let name = user_name(&v, "user")?;
@@ -727,8 +1161,9 @@ impl Vault {
         // Unknown names get a stable made-up salt, so prelogin does not
         // tell which names exist.
         let (salt, params) = match users.get(&name) {
-            Some(u) => (u.salt, u.params),
-            None => (keys::fake_salt(&self.pepper, &name), KdfParams::DEFAULT),
+            // Without a password the account looks like an unknown one.
+            Some(u) if !u.password_off => (u.salt, u.params),
+            _ => (keys::fake_salt(&self.pepper, &name), KdfParams::DEFAULT),
         };
         Ok(Response::json(
             200,
@@ -753,6 +1188,7 @@ impl Vault {
             let users = self.users.read().unwrap_or_else(|e| e.into_inner());
             users
                 .get(&name)
+                .filter(|u| recovery || !u.password_off)
                 .filter(|u| {
                     ct_eq(
                         &check,
@@ -819,6 +1255,8 @@ impl Vault {
             generation: 0,
             created: util::now_secs(),
             name: name.clone(),
+            password_off: false,
+            passkeys: Vec::new(),
         };
         let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
         if users.contains_key(&name) {
@@ -846,10 +1284,24 @@ impl Vault {
 
     /// Checks the proof of a sensitive change: the current auth key or the
     /// recovery auth key (a stolen session token alone is not enough).
-    fn check_proof(&self, v: &Value, user: &User, ip: Option<IpAddr>) -> Result<(), Failure> {
+    fn check_proof(
+        &self,
+        req: &Request,
+        v: &Value,
+        user: &User,
+        ip: Option<IpAddr>,
+    ) -> Result<(), Failure> {
         self.check_limits(ip, Some(&user.name))?;
         let p = v.get("proof");
+        // Just signed in with a passkey: the session is the proof.
+        if p.bool_or("session", false) {
+            if self.session_fresh(req) {
+                return Ok(());
+            }
+            return fail(403, "sign in with your passkey again to confirm");
+        }
         let ok = match (p.get("auth").as_str(), p.get("recoveryAuth").as_str()) {
+            (Some(_), _) if user.password_off => false,
             (Some(_), _) => ct_eq(&self.verifier(&bytes(p, "auth", Some(32))?), &user.verifier),
             (_, Some(_)) => ct_eq(
                 &self.verifier(&bytes(p, "recoveryAuth", Some(32))?),
@@ -879,12 +1331,30 @@ impl Vault {
                 .cloned()
                 .ok_or((401, "no such user".to_string()))?
         };
-        self.check_proof(&v, &user, ip)?;
+        self.check_proof(req, &v, &user, ip)?;
         let (pw, rc) = (v.get("password"), v.get("recovery"));
-        if pw.is_null() && rc.is_null() {
+        let off = v.bool_or("passwordOff", false);
+        if pw.is_null() && rc.is_null() && !off {
             return fail(400, "nothing to change");
         }
+        if off {
+            if !pw.is_null() {
+                return fail(
+                    400,
+                    "\"password\" and \"passwordOff\" contradict each other",
+                );
+            }
+            if user.passkeys.is_empty() {
+                return fail(409, "add a passkey before turning the password off");
+            }
+            // Without the verifier and the password wrapping, the password
+            // opens nothing any more.
+            user.password_off = true;
+            user.verifier = [0; 32];
+            user.master_by_password.clear();
+        }
         if !pw.is_null() {
+            user.password_off = false;
             user.salt = array(pw, "salt")?;
             user.params = params_from(pw.get("params"))?;
             user.verifier = self.verifier(&bytes(pw, "auth", Some(32))?);
@@ -901,7 +1371,8 @@ impl Vault {
         users.insert(me.to_string(), user.clone());
         drop(users);
         crate::info!(
-            "vault: {me} changed{}{}",
+            "vault: {me} changed{}{}{}",
+            if off { " to passkeys only" } else { "" },
             if pw.is_null() { "" } else { " the password" },
             if rc.is_null() {
                 ""
@@ -931,7 +1402,7 @@ impl Vault {
                 .cloned()
                 .ok_or((401, "no such user".to_string()))?
         };
-        self.check_proof(&v, &user, ip)?;
+        self.check_proof(req, &v, &user, ip)?;
         {
             let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
             let ids: Vec<String> = files.keys().cloned().collect();

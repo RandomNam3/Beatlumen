@@ -107,6 +107,53 @@ identity: Ed25519 (signing) + X25519 (receiving file keys), X25519 public key si
    like the current password login. Sessions expire; all sessions end on a
    password change or recovery.
 
+## Passkeys
+
+Passkeys unlock the account without a password, on every platform:
+
+* **Unlocking needs a secret, not only a login.** A passkey proves the
+  user to the server (WebAuthn signature), and its **PRF extension**
+  gives the device a secret that only this passkey produces for this
+  server. HKDF turns it into a key that wraps the master key, once per
+  passkey (`masterByPasskey`). A passkey without PRF support can not
+  unlock the files; the apps say so.
+* The PRF input is a fixed value (`SHA-256("beatlumen passkey prf v1")`):
+  the output differs per passkey and server anyway, and a fixed input
+  allows signing in without typing the user name first.
+* The server checks registrations and signatures itself (ES256, EdDSA,
+  RS256; user verification required; signature counters) and stores per
+  passkey: id, public key, counter, name, the wrapped master key.
+  Passkeys need the server's HTTPS address (`--public-url`), whose host
+  is the WebAuthn relying party.
+* **Password off**: with at least one passkey the user can turn the
+  password off; the server then deletes the password verifier and the
+  password wrapping of the master key. The recovery code always stays (it
+  sets a new password). The last passkey can not be removed while the
+  password is off.
+
+Where passkeys and password managers are used:
+
+* **Browser sign-in page** (`/auth/`, part of the signed web client): it
+  offers passkeys (including a phone via QR code and security keys) and a
+  password form that password managers and browser extensions fill in.
+  It runs the same cryptography (`bl-vault` compiled to WebAssembly) and
+  also manages passkeys and the password switch.
+* **Apps sign in through the browser**: the app creates a one-time
+  X25519 key, opens `/auth/?mode=app&key=…` in the system browser and
+  shows a pairing code derived from that key; the page shows the same
+  code. After unlocking, the page seals the master key and the session to
+  the app's one-time key and hands it back to the app (desktop: a local
+  callback on 127.0.0.1; Android: the `beatlumen://` link). The server
+  only relays ciphertext, and a result can only be opened by the app
+  that started the sign-in.
+* **Android** additionally uses the system's Credential Manager directly
+  (Android 14+): passkeys and saved passwords from the user's provider
+  (Google Password Manager, Bitwarden, …) without leaving the app. The
+  server publishes `/.well-known/assetlinks.json` for the app, which
+  Android requires before an app may use passkeys of a web domain.
+* The **web client** opens the sign-in page in a small window and gets
+  the result the same way.
+
 ## Encrypted files
 
 Each file has a random 256-bit **file key**.
@@ -218,3 +265,6 @@ beatlumen-server release-keygen
 4. Web client integrity (done): manifest and signing in CI, server
    self-check, Subresource Integrity and the WebAssembly hash check,
    verification in the apps.
+5. Passkeys (in progress): WebAuthn with PRF on the server, the sign-in
+   page, the hand-over to the apps, Android's Credential Manager, the
+   password switch.

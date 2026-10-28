@@ -48,6 +48,29 @@ pub struct Config {
     pub registration: bool,
     /// Push endpoints in private networks (and plain http) are allowed.
     pub push_allow_private: bool,
+    /// The server's HTTPS address as users reach it; enables passkeys.
+    pub public_url: Option<String>,
+    /// SHA-256 fingerprints (hex) of Android app signing certificates whose
+    /// apps may use passkeys for this server (besides the official one).
+    pub android_certs: Vec<String>,
+}
+
+impl Config {
+    /// Configured and built-in Android certificate fingerprints.
+    pub fn all_android_certs(&self) -> Vec<String> {
+        let mut v: Vec<String> = official_android_cert().map(str::to_string).into_iter().collect();
+        for c in &self.android_certs {
+            if !v.contains(c) {
+                v.push(c.clone());
+            }
+        }
+        v
+    }
+}
+
+/// The signing certificate of the official Android app (built in).
+pub fn official_android_cert() -> Option<&'static str> {
+    option_env!("BEATLUMEN_ANDROID_CERT_SHA256").filter(|c| c.len() == 64)
 }
 
 impl Default for Config {
@@ -70,6 +93,8 @@ impl Default for Config {
             vault_quota_mb: 10 * 1024,
             registration: true,
             push_allow_private: false,
+            public_url: None,
+            android_certs: Vec::new(),
         }
     }
 }
@@ -151,6 +176,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "BEATLUMEN_CA_FILE",
         "extra root certificates (PEM) for outgoing TLS",
     ),
+    (
+        "BEATLUMEN_PUBLIC_URL",
+        "the server's https:// address as users reach it (passkeys)",
+    ),
+    (
+        "BEATLUMEN_ANDROID_CERTS",
+        "extra Android app certificate fingerprints for passkeys, comma separated",
+    ),
 ];
 
 fn registration(v: &str) -> Result<bool, String> {
@@ -221,6 +254,16 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     if let Some(v) = get("BEATLUMEN_VAULT_QUOTA_MB") {
         cfg.vault_quota_mb = num("BEATLUMEN_VAULT_QUOTA_MB", &v)?;
     }
+    if let Some(v) = get("BEATLUMEN_PUBLIC_URL") {
+        cfg.public_url = Some(v.trim().trim_end_matches('/').to_string());
+    }
+    if let Some(v) = get("BEATLUMEN_ANDROID_CERTS") {
+        cfg.android_certs = v
+            .split([',', ' '])
+            .map(|c| c.trim().replace(':', "").to_ascii_lowercase())
+            .filter(|c| !c.is_empty())
+            .collect();
+    }
     if let Some(v) = get("BEATLUMEN_PUSH_ALLOW_PRIVATE") {
         cfg.push_allow_private = matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on");
     }
@@ -276,7 +319,8 @@ OPTIONS:
     --config FILE           JSON configuration file (keys: music, images, data,
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
-                            vaultQuotaMb, registration, pushAllowPrivate, verbose)
+                            vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
+                            androidCerts, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -285,6 +329,12 @@ OPTIONS:
     --vault-quota-mb MB     Encrypted storage per user; 0 = unlimited [default: 10240]
     --registration MODE     invite: new accounts with an invitation code from
                             `beatlumen-server invite`; off: no new accounts [default: invite]
+    --public-url URL        The server's https:// address as users reach it (e.g. the
+                            reverse proxy's). Enables passkeys, whose relying party
+                            is this host
+    --android-cert SHA256   Fingerprint of an Android app's signing certificate that
+                            may use passkeys for this server (repeatable; the official
+                            app is built in)
     --push-allow-private    Allow push services (UnifiedPush) in private networks and
                             over plain http, e.g. ntfy in the home network
     --verbose               Log every request and per-file scan problems
@@ -301,7 +351,8 @@ ENVIRONMENT:
     BEATLUMEN_RESCAN_INTERVAL, BEATLUMEN_ANALYSIS_MAX_MINUTES,
     BEATLUMEN_SCAN_THREADS, BEATLUMEN_VAULT_PEPPER_FILE,
     BEATLUMEN_VAULT_QUOTA_MB, BEATLUMEN_REGISTRATION,
-    BEATLUMEN_PUSH_ALLOW_PRIVATE, BEATLUMEN_CA_FILE, BEATLUMEN_VERBOSE
+    BEATLUMEN_PUSH_ALLOW_PRIVATE, BEATLUMEN_CA_FILE, BEATLUMEN_PUBLIC_URL,
+    BEATLUMEN_ANDROID_CERTS, BEATLUMEN_VERBOSE
     They override the --config file; command line flags override them.
 
 The server connects only to remote sources you configure (no update checks,
@@ -423,6 +474,26 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     val.as_str().ok_or_else(|| err("expected a path"))?,
                 ))
             }
+            "publicUrl" => {
+                cfg.public_url = Some(
+                    val.as_str()
+                        .ok_or_else(|| err("expected a string"))?
+                        .trim_end_matches('/')
+                        .to_string(),
+                )
+            }
+            "androidCerts" => {
+                cfg.android_certs = val
+                    .as_array()
+                    .ok_or_else(|| err("expected an array of strings"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(|s| s.replace(':', "").to_ascii_lowercase())
+                            .ok_or_else(|| err("expected an array of strings"))
+                    })
+                    .collect::<Result<_, _>>()?
+            }
             "pushAllowPrivate" => {
                 cfg.push_allow_private = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
@@ -497,6 +568,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--vault-pepper-file"
                 | "--vault-quota-mb"
                 | "--registration"
+                | "--public-url"
+                | "--android-cert"
                 | "--days"
         );
         match flag.as_str() {
@@ -556,6 +629,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--vault-quota-mb" => cfg.vault_quota_mb = num(&flag, &v)?,
             "--registration" => cfg.registration = registration(&v)?,
             "--push-allow-private" => cfg.push_allow_private = true,
+            "--public-url" => cfg.public_url = Some(v.trim_end_matches('/').to_string()),
+            "--android-cert" => cfg.android_certs.push(v.replace(':', "").to_ascii_lowercase()),
             "--days" if command.as_deref() == Some("invite") => days = num(&flag, &v)?.clamp(1, 365),
             "--days" => return Err("--days only applies to `invite`".into()),
             _ => {}

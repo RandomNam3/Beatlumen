@@ -44,17 +44,20 @@ pub fn seal(recipient_dh: &[u8; 32], aad: &[u8], msg: &[u8]) -> Result<Vec<u8>, 
 
 /// Opens a box sealed to `identity`.
 pub fn open(identity: &Identity, aad: &[u8], data: &[u8]) -> Result<Vec<u8>, Error> {
+    open_with(identity.dh_secret(), aad, data)
+}
+
+/// Opens a box sealed to the public key of `secret`.
+pub fn open_with(secret: &StaticSecret, aad: &[u8], data: &[u8]) -> Result<Vec<u8>, Error> {
     if data.len() < 32 + aead::OVERHEAD {
         return Err(Error::Decrypt);
     }
     let eph_pub: [u8; 32] = data[..32].try_into().expect("32");
-    let shared = identity
-        .dh_secret()
-        .diffie_hellman(&PublicKey::from(eph_pub));
+    let shared = secret.diffie_hellman(&PublicKey::from(eph_pub));
     if !shared.was_contributory() {
         return Err(Error::Decrypt);
     }
-    let me = PublicKey::from(identity.dh_secret()).to_bytes();
+    let me = PublicKey::from(secret).to_bytes();
     let key = box_key(shared.as_bytes(), &eph_pub, &me);
     aead::open(&key, aad, &data[32..])
 }

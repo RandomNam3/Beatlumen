@@ -156,6 +156,69 @@ fn unwrap_master(kek: &Secret, user: &str, kind: &str, data: &[u8]) -> Result<Se
     out.map_err(|_| Error::Format("master key length"))
 }
 
+/// The fixed PRF input of passkeys (the output differs per passkey and
+/// server anyway; a fixed input allows sign-in without a user name).
+pub fn passkey_prf_input() -> [u8; 32] {
+    sha256(&[b"beatlumen passkey prf v1"])
+}
+
+/// The key a passkey's PRF output wraps the master key with.
+pub fn passkey_kek(prf: &[u8]) -> Result<Secret, Error> {
+    if prf.len() < 32 {
+        return Err(Error::Format("passkey PRF output too short"));
+    }
+    Ok(derive(prf, "beatlumen passkey kek v1"))
+}
+
+fn passkey_kind(credential_id: &[u8]) -> String {
+    let h = sha256(&[credential_id]);
+    let hex: String = h[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!("passkey:{hex}")
+}
+
+/// Wraps the master key for a passkey (`credential_id`, PRF output).
+pub fn wrap_master_for_passkey(
+    user: &str,
+    master: &Secret,
+    credential_id: &[u8],
+    prf: &[u8],
+) -> Result<Vec<u8>, Error> {
+    let user = normalize_user(user)?;
+    wrap_master(
+        &passkey_kek(prf)?,
+        &user,
+        &passkey_kind(credential_id),
+        master,
+    )
+}
+
+/// Unwraps the master key with a passkey's PRF output.
+pub fn unwrap_master_with_passkey(
+    user: &str,
+    credential_id: &[u8],
+    prf: &[u8],
+    wrapped: &[u8],
+) -> Result<Secret, Error> {
+    let user = normalize_user(user)?;
+    unwrap_master(
+        &passkey_kek(prf)?,
+        &user,
+        &passkey_kind(credential_id),
+        wrapped,
+    )
+}
+
+/// Unwraps the master key with the password keys (for the sign-in page,
+/// which hands the master key on instead of keeping an account open).
+pub fn unwrap_master_with_password(
+    user: &str,
+    keys: &PasswordKeys,
+    wrapped: &[u8],
+) -> Result<Secret, Error> {
+    let user = normalize_user(user)?;
+    unwrap_master(&keys.kek, &user, "password", wrapped)
+}
+
 /// Everything the server stores for an account, apart from the verifiers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyBundle {
@@ -252,6 +315,19 @@ impl Account {
         let rk = RecoveryKeys::derive(code);
         let master = unwrap_master(&rk.kek, user, "recovery", &bundle.master_by_recovery)?;
         Account::open(user, master, bundle)
+    }
+
+    /// Opens the account with its master key (from a passkey or the
+    /// browser sign-in).
+    pub fn from_master(user: &str, master: Secret, bundle: &KeyBundle) -> Result<Account, Error> {
+        let user = &normalize_user(user)?;
+        Account::open(user, master, bundle)
+    }
+
+    /// The master key (for wrapping it for a new passkey or handing it to
+    /// an app).
+    pub fn master(&self) -> &Secret {
+        &self.master
     }
 
     fn open(user: &str, master: Secret, bundle: &KeyBundle) -> Result<Account, Error> {
@@ -359,6 +435,25 @@ mod tests {
             p: 1,
         };
         assert!(PasswordKeys::derive("pw", &salt, huge).is_err());
+    }
+
+    #[test]
+    fn passkey_wrapping() {
+        let (acc, reg, _) = Account::register("alice", "correct horse").unwrap();
+        let prf = [5u8; 32];
+        let w = wrap_master_for_passkey("alice", acc.master(), b"cred-1", &prf).unwrap();
+        let m = unwrap_master_with_passkey("Alice", b"cred-1", &prf, &w).unwrap();
+        let back = Account::from_master("alice", m, &reg.bundle).unwrap();
+        assert_eq!(back.identity.public(), acc.identity.public());
+        // Another passkey, another credential id, another user: no.
+        assert!(unwrap_master_with_passkey("alice", b"cred-1", &[6; 32], &w).is_err());
+        assert!(unwrap_master_with_passkey("alice", b"cred-2", &prf, &w).is_err());
+        assert!(unwrap_master_with_passkey("bob", b"cred-1", &prf, &w).is_err());
+        assert!(passkey_kek(&[1; 16]).is_err());
+        let pk =
+            PasswordKeys::derive("correct horse", &reg.bundle.salt, reg.bundle.params).unwrap();
+        let m2 = unwrap_master_with_password("alice", &pk, &reg.bundle.master_by_password).unwrap();
+        assert_eq!(m2, *acc.master());
     }
 
     #[test]
