@@ -1148,6 +1148,9 @@ impl Core {
                         let token = json.str_or("token", "").to_string();
                         self.vault_logged_in(host, token, a, None);
                     }
+                    (403, _) if server_error().contains("disabled") => {
+                        self.vault_fail(self.tr("Registration is disabled on this server"))
+                    }
                     (403, _) => {
                         self.vault_fail(self.tr("The invitation is not valid or has expired"))
                     }

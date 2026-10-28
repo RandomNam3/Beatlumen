@@ -21,6 +21,9 @@ fn main() {
         }
         Action::Run(cfg) => *cfg,
         Action::Invite(cfg, days) => {
+            if !cfg.registration {
+                eprintln!("warning: registration is off (--registration off); this code works only after turning it on");
+            }
             match beatlumen_server::vault::create_invite(&cfg.data_dir, days) {
                 Ok(code) => {
                     println!("{code}");

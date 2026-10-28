@@ -44,6 +44,8 @@ pub struct Config {
     pub vault_pepper_file: Option<PathBuf>,
     /// Encrypted storage per user in MiB (0 = unlimited).
     pub vault_quota_mb: u64,
+    /// New accounts with invitation codes (false: registration is off).
+    pub registration: bool,
 }
 
 impl Default for Config {
@@ -64,6 +66,7 @@ impl Default for Config {
             verbose: false,
             vault_pepper_file: None,
             vault_quota_mb: 10 * 1024,
+            registration: true,
         }
     }
 }
@@ -128,7 +131,19 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "BEATLUMEN_VAULT_QUOTA_MB",
         "encrypted storage per user in MiB, 0 = unlimited",
     ),
+    (
+        "BEATLUMEN_REGISTRATION",
+        "invite: new accounts with invitation codes; off: none",
+    ),
 ];
+
+fn registration(v: &str) -> Result<bool, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "invite" | "on" => Ok(true),
+        "off" => Ok(false),
+        other => Err(format!("registration: expected \"invite\" or \"off\", got \"{other}\"")),
+    }
+}
 
 /// Applies `BEATLUMEN_*` variables (read through `get`) to `cfg`.
 pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Result<(), String> {
@@ -190,6 +205,9 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     if let Some(v) = get("BEATLUMEN_VAULT_QUOTA_MB") {
         cfg.vault_quota_mb = num("BEATLUMEN_VAULT_QUOTA_MB", &v)?;
     }
+    if let Some(v) = get("BEATLUMEN_REGISTRATION") {
+        cfg.registration = registration(&v)?;
+    }
     if let Some(v) = get("BEATLUMEN_VERBOSE") {
         cfg.verbose = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -235,13 +253,15 @@ OPTIONS:
     --config FILE           JSON configuration file (keys: music, images, data,
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
-                            vaultQuotaMb, verbose)
+                            vaultQuotaMb, registration, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
                             container secret) so a copy of the data alone is useless
                             [default: <data>/vault/pepper, created on first start]
     --vault-quota-mb MB     Encrypted storage per user; 0 = unlimited [default: 10240]
+    --registration MODE     invite: new accounts with an invitation code from
+                            `beatlumen-server invite`; off: no new accounts [default: invite]
     --verbose               Log every request and per-file scan problems
     --health-check          Check that the server configured this way answers
                             (exit status 0), for container health checks
@@ -255,7 +275,7 @@ ENVIRONMENT:
     BEATLUMEN_ALLOWED_HOSTS (comma separated), BEATLUMEN_SOURCE_URL,
     BEATLUMEN_RESCAN_INTERVAL, BEATLUMEN_ANALYSIS_MAX_MINUTES,
     BEATLUMEN_SCAN_THREADS, BEATLUMEN_VAULT_PEPPER_FILE,
-    BEATLUMEN_VAULT_QUOTA_MB, BEATLUMEN_VERBOSE
+    BEATLUMEN_VAULT_QUOTA_MB, BEATLUMEN_REGISTRATION, BEATLUMEN_VERBOSE
     They override the --config file; command line flags override them.
 
 The server connects only to remote sources you configure (no update checks,
@@ -377,6 +397,11 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     val.as_str().ok_or_else(|| err("expected a path"))?,
                 ))
             }
+            "registration" => {
+                cfg.registration =
+                    registration(val.as_str().ok_or_else(|| err("expected \"invite\" or \"off\""))?)
+                        .map_err(|e| err(&e))?
+            }
             "vaultQuotaMb" => {
                 cfg.vault_quota_mb = val
                     .as_u64()
@@ -423,6 +448,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--scan-threads"
                 | "--vault-pepper-file"
                 | "--vault-quota-mb"
+                | "--registration"
                 | "--days"
         );
         match flag.as_str() {
@@ -480,6 +506,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--health-check" => health_check = true,
             "--vault-pepper-file" => cfg.vault_pepper_file = Some(PathBuf::from(v)),
             "--vault-quota-mb" => cfg.vault_quota_mb = num(&flag, &v)?,
+            "--registration" => cfg.registration = registration(&v)?,
             "--days" if command.as_deref() == Some("invite") => days = num(&flag, &v)?.clamp(1, 365),
             "--days" => return Err("--days only applies to `invite`".into()),
             _ => {}

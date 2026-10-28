@@ -148,6 +148,7 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_WEB_DIR` | embedded | Web client from a mounted folder instead of the embedded one (a `x.gz` next to a file is sent to browsers that accept gzip) |
 | `BEATLUMEN_VAULT_PEPPER_FILE` | `/data/vault/pepper` | Secret (at least 32 bytes) mixed into the account verifiers. As a secret outside `/data`, a copy of the volume alone does not even allow testing password guesses. Losing it locks every account out (the files stay encrypted and are lost with it) |
 | `BEATLUMEN_VAULT_QUOTA_MB` | `10240` | Encrypted storage per account in MiB, `0` = unlimited |
+| `BEATLUMEN_REGISTRATION` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
 | `BEATLUMEN_VERBOSE` | `false` | `true`: log every request and per-file tag problems |
 
 Without a password the server accepts every client in the network. Set one
@@ -180,6 +181,7 @@ environment variables:
 | `--config FILE` | JSON configuration file (mount it read-only) |
 | `--vault-pepper-file FILE` | Pepper of the account verifiers |
 | `--vault-quota-mb MB` | Encrypted storage per account |
+| `--registration MODE` | `invite` or `off` |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |
 | `--help`, `--version` | |

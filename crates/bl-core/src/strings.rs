@@ -27,6 +27,7 @@ fn de(s: &str) -> Option<&'static str> {
         "Too many attempts; try again later" => "Zu viele Versuche; bitte später erneut versuchen",
         "The invitation is not valid or has expired" => "Die Einladung ist ungültig oder abgelaufen",
         "The user name is taken" => "Der Benutzername ist vergeben",
+        "Registration is disabled on this server" => "Die Registrierung ist auf diesem Server abgeschaltet",
         "Wrong user name or recovery code" => "Falscher Benutzername oder Wiederherstellungscode",
         "Account keys changed" => "Kontoschlüssel geändert",
         "Storage quota exceeded" => "Speicherkontingent überschritten",

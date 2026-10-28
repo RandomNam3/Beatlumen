@@ -435,6 +435,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         &data.root,
         config.vault_pepper_file.as_deref(),
         config.vault_quota_mb.saturating_mul(1024 * 1024),
+        config.registration,
     )?;
     let state = Arc::new(State {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),

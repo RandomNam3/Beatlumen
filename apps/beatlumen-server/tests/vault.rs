@@ -731,6 +731,19 @@ fn restart_quota_limits_and_password_protected_server() {
     let pepper = std::fs::read(data.join("vault/pepper")).unwrap();
     assert_eq!(pepper.len(), 32);
 
+    // Registration switched off: even valid invitations are refused.
+    let s3 = start("closed", |c| c.registration = false);
+    let (_, reg, _) = Account::register("carl", "pw").unwrap();
+    let body = Value::object()
+        .with("invite", s3.invite())
+        .with("user", "carl")
+        .with("auth", b64(reg.auth.as_bytes()))
+        .with("recoveryAuth", b64(reg.recovery_auth.as_bytes()))
+        .with("bundle", bundle_json(&reg.bundle));
+    let (st, v) = s3.call("POST", "/api/vault/register", None, &body);
+    assert_eq!(st, 403);
+    assert!(v.str_or("error", "").contains("disabled"));
+
     // Brute force: the account locks for a while after 10 wrong passwords.
     for _ in 0..10 {
         assert_eq!(login(&s2, "alice", "guess").err(), Some(401));

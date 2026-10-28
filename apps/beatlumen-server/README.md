@@ -36,6 +36,7 @@ installed) or add the server in an Beatlumen app.
 | `--verbose` | off | Log every request and per-file tag problems |
 | `--vault-pepper-file FILE` | `<data>/vault/pepper` | Secret (32+ bytes) mixed into the account verifiers; keep it outside the data folder, e.g. as a container secret |
 | `--vault-quota-mb MB` | `10240` | Encrypted storage per account, `0` = unlimited |
+| `--registration MODE` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
 | `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
 | `-h`, `--help` / `-V`, `--version` | | |
 
@@ -46,7 +47,7 @@ containers): `BEATLUMEN_MUSIC`, `BEATLUMEN_IMAGES` (folders separated like
 secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
 (comma separated), `BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
 `BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
-`BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`,
+`BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`, `BEATLUMEN_REGISTRATION`,
 `BEATLUMEN_VERBOSE`. A container image, `compose.yml` and AppArmor/SELinux
 profiles are in [`container/`](../../container/README.md).
 
@@ -243,7 +244,8 @@ people they share them with can read (design and threat model:
 contents never reach the server; the apps encrypt on the device.
 
 The admin creates invitations on the command line; each code creates one
-account and expires after 7 days (`--days N`):
+account and expires after 7 days (`--days N`). `--registration off` turns
+registration off completely (also for existing codes):
 
 ```sh
 beatlumen-server invite --data /var/lib/beatlumen

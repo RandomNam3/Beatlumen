@@ -31,6 +31,7 @@ services:
       # Secret of the account verifiers, kept out of the data volume.
       BEATLUMEN_VAULT_PEPPER_FILE: /run/secrets/beatlumen_pepper
       BEATLUMEN_VAULT_QUOTA_MB: "${BEATLUMEN_VAULT_QUOTA_MB:-10240}"
+      BEATLUMEN_REGISTRATION: "${BEATLUMEN_REGISTRATION:-invite}"
       # Domain of a reverse proxy (comma separated), e.g. music.example.org
       BEATLUMEN_ALLOWED_HOSTS: "${BEATLUMEN_ALLOWED_HOSTS:-}"
       BEATLUMEN_RESCAN_INTERVAL: "${BEATLUMEN_RESCAN_INTERVAL:-600}"

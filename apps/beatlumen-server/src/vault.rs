@@ -268,6 +268,8 @@ pub struct Vault {
     pepper: Vec<u8>,
     /// Bytes per user (0 = unlimited).
     quota: u64,
+    /// New accounts with invitation codes (off: no new accounts at all).
+    open_registration: bool,
     users: RwLock<HashMap<String, User>>,
     files: RwLock<HashMap<String, FileRec>>,
     sessions: RwLock<HashMap<[u8; 32], Session>>,
@@ -358,7 +360,12 @@ fn load_pepper(file: Option<&Path>, default: &Path) -> Result<Vec<u8>, String> {
 }
 
 impl Vault {
-    pub fn open(data: &Path, pepper_file: Option<&Path>, quota: u64) -> Result<Vault, String> {
+    pub fn open(
+        data: &Path,
+        pepper_file: Option<&Path>,
+        quota: u64,
+        open_registration: bool,
+    ) -> Result<Vault, String> {
         let dir = data.join("vault");
         let users_dir = dir.join("users");
         let files_dir = dir.join("files");
@@ -470,6 +477,7 @@ impl Vault {
             sessions_path,
             pepper,
             quota,
+            open_registration,
             users: RwLock::new(users),
             files: RwLock::new(files),
             sessions: RwLock::new(sessions),
@@ -759,6 +767,9 @@ impl Vault {
     }
 
     fn register(&self, req: &Request, ip: Option<IpAddr>) -> Result<Response, Failure> {
+        if !self.open_registration {
+            return fail(403, "registration is disabled on this server");
+        }
         let v = body(req)?;
         self.check_limits(ip, None)?;
         let name = user_name(&v, "user")?;
