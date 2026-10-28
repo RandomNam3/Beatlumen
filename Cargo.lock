@@ -19,6 +19,13 @@ name = "bl-aac"
 version = "0.1.0"
 
 [[package]]
+name = "bl-airplay"
+version = "0.1.0"
+dependencies = [
+ "bl-media",
+]
+
+[[package]]
 name = "bl-analysis"
 version = "0.1.0"
 
