@@ -164,6 +164,7 @@ impl State {
             track_count: idx.entries.len() as u64,
             scanning: self.scanning(),
             revision: idx.revision,
+            source_url: self.config.source_url.clone(),
         }
     }
 
@@ -423,6 +424,14 @@ pub fn start(config: Config) -> Result<Server, String> {
     info!("web client: {}", state.web.describe());
     if state.auth.required() {
         info!("password protection enabled");
+        if state
+            .config
+            .password
+            .as_ref()
+            .is_some_and(|p| p.chars().count() < 12)
+        {
+            warn!("the password is short: use at least 12 characters if the server is reachable from the internet");
+        }
     } else if !addr.ip().is_loopback() {
         warn!(
             "no password set: anyone who can reach port {} can access the library (use --password)",
@@ -439,10 +448,11 @@ pub fn start(config: Config) -> Result<Server, String> {
     let handler_state = state.clone();
     let handler: Arc<bl_net::server::Handler> =
         Arc::new(move |req| routes::handle(&handler_state, req));
+    // Small bodies everywhere except image uploads.
     let server_config = bl_net::server::ServerConfig {
-        max_connections: 256,
-        max_body: images::MAX_UPLOAD + 1024 * 1024,
-        keep_alive: Duration::from_secs(30),
+        max_body: 4 * 1024 * 1024,
+        large_bodies: vec![("POST", "/api/images", images::MAX_UPLOAD + 1024 * 1024)],
+        ..Default::default()
     };
     let http = std::thread::Builder::new()
         .name("http".into())

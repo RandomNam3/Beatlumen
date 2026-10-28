@@ -27,6 +27,12 @@ pub struct Config {
     /// Seconds between automatic rescans (0 = off).
     pub rescan_interval: u64,
     pub name: String,
+    /// Host names (besides IP addresses, localhost and local network names)
+    /// the server answers to; protects password-less servers against DNS
+    /// rebinding by web pages.
+    pub allowed_hosts: Vec<String>,
+    /// Where users get the source code of this server (AGPL section 13).
+    pub source_url: String,
     /// Longest track (minutes) analysed on the server (0 = unlimited).
     pub analysis_max_minutes: u64,
     /// Worker threads used to read tags during scans (0 = automatic).
@@ -46,6 +52,8 @@ impl Default for Config {
             web_dir: None,
             rescan_interval: 600,
             name: "Beatlumen Server".into(),
+            source_url: bl_net::api::SOURCE_URL.into(),
+            allowed_hosts: Vec::new(),
             analysis_max_minutes: 20,
             scan_threads: 0,
             verbose: false,
@@ -81,12 +89,19 @@ OPTIONS:
     --rescan-interval SECS  Seconds between automatic library rescans; 0 = off
                             [default: 600]
     --name NAME             Server name shown to clients [default: Beatlumen Server]
+    --allow-host NAME       Host name the server may be reached by (repeatable), e.g.
+                            the domain of a reverse proxy. IP addresses, localhost
+                            and names ending in .local/.lan/.home.arpa/.internal
+                            are always accepted
+    --source-url URL        Source code of this server, shown to users. Required by
+                            the AGPL when you run a modified version for others
+                            [default: the official repository]
     --analysis-max-minutes M
                             Longest track analysed on the server; 0 = unlimited
                             [default: 20]
     --scan-threads N        Threads reading tags during scans [default: automatic]
     --config FILE           JSON configuration file (keys: music, images, data,
-                            bind, password, webDir, rescanInterval, name,
+                            bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, verbose)
     --verbose               Log every request and per-file scan problems
     -h, --help              Print this help
@@ -161,6 +176,24 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     .ok_or_else(|| err("expected a string"))?
                     .to_string()
             }
+            "allowedHosts" => {
+                cfg.allowed_hosts = val
+                    .as_array()
+                    .ok_or_else(|| err("expected an array of strings"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(|s| s.to_ascii_lowercase())
+                            .ok_or_else(|| err("expected an array of strings"))
+                    })
+                    .collect::<Result<_, _>>()?
+            }
+            "sourceUrl" => {
+                cfg.source_url = val
+                    .as_str()
+                    .ok_or_else(|| err("expected a string"))?
+                    .to_string()
+            }
             "rescanInterval" => {
                 cfg.rescan_interval = val
                     .as_u64()
@@ -206,6 +239,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--web-dir"
                 | "--rescan-interval"
                 | "--name"
+                | "--source-url"
+                | "--allow-host"
                 | "--config"
                 | "--analysis-max-minutes"
                 | "--scan-threads"
@@ -261,6 +296,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--analysis-max-minutes" => cfg.analysis_max_minutes = num(&flag, &v)?,
             "--scan-threads" => cfg.scan_threads = num(&flag, &v)? as usize,
             "--name" => cfg.name = v,
+            "--source-url" => cfg.source_url = v,
+            "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
             "--verbose" => cfg.verbose = true,
             _ => {}
         }

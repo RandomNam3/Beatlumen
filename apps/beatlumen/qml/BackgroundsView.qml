@@ -52,7 +52,7 @@ ScrollView {
             Layout.leftMargin: 8
             Layout.rightMargin: 8
             spacing: 8
-            Button { text: Theme.tr("Add images"); icon.source: Theme.icon("image"); highlighted: true; onClicked: view.addImages() }
+            AccentButton { text: Theme.tr("Add images"); icon.source: Theme.icon("image"); highlighted: true; onClicked: view.addImages() }
             Button { text: Theme.tr("Add folder"); icon.source: Theme.icon("create_new_folder"); visible: Core.platform !== "web"; onClicked: view.addImageFolder() }
             IconButton { iconName: "skip_previous"; tip: Theme.tr("Previous"); enabled: view.items.length > 1; onClicked: Core.call("backgrounds.prev") }
             IconButton { iconName: "skip_next"; tip: Theme.tr("Next"); enabled: view.items.length > 1; onClicked: Core.call("backgrounds.next") }

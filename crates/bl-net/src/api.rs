@@ -7,6 +7,9 @@ use bl_json::{Map, Value};
 
 pub const API_VERSION: u32 = 1;
 
+/// Official source code repository (AGPL-3.0-or-later).
+pub const SOURCE_URL: &str = "https://github.com/RandomNam3/Beatlumen";
+
 fn s(v: &Value, k: &str) -> String {
     v.get(k).as_str().unwrap_or("").to_string()
 }
@@ -40,6 +43,8 @@ pub struct ServerInfo {
     pub scanning: bool,
     /// Library revision; changes whenever the library changes.
     pub revision: u64,
+    /// Source code of the server's version (AGPL section 13).
+    pub source_url: String,
 }
 
 impl ServerInfo {
@@ -52,6 +57,7 @@ impl ServerInfo {
             .with("trackCount", self.track_count)
             .with("scanning", self.scanning)
             .with("revision", self.revision)
+            .with("sourceUrl", self.source_url.as_str())
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -62,6 +68,7 @@ impl ServerInfo {
             track_count: u(v, "trackCount"),
             scanning: v.bool_or("scanning", false),
             revision: u(v, "revision"),
+            source_url: s(v, "sourceUrl"),
         }
     }
 }
@@ -326,6 +333,10 @@ pub mod paths {
     /// (`{"analysisConfig":..,"noveltyConfigs":..}`), percent-encoded.
     pub fn track_analysis(id: &str, cfg_encoded: &str) -> String {
         format!("/api/tracks/{id}/analysis?cfg={cfg_encoded}")
+    }
+    /// `{"integrated": LUFS or null, "peak": linear}`.
+    pub fn track_loudness(id: &str) -> String {
+        format!("/api/tracks/{id}/loudness")
     }
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")

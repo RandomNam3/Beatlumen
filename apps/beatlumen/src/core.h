@@ -19,6 +19,7 @@ typedef struct BlCallbacks {
     uint32_t (*audio_queued)(void *user);
     void (*audio_clear)(void *user);
     void (*audio_set_paused)(void *user, int32_t paused);
+    void (*audio_set_gain)(void *user, float gain);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);

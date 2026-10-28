@@ -104,12 +104,14 @@ Item {
                         }
 
                         SectionLabel { text: Theme.tr("Overlay") }
-                        RowLayout {
+                        Flow {
+                            Layout.fillWidth: true
                             Layout.leftMargin: 8
+                            Layout.rightMargin: 8
                             spacing: 8
                             Repeater {
                                 model: [{ v: "Spectrum", l: Theme.tr("Spectrum") }, { v: "Waveform", l: Theme.tr("Waveform") }, { v: "None", l: Theme.tr("Off") }]
-                                delegate: Button {
+                                delegate: AccentButton {
                                     text: modelData.l
                                     checkable: true
                                     checked: page.settings.visualizer === modelData.v

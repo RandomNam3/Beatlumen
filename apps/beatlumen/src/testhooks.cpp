@@ -29,6 +29,19 @@ bool effectivelyVisible(QQuickItem *item)
     return true;
 }
 
+// Inside something that scrolls horizontally (overflow there is intended).
+bool inHorizontalScroller(QQuickItem *item)
+{
+    for (QQuickItem *p = item->parentItem(); p; p = p->parentItem()) {
+        if (p->inherits("QQuickFlickable")) {
+            const qreal cw = p->property("contentWidth").toReal();
+            if (cw > p->width() + 1)
+                return true;
+        }
+    }
+    return false;
+}
+
 void collect(QQuickItem *item, QJsonArray &out, QRectF clip)
 {
     if (!item->isVisible() || item->opacity() <= 0.01)
@@ -51,6 +64,9 @@ void collect(QQuickItem *item, QJsonArray &out, QRectF clip)
             o.insert(QStringLiteral("h"), r.height());
             o.insert(QStringLiteral("enabled"), item->isEnabled());
             o.insert(QStringLiteral("button"), item->inherits("QQuickAbstractButton"));
+            // Unclipped extent, to find content wider than the window.
+            o.insert(QStringLiteral("right"), full.right());
+            o.insert(QStringLiteral("hscroll"), inHorizontalScroller(item));
             const QVariant checked = item->property("checked");
             if (checked.isValid())
                 o.insert(QStringLiteral("checked"), checked.toBool());

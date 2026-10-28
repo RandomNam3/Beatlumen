@@ -45,6 +45,7 @@ public:
     Q_INVOKABLE void attachWindow(QQuickWindow *window);
     // Opens files: local paths/URLs, Android content URIs, browser uploads.
     Q_INVOKABLE void openUrls(const QList<QUrl> &urls, bool play = true);
+    void openPaths(const QStringList &paths, bool play);
     // Converts file URLs from dialogs into local paths (content URIs are
     // copied into the cache first).
     Q_INVOKABLE QStringList localPaths(const QList<QUrl> &urls);

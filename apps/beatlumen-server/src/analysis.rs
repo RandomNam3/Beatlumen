@@ -180,6 +180,59 @@ impl Analyzer {
         outcome.map(|a| (*a).clone())
     }
 
+    /// Integrated loudness and peak of a track as JSON
+    /// (`{"integrated": LUFS or null, "peak": linear}`), cached per track.
+    pub fn loudness(&self, e: &Entry) -> Result<String, Failure> {
+        let path = self.dir.join(format!("{}.loudness.json", e.track.id));
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if util::mtime_ns(&meta) >= e.mtime_ns {
+                if let Ok(s) = std::fs::read_to_string(&path) {
+                    return Ok(s);
+                }
+            }
+        }
+        let _permit = self.sem.acquire();
+        let file =
+            std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;
+        let ext = e.ext();
+        let l = util::catch(
+            "loudness",
+            move || -> Result<bl_analysis::loudness::Loudness, Failure> {
+                let src: Box<dyn bl_media::Source> =
+                    Box::new(BufReader::with_capacity(256 * 1024, file));
+                let mut dec = bl_media::open(src, Some(&ext))
+                    .map_err(|err| (415, format!("cannot decode track: {err}")))?;
+                let spec = dec.spec();
+                let mut meter =
+                    bl_analysis::loudness::LoudnessMeter::new(spec.sample_rate, spec.channels);
+                let mut buf = Vec::new();
+                loop {
+                    buf.clear();
+                    match dec.next_chunk(&mut buf) {
+                        Ok(more) => {
+                            meter.push(&buf);
+                            if !more {
+                                break;
+                            }
+                        }
+                        // Measure the decodable part of damaged files.
+                        Err(_) => break,
+                    }
+                }
+                Ok(meter.finish())
+            },
+        )
+        .map_err(|m| (500, m))??;
+        let json = Value::object()
+            .with("integrated", l.integrated)
+            .with("peak", l.peak)
+            .to_json();
+        if let Err(err) = util::write_atomic(&path, json.as_bytes()) {
+            crate::warn!("cannot write loudness cache {}: {err}", path.display());
+        }
+        Ok(json)
+    }
+
     fn compute(&self, e: &Entry, cfg: &AnalysisConfig) -> Result<Vec<u8>, Failure> {
         let file =
             std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;

@@ -5,10 +5,10 @@ use crate::http::{
     percent_decode, read_headers, read_line, status_text, ChunkedReader, Headers, MAX_HEAD,
 };
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct Request {
@@ -138,63 +138,177 @@ pub type Handler = dyn Fn(Request) -> Response + Send + Sync;
 
 pub struct ServerConfig {
     pub max_connections: usize,
+    /// Simultaneous connections per client address (IPv6: per /64);
+    /// loopback (a local reverse proxy) is exempt.
+    pub max_per_ip: usize,
+    /// Largest request body in general.
     pub max_body: usize,
+    /// Larger limits for specific requests: (method, exact path, limit).
+    pub large_bodies: Vec<(&'static str, &'static str, usize)>,
+    /// Idle time allowed between requests on a kept-alive connection.
     pub keep_alive: Duration,
+    /// Time allowed for the request line and headers.
+    pub head_timeout: Duration,
+    /// Minimum upload rate in bytes per second (plus a fixed grace period)
+    /// before a slow body is abandoned.
+    pub min_body_rate: u64,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             max_connections: 256,
-            max_body: 256 * 1024 * 1024,
+            max_per_ip: 32,
+            max_body: 1024 * 1024,
+            large_bodies: Vec::new(),
             keep_alive: Duration::from_secs(30),
+            head_timeout: Duration::from_secs(10),
+            min_body_rate: 16 * 1024,
         }
     }
 }
 
+impl ServerConfig {
+    fn body_limit(&self, method: &str, path: &str) -> usize {
+        self.large_bodies
+            .iter()
+            .find(|(m, p, _)| *m == method && *p == path)
+            .map_or(self.max_body, |(_, _, n)| *n)
+    }
+}
+
+/// Connection counts per client address.
+struct Limits {
+    active: AtomicUsize,
+    per_ip: std::sync::Mutex<std::collections::HashMap<IpAddr, usize>>,
+}
+
+/// Address a connection counts against (IPv6 grouped by /64, since one
+/// client usually owns a whole /64); None for loopback.
+fn ip_bucket(addr: Option<SocketAddr>) -> Option<IpAddr> {
+    let ip = addr?.ip();
+    if ip.is_loopback() {
+        return None;
+    }
+    Some(match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => {
+                let s = v6.segments();
+                IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+            }
+        },
+        v4 => v4,
+    })
+}
+
 /// Accepts connections forever, handling each on its own thread.
 pub fn serve(listener: TcpListener, handler: Arc<Handler>, config: ServerConfig) -> io::Result<()> {
-    let active = Arc::new(AtomicUsize::new(0));
+    let limits = Arc::new(Limits {
+        active: AtomicUsize::new(0),
+        per_ip: Default::default(),
+    });
     let config = Arc::new(config);
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
             Err(_) => continue,
         };
-        if active.load(Ordering::Relaxed) >= config.max_connections {
+        let bucket = ip_bucket(stream.peer_addr().ok());
+        let refused = limits.active.load(Ordering::Relaxed) >= config.max_connections
+            || bucket.is_some_and(|ip| {
+                let mut m = limits.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+                let n = m.entry(ip).or_insert(0);
+                if *n >= config.max_per_ip {
+                    true
+                } else {
+                    *n += 1;
+                    false
+                }
+            });
+        if refused {
             let mut s = stream;
+            let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
             let _ = s.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             continue;
         }
-        active.fetch_add(1, Ordering::Relaxed);
+        limits.active.fetch_add(1, Ordering::Relaxed);
         let handler = handler.clone();
-        let active2 = active.clone();
+        let limits2 = limits.clone();
         let config = config.clone();
+        let release = move |limits: &Limits| {
+            limits.active.fetch_sub(1, Ordering::Relaxed);
+            if let Some(ip) = bucket {
+                let mut m = limits.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(n) = m.get_mut(&ip) {
+                    *n -= 1;
+                    if *n == 0 {
+                        m.remove(&ip);
+                    }
+                }
+            }
+        };
         let spawned = std::thread::Builder::new()
             .name("http-conn".into())
             .spawn(move || {
-                let _ = handle_connection(stream, &*handler, &config);
-                active2.fetch_sub(1, Ordering::Relaxed);
+                let _ = handle_connection(stream, &*handler, &config, &limits2.active);
+                release(&limits2);
             });
         if spawned.is_err() {
-            active.fetch_sub(1, Ordering::Relaxed);
+            release(&limits);
         }
     }
     Ok(())
+}
+
+/// A socket whose reads fail once a deadline has passed (per-read timeouts
+/// alone let a client trickle one byte at a time forever).
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "request too slow"));
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
 }
 
 fn handle_connection(
     stream: TcpStream,
     handler: &Handler,
     config: &ServerConfig,
+    active: &AtomicUsize,
 ) -> io::Result<()> {
     let remote = stream.peer_addr().ok();
-    stream.set_read_timeout(Some(config.keep_alive))?;
     stream.set_write_timeout(Some(Duration::from_secs(60)))?;
     let _ = stream.set_nodelay(true);
     let mut writer = stream.try_clone()?;
-    let mut reader = BufReader::with_capacity(16 * 1024, stream);
+    let mut reader = BufReader::with_capacity(
+        16 * 1024,
+        DeadlineStream {
+            stream,
+            deadline: Instant::now() + config.head_timeout,
+        },
+    );
+    let mut first = true;
     loop {
+        if !first {
+            // Idle keep-alive connections are dropped quickly when the
+            // server is nearly full.
+            let idle = if active.load(Ordering::Relaxed) * 4 >= config.max_connections * 3 {
+                Duration::from_secs(2)
+            } else {
+                config.keep_alive
+            };
+            reader.get_mut().deadline = Instant::now() + idle;
+        }
+        first = false;
         let mut limit = MAX_HEAD;
         let line = match read_line(&mut reader, &mut limit) {
             Ok(Some(l)) => l,
@@ -204,6 +318,7 @@ fn handle_connection(
         if line.is_empty() {
             continue;
         }
+        reader.get_mut().deadline = Instant::now() + config.head_timeout;
         let mut parts = line.split(' ');
         let (method, target, proto) = match (parts.next(), parts.next(), parts.next()) {
             (Some(m), Some(t), Some(p)) => (m.to_string(), t.to_string(), p.to_string()),
@@ -229,15 +344,52 @@ fn handle_connection(
         } else {
             !conn_hdr.contains("close")
         };
-        // Body.
+        let (path, raw_query) = match target.split_once('?') {
+            Some((p, q)) => (p.to_string(), q.to_string()),
+            None => (target.clone(), String::new()),
+        };
+        let path = percent_decode(&path, false);
+        // Body: limited per request, read as it arrives (never allocated
+        // up front from the announced length) and at a minimum rate.
+        let max_body = config.body_limit(&method, &path);
+        let announced = headers.content_length();
+        // Ambiguous framing is rejected (request smuggling through proxies
+        // that interpret it differently).
+        let te = headers.get("transfer-encoding").is_some();
+        let cl = headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+            .count();
+        if (te && (cl > 0 || !headers.is_chunked())) || cl > 1 || (cl == 1 && announced.is_none()) {
+            write_response(
+                &mut writer,
+                Response::text(400, "bad request framing"),
+                false,
+                true,
+            )?;
+            return Ok(());
+        }
+        if announced.is_some_and(|n| n > max_body as u64) {
+            write_response(
+                &mut writer,
+                Response::text(413, "body too large"),
+                false,
+                true,
+            )?;
+            return Ok(());
+        }
+        let expected = announced.unwrap_or(max_body as u64);
+        reader.get_mut().deadline = Instant::now()
+            + Duration::from_secs(30)
+            + Duration::from_secs(expected / config.min_body_rate.max(1));
         let mut body = Vec::new();
         if headers.is_chunked() {
             let mut r = ChunkedReader::new(&mut reader);
             if (&mut r)
-                .take(config.max_body as u64 + 1)
+                .take(max_body as u64 + 1)
                 .read_to_end(&mut body)
                 .is_err()
-                || body.len() > config.max_body
+                || body.len() > max_body
             {
                 write_response(
                     &mut writer,
@@ -247,35 +399,14 @@ fn handle_connection(
                 )?;
                 return Ok(());
             }
-        } else if let Some(n) = headers.content_length() {
-            if n as usize > config.max_body {
-                write_response(
-                    &mut writer,
-                    Response::text(413, "body too large"),
-                    false,
-                    true,
-                )?;
-                return Ok(());
-            }
-            body.resize(n as usize, 0);
-            if reader.read_exact(&mut body).is_err() {
+        } else if let Some(n) = announced {
+            if (&mut reader).take(n).read_to_end(&mut body).is_err() || body.len() as u64 != n {
                 return Ok(());
             }
         }
-        if headers
-            .get("expect")
-            .is_some_and(|v| v.eq_ignore_ascii_case("100-continue"))
-        {
-            // Bodies were already read; clients that wait for 100 continue
-            // after a timeout anyway.
-        }
-        let (path, raw_query) = match target.split_once('?') {
-            Some((p, q)) => (p.to_string(), q.to_string()),
-            None => (target.clone(), String::new()),
-        };
         let req = Request {
             method: method.clone(),
-            path: percent_decode(&path, false),
+            path,
             query: crate::http::parse_query(&raw_query),
             raw_query,
             headers,
@@ -350,6 +481,85 @@ fn write_response(
 mod tests {
     use super::*;
     use crate::client;
+
+    /// Sends raw bytes and returns the response text (until close/timeout).
+    fn raw(addr: SocketAddr, data: &[u8], wait: Duration) -> String {
+        let mut s = TcpStream::connect(addr).unwrap();
+        s.set_read_timeout(Some(wait)).unwrap();
+        s.write_all(data).unwrap();
+        let mut out = Vec::new();
+        let _ = s.read_to_end(&mut out);
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[test]
+    fn hostile_requests_are_limited() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handler: Arc<Handler> =
+            Arc::new(|req: Request| Response::text(200, &req.body.len().to_string()));
+        let config = ServerConfig {
+            max_body: 1000,
+            large_bodies: vec![("POST", "/upload", 100_000)],
+            head_timeout: Duration::from_millis(300),
+            ..Default::default()
+        };
+        std::thread::spawn(move || serve(listener, handler, config));
+        let w = Duration::from_secs(5);
+        // Announced bodies above the route's limit are refused before reading.
+        let r = raw(
+            addr,
+            b"POST /x HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n",
+            w,
+        );
+        assert!(r.starts_with("HTTP/1.1 413"), "{r}");
+        let r = raw(
+            addr,
+            b"POST /upload HTTP/1.1\r\nContent-Length: 5000\r\nConnection: close\r\n\r\n",
+            Duration::from_millis(200),
+        );
+        assert!(r.is_empty(), "upload route accepts larger bodies: {r}");
+        // Ambiguous framing.
+        let r = raw(
+            addr,
+            b"POST /x HTTP/1.1\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\nabc",
+            w,
+        );
+        assert!(r.starts_with("HTTP/1.1 400"), "{r}");
+        let r = raw(addr, b"POST /x HTTP/1.1\r\nContent-Length: abc\r\n\r\n", w);
+        assert!(r.starts_with("HTTP/1.1 400"), "{r}");
+        // A head that trickles in is cut off after the head timeout.
+        let mut s = TcpStream::connect(addr).unwrap();
+        s.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+        let t = std::time::Instant::now();
+        let mut closed = false;
+        for _ in 0..40 {
+            if s.write_all(b"X").is_err() {
+                closed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            closed && t.elapsed() < Duration::from_secs(2),
+            "slow head not dropped"
+        );
+        // A normal request still works.
+        let r = raw(
+            addr,
+            b"POST /x HTTP/1.1\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+            w,
+        );
+        assert!(r.starts_with("HTTP/1.1 200") && r.ends_with("3"), "{r}");
+    }
+
+    #[test]
+    fn ipv6_clients_are_grouped_by_prefix() {
+        let a: SocketAddr = "[2001:db8:1:2:aaaa::1]:5".parse().unwrap();
+        let b: SocketAddr = "[2001:db8:1:2:bbbb::7]:9".parse().unwrap();
+        assert_eq!(ip_bucket(Some(a)), ip_bucket(Some(b)));
+        assert_eq!(ip_bucket(Some("127.0.0.1:1".parse().unwrap())), None);
+    }
 
     #[test]
     fn end_to_end_with_client() {

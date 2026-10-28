@@ -24,6 +24,15 @@ QtObject {
     readonly property color textDim: dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
     readonly property color textFaint: dark ? Qt.rgba(1, 1, 1, 0.42) : Qt.rgba(0, 0, 0, 0.40)
     readonly property color danger: "#ef5350"
+    // Text/icon colour on top of the accent colour.
+    readonly property color onAccent: onColor(accent)
+
+    // Black or white, whichever contrasts more with `c` (WCAG luminance).
+    function onColor(c) {
+        const lin = (v) => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+        const l = 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+        return l > 0.179 ? "#1b1a20" : "#ffffff"
+    }
 
     // Touch friendly metrics (device independent pixels).
     readonly property int touch: 48
@@ -180,8 +189,14 @@ QtObject {
         "Render resolution": "Render-Auflösung",
         "About": "Über",
         "Licenses": "Lizenzen",
+        "Source code": "Quellcode",
+        "Playback": "Wiedergabe",
+        "Normalize volume": "Lautstärke angleichen",
+        "Plays all songs at a similar loudness. Each song is measured once when it is first played.": "Spielt alle Titel ähnlich laut ab. Jeder Titel wird beim ersten Abspielen einmal vermessen.",
+        "Copy link": "Link kopieren",
         "Choose folder": "Ordner wählen",
         "Use this folder": "Diesen Ordner verwenden",
+        "Select folder": "Auswählen",
         "Allow access to music": "Zugriff auf Musik erlauben",
         "Beatlumen needs access to your music and pictures to show your library.": "Beatlumen braucht Zugriff auf deine Musik und Bilder, um deine Bibliothek anzuzeigen.",
         "Allow": "Erlauben",

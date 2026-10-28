@@ -29,7 +29,7 @@ Dialog {
         RowLayout {
             Layout.alignment: Qt.AlignRight
             Button { text: Theme.tr("Cancel"); flat: true; onClicked: dlg.close() }
-            Button {
+            AccentButton {
                 text: dlg.acceptText
                 highlighted: true
                 enabled: field.text.length > 0

@@ -36,7 +36,7 @@ impl Headers {
     }
     pub fn is_chunked(&self) -> bool {
         self.get("transfer-encoding")
-            .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("chunked"))
     }
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))

@@ -7,7 +7,7 @@
 // thread; everything here then runs on the Android main thread. User actions
 // go back to C++ through the native methods registered by android_media.cpp.
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package io.github.randomnam3.beatlumen;
 

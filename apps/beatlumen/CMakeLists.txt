@@ -83,7 +83,9 @@ target_compile_definitions(beatlumen PRIVATE BL_VERSION="${PROJECT_VERSION}")
 file(GLOB BL_QML RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS qml/*.qml)
 # File pickers: Qt Quick Dialogs on desktop; the system document picker on
 # Android and in the browser (keeps the other Qt Quick Controls styles out).
-if(ANDROID OR EMSCRIPTEN)
+# BL_MOBILE_DIALOGS=ON uses the mobile variant on desktop (for testing).
+option(BL_MOBILE_DIALOGS "Use the mobile file pickers on desktop" OFF)
+if(ANDROID OR EMSCRIPTEN OR BL_MOBILE_DIALOGS)
     list(APPEND BL_QML platform/mobile/PlatformDialogs.qml)
 else()
     # Kept as .qml.in so that the import scanner of mobile builds, which scans

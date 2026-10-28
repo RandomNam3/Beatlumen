@@ -44,6 +44,8 @@ pub struct BlCallbacks {
     pub audio_queued: Option<unsafe extern "C" fn(user: *mut c_void) -> u32>,
     pub audio_clear: Option<unsafe extern "C" fn(user: *mut c_void)>,
     pub audio_set_paused: Option<unsafe extern "C" fn(user: *mut c_void, paused: i32)>,
+    /// Push audio: output gain (volume × normalization), applied smoothly.
+    pub audio_set_gain: Option<unsafe extern "C" fn(user: *mut c_void, gain: f32)>,
 }
 
 /// The audio source pulled by the UI's audio thread.
@@ -347,6 +349,12 @@ impl Host for UiHost {
         if let Some(f) = self.cb.audio_set_paused {
             // SAFETY: UI callback contract.
             unsafe { f(self.cb.user, paused as i32) }
+        }
+    }
+    fn audio_set_gain(&mut self, gain: f32) {
+        if let Some(f) = self.cb.audio_set_gain {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user, gain) }
         }
     }
     fn audio_is_push(&self) -> bool {

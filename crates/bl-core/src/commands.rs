@@ -941,6 +941,9 @@ impl Core {
         if old.adaptive != self.settings.adaptive {
             self.engine.set_adaptive(self.settings.adaptive);
         }
+        if old.normalize != self.settings.normalize {
+            self.apply_normalization(host);
+        }
         if old.library_folders != self.settings.library_folders {
             self.rescan_local();
         }

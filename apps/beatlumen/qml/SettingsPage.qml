@@ -24,23 +24,30 @@ Item {
 
             // ---- appearance -------------------------------------------------
             SectionLabel { text: Theme.tr("Appearance") }
-            RowLayout {
+            ColumnLayout {
+                Layout.fillWidth: true
                 Layout.leftMargin: 16
-                spacing: 8
-                Label { text: Theme.tr("Theme"); color: Theme.text; Layout.preferredWidth: 120 }
-                Repeater {
-                    model: [{ v: "system", l: Theme.tr("System") }, { v: "light", l: Theme.tr("Light") }, { v: "dark", l: Theme.tr("Dark") }]
-                    delegate: Button {
-                        text: modelData.l
-                        checkable: true
-                        flat: !checked
-                        highlighted: checked
-                        checked: (page.ui.theme || "system") === modelData.v
-                        onClicked: Core.call("settings.set", { key: "ui.theme", value: modelData.v })
+                Layout.rightMargin: 16
+                spacing: 4
+                Label { text: Theme.tr("Theme"); color: Theme.text }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Repeater {
+                        model: [{ v: "system", l: Theme.tr("System") }, { v: "light", l: Theme.tr("Light") }, { v: "dark", l: Theme.tr("Dark") }]
+                        delegate: AccentButton {
+                            text: modelData.l
+                            checkable: true
+                            flat: !checked
+                            highlighted: checked
+                            checked: (page.ui.theme || "system") === modelData.v
+                            onClicked: Core.call("settings.set", { key: "ui.theme", value: modelData.v })
+                        }
                     }
                 }
             }
             ColumnLayout {
+                Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
                 spacing: 8
@@ -60,7 +67,14 @@ Item {
                                 color: modelData === "" ? Core.systemAccent : modelData
                                 border.width: (page.ui.accent || "") === modelData ? 3 : 0
                                 border.color: Theme.text
-                                Icon { anchors.centerIn: parent; visible: modelData === ""; name: "hdr_auto"; color: "white"; size: 20 }
+                                Icon {
+                                    anchors.centerIn: parent
+                                    readonly property bool selected: (page.ui.accent || "") === modelData
+                                    visible: modelData === "" || selected
+                                    name: modelData === "" ? "hdr_auto" : "check"
+                                    color: Theme.onColor(parent.color)
+                                    size: 20
+                                }
                             }
                         }
                     }
@@ -79,6 +93,16 @@ Item {
                 }
             }
 
+            // ---- playback ---------------------------------------------------
+            SectionLabel { text: Theme.tr("Playback") }
+            SwitchRow {
+                Layout.fillWidth: true
+                title: Theme.tr("Normalize volume")
+                detail: Theme.tr("Plays all songs at a similar loudness. Each song is measured once when it is first played.")
+                on: page.settings.normalize === true
+                onSwitched: (on) => Core.call("settings.set", { key: "normalize", value: on })
+            }
+
             // ---- library ----------------------------------------------------
             SectionLabel { text: Theme.tr("Music folders"); visible: Core.platform !== "web" }
             Repeater {
@@ -93,9 +117,12 @@ Item {
                     }
                 }
             }
-            RowLayout {
+            Flow {
                 visible: Core.platform !== "web"
+                Layout.fillWidth: true
                 Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                spacing: 4
                 Button { text: Theme.tr("Add music folder"); icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
                 Button { text: Theme.tr("Rescan"); icon.source: Theme.icon("refresh"); flat: true; onClicked: Core.call("library.rescan") }
                 Button {
@@ -133,10 +160,13 @@ Item {
                     inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
                     onAccepted: Core.call("server.connect", { url: text })
                 }
-                Button { text: Theme.tr("Connect"); highlighted: true; onClicked: Core.call("server.connect", { url: url.text }) }
+                AccentButton { text: Theme.tr("Connect"); highlighted: true; onClicked: Core.call("server.connect", { url: url.text }) }
             }
-            RowLayout {
+            Flow {
+                Layout.fillWidth: true
                 Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                spacing: 4
                 Button { visible: page.server === "login"; text: Theme.tr("Log in"); icon.source: Theme.icon("login"); onClicked: page.login() }
                 Button { visible: page.server === "connected" && page.settings.serverToken !== ""; text: Theme.tr("Log out"); flat: true; icon.source: Theme.icon("logout"); onClicked: Core.call("server.logout") }
                 Button { visible: Core.platform !== "web" && page.server !== "disabled"; text: Theme.tr("Disconnect"); flat: true; icon.source: Theme.icon("cloud_off"); onClicked: Core.call("server.disconnect") }
@@ -176,7 +206,25 @@ Item {
                 ColumnLayout {
                     spacing: 2
                     Label { text: "Beatlumen " + Core.version; font.pixelSize: 18; font.weight: Font.Bold; color: Theme.text }
-                    Label { text: "GNU GPL v3.0 or later"; color: Theme.textDim }
+                    Label { text: "GNU AGPL v3.0 or later"; color: Theme.textDim }
+                }
+            }
+            // AGPL: users get the source code of the version they use.
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 8
+                Label {
+                    Layout.fillWidth: true
+                    text: Theme.tr("Source code") + ": " + (Core.state.sourceUrl || "")
+                    color: Theme.textDim
+                    wrapMode: Text.WrapAnywhere
+                }
+                Button {
+                    text: Theme.tr("Copy link")
+                    flat: true
+                    icon.source: Theme.icon("content_copy")
+                    onClicked: Core.copyText(Core.state.sourceUrl || "")
                 }
             }
             Label {

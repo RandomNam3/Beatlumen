@@ -128,6 +128,8 @@ pub struct Settings {
     pub intensity: f32,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
+    /// Play all tracks at a similar loudness (EBU R128 measurement).
+    pub normalize: bool,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -164,6 +166,7 @@ impl Default for Settings {
             waveform_thickness: 0.3,
             intensity: 1.0,
             adaptive: true,
+            normalize: false,
             ui: Value::object(),
         }
     }
@@ -218,6 +221,7 @@ impl Settings {
                 .clamp(0.0, 0.99),
             intensity: v.f32_or("intensity", d.intensity).clamp(0.0, 2.0),
             adaptive: v.bool_or("adaptive", d.adaptive),
+            normalize: v.bool_or("normalize", d.normalize),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -257,6 +261,7 @@ impl Settings {
             .with("waveformThickness", self.waveform_thickness)
             .with("intensity", self.intensity)
             .with("adaptive", self.adaptive)
+            .with("normalize", self.normalize)
             .with("ui", self.ui.clone())
     }
 }

@@ -119,6 +119,9 @@ pub trait Host {
     /// Push based audio (web): pause/resume the output without dropping
     /// queued audio.
     fn audio_set_paused(&mut self, _paused: bool) {}
+    /// Push based audio (web): output gain (volume and normalization),
+    /// applied smoothly by the host.
+    fn audio_set_gain(&mut self, _gain: f32) {}
     /// Whether audio is pull based ([`Host::audio_start`]) or push based.
     fn audio_is_push(&self) -> bool {
         false

@@ -1,9 +1,9 @@
 # Third-party notices
 
-Beatlumen is licensed under the GNU General Public License v3.0 or later (see
-`LICENSE`). It uses no external libraries at build time; the following
+Beatlumen is licensed under the GNU Affero General Public License v3.0 or
+later (see `LICENSE`). It uses no external libraries at build time; the following
 third-party works were ported or embedded. All of them are under licenses
-compatible with GPL-3.0. Each crate's `NOTICE` file lists exactly which files
+compatible with AGPL-3.0. Each crate's `NOTICE` file lists exactly which files
 contain the ported code and carries the full license text where required.
 
 | Work | Used in | License |

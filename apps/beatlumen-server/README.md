@@ -48,6 +48,7 @@ file. Relative paths in the file are resolved against the file's folder.
   "webDir": "/opt/beatlumen/web",
   "rescanInterval": 600,
   "name": "Living Room",
+  "sourceUrl": "https://github.com/RandomNam3/Beatlumen",
   "analysisMaxMinutes": 20,
   "scanThreads": 0,
   "verbose": false
@@ -55,6 +56,10 @@ file. Relative paths in the file are resolved against the file's folder.
 ```
 
 Logs go to stderr with UTC timestamps.
+
+`sourceUrl` / `--source-url` is the link to the source code shown to users
+(Settings → About). Beatlumen is licensed under the AGPL-3.0-or-later: if you
+run a modified server for others, point it to the source of your version.
 
 ### Web client
 
@@ -82,7 +87,8 @@ beatlumen-data/
   presets/<name>.hfx    shared presets
   uploads/              uploaded background images
   cache/covers/         <track id>_<size>_<stamp>.jpg cover thumbnails
-  cache/analysis/       <track id>_<config key>.ocan analysis blobs
+  cache/analysis/       <track id>_<config key>.ocan analysis blobs,
+                        <track id>.loudness.json loudness measurements
   cache/images/         <image id>_<size>_<stamp>.jpg scaled backgrounds
 ```
 
@@ -140,7 +146,7 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/info` | `ServerInfo` (always public) |
+| `GET /api/info` | `ServerInfo` (always public), including `sourceUrl` |
 | `POST /api/login` | body `{"password": "..."}` → `{"token": "..."}`; 401 on a wrong password. Without a configured password it returns `{"token": ""}` |
 | `POST /api/logout` | revokes the presented token → 204 |
 | `GET /api/library` | `Library`. `ETag: "<revision>"`; `If-None-Match` → 304 |
@@ -149,6 +155,7 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 | `GET /api/tracks/{id}/cover?size=N` | JPEG thumbnail (N clamped to 32..1024, default 300; never upscaled); 404 without cover; `ETag` |
 | `GET /api/albums/{id}/cover?size=N` | cover of the album's `coverTrack` |
 | `GET /api/tracks/{id}/analysis?cfg=...` | `application/octet-stream` blob of `bl_analysis::encode`. `cfg` is the percent-encoded JSON `{"analysisConfig":{..},"noveltyConfigs":{..}}` of a preset (optional: defaults) |
+| `GET /api/tracks/{id}/loudness` | `{"integrated": LUFS or null, "peak": linear}`: integrated loudness after EBU R128, used by clients for volume normalization (measured on first request, then cached) |
 | `GET /api/playlists` | all playlists **including their items** |
 | `POST /api/playlists` | body `{"name", "kind": "track"\|"background", "items"?}` → 201 `Playlist` |
 | `GET /api/playlists/{id}` | `Playlist` |

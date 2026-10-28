@@ -1525,3 +1525,93 @@ fn garbage_requests_are_rejected_cleanly() {
         assert!(e.path().is_file());
     }
 }
+
+/// Raw request (custom Host/Origin headers); returns the status code.
+fn raw_status(srv: &Srv, method: &str, path: &str, headers: &[(&str, &str)]) -> u16 {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(srv.server.addr).unwrap();
+    let mut req = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\nContent-Length: 2\r\n");
+    for (k, v) in headers {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n{}");
+    s.write_all(req.as_bytes()).unwrap();
+    let mut out = String::new();
+    let _ = s.read_to_string(&mut out);
+    out.split(' ')
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0)
+}
+
+#[test]
+fn foreign_hosts_and_cross_site_writes_are_refused() {
+    let root = temp_dir("origin");
+    let music = root.join("music");
+    std::fs::create_dir_all(&music).unwrap();
+    let mut cfg = config(vec![music], vec![], &root.join("data"), None, None);
+    cfg.allowed_hosts = vec!["music.example.org".into()];
+    let srv = start(cfg);
+    let host = srv.server.addr.to_string();
+    // DNS rebinding: a web page's own name pointing at the server.
+    assert_eq!(
+        raw_status(&srv, "GET", "/api/library", &[("Host", "attacker.example")]),
+        421
+    );
+    for ok in [
+        host.as_str(),
+        "localhost:7878",
+        "nas.local",
+        "music.example.org",
+        "[::1]:7878",
+    ] {
+        assert_eq!(
+            raw_status(&srv, "GET", "/api/info", &[("Host", ok)]),
+            200,
+            "{ok}"
+        );
+    }
+    // Cross-site writes (CSRF), also with an allowed host name.
+    let origin = format!("http://{host}");
+    assert_eq!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[("Host", &host), ("Origin", "http://evil.example")]
+        ),
+        403
+    );
+    assert_eq!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[("Host", &host), ("Sec-Fetch-Site", "cross-site")]
+        ),
+        403
+    );
+    assert_eq!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[("Host", &host), ("Origin", "null")]
+        ),
+        403
+    );
+    // Same-origin writes from the web app and writes from native clients work.
+    assert_ne!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[("Host", &host), ("Origin", &origin)]
+        ),
+        403
+    );
+    assert_ne!(
+        raw_status(&srv, "POST", "/api/playlists", &[("Host", &host)]),
+        403
+    );
+}

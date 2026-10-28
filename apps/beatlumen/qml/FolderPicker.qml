@@ -14,13 +14,18 @@ Dialog {
 
     title: Theme.tr("Choose folder")
     modal: true
-    anchors.centerIn: Overlay.overlay
+    // Always sized against the window (the dialog may be declared inside a
+    // zero-sized helper item).
+    parent: Overlay.overlay
+    anchors.centerIn: parent
     width: Math.min(520, (parent ? parent.width : 520) - 24)
     height: Math.min(640, (parent ? parent.height : 640) - 48)
     padding: 0
     standardButtons: Dialog.NoButton
 
     function show() {
+        if (Core.platform === "android")
+            Core.requestMediaPermission()
         roots = Core.call("fs.roots") || []
         path = ""
         entries = []
@@ -68,8 +73,8 @@ Dialog {
             Layout.alignment: Qt.AlignRight
             Layout.margins: 12
             Button { text: Theme.tr("Cancel"); flat: true; onClicked: dlg.close() }
-            Button {
-                text: Theme.tr("Use this folder")
+            AccentButton {
+                text: Theme.tr("Select folder")
                 highlighted: true
                 enabled: dlg.path !== ""
                 onClicked: { dlg.chosen(dlg.path); dlg.close() }

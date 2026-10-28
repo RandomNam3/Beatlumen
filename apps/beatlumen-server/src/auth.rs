@@ -41,6 +41,8 @@ pub struct Auth {
     check: String,
     tokens: RwLock<TokenStore>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    /// Serializes password checks.
+    check_lock: Mutex<()>,
 }
 
 pub enum LoginError {
@@ -93,6 +95,7 @@ impl Auth {
             check,
             tokens: RwLock::new(TokenStore { order: list, set }),
             failures: Mutex::new(HashMap::new()),
+            check_lock: Mutex::new(()),
         };
         if password.is_some() {
             auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()).order);
@@ -163,7 +166,18 @@ impl Auth {
             .get("password")
             .as_str()
             .ok_or_else(|| LoginError::BadRequest("missing \"password\"".into()))?;
-        let ip = remote.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+        // IPv6 clients usually own a whole /64: count them per prefix.
+        let ip = match remote.unwrap_or(IpAddr::from([0, 0, 0, 0])) {
+            IpAddr::V6(v6) if v6.to_ipv4_mapped().is_none() => {
+                let s = v6.segments();
+                IpAddr::V6(std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+            }
+            IpAddr::V6(v6) => IpAddr::V4(
+                v6.to_ipv4_mapped()
+                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED),
+            ),
+            v4 => v4,
+        };
         {
             let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
             f.retain(|_, (_, t)| t.elapsed() < FAILURE_WINDOW);
@@ -171,14 +185,21 @@ impl Auth {
                 return Err(LoginError::TooMany);
             }
         }
+        // Password checks run one at a time and a wrong one costs
+        // FAILURE_DELAY, so guessing is slow however many addresses an
+        // attacker uses.
+        let _serial = self.check_lock.lock().unwrap_or_else(|e| e.into_inner());
         if !ct_eq(&sha256(pw.as_bytes()), &expected) {
-            {
+            let recent: u32 = {
                 let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
                 let e = f.entry(ip).or_insert((0, Instant::now()));
                 e.0 += 1;
-            }
+                f.values().map(|(n, _)| *n).sum()
+            };
             crate::warn!("failed login from {ip}");
-            std::thread::sleep(FAILURE_DELAY);
+            // Many failures overall (e.g. from many addresses): slow down
+            // further, up to 3 s per attempt.
+            std::thread::sleep(FAILURE_DELAY * (1 + recent / 20).min(10));
             return Err(LoginError::Wrong);
         }
         let token = crate::random::hex(16)

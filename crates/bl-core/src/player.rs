@@ -216,6 +216,33 @@ impl Tap {
     }
 }
 
+/// Loudness normalization gain of the output.
+struct Norm {
+    /// Applied gain (follows `target` smoothly).
+    gain: f32,
+    target: f32,
+    /// False while the current track's gain is being measured.
+    known: bool,
+    /// Until then, playback of a new track waits for its gain.
+    hold_until: Option<std::time::Instant>,
+    /// First output frame of the next (gapless) track and its gain.
+    next_at: Option<u64>,
+    next: Option<f32>,
+}
+
+impl Default for Norm {
+    fn default() -> Norm {
+        Norm {
+            gain: 1.0,
+            target: 1.0,
+            known: true,
+            hold_until: None,
+            next_at: None,
+            next: None,
+        }
+    }
+}
+
 struct Ring {
     samples: VecDeque<f32>,
     /// Output frame index (since track start) of the first queued frame.
@@ -229,6 +256,7 @@ pub struct Output {
     paused: AtomicBool,
     volume: AtomicU32,
     current_gain: Mutex<f32>,
+    norm: Mutex<Norm>,
     /// Output frame index (since track start, including the seek base) of
     /// the last frame handed to the device.
     played: AtomicU64,
@@ -251,6 +279,7 @@ impl Output {
             paused: AtomicBool::new(true),
             volume: AtomicU32::new(0.5f32.to_bits()),
             current_gain: Mutex::new(0.0),
+            norm: Mutex::new(Norm::default()),
             played: AtomicU64::new(0),
             latency: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
@@ -310,9 +339,25 @@ impl AudioSource for Output {
             }
             return;
         }
+        let mut norm = self.norm.lock().unwrap_or_else(|e| e.into_inner());
+        if !norm.known {
+            if norm
+                .hold_until
+                .is_some_and(|t| std::time::Instant::now() < t)
+            {
+                // Wait (without consuming) until the new track's gain is known.
+                out.fill(0.0);
+                return;
+            }
+            // Measuring takes longer: keep the previous gain for now.
+            norm.known = true;
+            norm.hold_until = None;
+        }
         let frames = out.len() / 2;
         let mut taken = 0usize;
+        let mut first_frame = 0;
         if let Ok(mut r) = self.ring.lock() {
+            first_frame = r.next_frame;
             let avail = r.samples.len() / 2;
             taken = avail.min(frames);
             for i in 0..taken * 2 {
@@ -329,16 +374,28 @@ impl AudioSource for Output {
         if let Ok(mut t) = self.tap.lock() {
             t.push_stereo(&out[..taken * 2]);
         }
-        // Smooth gain changes (pause/resume fades, volume changes).
-        let step = 1.0 / (0.02 * self.sample_rate.load(Ordering::Relaxed).max(1) as f32);
-        for f in out[..taken * 2].chunks_exact_mut(2) {
+        // Smooth gain changes (pause/resume fades, volume changes); the
+        // normalization gain follows within ~0.25 s and switches exactly at
+        // the first frame of a gapless next track.
+        let rate = self.sample_rate.load(Ordering::Relaxed).max(1) as f32;
+        let step = 1.0 / (0.02 * rate);
+        let follow = 1.0 / (0.25 * rate);
+        for (i, f) in out[..taken * 2].chunks_exact_mut(2).enumerate() {
+            if norm.next_at.is_some_and(|at| first_frame + i as u64 >= at) {
+                norm.next_at = None;
+                if let Some(g) = norm.next.take() {
+                    norm.target = g;
+                    norm.gain = g;
+                }
+            }
+            norm.gain += (norm.target - norm.gain) * follow;
             if gain < target {
                 gain = (gain + step).min(target);
             } else if gain > target {
                 gain = (gain - step).max(target);
             }
             // Perceptual volume curve.
-            let g = gain * gain;
+            let g = gain * gain * norm.gain;
             f[0] *= g;
             f[1] *= g;
         }
@@ -433,6 +490,9 @@ pub struct Player {
     error: Option<String>,
     scratch: Vec<f32>,
     pending_seek: Option<f64>,
+    /// Normalization gain (push audio) and the gain last sent to the host.
+    norm_gain: f32,
+    sent_gain: f32,
 }
 
 impl Default for Player {
@@ -460,6 +520,8 @@ impl Player {
             error: None,
             scratch: Vec::new(),
             pending_seek: None,
+            norm_gain: 1.0,
+            sent_gain: -1.0,
         }
     }
 
@@ -495,6 +557,37 @@ impl Player {
 
     pub fn volume(&self) -> f32 {
         self.volume
+    }
+
+    /// Sets the loudness normalization gain of the current track; None
+    /// while it is being measured (with `hold`, a newly loaded track waits
+    /// up to a second for it instead of starting at the previous gain).
+    pub fn set_gain(&mut self, gain: Option<f32>, hold: bool) {
+        if let Some(g) = gain {
+            self.norm_gain = g;
+        }
+        if let Ok(mut n) = self.output.norm.lock() {
+            match gain {
+                Some(g) => {
+                    n.target = g;
+                    n.known = true;
+                    n.hold_until = None;
+                }
+                None => {
+                    n.known = false;
+                    n.hold_until =
+                        hold.then(|| std::time::Instant::now() + std::time::Duration::from_secs(1));
+                }
+            }
+        }
+    }
+
+    /// Normalization gain of the preloaded next track (None = unknown, the
+    /// current gain is kept).
+    pub fn set_next_gain(&mut self, gain: Option<f32>) {
+        if let Ok(mut n) = self.output.norm.lock() {
+            n.next = gain;
+        }
     }
 
     pub fn set_volume(&mut self, v: f32) {
@@ -602,6 +695,10 @@ impl Player {
             let (etx, erx) = std::sync::mpsc::channel();
             let output = self.output.clone();
             output.reset(0);
+            if let Ok(mut n) = output.norm.lock() {
+                n.next_at = None;
+                n.next = None;
+            }
             output.paused.store(!autoplay, Ordering::Relaxed);
             std::thread::Builder::new()
                 .name("bl-decoder".into())
@@ -782,6 +879,14 @@ impl Player {
                 self.events.push(PlayerEvent::Ended);
             }
         }
+        if self.push.is_some() {
+            // Push audio: the host applies volume and normalization.
+            let g = self.volume * self.volume * self.norm_gain;
+            if g != self.sent_gain {
+                self.sent_gain = g;
+                host.audio_set_gain(g);
+            }
+        }
         if let Some(p) = &mut self.push {
             if self.state == PlayState::Playing {
                 let target = (self.device_rate as f64 * 0.6) as u32;
@@ -896,8 +1001,12 @@ fn decoder_thread(
                         pipeline = p;
                         index += 1;
                         eof_sent = false;
+                        let at = output.end_frame();
+                        if let Ok(mut n) = output.norm.lock() {
+                            n.next_at = Some(at);
+                        }
                         let _ = events.send(ThreadEvent::Advanced {
-                            at: output.end_frame(),
+                            at,
                             info: TrackInfo::of(&pipeline),
                         });
                         continue;

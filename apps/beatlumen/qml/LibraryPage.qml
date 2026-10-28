@@ -117,7 +117,7 @@ Item {
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
-                    Button { text: Theme.tr("Add music folder"); highlighted: true; icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
+                    AccentButton { text: Theme.tr("Add music folder"); highlighted: true; icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
                     Button { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onClicked: page.openFiles() }
                     Button { text: Theme.tr("Connect server"); flat: true; icon.source: Theme.icon("cloud"); onClicked: page.connectServer() }
                 }
@@ -140,7 +140,7 @@ Item {
                         RowLayout {
                             Layout.leftMargin: 8
                             spacing: 8
-                            Button { text: Theme.tr("Play all"); icon.source: Theme.icon("play_arrow"); highlighted: true
+                            AccentButton { text: Theme.tr("Play all"); icon.source: Theme.icon("play_arrow"); highlighted: true
                                      onClicked: { Core.call("shuffle", { value: false }); Core.call("play", { ids: page.tracks.map(t => t.id), start: 0 }) } }
                             Button { text: Theme.tr("Shuffle all"); icon.source: Theme.icon("shuffle"); flat: true
                                      onClicked: { Core.call("shuffle", { value: true }); Core.call("play", { ids: page.tracks.map(t => t.id), start: Math.floor(Math.random() * page.tracks.length) }) } }
@@ -301,7 +301,7 @@ Item {
                 Label { Layout.fillWidth: true; text: dh.subtitle; color: Theme.textDim; elide: Text.ElideRight }
                 RowLayout {
                     spacing: 4
-                    Button {
+                    AccentButton {
                         text: Theme.tr("Play"); highlighted: true; icon.source: Theme.icon("play_arrow")
                         onClicked: { Core.call("shuffle", { value: false }); Core.call("play", { ids: dh.ids, start: 0 }) }
                     }

@@ -19,9 +19,10 @@ media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 
 pub fn handle(state: &State, req: Request) -> Response {
     let t0 = Instant::now();
     let is_api = req.path == "/api" || req.path.starts_with("/api/");
-    let mut resp = match util::catch("request handler", || route(state, &req)) {
-        Ok(r) => r,
-        Err(_) => Response::error(500, "internal server error"),
+    let mut resp = match check_origin(state, &req) {
+        Err(refused) => refused,
+        Ok(()) => util::catch("request handler", || route(state, &req))
+            .unwrap_or_else(|_| Response::error(500, "internal server error")),
     };
     finish_headers(&mut resp, is_api);
     if crate::log::verbose() || resp.status >= 500 {
@@ -36,6 +37,60 @@ pub fn handle(state: &State, req: Request) -> Response {
         );
     }
     resp
+}
+
+/// Whether `host` (without port) is a name the server answers to.
+fn host_allowed(state: &State, host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    if h.parse::<std::net::IpAddr>().is_ok() || h.starts_with('[') {
+        return true; // IP literal: no DNS involved
+    }
+    h == "localhost"
+        || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
+            .iter()
+            .any(|s| h.ends_with(s))
+        || state.config.allowed_hosts.iter().any(|a| *a == h)
+}
+
+/// Strips the port from a `Host` header value (`[v6]:port`, `name:port`).
+fn host_name(v: &str) -> &str {
+    if let Some(rest) = v.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    v.rsplit_once(':').map_or(v, |(h, p)| {
+        if p.bytes().all(|b| b.is_ascii_digit()) {
+            h
+        } else {
+            v
+        }
+    })
+}
+
+/// Rejects requests from other web sites: cross-site writes (CSRF) always,
+/// unknown host names (DNS rebinding) when no password protects the server.
+fn check_origin(state: &State, req: &Request) -> Result<(), Response> {
+    let host = req.header("host").unwrap_or("");
+    if !state.auth.required() && !host_allowed(state, host_name(host)) {
+        crate::warn!("refused request for unknown host name {host:?} (allow it with --allow-host)");
+        return Err(Response::error(
+            421,
+            "unknown host name; start the server with --allow-host for it",
+        ));
+    }
+    let writes = !matches!(req.method.as_str(), "GET" | "HEAD" | "OPTIONS");
+    if writes {
+        let cross_site = req
+            .header("sec-fetch-site")
+            .is_some_and(|v| v.eq_ignore_ascii_case("cross-site"));
+        let foreign_origin = req.header("origin").is_some_and(|o| {
+            let o = o.split_once("://").map_or(o, |(_, rest)| rest);
+            o == "null" || !o.eq_ignore_ascii_case(host)
+        });
+        if cross_site || foreign_origin {
+            return Err(Response::error(403, "cross-site request refused"));
+        }
+    }
+    Ok(())
 }
 
 fn finish_headers(resp: &mut Response, is_api: bool) {
@@ -138,6 +193,11 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 "stream" => stream(state, req, e),
                 "cover" => cover(state, req, &idx, e),
                 "analysis" => analysis(state, req, e),
+                "loudness" => match state.analyzer.loudness(e) {
+                    Ok(body) => Response::bytes(200, "application/json", body.into_bytes())
+                        .with_header("Cache-Control", "private, max-age=3600"),
+                    Err(err) => fail(err),
+                },
                 _ => Response::error(404, "not found"),
             }
         }

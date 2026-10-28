@@ -17,6 +17,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QPalette>
+#include <QPointer>
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -24,7 +25,9 @@
 #ifdef Q_OS_ANDROID
 #include "android_media.h"
 #include <QCoreApplication>
+#include <QJniEnvironment>
 #include <QJniObject>
+#include <QThreadPool>
 #include <QtCore/private/qandroidextras_p.h>
 #endif
 
@@ -337,7 +340,11 @@ QStringList Bridge::localPaths(const QList<QUrl> &urls)
 
 void Bridge::openUrls(const QList<QUrl> &urls, bool play)
 {
-    const QStringList paths = localPaths(urls);
+    openPaths(localPaths(urls), play);
+}
+
+void Bridge::openPaths(const QStringList &paths, bool play)
+{
     QVariantList list;
     for (const QString &p : paths)
         list << p;
@@ -390,34 +397,51 @@ void Bridge::copyText(const QString &text)
 #ifdef Q_OS_ANDROID
 namespace {
 
-// Receives the result of the system document picker (ACTION_OPEN_DOCUMENT).
+// Receives the result of the system document picker (ACTION_OPEN_DOCUMENT)
+// and imports the picked documents on a worker thread (FileImport.java):
+// images become permanent backgrounds in the app's data folder, everything
+// else (songs to play, presets) is copied into the cache.
 class PickReceiver : public QAndroidActivityResultReceiver
 {
 public:
     explicit PickReceiver(Bridge *bridge) : m_bridge(bridge) {}
+    QString accept;
 
     void handleActivityResult(int, int resultCode, const QJniObject &data) override
     {
         const int resultOk = -1;
         if (resultCode != resultOk || !data.isValid())
             return;
-        QList<QUrl> urls;
-        const QJniObject clip = data.callObjectMethod("getClipData", "()Landroid/content/ClipData;");
-        if (clip.isValid()) {
-            const int n = clip.callMethod<jint>("getItemCount");
-            for (int i = 0; i < n; ++i) {
-                const QJniObject item = clip.callObjectMethod("getItemAt", "(I)Landroid/content/ClipData$Item;", i);
-                const QJniObject uri = item.callObjectMethod("getUri", "()Landroid/net/Uri;");
-                if (uri.isValid())
-                    urls << QUrl(uri.toString());
+        QJniObject uris = QJniObject::callStaticObjectMethod("io/github/randomnam3/beatlumen/FileImport", "uris",
+                                                             "(Landroid/content/Intent;)[Ljava/lang/String;", data.object());
+        if (!uris.isValid())
+            return;
+        const bool images = accept.startsWith(QStringLiteral("image/"));
+        const QString dest = images ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/backgrounds")
+                                    : QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/picked");
+        const jlong maxBytes = images ? jlong(64) << 20 : jlong(2) << 30;
+        QPointer<Bridge> bridge = m_bridge;
+        QThreadPool::globalInstance()->start([bridge, uris, dest, maxBytes]() {
+            QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+            QJniObject result = QJniObject::callStaticObjectMethod(
+                "io/github/randomnam3/beatlumen/FileImport", "copy",
+                "(Landroid/content/Context;[Ljava/lang/String;Ljava/lang/String;J)[Ljava/lang/String;",
+                ctx.object(), uris.object(), QJniObject::fromString(dest).object<jstring>(), maxBytes);
+            QStringList paths;
+            if (result.isValid()) {
+                QJniEnvironment env;
+                auto arr = result.object<jobjectArray>();
+                const jsize n = env->GetArrayLength(arr);
+                for (jsize i = 0; i < n; ++i) {
+                    QJniObject str = QJniObject::fromLocalRef(env->GetObjectArrayElement(arr, i));
+                    paths << str.toString();
+                }
             }
-        } else {
-            const QJniObject uri = data.callObjectMethod("getData", "()Landroid/net/Uri;");
-            if (uri.isValid())
-                urls << QUrl(uri.toString());
-        }
-        Bridge *bridge = m_bridge;
-        QMetaObject::invokeMethod(bridge, [bridge, urls]() { bridge->openUrls(urls, true); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(bridge, [bridge, paths]() {
+                if (bridge && !paths.isEmpty())
+                    bridge->openPaths(paths, true);
+            }, Qt::QueuedConnection);
+        });
     }
 
 private:
@@ -434,6 +458,7 @@ void Bridge::pickFiles(const QString &accept, bool multiple)
     // cache and opened like local files (audio plays, images become
     // backgrounds, .hfx files are imported).
     static PickReceiver *receiver = new PickReceiver(this);
+    receiver->accept = accept;
     QJniObject intent("android/content/Intent", "(Ljava/lang/String;)V", QJniObject::fromString(QStringLiteral("android.intent.action.OPEN_DOCUMENT")).object<jstring>());
     intent.callObjectMethod("addCategory", "(Ljava/lang/String;)Landroid/content/Intent;", QJniObject::fromString(QStringLiteral("android.intent.category.OPENABLE")).object<jstring>());
     intent.callObjectMethod("setType", "(Ljava/lang/String;)Landroid/content/Intent;", QJniObject::fromString(accept.isEmpty() ? QStringLiteral("*/*") : accept).object<jstring>());

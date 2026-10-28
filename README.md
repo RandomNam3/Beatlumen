@@ -87,7 +87,13 @@ features (lyrics, user accounts, sharing, provider integrations).
 
 ## License
 
-GNU General Public License v3.0 or later. Third-party material and its
-licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+Third-party material and its licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+If you run a modified `beatlumen-server` for other people, the AGPL requires
+you to offer them the source code of your version: start the server with
+`--source-url <link to your source>`. The web app shows that link under
+Settings → About.
 Beatlumen is not affiliated with Hyperchroma and contains none of its code
 or assets.

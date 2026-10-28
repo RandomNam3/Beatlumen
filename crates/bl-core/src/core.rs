@@ -10,6 +10,7 @@ use crate::player::{PlayState, Player, PlayerEvent, SourceOpener};
 use crate::queue::Queue;
 use crate::server::{ServerClient, ServerState};
 use crate::settings::{BackgroundMode, Repeat, Settings, VisualizerKind};
+use bl_analysis::loudness::{Loudness, LoudnessMeter};
 use bl_analysis::realtime::RealtimeAnalyzer;
 use bl_analysis::TrackAnalysis;
 use bl_fx::{Engine, FrameInput, ImageRef, Preset, Rng};
@@ -68,6 +69,7 @@ pub(crate) enum Req {
     PresetGet(String),
     PresetSaved(String),
     Analysis(String),
+    Loudness(String),
     TrackDownload {
         track_id: String,
         autoplay: bool,
@@ -157,6 +159,22 @@ pub(crate) struct Revisions {
 
 pub const DEFAULT_BG: &str = "builtin:default";
 
+/// Loudness all tracks are normalized to (LUFS).
+const NORMALIZE_TARGET_LUFS: f64 = -16.0;
+
+/// Parses a cached loudness ("<LUFS or -> <peak>").
+fn parse_loudness(s: &str) -> Option<Loudness> {
+    let mut it = s.split_whitespace();
+    let integrated = match it.next()? {
+        "-" => None,
+        v => Some(v.parse().ok()?),
+    };
+    Some(Loudness {
+        integrated,
+        peak: it.next()?.parse().ok()?,
+    })
+}
+
 pub struct Core {
     pub settings: Settings,
     pub(crate) settings_dirty_at: Option<f64>,
@@ -175,6 +193,9 @@ pub struct Core {
     pub(crate) play_generation: u64,
     /// Track handed to the player for gapless playback: (player serial, id).
     preloaded: (u64, Option<String>),
+    /// Measured loudness per track id (None while measuring).
+    loudness: HashMap<String, Option<Loudness>>,
+    loudness_box: Mailbox<(String, Result<Loudness, String>)>,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -340,6 +361,8 @@ impl Core {
             current: None,
             play_generation: 0,
             preloaded: (0, None),
+            loudness: HashMap::new(),
+            loudness_box: Mailbox::default(),
             queue,
             bg_queue,
             library,
@@ -475,6 +498,13 @@ impl Core {
             ServerState::NeedsLogin(i) => ("login", i.name.clone(), String::new()),
             ServerState::Error(e) => ("error", String::new(), e.clone()),
         };
+        // Source code of the connected server (AGPL section 13), else ours.
+        let source_url = match &self.server.state {
+            ServerState::Connected(i) | ServerState::NeedsLogin(i) if !i.source_url.is_empty() => {
+                i.source_url.clone()
+            }
+            _ => bl_net::api::SOURCE_URL.to_string(),
+        };
         let play = match self.player.state() {
             PlayState::Stopped => "stopped",
             PlayState::Loading => "loading",
@@ -514,6 +544,7 @@ impl Core {
             .with("serverName", server_name)
             .with("serverError", server_error)
             .with("serverUrl", self.server.base.as_str())
+            .with("sourceUrl", source_url)
             .with("preset", self.preset.name.as_str())
             .with("presetOrigin", self.preset_origin.name())
             .with("presetDirty", self.preset_dirty)
@@ -713,6 +744,19 @@ impl Core {
                 } else {
                     self.toast(self.tr("Saving the preset failed"), true);
                 }
+            }
+            Req::Loudness(id) => {
+                let l = match res {
+                    Ok(r) if r.status == 200 => bl_json::parse(&String::from_utf8_lossy(&r.body))
+                        .map(|v| Loudness {
+                            integrated: v.get("integrated").as_f64(),
+                            peak: v.f32_or("peak", 1.0),
+                        })
+                        .map_err(|e| e.to_string()),
+                    Ok(r) => Err(format!("HTTP {}", r.status)),
+                    Err(e) => Err(e),
+                };
+                self.loudness_box.post((id, l));
             }
             Req::Analysis(key) => {
                 if key != self.analysis_key {
@@ -1062,6 +1106,8 @@ impl Core {
         self.analysis_status = AnalysisStatus::None;
         self.revs.analysis += 1;
         self.live.reset();
+        let gain = self.track_gain(host, &id);
+        self.player.set_gain(gain, load);
         if !load {
             // Already playing (gapless advance).
         } else if let Some(opener) = self.opener_for(host, &id) {
@@ -1154,7 +1200,7 @@ impl Core {
     }
 
     /// Keeps the player's preloaded next track in sync with the queue.
-    fn sync_preload(&mut self, host: &dyn Host) {
+    fn sync_preload(&mut self, host: &mut dyn Host) {
         if !matches!(self.player.state(), PlayState::Playing | PlayState::Paused) {
             return;
         }
@@ -1166,9 +1212,158 @@ impl Core {
         let opener = want.as_deref().and_then(|id| self.opener_for(host, id));
         let want = if opener.is_some() { want } else { None };
         if self.player.preload(opener) {
+            let gain = match &want {
+                Some(id) => self.track_gain(host, id),
+                None => None,
+            };
+            self.player.set_next_gain(gain);
             self.preloaded = (serial, want);
         } else {
             self.preloaded = (serial, None);
+        }
+    }
+
+    // ---- loudness normalization ------------------------------------------------
+
+    /// Storage key of a track's cached loudness (changes with the file).
+    fn loudness_storage_key(&self, id: &str) -> String {
+        let t = self.track_for(id);
+        format!(
+            "loudness/{:016x}.txt",
+            library::fnv(&format!("{id}|{}|{}", t.size, t.modified))
+        )
+    }
+
+    /// Normalization gain of a track: 1 when normalization is off, None
+    /// while its loudness is being measured (the measurement is started).
+    fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
+        if !self.settings.normalize {
+            return Some(1.0);
+        }
+        match self.loudness.get(id) {
+            Some(Some(l)) => return Some(l.gain_for(NORMALIZE_TARGET_LUFS, 1.0)),
+            Some(None) => return None,
+            None => {}
+        }
+        let key = self.loudness_storage_key(id);
+        if let Some(l) = host
+            .storage_read(&key)
+            .and_then(|b| parse_loudness(&String::from_utf8_lossy(&b)))
+        {
+            self.loudness.insert(id.to_string(), Some(l));
+            return Some(l.gain_for(NORMALIZE_TARGET_LUFS, 1.0));
+        }
+        self.measure_loudness(host, id);
+        None
+    }
+
+    /// Measures a track's loudness in the background (server tracks are
+    /// measured by the server).
+    fn measure_loudness(&mut self, host: &mut dyn Host, id: &str) {
+        let measure =
+            |src: Box<dyn bl_media::Source>, ext: Option<String>| -> Result<Loudness, String> {
+                let mut dec = bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())?;
+                let spec = dec.spec();
+                let mut meter = LoudnessMeter::new(spec.sample_rate, spec.channels);
+                let mut buf = Vec::new();
+                loop {
+                    buf.clear();
+                    let more = dec.next_chunk(&mut buf).map_err(|e| e.to_string())?;
+                    meter.push(&buf);
+                    if !more {
+                        return Ok(meter.finish());
+                    }
+                }
+            };
+        let mailbox = self.loudness_box.clone();
+        let key = id.to_string();
+        if let Some(path) = library::local_path(id).map(str::to_string) {
+            let ext = extension(&path);
+            if host.has_threads() {
+                host.spawn(Box::new(move || {
+                    let res = std::fs::File::open(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|f| {
+                            measure(
+                                Box::new(std::io::BufReader::with_capacity(64 * 1024, f)),
+                                ext,
+                            )
+                        });
+                    mailbox.post((key, res));
+                }));
+            } else {
+                let res = host
+                    .fs_read(&path)
+                    .and_then(|d| measure(Box::new(std::io::Cursor::new(d)), ext));
+                mailbox.post((key, res));
+            }
+        } else if let Some(name) = id.strip_prefix("mem:") {
+            let Some(data) = self.memory_files.get(name).cloned() else {
+                return;
+            };
+            let ext = extension(name);
+            if host.has_threads() {
+                host.spawn(Box::new(move || {
+                    mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)))
+                }));
+            } else {
+                mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)));
+            }
+        } else if self.server.is_connected() {
+            let rid = self
+                .server
+                .get(host, &bl_net::api::paths::track_loudness(id));
+            self.requests.insert(rid, Req::Loudness(key));
+        } else {
+            return;
+        }
+        self.loudness.insert(id.to_string(), None);
+    }
+
+    fn poll_loudness(&mut self, host: &mut dyn Host) {
+        for (id, res) in self.loudness_box.take() {
+            match res {
+                Ok(l) => {
+                    let text = format!(
+                        "{} {}",
+                        l.integrated.map_or("-".to_string(), |v| v.to_string()),
+                        l.peak
+                    );
+                    let key = self.loudness_storage_key(&id);
+                    host.storage_write(&key, text.as_bytes());
+                    self.loudness.insert(id.clone(), Some(l));
+                }
+                Err(e) => {
+                    host.log(&format!("loudness of {id}: {e}"));
+                    // Played without normalization (not retried this session).
+                    self.loudness.insert(
+                        id.clone(),
+                        Some(Loudness {
+                            integrated: None,
+                            peak: 0.0,
+                        }),
+                    );
+                }
+            }
+            let gain = self.track_gain(host, &id);
+            if self.current.as_ref().is_some_and(|t| t.id == id) {
+                self.player.set_gain(gain, false);
+            }
+            if self.preloaded.1.as_deref() == Some(id.as_str()) {
+                self.player.set_next_gain(gain);
+            }
+        }
+    }
+
+    /// Re-applies the gains after normalization was switched on or off.
+    pub(crate) fn apply_normalization(&mut self, host: &mut dyn Host) {
+        if let Some(id) = self.current.as_ref().map(|t| t.id.clone()) {
+            let gain = self.track_gain(host, &id);
+            self.player.set_gain(gain, false);
+        }
+        if let Some(id) = self.preloaded.1.clone() {
+            let gain = self.track_gain(host, &id);
+            self.player.set_next_gain(gain);
         }
     }
 
@@ -1908,6 +2103,7 @@ impl Core {
             }
         }
         self.poll_analysis(host);
+        self.poll_loudness(host);
         self.poll_scan(host);
         self.poll_covers();
         if self.analysis_requested {

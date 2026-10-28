@@ -44,7 +44,7 @@ Item {
             icon.source: Theme.icon(bar.playing ? "pause" : "play_arrow")
             icon.width: parent.big * 0.5
             icon.height: parent.big * 0.5
-            icon.color: "white"
+            icon.color: Theme.onAccent
             Material.background: Theme.accent
             readonly property string tip: bar.playing ? Theme.tr("Pause") : Theme.tr("Play")
             Accessible.name: tip

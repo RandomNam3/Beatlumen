@@ -199,15 +199,17 @@ EM_JS(void, bl_js_audio_init, (), {
     if (Module.blAudio) return;
     const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
     const code = `class P extends AudioWorkletProcessor {
-        constructor() { super(); this.q = []; this.off = 0; this.queued = 0; this.paused = false;
+        constructor() { super(); this.q = []; this.off = 0; this.queued = 0; this.paused = false; this.gain = 0.25; this.target = 0.25;
             this.port.onmessage = (e) => { const m = e.data;
                 if (m.t === 'push') { this.q.push(m.d); this.queued += m.d.length / 2; }
                 else if (m.t === 'clear') { this.q = []; this.off = 0; this.queued = 0; }
-                else if (m.t === 'pause') { this.paused = m.v; } }; }
+                else if (m.t === 'pause') { this.paused = m.v; }
+                else if (m.t === 'gain') { this.target = m.v; } }; }
         process(inputs, outputs) { const out = outputs[0]; const l = out[0], r = out[1] || out[0];
             for (let i = 0; i < l.length; i++) {
                 if (this.paused || this.q.length === 0) { l[i] = 0; r[i] = 0; continue; }
-                const b = this.q[0]; l[i] = b[this.off]; r[i] = b[this.off + 1]; this.off += 2; this.queued--;
+                this.gain += (this.target - this.gain) * 0.0002;
+                const b = this.q[0]; l[i] = b[this.off] * this.gain; r[i] = b[this.off + 1] * this.gain; this.off += 2; this.queued--;
                 if (this.off >= b.length) { this.q.shift(); this.off = 0; } }
             this.port.postMessage(this.queued); return true; } }
         registerProcessor('bl-out', P);`;
@@ -231,6 +233,7 @@ EM_JS(void, bl_js_audio_post, (int kind, const float *ptr, int count, int flag),
     let m;
     if (kind === 0) { const d = new Float32Array(HEAPF32.buffer, ptr, count).slice(); m = { t: 'push', d: d }; a.queued += count / 2; }
     else if (kind === 1) { m = { t: 'clear' }; a.queued = 0; }
+    else if (kind === 3) { m = { t: 'gain', v: HEAPF32[ptr >> 2] }; }
     else { m = { t: 'pause', v: !!flag }; }
     if (a.node) a.node.port.postMessage(m, kind === 0 ? [m.d.buffer] : []); else a.pending.push(m);
 });
@@ -244,6 +247,7 @@ void pushCb(void *, const float *s, size_t n) { bl_js_audio_post(0, s, int(n), 0
 uint32_t queuedCb(void *) { return uint32_t(bl_js_audio_queued()); }
 void clearCb(void *) { bl_js_audio_post(1, nullptr, 0, 0); }
 void pausedCb(void *, int32_t p) { bl_js_audio_post(2, nullptr, 0, p); }
+void gainCb(void *, float g) { bl_js_audio_post(3, &g, 1, 0); }
 } // namespace
 
 AudioOutput *AudioOutput::instance()
@@ -259,6 +263,7 @@ void AudioOutput::configure(BlCallbacks &cb)
     cb.audio_queued = queuedCb;
     cb.audio_clear = clearCb;
     cb.audio_set_paused = pausedCb;
+    cb.audio_set_gain = gainCb;
 }
 
 uint32_t AudioOutput::start() { return 48000; }

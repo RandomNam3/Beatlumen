@@ -3,6 +3,7 @@
 //! * [`fft`]: real FFT and windows.
 //! * [`track`]: offline whole-track analysis (energy, novelty curves,
 //!   structural transitions) that drives effect triggers.
+//! * [`loudness`]: integrated loudness (EBU R128) for volume normalization.
 //! * [`realtime`]: streaming spectrum/novelty used while the offline analysis
 //!   is not available yet and for live spectrum displays.
 //! * Binary (de)serialization of [`TrackAnalysis`] for caching and for
@@ -11,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod fft;
+pub mod loudness;
 pub mod realtime;
 pub mod track;
 
