@@ -36,9 +36,7 @@ pub fn set_certificate_pin(host_port: &str, fingerprint: Option<&str>) {
     }
 }
 
-/// Marker in TLS errors for an untrusted certificate, followed by its
-/// SHA-256 fingerprint (hex) and `]`.
-pub const UNTRUSTED_CERT_MARKER: &str = "[sha256:";
+pub use crate::UNTRUSTED_CERT_MARKER;
 
 /// Registers the TLS implementation used for `https://` URLs.
 pub fn set_tls_connector(f: TlsConnector) {

@@ -68,104 +68,114 @@ pub struct BlCallbacks {
     pub tls_close: Option<unsafe extern "C" fn(handle: i64)>,
 }
 
-/// TLS callbacks of the UI (process wide, set once).
-#[derive(Clone, Copy)]
-struct TlsCallbacks {
-    open: unsafe extern "C" fn(*const c_char, u16, u32, *const c_char, *mut c_char, usize) -> i64,
-    read: unsafe extern "C" fn(i64, *mut u8, usize, u32) -> i64,
-    write: unsafe extern "C" fn(i64, *const u8, usize, u32) -> i64,
-    close: unsafe extern "C" fn(i64),
-}
+/// TLS connections provided by the UI (native platforms; the browser does
+/// TLS itself).
+#[cfg(not(target_arch = "wasm32"))]
+mod tls {
+    use super::*;
 
-static TLS: std::sync::OnceLock<TlsCallbacks> = std::sync::OnceLock::new();
+    /// TLS callbacks of the UI (process wide, set once).
+    #[derive(Clone, Copy)]
+    pub(crate) struct TlsCallbacks {
+        pub(crate) open:
+            unsafe extern "C" fn(*const c_char, u16, u32, *const c_char, *mut c_char, usize) -> i64,
+        pub(crate) read: unsafe extern "C" fn(i64, *mut u8, usize, u32) -> i64,
+        pub(crate) write: unsafe extern "C" fn(i64, *const u8, usize, u32) -> i64,
+        pub(crate) close: unsafe extern "C" fn(i64),
+    }
 
-/// A TLS connection provided by the UI.
-struct TlsConn {
-    handle: i64,
-    timeout_ms: u32,
-    cb: TlsCallbacks,
-}
+    pub(crate) static TLS: std::sync::OnceLock<TlsCallbacks> = std::sync::OnceLock::new();
 
-impl std::io::Read for TlsConn {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // SAFETY: valid buffer; handle owned by this connection.
-        let n =
-            unsafe { (self.cb.read)(self.handle, buf.as_mut_ptr(), buf.len(), self.timeout_ms) };
-        if n < 0 {
-            Err(std::io::Error::other("TLS read failed"))
-        } else {
-            Ok(n as usize)
+    /// A TLS connection provided by the UI.
+    struct TlsConn {
+        handle: i64,
+        timeout_ms: u32,
+        cb: TlsCallbacks,
+    }
+
+    impl std::io::Read for TlsConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            // SAFETY: valid buffer; handle owned by this connection.
+            let n = unsafe {
+                (self.cb.read)(self.handle, buf.as_mut_ptr(), buf.len(), self.timeout_ms)
+            };
+            if n < 0 {
+                Err(std::io::Error::other("TLS read failed"))
+            } else {
+                Ok(n as usize)
+            }
         }
     }
-}
 
-impl std::io::Write for TlsConn {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // SAFETY: valid buffer; handle owned by this connection.
-        let n = unsafe { (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.timeout_ms) };
-        if n < 0 {
-            Err(std::io::Error::other("TLS write failed"))
-        } else {
-            Ok(n as usize)
+    impl std::io::Write for TlsConn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            // SAFETY: valid buffer; handle owned by this connection.
+            let n =
+                unsafe { (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.timeout_ms) };
+            if n < 0 {
+                Err(std::io::Error::other("TLS write failed"))
+            } else {
+                Ok(n as usize)
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
     }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+
+    impl Drop for TlsConn {
+        fn drop(&mut self) {
+            // SAFETY: closes the handle opened for this connection (same thread).
+            unsafe { (self.cb.close)(self.handle) }
+        }
     }
-}
 
-impl Drop for TlsConn {
-    fn drop(&mut self) {
-        // SAFETY: closes the handle opened for this connection (same thread).
-        unsafe { (self.cb.close)(self.handle) }
-    }
-}
+    // SAFETY: the handle is an opaque id; the UI side keeps each connection on
+    // the thread that uses it.
+    unsafe impl Send for TlsConn {}
 
-// SAFETY: the handle is an opaque id; the UI side keeps each connection on
-// the thread that uses it.
-unsafe impl Send for TlsConn {}
-
-fn tls_connect(
-    host: &str,
-    port: u16,
-    timeout: std::time::Duration,
-    pin: Option<&str>,
-) -> std::io::Result<Box<dyn bl_net::client::Conn>> {
-    let cb = *TLS
-        .get()
-        .ok_or_else(|| std::io::Error::other("TLS unavailable"))?;
-    let host_c = CString::new(host).map_err(|_| std::io::Error::other("invalid host"))?;
-    let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
-    let pin_c =
-        CString::new(pin.unwrap_or("")).map_err(|_| std::io::Error::other("invalid pin"))?;
-    let mut err = [0 as c_char; 512];
-    // SAFETY: valid NUL terminated strings and error buffer.
-    let handle = unsafe {
-        (cb.open)(
-            host_c.as_ptr(),
-            port,
+    pub(crate) fn tls_connect(
+        host: &str,
+        port: u16,
+        timeout: std::time::Duration,
+        pin: Option<&str>,
+    ) -> std::io::Result<Box<dyn bl_net::client::Conn>> {
+        let cb = *TLS
+            .get()
+            .ok_or_else(|| std::io::Error::other("TLS unavailable"))?;
+        let host_c = CString::new(host).map_err(|_| std::io::Error::other("invalid host"))?;
+        let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
+        let pin_c =
+            CString::new(pin.unwrap_or("")).map_err(|_| std::io::Error::other("invalid pin"))?;
+        let mut err = [0 as c_char; 512];
+        // SAFETY: valid NUL terminated strings and error buffer.
+        let handle = unsafe {
+            (cb.open)(
+                host_c.as_ptr(),
+                port,
+                timeout_ms,
+                pin_c.as_ptr(),
+                err.as_mut_ptr(),
+                err.len(),
+            )
+        };
+        if handle <= 0 {
+            // SAFETY: the callee writes a NUL terminated message (buffer zeroed).
+            let msg = unsafe { CStr::from_ptr(err.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            return Err(std::io::Error::other(if msg.is_empty() {
+                "TLS connection failed".to_string()
+            } else {
+                msg
+            }));
+        }
+        Ok(Box::new(TlsConn {
+            handle,
             timeout_ms,
-            pin_c.as_ptr(),
-            err.as_mut_ptr(),
-            err.len(),
-        )
-    };
-    if handle <= 0 {
-        // SAFETY: the callee writes a NUL terminated message (buffer zeroed).
-        let msg = unsafe { CStr::from_ptr(err.as_ptr()) }
-            .to_string_lossy()
-            .into_owned();
-        return Err(std::io::Error::other(if msg.is_empty() {
-            "TLS connection failed".to_string()
-        } else {
-            msg
-        }));
+            cb,
+        }))
     }
-    Ok(Box::new(TlsConn {
-        handle,
-        timeout_ms,
-        cb,
-    }))
 }
 
 /// Fetches a URL with the core's HTTP client (including TLS); for the UI's
@@ -542,11 +552,12 @@ pub unsafe extern "C" fn bl_core_new(
         "web" => "web",
         _ => "linux",
     };
+    #[cfg(not(target_arch = "wasm32"))]
     if let (Some(open), Some(read), Some(write), Some(close)) =
         (cb.tls_open, cb.tls_read, cb.tls_write, cb.tls_close)
     {
-        if TLS
-            .set(TlsCallbacks {
+        if tls::TLS
+            .set(tls::TlsCallbacks {
                 open,
                 read,
                 write,
@@ -554,7 +565,7 @@ pub unsafe extern "C" fn bl_core_new(
             })
             .is_ok()
         {
-            bl_net::client::set_tls_connector(tls_connect);
+            bl_net::client::set_tls_connector(tls::tls_connect);
         }
     }
     let data_dir = PathBuf::from(cstr(data_dir));

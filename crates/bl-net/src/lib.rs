@@ -7,6 +7,10 @@
 //! * [`api`]: request/response types of the Beatlumen server API.
 
 pub mod api;
+
+/// Marker in TLS errors for a certificate the system does not trust,
+/// followed by its SHA-256 fingerprint (hex) and `]`.
+pub const UNTRUSTED_CERT_MARKER: &str = "[sha256:";
 #[cfg(not(target_arch = "wasm32"))]
 pub mod client;
 pub mod http;

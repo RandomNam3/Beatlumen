@@ -509,7 +509,7 @@ impl Core {
         // A certificate the system does not trust: its fingerprint, so the
         // user can compare it and choose to trust it.
         let (server_error, untrusted_cert) =
-            match server_error.split_once(bl_net::client::UNTRUSTED_CERT_MARKER) {
+            match server_error.split_once(bl_net::UNTRUSTED_CERT_MARKER) {
                 Some((msg, rest)) => (
                     msg.trim_end().to_string(),
                     rest.split(']').next().unwrap_or("").to_string(),
@@ -613,6 +613,8 @@ impl Core {
             self.server.state = ServerState::Disabled;
             return;
         }
+        // The browser handles TLS itself on the web.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Ok(u) = bl_net::client::Url::parse(&self.server.base) {
             let pin = &self.settings.server_cert_pin;
             bl_net::client::set_certificate_pin(
