@@ -122,6 +122,20 @@ if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN AND NOT ANDROID)
     target_compile_definitions(beatlumen PRIVATE BL_HAVE_MULTIMEDIA)
 endif()
 
+# The desktop's media controls and media keys (media_desktop.cpp).
+if(WIN32)
+    target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_SMTC)
+    target_link_libraries(beatlumen PRIVATE runtimeobject shcore)
+elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
+    find_package(Qt6 QUIET COMPONENTS DBus)
+    if(TARGET Qt6::DBus)
+        target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS)
+        target_link_libraries(beatlumen PRIVATE Qt6::DBus)
+    endif()
+endif()
+
 if(WIN32)
     # Icon and version information of beatlumen.exe.
     configure_file(windows/beatlumen.rc.in "${CMAKE_CURRENT_BINARY_DIR}/beatlumen.rc" @ONLY)

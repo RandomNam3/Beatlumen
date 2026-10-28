@@ -80,6 +80,7 @@ private:
     double m_position = 0;
     QTimer m_timer;
     QQuickWindow *m_window = nullptr;
+    class DesktopMedia *m_desktopMedia = nullptr;
     bool m_glReady = false;
     bool m_glFailed = false;
     QElapsedTimer m_frameClock;

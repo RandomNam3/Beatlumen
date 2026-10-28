@@ -26,6 +26,10 @@
 #include <QStandardPaths>
 #include <QStyleHints>
 
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+#include "media_desktop.h"
+#endif
+
 #ifdef Q_OS_ANDROID
 #include "android_media.h"
 #include <QCoreApplication>
@@ -297,6 +301,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
             web::persistStorage();
         }
     });
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+    m_desktopMedia = new DesktopMedia(this);
+#endif
 #ifdef Q_OS_ANDROID
     // Background playback: media session, notification, foreground service.
     new AndroidMedia(this);
@@ -528,6 +535,10 @@ void Bridge::attachWindow(QQuickWindow *window)
         return;
     m_window = window;
     window->setColor(Qt::black);
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+    if (m_desktopMedia)
+        m_desktopMedia->setWindow(window);
+#endif
     TestHooks::attach(window);
     connect(window, &QQuickWindow::beforeRenderPassRecording, this, &Bridge::renderUnderlay, Qt::DirectConnection);
     connect(window, &QQuickWindow::sceneGraphInvalidated, this, [this]() {
