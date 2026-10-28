@@ -243,7 +243,7 @@ int64_t tlsRead(int64_t h, uint8_t *buf, size_t len, uint32_t timeoutMs)
         if (s->state() != QAbstractSocket::ConnectedState)
             return 0;
         if (!s->waitForReadyRead(int(timeoutMs)))
-            return s->state() == QAbstractSocket::ConnectedState ? -1 : 0; // timeout vs. closed
+            return s->state() == QAbstractSocket::ConnectedState ? -2 : 0; // timeout vs. closed
     }
     const qint64 n = s->read(reinterpret_cast<char *>(buf), qint64(len));
     return n < 0 ? -1 : n;

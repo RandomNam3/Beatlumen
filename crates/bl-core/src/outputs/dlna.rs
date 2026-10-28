@@ -3,17 +3,14 @@
 //! pause and change its volume over UPnP. Its delay is measured from the
 //! position it reports, so the visuals follow what is heard.
 
-use super::stream::{local_ip_towards, Format, LiveStream, RATE};
-use super::{Job, Pump, Report};
+use super::stream::{live_loop, local_ip_towards, Format, LiveStream, LiveTarget, LEAD, RATE};
+use super::{Job, Report};
 use bl_upnp::Renderer;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Audio produced ahead of real time (frames); a new connection also gets
-/// this much at once, so the renderer starts quickly.
-const LEAD: u64 = RATE as u64 / 2;
 /// Assumed delay until the renderer reports its position (seconds).
 const DEFAULT_DELAY: f64 = 2.5;
 
@@ -85,49 +82,53 @@ pub(super) fn run(renderer: Renderer, job: Job) {
             .ok()
     };
 
-    let mut pump = Pump::new(&job);
-    let mut produced: u64 = 0;
-    // Real time at `anchor.0` corresponds to frame `anchor.1`.
-    let mut anchor = (Instant::now(), 0u64);
-    let mut silent = false;
-    while !job.stopped() {
-        let pending = job.take_control();
-        if let Some(v) = pending.volume {
-            let _ = renderer.set_volume((v.clamp(0.0, 1.0) * 100.0).round() as u32);
-        }
-        pump.reset_seen(&job.output);
-        if job.output.is_silent() {
-            if !silent {
-                silent = true;
-                paused.store(true, Ordering::Relaxed);
-                let _ = renderer.pause();
-            }
-            std::thread::sleep(Duration::from_millis(50));
-            continue;
-        }
-        if silent {
-            silent = false;
-            let _ = renderer.play();
-            paused.store(false, Ordering::Relaxed);
-            anchor = (Instant::now(), produced.saturating_sub(LEAD));
-        }
-        let now = anchor.1 + (anchor.0.elapsed().as_secs_f64() * RATE as f64) as u64;
-        let due = (now + LEAD).saturating_sub(produced);
-        if due >= 441 {
-            // The newest frame is heard after the measured delay.
-            let latency = f64::from_bits(delay.load(Ordering::Relaxed));
-            let pcm = pump.take(&job.output, due as usize, latency);
-            produced += pcm.len() as u64 / 2;
-            stream.push(pcm);
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let mut target = Dlna {
+        renderer: &renderer,
+        delay: &delay,
+        paused: &paused,
+    };
+    let result = live_loop(&job, &stream, &mut target);
     measuring.store(false, Ordering::Relaxed);
     if let Some(t) = meter {
         let _ = t.join();
     }
     let _ = renderer.stop();
     job.output.set_external(false);
+    if let Err(e) = result {
+        job.reports.post(Report::Failed(e));
+    }
+}
+
+struct Dlna<'a> {
+    renderer: &'a Renderer,
+    delay: &'a AtomicU64,
+    paused: &'a AtomicBool,
+}
+
+impl LiveTarget for Dlna<'_> {
+    fn set_volume(&mut self, volume: f32) {
+        let _ = self
+            .renderer
+            .set_volume((volume.clamp(0.0, 1.0) * 100.0).round() as u32);
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        if paused {
+            self.paused.store(true, Ordering::Relaxed);
+            let _ = self.renderer.pause();
+        } else {
+            let _ = self.renderer.play();
+            self.paused.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn tick(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn delay(&self) -> f64 {
+        f64::from_bits(self.delay.load(Ordering::Relaxed))
+    }
 }
 
 /// Delay = audio produced − (where the renderer's connection started +

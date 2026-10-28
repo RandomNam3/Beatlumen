@@ -15,12 +15,19 @@ use std::time::Duration;
 pub trait Conn: Read + Write + Send {}
 impl<T: Read + Write + Send> Conn for T {}
 
-/// Opens a TLS connection to `host:port` with the given connect/IO
-/// timeout. The certificate must be trusted by the system and match the
-/// host name, or have the SHA-256 fingerprint `pin` (hex) if one is given
-/// (a self-signed certificate the user chose to trust).
-pub type TlsConnector =
-    fn(host: &str, port: u16, timeout: Duration, pin: Option<&str>) -> io::Result<Box<dyn Conn>>;
+/// Opens a TLS connection to `host:port` within `connect_timeout`; reads
+/// wait up to `io_timeout` and then fail with [`io::ErrorKind::TimedOut`]
+/// (the connection stays usable). The certificate must be trusted by the
+/// system and match the host name, or have the SHA-256 fingerprint `pin`
+/// (hex) if one is given (a self-signed certificate the user chose to
+/// trust).
+pub type TlsConnector = fn(
+    host: &str,
+    port: u16,
+    connect_timeout: Duration,
+    io_timeout: Duration,
+    pin: Option<&str>,
+) -> io::Result<Box<dyn Conn>>;
 
 static TLS: OnceLock<TlsConnector> = OnceLock::new();
 /// Trusted certificate fingerprints by "host:port".
@@ -46,6 +53,23 @@ pub fn set_tls_connector(f: TlsConnector) {
 /// Whether `https://` URLs can be used.
 pub fn tls_available() -> bool {
     TLS.get().is_some()
+}
+
+/// A TLS connection for protocols other than HTTP (see [`TlsConnector`]).
+pub fn tls_connect(
+    host: &str,
+    port: u16,
+    connect_timeout: Duration,
+    io_timeout: Duration,
+    pin: Option<&str>,
+) -> io::Result<Box<dyn Conn>> {
+    let tls = TLS.get().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "TLS is not available on this platform",
+        )
+    })?;
+    tls(host, port, connect_timeout, io_timeout, pin)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,12 +205,8 @@ fn connect(url: &Url, opts: &Options) -> io::Result<Box<dyn Conn>> {
             .iter()
             .find(|(h, _)| *h == key)
             .map(|(_, f)| f.clone());
-        return tls(
-            &url.host,
-            url.port,
-            opts.io_timeout.min(opts.connect_timeout * 4),
-            pin.as_deref(),
-        );
+        let timeout = opts.io_timeout.min(opts.connect_timeout * 4);
+        return tls(&url.host, url.port, timeout, timeout, pin.as_deref());
     }
     let mut last = io::Error::new(io::ErrorKind::NotFound, "host not found");
     for addr in (url.host.as_str(), url.port).to_socket_addrs()? {

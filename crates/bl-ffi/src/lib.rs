@@ -128,7 +128,8 @@ mod tls {
     /// A TLS connection provided by the UI.
     struct TlsConn {
         handle: i64,
-        timeout_ms: u32,
+        read_timeout_ms: u32,
+        write_timeout_ms: u32,
         cb: TlsCallbacks,
     }
 
@@ -136,9 +137,16 @@ mod tls {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             // SAFETY: valid buffer; handle owned by this connection.
             let n = unsafe {
-                (self.cb.read)(self.handle, buf.as_mut_ptr(), buf.len(), self.timeout_ms)
+                (self.cb.read)(
+                    self.handle,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    self.read_timeout_ms,
+                )
             };
-            if n < 0 {
+            if n == -2 {
+                Err(std::io::ErrorKind::TimedOut.into())
+            } else if n < 0 {
                 Err(std::io::Error::other("TLS read failed"))
             } else {
                 Ok(n as usize)
@@ -149,8 +157,9 @@ mod tls {
     impl std::io::Write for TlsConn {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             // SAFETY: valid buffer; handle owned by this connection.
-            let n =
-                unsafe { (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.timeout_ms) };
+            let n = unsafe {
+                (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.write_timeout_ms)
+            };
             if n < 0 {
                 Err(std::io::Error::other("TLS write failed"))
             } else {
@@ -177,6 +186,7 @@ mod tls {
         host: &str,
         port: u16,
         timeout: std::time::Duration,
+        io_timeout: std::time::Duration,
         pin: Option<&str>,
     ) -> std::io::Result<Box<dyn bl_net::client::Conn>> {
         let cb = *TLS
@@ -209,9 +219,12 @@ mod tls {
                 msg
             }));
         }
+        let io_ms = io_timeout.as_millis().clamp(1, u32::MAX as u128) as u32;
         Ok(Box::new(TlsConn {
             handle,
-            timeout_ms,
+            read_timeout_ms: io_ms,
+            // Writes are small; give them time even with short reads.
+            write_timeout_ms: io_ms.max(timeout_ms),
             cb,
         }))
     }

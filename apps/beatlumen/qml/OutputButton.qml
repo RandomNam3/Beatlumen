@@ -34,7 +34,7 @@ IconButton {
                 text: modelData.name
                 checkable: true
                 checked: btn.outputs.active === modelData.id
-                icon.source: Theme.icon("speaker")
+                icon.source: Theme.icon(modelData.kind === "cast" ? "cast" : "speaker")
                 onTriggered: {
                     if (modelData.needsPassword)
                         password.ask(modelData)

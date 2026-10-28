@@ -263,3 +263,62 @@ fn serve(conn: TcpStream, s: &Shared) {
         }
     }
 }
+
+/// A device that plays the live stream (DLNA renderer, Chromecast).
+pub(super) trait LiveTarget {
+    fn set_volume(&mut self, volume: f32);
+    fn set_paused(&mut self, paused: bool);
+    /// Called often: talk to the device; an error ends the output.
+    fn tick(&mut self) -> Result<(), String>;
+    /// Seconds from producing audio until it is heard.
+    fn delay(&self) -> f64;
+}
+
+/// Audio produced ahead of real time (frames); a new connection also gets
+/// this much at once, so the device starts quickly.
+pub(super) const LEAD: u64 = RATE as u64 / 2;
+
+/// Feeds the stream from the player in real time until the output stops.
+pub(super) fn live_loop(
+    job: &super::Job,
+    stream: &LiveStream,
+    target: &mut dyn LiveTarget,
+) -> Result<(), String> {
+    use std::time::Instant;
+    let mut pump = super::Pump::new(job);
+    let mut produced: u64 = 0;
+    // Real time at `anchor.0` corresponds to frame `anchor.1`.
+    let mut anchor = (Instant::now(), 0u64);
+    let mut silent = false;
+    while !job.stopped() {
+        let pending = job.take_control();
+        if let Some(v) = pending.volume {
+            target.set_volume(v);
+        }
+        target.tick()?;
+        pump.reset_seen(&job.output);
+        if job.output.is_silent() {
+            if !silent {
+                silent = true;
+                target.set_paused(true);
+            }
+            std::thread::sleep(Duration::from_millis(30));
+            continue;
+        }
+        if silent {
+            silent = false;
+            target.set_paused(false);
+            anchor = (Instant::now(), produced.saturating_sub(LEAD));
+        }
+        let now = anchor.1 + (anchor.0.elapsed().as_secs_f64() * RATE as f64) as u64;
+        let due = (now + LEAD).saturating_sub(produced);
+        if due >= 441 {
+            // The newest frame is heard after the device's delay.
+            let pcm = pump.take(&job.output, due as usize, target.delay());
+            produced += pcm.len() as u64 / 2;
+            stream.push(pcm);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}

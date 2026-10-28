@@ -28,8 +28,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   and cover (Linux, Windows, Android; AirPlay 1 protocol).
 - **Play on speakers in the network**: AirPlay 1 receivers (AirPort
   Express, AV receivers, shairport-sync, …; encrypted when the speaker
-  supports it) and DLNA/UPnP renderers (TVs, AV receivers, …, which fetch a
-  live stream from the app). The visuals stay in sync with the speaker.
+  supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
+  devices; the last two fetch a live stream from the app. The visuals stay
+  in sync with the speaker.
 - System media controls and media keys: MPRIS on Linux, the media
   overlay on Windows, the media notification and lock screen on Android.
   After the app was closed, Android's media controls continue the last

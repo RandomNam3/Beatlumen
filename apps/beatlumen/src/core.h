@@ -21,6 +21,8 @@ typedef struct BlCallbacks {
     void (*audio_set_paused)(void *user, int32_t paused);
     void (*audio_set_gain)(void *user, float gain);
     int64_t (*tls_open)(const char *host, uint16_t port, uint32_t timeout_ms, const char *pin, char *err, size_t err_len);
+    // Bytes read, 0 when closed, -2 when nothing arrived within timeout_ms
+    // (the connection stays usable), -1 on errors.
     int64_t (*tls_read)(int64_t handle, uint8_t *buf, size_t len, uint32_t timeout_ms);
     int64_t (*tls_write)(int64_t handle, const uint8_t *buf, size_t len, uint32_t timeout_ms);
     void (*tls_close)(int64_t handle);

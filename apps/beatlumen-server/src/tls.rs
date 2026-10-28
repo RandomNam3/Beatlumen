@@ -48,6 +48,7 @@ fn connect(
     host: &str,
     port: u16,
     timeout: Duration,
+    io_timeout: Duration,
     pin: Option<&str>,
 ) -> io::Result<Box<dyn Conn>> {
     if pin.is_some() {
@@ -62,8 +63,8 @@ fn connect(
     for addr in (host, port).to_socket_addrs()? {
         match TcpStream::connect_timeout(&addr, timeout) {
             Ok(tcp) => {
-                tcp.set_read_timeout(Some(timeout))?;
-                tcp.set_write_timeout(Some(timeout))?;
+                tcp.set_read_timeout(Some(io_timeout))?;
+                tcp.set_write_timeout(Some(io_timeout.max(timeout)))?;
                 let conn = ClientConnection::new(config(), name).map_err(io::Error::other)?;
                 return Ok(Box::new(StreamOwned::new(conn, tcp)));
             }
