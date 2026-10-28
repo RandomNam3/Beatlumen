@@ -1,7 +1,8 @@
 # Third-party notices
 
 Beatlumen is licensed under the GNU Affero General Public License v3.0 or
-later (see `LICENSE`). It uses no external libraries at build time; the following
+later (see `LICENSE`). The only external libraries are the cryptography
+crates of the end-to-end encryption (`bl-vault`, see below); the following
 third-party works were ported or embedded. All of them are under licenses
 compatible with AGPL-3.0. Each crate's `NOTICE` file lists exactly which files
 contain the ported code and carries the full license text where required.
@@ -22,6 +23,14 @@ Full texts: `crates/bl-opus/NOTICE`, `crates/bl-vorbis/NOTICE`,
 `crates/bl-media/NOTICE`, `crates/bl-mp3/NOTICE`,
 `crates/bl-image/NOTICE`, `apps/beatlumen/assets/Inter-OFL.txt`, and the MIT texts
 below.
+
+The end-to-end encryption (`bl-vault`) uses audited cryptography crates
+instead of an own implementation: the [RustCrypto](https://github.com/RustCrypto)
+crates `argon2`, `hkdf`, `sha2`, `chacha20poly1305` (MIT OR Apache-2.0,
+used under MIT) and [dalek-cryptography](https://github.com/dalek-cryptography)'s
+`ed25519-dalek`, `x25519-dalek`, `curve25519-dalek` and `subtle`
+(BSD-3-Clause), with their dependencies. `crates/bl-vault/NOTICE` lists
+every crate with its copyright notice and full license text.
 
 The AirPlay receiver (`bl-airplay`) is an independent implementation of the
 AirPlay 1 (RAOP) protocol for interoperability. It contains the RSA key of
