@@ -2,7 +2,8 @@
 //! configuration file.
 //!
 //! Precedence (lowest to highest): built-in defaults, the `--config` file,
-//! the `BEATLUMEN_PASSWORD` environment variable, command line flags.
+//! `BEATLUMEN_*` environment variables (see [`ENV_VARS`]), command line
+//! flags.
 //! Repeatable flags (`--music`, `--images`) given on the command line replace
 //! the lists from the configuration file. Relative paths in the
 //! configuration file are resolved against the file's directory.
@@ -65,8 +66,113 @@ impl Default for Config {
 #[derive(Debug)]
 pub enum Action {
     Run(Box<Config>),
+    /// Checks that a server with this configuration answers (container
+    /// health checks); exit status 0 when it does.
+    HealthCheck(Box<Config>),
     Help,
     Version,
+}
+
+/// Environment variables read at start (name, meaning), for containers.
+pub const ENV_VARS: &[(&str, &str)] = &[
+    (
+        "BEATLUMEN_MUSIC",
+        "music folders, separated like PATH (':' on Linux)",
+    ),
+    (
+        "BEATLUMEN_IMAGES",
+        "background image folders, separated like PATH",
+    ),
+    ("BEATLUMEN_DATA", "data folder"),
+    ("BEATLUMEN_BIND", "listen address"),
+    ("BEATLUMEN_PASSWORD", "login password"),
+    (
+        "BEATLUMEN_PASSWORD_FILE",
+        "file containing the login password (secrets)",
+    ),
+    ("BEATLUMEN_WEB_DIR", "web client folder"),
+    ("BEATLUMEN_NAME", "server name shown to clients"),
+    (
+        "BEATLUMEN_ALLOWED_HOSTS",
+        "extra host names, separated by commas",
+    ),
+    ("BEATLUMEN_SOURCE_URL", "source code link (AGPL)"),
+    (
+        "BEATLUMEN_RESCAN_INTERVAL",
+        "seconds between rescans, 0 = off",
+    ),
+    (
+        "BEATLUMEN_ANALYSIS_MAX_MINUTES",
+        "longest track analysed, 0 = unlimited",
+    ),
+    (
+        "BEATLUMEN_SCAN_THREADS",
+        "threads reading tags, 0 = automatic",
+    ),
+    ("BEATLUMEN_VERBOSE", "1/true: log every request"),
+];
+
+/// Applies `BEATLUMEN_*` variables (read through `get`) to `cfg`.
+pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    let get = |k: &str| get(k).filter(|v| !v.trim().is_empty());
+    let num = |k: &str, v: &str| {
+        v.trim()
+            .parse::<u64>()
+            .map_err(|_| format!("{k}: expected a non-negative integer, got \"{v}\""))
+    };
+    if let Some(v) = get("BEATLUMEN_MUSIC") {
+        cfg.music_dirs = std::env::split_paths(&v).collect();
+    }
+    if let Some(v) = get("BEATLUMEN_IMAGES") {
+        cfg.image_dirs = std::env::split_paths(&v).collect();
+    }
+    if let Some(v) = get("BEATLUMEN_DATA") {
+        cfg.data_dir = PathBuf::from(v);
+    }
+    if let Some(v) = get("BEATLUMEN_BIND") {
+        cfg.bind = v.trim().to_string();
+    }
+    if let Some(v) = get("BEATLUMEN_PASSWORD_FILE") {
+        let text = std::fs::read_to_string(v.trim())
+            .map_err(|e| format!("BEATLUMEN_PASSWORD_FILE: cannot read {}: {e}", v.trim()))?;
+        let pw = text.trim_end_matches(['\r', '\n']).to_string();
+        cfg.password = (!pw.is_empty()).then_some(pw);
+    }
+    if let Some(v) = get("BEATLUMEN_PASSWORD") {
+        cfg.password = Some(v);
+    }
+    if let Some(v) = get("BEATLUMEN_WEB_DIR") {
+        cfg.web_dir = Some(PathBuf::from(v));
+    }
+    if let Some(v) = get("BEATLUMEN_NAME") {
+        cfg.name = v;
+    }
+    if let Some(v) = get("BEATLUMEN_ALLOWED_HOSTS") {
+        cfg.allowed_hosts = v
+            .split([',', ' '])
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
+    }
+    if let Some(v) = get("BEATLUMEN_SOURCE_URL") {
+        cfg.source_url = v;
+    }
+    if let Some(v) = get("BEATLUMEN_RESCAN_INTERVAL") {
+        cfg.rescan_interval = num("BEATLUMEN_RESCAN_INTERVAL", &v)?;
+    }
+    if let Some(v) = get("BEATLUMEN_ANALYSIS_MAX_MINUTES") {
+        cfg.analysis_max_minutes = num("BEATLUMEN_ANALYSIS_MAX_MINUTES", &v)?;
+    }
+    if let Some(v) = get("BEATLUMEN_SCAN_THREADS") {
+        cfg.scan_threads = num("BEATLUMEN_SCAN_THREADS", &v)? as usize;
+    }
+    if let Some(v) = get("BEATLUMEN_VERBOSE") {
+        cfg.verbose = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    Ok(())
 }
 
 pub const USAGE: &str = "\
@@ -104,8 +210,19 @@ OPTIONS:
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, verbose)
     --verbose               Log every request and per-file scan problems
+    --health-check          Check that the server configured this way answers
+                            (exit status 0), for container health checks
     -h, --help              Print this help
     -V, --version           Print the version
+
+ENVIRONMENT:
+    BEATLUMEN_MUSIC, BEATLUMEN_IMAGES (folders separated like PATH),
+    BEATLUMEN_DATA, BEATLUMEN_BIND, BEATLUMEN_PASSWORD,
+    BEATLUMEN_PASSWORD_FILE, BEATLUMEN_WEB_DIR, BEATLUMEN_NAME,
+    BEATLUMEN_ALLOWED_HOSTS (comma separated), BEATLUMEN_SOURCE_URL,
+    BEATLUMEN_RESCAN_INTERVAL, BEATLUMEN_ANALYSIS_MAX_MINUTES,
+    BEATLUMEN_SCAN_THREADS, BEATLUMEN_VERBOSE
+    They override the --config file; command line flags override them.
 
 The server never opens outgoing network connections. It does not provide TLS:
 for access over the internet use a VPN, or a reverse proxy with HTTPS
@@ -248,7 +365,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         match flag.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "-V" | "--version" => return Ok(Action::Version),
-            "--verbose" => items.push((flag, None)),
+            "--verbose" | "--health-check" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {
                     Some(v) => v,
@@ -270,11 +387,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         let base = p.parent().map(Path::to_path_buf).unwrap_or_default();
         apply_json(&mut cfg, &v, &base)?;
     }
-    if let Ok(pw) = std::env::var("BEATLUMEN_PASSWORD") {
-        if !pw.is_empty() {
-            cfg.password = Some(pw);
-        }
-    }
+    apply_env(&mut cfg, |k| std::env::var(k).ok())?;
 
     let num = |flag: &str, v: &str| {
         v.trim()
@@ -283,6 +396,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
     };
     let mut music_cli = Vec::new();
     let mut images_cli = Vec::new();
+    let mut health_check = false;
     for (flag, v) in items {
         let v = v.unwrap_or_default();
         match flag.as_str() {
@@ -299,6 +413,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--source-url" => cfg.source_url = v,
             "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
             "--verbose" => cfg.verbose = true,
+            "--health-check" => health_check = true,
             _ => {}
         }
     }
@@ -311,12 +426,56 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
     if cfg.name.trim().is_empty() {
         cfg.name = Config::default().name;
     }
+    if health_check {
+        return Ok(Action::HealthCheck(Box::new(cfg)));
+    }
     Ok(Action::Run(Box::new(cfg)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment() {
+        let dir = std::env::temp_dir().join(format!("bl-env-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pw = dir.join("pw");
+        std::fs::write(&pw, "geheim\n").unwrap();
+        let env: std::collections::HashMap<&str, String> = [
+            ("BEATLUMEN_MUSIC", "/m1:/m2".to_string()),
+            ("BEATLUMEN_DATA", "/data".into()),
+            ("BEATLUMEN_PASSWORD_FILE", pw.display().to_string()),
+            (
+                "BEATLUMEN_ALLOWED_HOSTS",
+                "Music.Example.org, other.example".into(),
+            ),
+            ("BEATLUMEN_RESCAN_INTERVAL", "0".into()),
+            ("BEATLUMEN_VERBOSE", "true".into()),
+            ("BEATLUMEN_NAME", "".into()),
+        ]
+        .into_iter()
+        .collect();
+        let mut c = Config::default();
+        apply_env(&mut c, |k| env.get(k).cloned()).unwrap();
+        assert_eq!(
+            c.music_dirs,
+            vec![PathBuf::from("/m1"), PathBuf::from("/m2")]
+        );
+        assert_eq!(c.data_dir, PathBuf::from("/data"));
+        assert_eq!(c.password.as_deref(), Some("geheim"));
+        assert_eq!(c.allowed_hosts, vec!["music.example.org", "other.example"]);
+        assert_eq!(c.rescan_interval, 0);
+        assert!(c.verbose);
+        assert_eq!(c.name, Config::default().name);
+        let bad = |k: &'static str, v: &'static str| {
+            let mut c = Config::default();
+            apply_env(&mut c, |x| (x == k).then(|| v.to_string())).is_err()
+        };
+        assert!(bad("BEATLUMEN_SCAN_THREADS", "many"));
+        assert!(bad("BEATLUMEN_PASSWORD_FILE", "/nonexistent/pw"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn run(args: &[&str]) -> Config {
         match parse_args(args.iter().map(|s| s.to_string())).unwrap() {

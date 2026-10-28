@@ -1,0 +1,11 @@
+# Build context of container/Containerfile (Docker and Podman both read this
+# file): sources only, plus the built web client in dist/web.
+target
+build
+dist/*
+!dist/web
+.git
+.github
+*.apk
+*.keystore
+tests/fixtures/generated

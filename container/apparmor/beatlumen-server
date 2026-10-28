@@ -1,0 +1,88 @@
+# AppArmor profile for the Beatlumen Server container (Docker and Podman).
+#
+# Stricter than the runtimes' default profile: the server may listen on TCP,
+# read the music and image folders, write only its data folder, and has no
+# capabilities, no raw sockets, no mounts and no ptrace.
+#
+#   sudo cp container/apparmor/beatlumen-server /etc/apparmor.d/
+#   sudo apparmor_parser -r -W /etc/apparmor.d/beatlumen-server
+#   docker run --security-opt apparmor=beatlumen-server ...
+#   podman run --security-opt apparmor=beatlumen-server ...
+#
+# Paths are the ones inside the container (see container/README.md).
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+abi <abi/3.0>,
+
+include <tunables/global>
+
+profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  # Network: TCP only (the server listens; the health check connects to
+  # it). No UDP, raw or packet sockets: the server makes no DNS lookups
+  # and no outgoing connections.
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+  deny network raw,
+  deny network packet,
+  deny network inet dgram,
+  deny network inet6 dgram,
+
+  # The process runs as an unprivileged user and needs no capability.
+  deny capability,
+
+  # Programs: the init process of the runtime and the server.
+  /sbin/docker-init ix,
+  /run/podman-init ix,
+  /dev/init ix,
+  /beatlumen-server mrix,
+
+  # Folders.
+  /data/ rw,
+  /data/** rwk,
+  /music/ r,
+  /music/** r,
+  /images/ r,
+  /images/** r,
+  /run/secrets/ r,
+  /run/secrets/* r,
+  /usr/share/doc/beatlumen/** r,
+  # Optional: web client from a mounted folder (BEATLUMEN_WEB_DIR=/web).
+  /web/ r,
+  /web/** r,
+
+  # Read by the standard library: CPU count and limits, cgroup quotas.
+  @{PROC}/@{pid}/cgroup r,
+  @{PROC}/@{pid}/mountinfo r,
+  @{PROC}/@{pid}/stat r,
+  @{PROC}/@{pid}/status r,
+  @{PROC}/@{pid}/task/@{tid}/comm rw,
+  /sys/fs/cgroup/** r,
+  /sys/devices/system/cpu/** r,
+
+  # Signals from the container runtime (stop) and between init and server.
+  signal (receive) peer=unconfined,
+  signal (send, receive) peer=beatlumen-server,
+
+  # Hardening as in the runtimes' default profile.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+  deny ptrace,
+  deny @{PROC}/* w,
+  deny @{PROC}/sys/** w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/mem rwklx,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}

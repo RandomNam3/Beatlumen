@@ -19,6 +19,8 @@
 #include <QOpenGLFunctions>
 #include <QPalette>
 #include <QPointer>
+#include <QProcess>
+#include <QSettings>
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -205,6 +207,54 @@ bool Bridge::systemDark() const
     return scheme == Qt::ColorScheme::Dark;
 }
 
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+namespace {
+
+// "r,g,b" (QSettings reads it as a list).
+QColor rgbSetting(const QVariant &v)
+{
+    const QStringList parts = v.toStringList().size() == 3 ? v.toStringList() : v.toString().split(QLatin1Char(','));
+    if (parts.size() != 3)
+        return {};
+    return QColor(parts[0].trimmed().toInt(), parts[1].trimmed().toInt(), parts[2].trimmed().toInt());
+}
+
+// The accent of KDE Plasma (kdeglobals): the chosen accent colour, else the
+// colour scheme's selection colour. Read directly, as a Qt that ships with
+// the app (AppImage) does not load Plasma's own platform theme.
+QColor kdeAccent()
+{
+    const QString path = QStandardPaths::locate(QStandardPaths::GenericConfigLocation, QStringLiteral("kdeglobals"));
+    if (path.isEmpty())
+        return {};
+    QSettings s(path, QSettings::IniFormat);
+    QColor c = rgbSetting(s.value(QStringLiteral("General/AccentColor")));
+    if (!c.isValid())
+        c = rgbSetting(s.value(QStringLiteral("Colors:Selection/BackgroundNormal")));
+    return c;
+}
+
+// GNOME 47+ accent colour names.
+QColor gnomeAccent()
+{
+    QProcess p;
+    p.start(QStringLiteral("gsettings"), {QStringLiteral("get"), QStringLiteral("org.gnome.desktop.interface"), QStringLiteral("accent-color")});
+    if (!p.waitForFinished(500) || p.exitCode() != 0)
+        return {};
+    const QString name = QString::fromUtf8(p.readAllStandardOutput()).trimmed().remove(QLatin1Char('\''));
+    static const QHash<QString, QColor> colors = {
+        {QStringLiteral("blue"), QColor(0x35, 0x84, 0xe4)},   {QStringLiteral("teal"), QColor(0x21, 0x90, 0xa4)},
+        {QStringLiteral("green"), QColor(0x3a, 0x94, 0x4a)},  {QStringLiteral("yellow"), QColor(0xc8, 0x88, 0x00)},
+        {QStringLiteral("orange"), QColor(0xed, 0x5b, 0x00)}, {QStringLiteral("red"), QColor(0xe6, 0x2d, 0x42)},
+        {QStringLiteral("pink"), QColor(0xd5, 0x61, 0x99)},   {QStringLiteral("purple"), QColor(0x91, 0x41, 0xac)},
+        {QStringLiteral("slate"), QColor(0x6f, 0x83, 0x96)},
+    };
+    return colors.value(name);
+}
+
+} // namespace
+#endif
+
 QColor Bridge::systemAccent() const
 {
 #ifdef Q_OS_ANDROID
@@ -221,8 +271,25 @@ QColor Bridge::systemAccent() const
         }
     }
 #endif
+    // A usable accent: not (nearly) black, white or transparent, which some
+    // desktops report when no accent is known.
+    const auto usable = [](const QColor &c) {
+        return c.isValid() && c.alpha() > 200 && c.lightness() > 45 && c.lightness() < 225;
+    };
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    const QString desktop = qEnvironmentVariable("XDG_CURRENT_DESKTOP").toUpper();
+    if (desktop.contains(QStringLiteral("KDE"))) {
+        const QColor c = kdeAccent();
+        if (usable(c))
+            return c;
+    } else if (desktop.contains(QStringLiteral("GNOME"))) {
+        static const QColor c = gnomeAccent();
+        if (usable(c))
+            return c;
+    }
+#endif
     const QColor c = QGuiApplication::palette().color(QPalette::Accent);
-    return c.isValid() ? c : QColor(0xe9, 0x1e, 0x63);
+    return usable(c) ? c : QColor(0xe9, 0x1e, 0x63);
 }
 
 QJSValue Bridge::call(const QString &cmd, const QVariantMap &args)

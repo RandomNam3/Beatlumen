@@ -32,9 +32,20 @@ installed) or add the server in an Beatlumen app.
 | `--scan-threads N` | automatic (up to 4) | Threads reading tags during scans |
 | `--config FILE` | none | JSON configuration file |
 | `--verbose` | off | Log every request and per-file tag problems |
+| `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
 | `-h`, `--help` / `-V`, `--version` | | |
 
-Precedence: defaults < config file < `BEATLUMEN_PASSWORD` < command line.
+Every option can also be set through an environment variable (useful in
+containers): `BEATLUMEN_MUSIC`, `BEATLUMEN_IMAGES` (folders separated like
+`PATH`), `BEATLUMEN_DATA`, `BEATLUMEN_BIND`, `BEATLUMEN_PASSWORD`,
+`BEATLUMEN_PASSWORD_FILE` (file with the password, for Docker/Podman
+secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
+(comma separated), `BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
+`BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
+`BEATLUMEN_VERBOSE`. A container image, `compose.yml` and AppArmor/SELinux
+profiles are in [`container/`](../../container/README.md).
+
+Precedence: defaults < config file < environment variables < command line.
 `--music` / `--images` given on the command line replace the lists from the
 file. Relative paths in the file are resolved against the file's folder.
 

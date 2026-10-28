@@ -41,7 +41,7 @@ server makes no outgoing connections at all. No accounts, no tracking.
 | Windows | same, built by CI with MSVC (`windeployqt`) → installer `Beatlumen-Setup-x64.exe` (Inno Setup, `apps/beatlumen/windows/beatlumen.iss`) and a portable zip |
 | Android | `./build-android.sh` → `dist/android/beatlumen.apk` |
 | Web | `./build-web.sh` → `dist/web`, served by the server |
-| Server | `cargo build --release -p beatlumen-server` |
+| Server | `cargo build --release -p beatlumen-server`; container image for Docker/Podman with `compose.yml`, AppArmor and SELinux profiles: [`container/`](container/README.md) |
 
 ## Building
 

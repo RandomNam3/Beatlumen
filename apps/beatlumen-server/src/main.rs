@@ -20,6 +20,13 @@ fn main() {
             return;
         }
         Action::Run(cfg) => *cfg,
+        Action::HealthCheck(cfg) => {
+            std::process::exit(if beatlumen_server::health_check(&cfg) {
+                0
+            } else {
+                1
+            });
+        }
     };
     match beatlumen_server::start(cfg) {
         Ok(server) => server.join(),

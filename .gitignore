@@ -4,3 +4,7 @@
 *.keystore
 /tests/fixtures/generated
 /build
+
+# Local container settings and secrets
+/container/.env
+/container/password.txt

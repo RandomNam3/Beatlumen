@@ -353,6 +353,51 @@ fn absolute(p: &std::path::Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
+/// Asks the server configured by `config` for its info page (container
+/// health checks). True when it answers with 200 within three seconds.
+pub fn health_check(config: &Config) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    let Some(mut addr) = config
+        .bind
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+    else {
+        return false;
+    };
+    // A wildcard address is reached through the loopback interface.
+    if addr.ip().is_unspecified() {
+        addr = match addr {
+            SocketAddr::V4(a) => SocketAddr::from(([127, 0, 0, 1], a.port())),
+            SocketAddr::V6(a) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, a.port())),
+        };
+    }
+    let timeout = Duration::from_secs(3);
+    let Ok(mut s) = TcpStream::connect_timeout(&addr, timeout) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(timeout));
+    let _ = s.set_write_timeout(Some(timeout));
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        bl_net::api::paths::INFO
+    );
+    if s.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 16];
+    let mut n = 0;
+    while n < head.len() {
+        match s.read(&mut head[n..]) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => n += k,
+        }
+    }
+    head[..n].starts_with(b"HTTP/1.1 200")
+}
+
 /// Starts the server: prepares the data folder, loads the cached library,
 /// binds the listener and starts the scanner and HTTP threads.
 pub fn start(config: Config) -> Result<Server, String> {

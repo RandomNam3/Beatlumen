@@ -133,6 +133,41 @@ jobs:
           name: beatlumen-web
           path: dist/web
 
+  container:
+    name: Server container image
+    needs: web
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: beatlumen-web
+          path: dist/web
+      - name: Build
+        run: docker build -f container/Containerfile -t beatlumen-server:ci .
+      - name: Smoke test (read-only, no capabilities, health check)
+        run: |
+          set -eu
+          mkdir -p music && chmod 0755 music
+          printf '%s' 'ci-password-0123456789' > password.txt && chmod 0444 password.txt
+          docker run -d --name bl --init --read-only --cap-drop ALL \
+            --security-opt no-new-privileges -p 127.0.0.1:7878:7878 \
+            -v "$PWD/music:/music:ro" -v "$PWD/password.txt:/run/secrets/pw:ro" \
+            -e BEATLUMEN_PASSWORD_FILE=/run/secrets/pw beatlumen-server:ci
+          for i in $(seq 30); do
+            docker exec bl /beatlumen-server --health-check && break
+            sleep 1
+          done
+          docker exec bl /beatlumen-server --health-check
+          curl -fsS http://127.0.0.1:7878/api/info
+          curl -fsS http://127.0.0.1:7878/ | grep -qi "<html"
+          docker logs bl
+          docker rm -f bl
+      - name: AppArmor profile syntax
+        run: |
+          sudo apt-get install -y -q apparmor
+          sudo apparmor_parser -Q -T -K container/apparmor/beatlumen-server
+
   android:
     name: Android app (APK)
     runs-on: ubuntu-24.04

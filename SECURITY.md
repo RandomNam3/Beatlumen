@@ -53,6 +53,18 @@ issue.
   front of it (see the server README). The apps and the web app connect to
   `https://` addresses.
 
+## Container
+
+* The image (`container/Containerfile`) holds only the static server
+  binary; it runs as an unprivileged user (10001) and is meant to run with
+  a read-only root file system, no capabilities and `no-new-privileges`
+  (as in `container/compose.yml`).
+* The password can come from a file (`BEATLUMEN_PASSWORD_FILE`, Docker and
+  Podman secrets) instead of the environment, which `docker inspect` shows.
+* Optional AppArmor (`container/apparmor/`) and SELinux
+  (`container/selinux/`) profiles confine it further; see
+  `container/README.md`.
+
 ## Apps
 
 * Text from tags, servers and presets is shown as plain text (no rich text,
