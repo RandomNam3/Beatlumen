@@ -84,6 +84,74 @@ void serviceUnregister(void *)
 {
     QJniObject::callStaticMethod<void>(kAnnouncer, "unregister", "()V");
 }
+
+// UnifiedPush (UnifiedPush.java): registration with the distributor, and the
+// endpoint and decrypted messages coming back from Java.
+constexpr const char *kPush = "io/github/randomnam3/beatlumen/UnifiedPush";
+Bridge *g_pushBridge = nullptr;
+
+int32_t pushRegister(void *, const char *instance, const char *vapid)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    return QJniObject::callStaticMethod<jint>(kPush, "register", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>(),
+        QJniObject::fromString(QString::fromUtf8(vapid)).object<jstring>());
+}
+
+void pushUnregister(void *, const char *instance)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(kPush, "unregister", "(Landroid/content/Context;Ljava/lang/String;)V",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>());
+}
+
+QString jstr(JNIEnv *env, jstring s)
+{
+    if (!s)
+        return {};
+    const char *c = env->GetStringUTFChars(s, nullptr);
+    QString out = QString::fromUtf8(c);
+    env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+// Called on a Java thread: forwarded to the core on the main thread.
+void pushCommand(const QVariantMap &cmd)
+{
+    if (g_pushBridge)
+        QMetaObject::invokeMethod(g_pushBridge, [cmd]() { if (g_pushBridge) g_pushBridge->call(cmd.value(QStringLiteral("cmd")).toString(), cmd); }, Qt::QueuedConnection);
+}
+
+void JNICALL nativeEndpoint(JNIEnv *env, jclass, jstring instance, jstring endpoint, jstring p256dh, jstring auth)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.endpoint") },
+        { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("endpoint"), jstr(env, endpoint) },
+        { QStringLiteral("p256dh"), jstr(env, p256dh) }, { QStringLiteral("auth"), jstr(env, auth) } });
+}
+
+void JNICALL nativeMessage(JNIEnv *env, jclass, jstring json)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.message") }, { QStringLiteral("json"), jstr(env, json) } });
+}
+
+void JNICALL nativeFailed(JNIEnv *env, jclass, jstring instance, jstring reason)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.failed") },
+        { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("reason"), jstr(env, reason) } });
+}
+
+void setupPush(Bridge *bridge)
+{
+    g_pushBridge = bridge;
+    const JNINativeMethod methods[] = {
+        { "nativeEndpoint", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", reinterpret_cast<void *>(nativeEndpoint) },
+        { "nativeMessage", "(Ljava/lang/String;)V", reinterpret_cast<void *>(nativeMessage) },
+        { "nativeFailed", "(Ljava/lang/String;Ljava/lang/String;)V", reinterpret_cast<void *>(nativeFailed) },
+    };
+    QJniEnvironment env;
+    if (env.registerNativeMethods(kPush, methods, 3))
+        QJniObject::callStaticMethod<void>(kPush, "setNativeReady", "(Z)V", jboolean(true));
+}
 #endif
 
 } // namespace
@@ -116,6 +184,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
 #ifdef Q_OS_ANDROID
     cb.service_register = serviceRegister;
     cb.service_unregister = serviceUnregister;
+    cb.push_register = pushRegister;
+    cb.push_unregister = pushUnregister;
+    setupPush(this);
 #endif
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
 

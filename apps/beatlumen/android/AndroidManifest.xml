@@ -21,6 +21,14 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- UnifiedPush: find the installed distributors (Android 11+ package
+         visibility). -->
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <supports-screens
@@ -69,6 +77,18 @@
 
         <!-- Keeps the process alive while music plays in the background and
              shows the media notification (MediaPlaybackService.java). -->
+        <!-- UnifiedPush messages from the user's distributor (PushReceiver.java). -->
+        <receiver
+            android:name="io.github.randomnam3.beatlumen.PushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="io.github.randomnam3.beatlumen.MediaPlaybackService"
             android:exported="false"

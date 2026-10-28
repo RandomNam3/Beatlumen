@@ -37,6 +37,7 @@ installed) or add the server in an Beatlumen app.
 | `--vault-pepper-file FILE` | `<data>/vault/pepper` | Secret (32+ bytes) mixed into the account verifiers; keep it outside the data folder, e.g. as a container secret |
 | `--vault-quota-mb MB` | `10240` | Encrypted storage per account, `0` = unlimited |
 | `--registration MODE` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
+| `--push-allow-private` | off | Allow push services (UnifiedPush) in private networks and over plain http, e.g. ntfy at home |
 | `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
 | `-h`, `--help` / `-V`, `--version` | | |
 
@@ -48,6 +49,7 @@ secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
 (comma separated), `BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
 `BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
 `BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`, `BEATLUMEN_REGISTRATION`,
+`BEATLUMEN_PUSH_ALLOW_PRIVATE`, `BEATLUMEN_CA_FILE` (extra root certificates, PEM, for outgoing TLS),
 `BEATLUMEN_VERBOSE`. A container image, `compose.yml` and AppArmor/SELinux
 profiles are in [`container/`](../../container/README.md).
 
@@ -277,6 +279,17 @@ password-protected server. Binary values are base64 in JSON.
 | `POST /api/vault/files/{id}/keys` | `{"user", "key"}` → 204: share (owner) |
 | `DELETE /api/vault/files/{id}/keys/{user}` | revoke (owner) or leave (recipient) → 204 |
 | `DELETE /api/vault/files/{id}` | 204 (owner) |
+| `GET /api/vault/push` | `{"vapidKey", "subscriptions": [{"id", "name", "created"}]}` |
+| `POST /api/vault/push` | `{"endpoint", "p256dh", "auth", "name"}` (a UnifiedPush/Web Push subscription) → 201 `{"id"}`; the same endpoint again updates it |
+| `DELETE /api/vault/push/{id}` | 204 |
+
+**Push notifications** (UnifiedPush): when a file is shared with a user,
+the server sends `{"type": "share", "from", "file"}` to each of the user's
+registered endpoints, encrypted for the device (RFC 8291) and signed with
+the server's VAPID key (RFC 8292, `data/vault/vapid.key`). The push
+service sees only ciphertext; no phone number or e-mail address is used.
+Endpoints must use https and public addresses unless
+`--push-allow-private` is set; endpoints that answer 404/410 are removed.
 
 The server stores only hashes of the auth keys mixed with the pepper, and
 checks them in constant time. Failed logins, recoveries and password proofs

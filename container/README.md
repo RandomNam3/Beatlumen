@@ -104,6 +104,7 @@ For a rootless service that runs without a login session:
 |---|---|---|---|
 | `7878` | TCP | incoming | HTTP: API for the apps, audio streaming, web client |
 | as configured | TCP, UDP 53 (DNS) | outgoing | Only to remote sources the admin configures (planned: WebDAV/Nextcloud, SFTP, Jellyfin, Subsonic, internet radio) |
+| 443 (as registered) | TCP, UDP 53 (DNS) | outgoing | Push services (UnifiedPush) the users' devices registered, for share notifications |
 
 `7878` is the only port to publish. Outgoing connections go only to
 sources the admin configured: no update checks, telemetry or metadata
@@ -155,6 +156,8 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_VAULT_PEPPER_FILE` | `/data/vault/pepper` | Secret (at least 32 bytes) mixed into the account verifiers. As a secret outside `/data`, a copy of the volume alone does not even allow testing password guesses. Losing it locks every account out (the files stay encrypted and are lost with it) |
 | `BEATLUMEN_VAULT_QUOTA_MB` | `10240` | Encrypted storage per account in MiB, `0` = unlimited |
 | `BEATLUMEN_REGISTRATION` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
+| `BEATLUMEN_PUSH_ALLOW_PRIVATE` | `false` | `true`: allow push services (UnifiedPush, e.g. ntfy) in private networks and over plain http |
+| `BEATLUMEN_CA_FILE` | – | Extra root certificates (PEM) for outgoing TLS, e.g. a private CA of a push service at home |
 | `BEATLUMEN_VERBOSE` | `false` | `true`: log every request and per-file tag problems |
 
 Without a password the server accepts every client in the network. Set one

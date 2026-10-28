@@ -294,3 +294,145 @@ fn register_upload_share_and_play() {
     drop((a, b));
     let _ = std::fs::remove_dir_all(&data);
 }
+
+#[test]
+fn push_notifications_reach_the_app() {
+    let data = std::env::temp_dir().join(format!("bl-app-push-srv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data);
+    let server = beatlumen_server::start(beatlumen_server::Config {
+        data_dir: data.clone(),
+        bind: "127.0.0.1:0".into(),
+        rescan_interval: 0,
+        push_allow_private: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let url = format!("http://{}", server.addr);
+    let invite = || beatlumen_server::vault::create_invite(&data, 1).unwrap();
+    let (endpoint, rx) = common::fake_push_service();
+
+    let mut b = App::new("push-bob");
+    b.connect(&url);
+    b.cmd(
+        Value::object()
+            .with("cmd", "vault.register")
+            .with("invite", invite())
+            .with("user", "bob")
+            .with("password", "bob password 12"),
+    );
+    assert_eq!(b.ready().get("vault").str_or("error", ""), "");
+    // The platform (here the test) registers with the distributor...
+    let t0 = Instant::now();
+    let (instance, vapid) = loop {
+        b.state();
+        if let Some(r) = b.host.push.lock().unwrap().clone() {
+            break r;
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "push registration requested"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(vapid.len(), 87);
+    // ...and reports the endpoint with its keys.
+    let sub = bl_vault::webpush::Subscription::generate().unwrap();
+    b.cmd(
+        Value::object()
+            .with("cmd", "push.endpoint")
+            .with("instance", instance.as_str())
+            .with("endpoint", endpoint.as_str())
+            .with("p256dh", bl_net::base64_encode(&sub.public()))
+            .with("auth", bl_net::base64_encode(&sub.auth)),
+    );
+    b.wait("push active", |s| {
+        s.get("vault").get("push").str_or("status", "") == "active"
+    });
+
+    let mut a = App::new("push-alice");
+    a.connect(&url);
+    a.cmd(
+        Value::object()
+            .with("cmd", "vault.register")
+            .with("invite", invite())
+            .with("user", "alice")
+            .with("password", "alice password 1"),
+    );
+    assert_eq!(a.ready().get("vault").str_or("error", ""), "");
+    let song = a.dir.join("Push Song.wav");
+    std::fs::write(&song, wav(1)).unwrap();
+    a.cmd(
+        Value::object()
+            .with("cmd", "vault.upload")
+            .with("paths", vec![song.display().to_string()]),
+    );
+    a.wait("upload", |s| {
+        s.get("vault").get("used").as_u64().unwrap_or(0) > 0
+            && s.get("vault")
+                .get("uploads")
+                .as_array()
+                .is_some_and(|u| u.is_empty())
+    });
+    let id = a.files()[0].str_or("id", "").to_string();
+    let t0 = Instant::now();
+    while a
+        .cmd(Value::object().with("cmd", "vault.contacts"))
+        .as_array()
+        .map_or(0, |c| c.len())
+        == 0
+    {
+        a.cmd(Value::object().with("cmd", "vault.refresh"));
+        for _ in 0..10 {
+            a.state();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(t0.elapsed() < Duration::from_secs(20));
+    }
+    let r = a.cmd(
+        Value::object()
+            .with("cmd", "vault.share")
+            .with("id", id.as_str())
+            .with("user", "bob"),
+    );
+    assert!(r.get("error").is_null());
+    for _ in 0..20 {
+        a.state();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // The push service gets ciphertext; the app decrypts it.
+    let (_, body) = rx.recv_timeout(Duration::from_secs(10)).expect("push sent");
+    let plain = String::from_utf8(sub.decrypt(&body).unwrap()).unwrap();
+    assert!(plain.contains("\"from\":\"alice\""), "{plain}");
+    assert!(b.files().is_empty());
+    b.cmd(
+        Value::object()
+            .with("cmd", "push.message")
+            .with("json", plain.as_str()),
+    );
+    let t0 = Instant::now();
+    while b.files().is_empty() {
+        b.state();
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "shared file appears after the push"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Turning notifications off removes the device on the server.
+    b.cmd(
+        Value::object()
+            .with("cmd", "settings.set")
+            .with("key", "notifications")
+            .with("value", false),
+    );
+    b.wait("push off", |s| {
+        s.get("vault").get("push").str_or("status", "") == "off"
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let subs = std::fs::read_dir(data.join("vault/push")).unwrap().count();
+    assert_eq!(subs, 0, "subscription removed");
+    drop((a, b));
+    let _ = std::fs::remove_dir_all(&data);
+}

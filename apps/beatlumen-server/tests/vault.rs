@@ -1,6 +1,8 @@
 //! End-to-end encrypted accounts and files against a running server: the
 //! client side is done here with `bl-vault`, as the apps do it.
 
+mod common;
+
 use beatlumen_server::{Config, Server};
 use bl_json::Value;
 use bl_net::{base64_decode, base64_encode, client};
@@ -775,4 +777,57 @@ fn start_on(data: &std::path::Path, extra: impl FnOnce(&mut Config)) -> Srv {
         base,
         data: data.to_path_buf(),
     }
+}
+
+#[test]
+fn push_on_share() {
+    let s = start("push", |c| c.push_allow_private = true);
+    let (ta, alice, _) = register(&s, "alice", "pw one");
+    let (tb, _bob, _) = register(&s, "bob", "pw two");
+    let (endpoint, rx) = common::fake_push_service();
+    let sub = bl_vault::webpush::Subscription::generate().unwrap();
+    let body = Value::object()
+        .with("endpoint", endpoint.as_str())
+        .with("p256dh", b64(&sub.public()))
+        .with("auth", b64(&sub.auth))
+        .with("name", "Bob's phone");
+    let (st, v) = s.call("POST", "/api/vault/push", Some(&tb), &body);
+    assert_eq!(st, 201, "{}", v.to_json());
+    let (_, list) = s.call("GET", "/api/vault/push", Some(&tb), &Value::Null);
+    assert_eq!(list.get("subscriptions").as_array().unwrap().len(), 1);
+    let vapid = list.str_or("vapidKey", "").to_string();
+    assert_eq!(vapid.len(), 87);
+
+    let (id, key) = upload(&s, &ta, &alice, b"song", "a.mp3");
+    assert_eq!(share(&s, &ta, &id, &key, "bob"), 204);
+    let (head, msg) = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("push sent");
+    let head = head.to_ascii_lowercase();
+    assert!(head.contains("content-encoding: aes128gcm"), "{head}");
+    assert!(
+        head.contains(&format!("k={}", vapid.to_ascii_lowercase())),
+        "VAPID key in header"
+    );
+    let plain = sub.decrypt(&msg).unwrap();
+    let v = bl_json::parse_bytes(&plain).unwrap();
+    assert_eq!(v.str_or("type", ""), "share");
+    assert_eq!(v.str_or("from", ""), "alice");
+    assert_eq!(v.str_or("file", ""), id);
+    // The push service saw no names: the body is ciphertext.
+    assert!(!msg.windows(5).any(|w| w == b"alice"));
+
+    // Private endpoints are refused without the option, bad keys too.
+    let s2 = start("push2", |_| {});
+    let (tc, _, _) = register(&s2, "carl", "pw three");
+    assert_eq!(s2.call("POST", "/api/vault/push", Some(&tc), &body).0, 400);
+    let mut bad = body.clone();
+    bad.set("p256dh", b64(&[4; 65]));
+    assert_eq!(s.call("POST", "/api/vault/push", Some(&tb), &bad).0, 400);
+    let sid = list.get("subscriptions").at(0).str_or("id", "").to_string();
+    assert_eq!(
+        s.req("DELETE", &format!("/api/vault/push/{sid}"), Some(&tb), &[])
+            .status,
+        204
+    );
 }

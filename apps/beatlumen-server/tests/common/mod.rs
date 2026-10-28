@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 pub struct TestHost {
     pub svc: NativeServices,
     pub audio: Arc<Mutex<Option<Arc<dyn AudioSource>>>>,
+    /// The last UnifiedPush registration: (instance, VAPID key).
+    pub push: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl Host for TestHost {
@@ -76,6 +78,10 @@ impl Host for TestHost {
             channels: 2,
         })
     }
+    fn push_register(&mut self, instance: &str, vapid: &str) -> i32 {
+        *self.push.lock().unwrap() = Some((instance.to_string(), vapid.to_string()));
+        1
+    }
     fn log(&self, msg: &str) {
         eprintln!("[core] {msg}");
     }
@@ -100,6 +106,7 @@ impl App {
         let mut host = TestHost {
             svc: NativeServices::new(dir.clone()),
             audio: Default::default(),
+            push: Default::default(),
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }
@@ -153,4 +160,37 @@ impl App {
             v.str_or("state", "") == "ready" || !v.str_or("error", "").is_empty()
         })
     }
+}
+
+/// A fake push service: accepts one POST per connection and records it.
+pub fn fake_push_service() -> (String, std::sync::mpsc::Receiver<(String, Vec<u8>)>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/push/abc", l.local_addr().unwrap());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut head = String::new();
+            let mut len = 0;
+            loop {
+                let mut line = String::new();
+                if r.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+                head.push_str(&line);
+            }
+            let mut body = vec![0; len];
+            r.read_exact(&mut body).unwrap();
+            let mut s = s;
+            let _ = s.write_all(
+                b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let _ = tx.send((head, body));
+        }
+    });
+    (url, rx)
 }

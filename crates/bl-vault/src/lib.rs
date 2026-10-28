@@ -17,6 +17,7 @@ pub mod keys;
 pub mod manifest;
 pub mod recovery;
 pub mod sealed;
+pub mod webpush;
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 

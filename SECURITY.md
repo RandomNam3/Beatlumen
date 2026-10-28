@@ -21,8 +21,8 @@ issue.
   implementation.
 * **No connections except the configured ones.** The apps contact only
   the server the user entered; the server connects only to remote sources
-  its admin configures (none today): no update checks, telemetry or
-  metadata services.
+  its admin configures and to the push services the users' devices
+  registered: no update checks, telemetry or metadata services.
 * **Untrusted input is bounded.** Every parser limits sizes before
   allocating (sample tables, image dimensions up to 32 megapixels, JSON
   nesting, preset effects and particles). Panics in the server are caught
@@ -79,6 +79,13 @@ In short:
 * Accounts need an invitation from the admin (single use, expiring).
   Logins and password proofs are rate limited per account and address;
   password changes need the current password and end all other sessions.
+* Share notifications use UnifiedPush: the server encrypts each message
+  for the device (RFC 8291) and signs it with its VAPID key; the push
+  service relays ciphertext only, and the app drops messages that do not
+  decrypt. No phone number, e-mail address or Google service is involved.
+  The server connects only to the registered endpoints, never to private
+  addresses unless the admin allows it (no requests into the server's
+  network on a user's behalf).
 * What a compromised server can still do: delete or withhold files, see
   who shares how many files of which size with whom and when, and serve a
   modified web client. Against the last one: the server checks its web

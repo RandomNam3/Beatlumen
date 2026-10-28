@@ -53,6 +53,10 @@ pub(crate) enum VaultReq {
         autoplay: bool,
         generation: u64,
     },
+    PushInfo,
+    PushSubscribed,
+    /// Answer not needed.
+    Quiet,
 }
 
 /// Results of slow work (Argon2, encryption) done off the main thread.
@@ -310,6 +314,28 @@ impl Core {
             .insert(id, Req::Vault(req, self.vault.token.clone()));
     }
 
+    pub(crate) fn vault_get(&mut self, host: &mut dyn Host, path: &str, req: VaultReq) {
+        self.vault_request(host, "GET", path, None, req);
+    }
+
+    pub(crate) fn vault_post(
+        &mut self,
+        host: &mut dyn Host,
+        path: &str,
+        body: Value,
+        req: VaultReq,
+    ) {
+        self.vault_request(host, "POST", path, Some(body), req);
+    }
+
+    pub(crate) fn vault_delete(&mut self, host: &mut dyn Host, path: &str) {
+        self.vault_request(host, "DELETE", path, None, VaultReq::Quiet);
+    }
+
+    pub(crate) fn vault_unlocked(&self) -> bool {
+        self.vault.account.is_some()
+    }
+
     fn vault_busy(&mut self, what: &str) {
         self.vault.busy = Some(self.tr(what).to_string());
         self.vault.error.clear();
@@ -543,6 +569,7 @@ impl Core {
         }
         self.vault.rev += 1;
         self.vault_refresh(host);
+        self.push_start(host);
     }
 
     pub(crate) fn vault_refresh(&mut self, host: &mut dyn Host) {
@@ -1333,7 +1360,17 @@ impl Core {
                 }
                 self.vault_refresh(host);
             }
-            VaultReq::Logout => {}
+            VaultReq::Logout | VaultReq::Quiet => {}
+            VaultReq::PushInfo => {
+                if status == 200 {
+                    self.push_info(host, &json);
+                }
+            }
+            VaultReq::PushSubscribed => {
+                let ok = status == 201;
+                let e = if ok { String::new() } else { server_error() };
+                self.push_subscribed(host, ok, &json, e);
+            }
             VaultReq::Download {
                 id,
                 autoplay,
@@ -1420,6 +1457,7 @@ impl Core {
                     .map(|a| a.identity.public().fingerprint()),
             )
             .with("web", host.platform() == "web")
+            .with("push", self.push_json())
     }
 
     pub(crate) fn vault_files_json(&self) -> Value {

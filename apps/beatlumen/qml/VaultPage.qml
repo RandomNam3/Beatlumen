@@ -382,6 +382,20 @@ Item {
                         wrapMode: Text.WrapAnywhere
                         color: Theme.textDim
                     }
+                    SwitchRow {
+                        readonly property var push: page.vault.push || ({})
+                        Layout.fillWidth: true
+                        title: Theme.tr("Notify me about shared files")
+                        detail: !push.enabled ? Theme.tr("Off")
+                              : push.status === "active" ? Theme.tr("On, through UnifiedPush. Messages are end-to-end encrypted; no phone number or e-mail address is needed.")
+                              : push.status === "no-distributor" ? Theme.tr("No UnifiedPush app found. Install one, e.g. ntfy (F-Droid or Play Store), then lock and unlock again.")
+                              : push.status === "registering" ? Theme.tr("Setting up…")
+                              : push.status === "failed" ? Theme.tr("Failed:") + " " + (push.detail || "")
+                              : push.status === "unsupported" ? Theme.tr("Not available on this platform yet.")
+                              : ""
+                        on: push.enabled === true
+                        onSwitched: (on) => Core.call("settings.set", { key: "notifications", value: on })
+                    }
                     Button { Layout.leftMargin: 16; text: Theme.tr("Change password"); icon.source: Theme.icon("key"); onClicked: changePw.open() }
                     Button { Layout.leftMargin: 16; text: Theme.tr("New recovery code"); icon.source: Theme.icon("refresh"); onClicked: newCode.open() }
                     Button { Layout.leftMargin: 16; text: Theme.tr("Lock"); flat: true; icon.source: Theme.icon("lock"); onClicked: Core.call("vault.logout") }

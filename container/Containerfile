@@ -30,7 +30,9 @@ RUN set -eu; \
     cargo build --release --locked -p beatlumen-server; \
     mkdir -p /out/data /out/doc; \
     cp target/release/beatlumen-server /out/; \
-    cp LICENSE THIRD_PARTY_NOTICES.md /out/doc/
+    cp LICENSE THIRD_PARTY_NOTICES.md /out/doc/; \
+    cp crates/bl-vault/NOTICE /out/doc/NOTICE-cryptography; \
+    cp apps/beatlumen-server/NOTICE /out/doc/NOTICE-tls
 
 FROM scratch
 COPY --from=build /out/beatlumen-server /beatlumen-server

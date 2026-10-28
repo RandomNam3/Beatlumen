@@ -946,6 +946,7 @@ impl Core {
                 ok()
             }
             n if n.starts_with("vault.") => self.vault_command(host, n, c),
+            n if n.starts_with("push.") => self.push_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }
     }
@@ -963,6 +964,15 @@ impl Core {
         if key.starts_with("airplay") {
             // Retry starting the receiver with the new settings.
             self.airplay.error = None;
+        }
+        if old.notifications != self.settings.notifications {
+            if self.settings.notifications {
+                if self.vault_unlocked() {
+                    self.push_start(host);
+                }
+            } else {
+                self.push_stop(host);
+            }
         }
         if (old.volume - self.settings.volume).abs() > 1e-6 || old.muted != self.settings.muted {
             self.player.set_volume(if self.settings.muted {

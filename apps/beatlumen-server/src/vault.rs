@@ -270,6 +270,7 @@ pub struct Vault {
     quota: u64,
     /// New accounts with invitation codes (off: no new accounts at all).
     open_registration: bool,
+    pub push: crate::push::Push,
     users: RwLock<HashMap<String, User>>,
     files: RwLock<HashMap<String, FileRec>>,
     sessions: RwLock<HashMap<[u8; 32], Session>>,
@@ -365,6 +366,7 @@ impl Vault {
         pepper_file: Option<&Path>,
         quota: u64,
         open_registration: bool,
+        push: crate::push::Push,
     ) -> Result<Vault, String> {
         let dir = data.join("vault");
         let users_dir = dir.join("users");
@@ -478,6 +480,7 @@ impl Vault {
             pepper,
             quota,
             open_registration,
+            push,
             users: RwLock::new(users),
             files: RwLock::new(files),
             sessions: RwLock::new(sessions),
@@ -685,6 +688,24 @@ impl Vault {
                 Ok(Response::json(200, &v))
             }
             ["files"] if post => self.create_file(req, &me),
+            ["push"] if get => Ok(Response::json(
+                200,
+                &Value::object()
+                    .with("vapidKey", self.push.vapid_key())
+                    .with("subscriptions", self.push.list_json(&me)),
+            )),
+            ["push"] if post => {
+                let v = body(req)?;
+                let id = self.push.subscribe(&me, &v)?;
+                Ok(Response::json(201, &Value::object().with("id", id)))
+            }
+            ["push", id] if m == "DELETE" => {
+                if self.push.unsubscribe(&me, id) {
+                    Ok(Response::new(204))
+                } else {
+                    fail(404, "no such subscription")
+                }
+            }
             ["files", id, rest @ ..] => {
                 if !(id.len() == 32
                     && id
@@ -932,6 +953,7 @@ impl Vault {
         let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
         s.retain(|_, s| s.user != me);
         self.save_sessions(&s);
+        self.push.forget(me);
         crate::info!("vault: user {me} deleted their account");
         Ok(Response::new(204))
     }
@@ -1117,6 +1139,14 @@ impl Vault {
                 if f.keys.len() >= MAX_RECIPIENTS && !f.keys.contains_key(&to) {
                     return fail(507, "too many recipients");
                 }
+                // The recipient's devices learn about it right away (encrypted push).
+                self.push.notify(
+                    &to,
+                    &Value::object()
+                        .with("type", "share")
+                        .with("from", me)
+                        .with("file", id),
+                );
                 f.keys.insert(to, key);
                 f.updated = now;
                 self.save_file(f)?;

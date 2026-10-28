@@ -80,6 +80,12 @@ QtObject {
 
     readonly property var de: ({
         "Now playing": "Wiedergabe",
+        "Notify me about shared files": "Bei neuen Freigaben benachrichtigen",
+        "On, through UnifiedPush. Messages are end-to-end encrypted; no phone number or e-mail address is needed.": "Aktiv über UnifiedPush. Nachrichten sind Ende-zu-Ende-verschlüsselt; Telefonnummer oder E-Mail-Adresse werden nicht gebraucht.",
+        "No UnifiedPush app found. Install one, e.g. ntfy (F-Droid or Play Store), then lock and unlock again.": "Keine UnifiedPush-App gefunden. Installiere eine, z. B. ntfy (F-Droid oder Play Store), dann sperren und erneut entsperren.",
+        "Setting up…": "Wird eingerichtet…",
+        "Failed:": "Fehlgeschlagen:",
+        "Not available on this platform yet.": "Auf dieser Plattform noch nicht verfügbar.",
         "Web app on the server: unchanged official release": "Web-App auf dem Server: unverändertes offizielles Release",
         "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)": "Web-App auf dem Server: Dateien stimmen mit dem Manifest überein, aber diese App kann die Release-Signatur nicht prüfen (inoffizieller Build)",
         "Warning: the web app on the server was modified.": "Warnung: Die Web-App auf dem Server wurde verändert.",

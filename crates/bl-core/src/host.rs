@@ -168,4 +168,15 @@ pub trait Host {
 
     /// Withdraws the service announced with [`Host::service_register`].
     fn service_unregister(&mut self) {}
+
+    /// Registers `instance` with the user's UnifiedPush distributor
+    /// (`vapid`: the server's VAPID key, base64url). The endpoint arrives
+    /// later as the `push.endpoint` command. Returns 1 when registration
+    /// started, -1 when no distributor is installed, 0 when the platform
+    /// has no UnifiedPush.
+    fn push_register(&mut self, _instance: &str, _vapid: &str) -> i32 {
+        0
+    }
+
+    fn push_unregister(&mut self, _instance: &str) {}
 }

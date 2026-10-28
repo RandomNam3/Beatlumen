@@ -247,6 +247,7 @@ pub struct Core {
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
+    pub(crate) push: crate::push::PushState,
     started: bool,
 }
 
@@ -416,6 +417,7 @@ impl Core {
             airplay: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
+            push: Default::default(),
             started: false,
         };
         core.engine.set_intensity(core.settings.intensity);

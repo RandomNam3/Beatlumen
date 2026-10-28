@@ -17,6 +17,7 @@ pub mod library;
 pub mod native;
 pub mod player;
 pub mod queue;
+mod push;
 pub mod server;
 pub mod settings;
 pub mod strings;

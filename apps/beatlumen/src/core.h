@@ -28,6 +28,10 @@ typedef struct BlCallbacks {
     // txt is a JSON array of "key=value" strings. 0 = not available.
     int32_t (*service_register)(void *user, const char *instance, const char *service_type, uint16_t port, const char *txt);
     void (*service_unregister)(void *user);
+    // UnifiedPush: 1 registration started, -1 no distributor, 0 not
+    // available; the endpoint comes back as the "push.endpoint" command.
+    int32_t (*push_register)(void *user, const char *instance, const char *vapid);
+    void (*push_unregister)(void *user, const char *instance);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);

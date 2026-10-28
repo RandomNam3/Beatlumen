@@ -2,7 +2,8 @@
 
 Beatlumen is licensed under the GNU Affero General Public License v3.0 or
 later (see `LICENSE`). The only external libraries are the cryptography
-crates of the end-to-end encryption (`bl-vault`, see below); the following
+crates of the end-to-end encryption (`bl-vault`) and the server's TLS
+(see below); the following
 third-party works were ported or embedded. All of them are under licenses
 compatible with AGPL-3.0. Each crate's `NOTICE` file lists exactly which files
 contain the ported code and carries the full license text where required.
@@ -29,8 +30,16 @@ instead of an own implementation: the [RustCrypto](https://github.com/RustCrypto
 crates `argon2`, `hkdf`, `sha2`, `chacha20poly1305` (MIT OR Apache-2.0,
 used under MIT) and [dalek-cryptography](https://github.com/dalek-cryptography)'s
 `ed25519-dalek`, `x25519-dalek`, `curve25519-dalek` and `subtle`
-(BSD-3-Clause), with their dependencies. `crates/bl-vault/NOTICE` lists
-every crate with its copyright notice and full license text.
+(BSD-3-Clause), with their dependencies, plus `p256` and `aes-gcm` for
+Web Push encryption. `crates/bl-vault/NOTICE` lists every crate with its
+copyright notice and full license text.
+
+The server uses [rustls](https://github.com/rustls/rustls) with
+[ring](https://github.com/briansmith/ring) for TLS of its outgoing
+connections (push services) and Mozilla's root certificates from
+`webpki-roots` (CDLA-Permissive-2.0); `apps/beatlumen-server/NOTICE` has
+the full texts. In the container image these notices are in
+`/usr/share/doc/beatlumen/`.
 
 The AirPlay receiver (`bl-airplay`) is an independent implementation of the
 AirPlay 1 (RAOP) protocol for interoperability. It contains the RSA key of

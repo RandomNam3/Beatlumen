@@ -28,10 +28,12 @@ pub mod images;
 pub mod library;
 pub mod playlists;
 pub mod presets;
+pub mod push;
 pub mod random;
 pub mod release;
 pub mod routes;
 pub mod sha256;
+pub mod tls;
 pub mod util;
 pub mod vault;
 pub mod web;
@@ -433,11 +435,18 @@ pub fn start(config: Config) -> Result<Server, String> {
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
 
     let web = web::WebClient::resolve(config.web_dir.as_deref());
+    tls::install();
+    let push = push::Push::open(
+        &data.root.join("vault"),
+        &config.source_url,
+        config.push_allow_private,
+    )?;
     let vault = vault::Vault::open(
         &data.root,
         config.vault_pepper_file.as_deref(),
         config.vault_quota_mb.saturating_mul(1024 * 1024),
         config.registration,
+        push,
     )?;
     let state = Arc::new(State {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),

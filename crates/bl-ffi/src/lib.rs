@@ -79,6 +79,13 @@ pub struct BlCallbacks {
         ) -> i32,
     >,
     pub service_unregister: Option<unsafe extern "C" fn(user: *mut c_void)>,
+    /// Registers with the UnifiedPush distributor: 1 started, -1 no
+    /// distributor, 0 not available. The endpoint comes back as the
+    /// `push.endpoint` command.
+    pub push_register: Option<
+        unsafe extern "C" fn(user: *mut c_void, instance: *const c_char, vapid: *const c_char) -> i32,
+    >,
+    pub push_unregister: Option<unsafe extern "C" fn(user: *mut c_void, instance: *const c_char)>,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -566,6 +573,24 @@ impl Host for UiHost {
         if let Some(f) = self.cb.service_unregister {
             // SAFETY: UI callback contract.
             unsafe { f(self.cb.user) }
+        }
+    }
+
+    fn push_register(&mut self, instance: &str, vapid: &str) -> i32 {
+        let Some(f) = self.cb.push_register else {
+            return 0;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (i, v) = (c(instance), c(vapid));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, i.as_ptr(), v.as_ptr()) }
+    }
+
+    fn push_unregister(&mut self, instance: &str) {
+        if let Some(f) = self.cb.push_unregister {
+            let i = CString::new(instance.replace('\0', "")).unwrap_or_default();
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user, i.as_ptr()) }
         }
     }
 }
