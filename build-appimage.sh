@@ -52,8 +52,12 @@ fetch "$LINUXDEPLOY_URL" "$LINUXDEPLOY_SHA256" "$TOOLS_DIR/linuxdeploy-x86_64.Ap
 fetch "$PLUGIN_QT_URL" "$PLUGIN_QT_SHA256" "$TOOLS_DIR/linuxdeploy-plugin-qt-x86_64.AppImage"
 
 step "build"
+# libGL.so.1 (present on every desktop) instead of the GLVND split
+# libOpenGL.so.0, which minimal installations lack; AppImages leave the
+# system's GL libraries out.
 cmake -S apps/beatlumen -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="$QT_ROOT" -DCMAKE_INSTALL_PREFIX=/usr
+    -DCMAKE_PREFIX_PATH="$QT_ROOT" -DCMAKE_INSTALL_PREFIX=/usr \
+    -DOpenGL_GL_PREFERENCE=LEGACY
 cmake --build "$BUILD_DIR"
 
 step "AppDir"
