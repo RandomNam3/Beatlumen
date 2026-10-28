@@ -110,7 +110,7 @@ jobs:
         with:
           version: 4.0.7
       - name: Rust target
-        run: rustup target add wasm32-unknown-emscripten
+        run: rustup target add wasm32-unknown-emscripten wasm32-unknown-unknown
       - uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}

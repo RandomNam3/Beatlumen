@@ -219,6 +219,26 @@ pub fn unwrap_master_with_password(
     unwrap_master(&keys.kek, &user, "password", wrapped)
 }
 
+/// A new password for the master key (also used by the sign-in page,
+/// which works with the master key directly).
+pub fn password_change(
+    user: &str,
+    master: &Secret,
+    new_password: &str,
+) -> Result<PasswordChange, Error> {
+    let user = normalize_user(user)?;
+    let mut salt = [0u8; SALT_LEN];
+    random(&mut salt)?;
+    let params = KdfParams::DEFAULT;
+    let pk = PasswordKeys::derive(new_password, &salt, params)?;
+    Ok(PasswordChange {
+        salt,
+        params,
+        master_by_password: wrap_master(&pk.kek, &user, "password", master)?,
+        auth: pk.auth.clone(),
+    })
+}
+
 /// Everything the server stores for an account, apart from the verifiers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyBundle {
@@ -345,16 +365,7 @@ impl Account {
     }
 
     pub fn change_password(&self, new_password: &str) -> Result<PasswordChange, Error> {
-        let mut salt = [0u8; SALT_LEN];
-        random(&mut salt)?;
-        let params = KdfParams::DEFAULT;
-        let pk = PasswordKeys::derive(new_password, &salt, params)?;
-        Ok(PasswordChange {
-            salt,
-            params,
-            master_by_password: wrap_master(&pk.kek, &self.user, "password", &self.master)?,
-            auth: pk.auth.clone(),
-        })
+        password_change(&self.user, &self.master, new_password)
     }
 
     /// Issues a new recovery code (the old one stops working once the
