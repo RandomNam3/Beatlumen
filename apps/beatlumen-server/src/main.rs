@@ -48,20 +48,18 @@ fn main() {
                 }
             }
         }
-        Action::ReleaseKeygen => {
-            match beatlumen_server::release::keygen() {
-                Ok((secret, public)) => {
-                    println!("BEATLUMEN_RELEASE_SIGNING_KEY={secret}");
-                    println!("BEATLUMEN_RELEASE_KEY={public}");
-                    eprintln!("Keep the signing key secret (CI secret); build official apps and servers with BEATLUMEN_RELEASE_KEY set.");
-                    return;
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
+        Action::ReleaseKeygen => match beatlumen_server::release::keygen() {
+            Ok((secret, public)) => {
+                println!("BEATLUMEN_RELEASE_SIGNING_KEY={secret}");
+                println!("BEATLUMEN_RELEASE_KEY={public}");
+                eprintln!("Keep the signing key secret (CI secret); build official apps and servers with BEATLUMEN_RELEASE_KEY set.");
+                return;
             }
-        }
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            }
+        },
         Action::Users(cfg) => {
             for u in beatlumen_server::vault::list_users(&cfg.data_dir) {
                 println!("{u}");

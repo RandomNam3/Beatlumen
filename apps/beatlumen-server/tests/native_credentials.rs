@@ -161,7 +161,13 @@ fn passkeys_and_passwords_from_the_platform() {
     assert_eq!(create.str_or("user", ""), "carol");
     let pk = public_key(&create);
     assert_eq!(pk.get("rp").str_or("id", ""), "localhost");
-    assert!(pk.get("extensions").get("prf").get("eval").get("first").as_str().is_some());
+    assert!(pk
+        .get("extensions")
+        .get("prf")
+        .get("eval")
+        .get("first")
+        .as_str()
+        .is_some());
     let (client, att) = auth.create(pk.str_or("challenge", ""), &android_origin());
     result(
         &mut app,
@@ -201,7 +207,10 @@ fn passkeys_and_passwords_from_the_platform() {
     app.cmd(Value::object().with("cmd", "vault.logout"));
     app.cmd(Value::object().with("cmd", "vault.nativeSignIn"));
     let get = next_request(&mut app, "get");
-    assert!(get.bool_or("password", false), "saved passwords offered too");
+    assert!(
+        get.bool_or("password", false),
+        "saved passwords offered too"
+    );
     let a = assertion(&mut auth, &public_key(&get), true);
     result(&mut app, "get", true, a);
     let s = app.ready();
@@ -245,7 +254,10 @@ fn passkeys_and_passwords_from_the_platform() {
         "get",
         false,
         Value::object()
-            .with("type", "android.credentials.GetCredentialException.TYPE_USER_CANCELED")
+            .with(
+                "type",
+                "android.credentials.GetCredentialException.TYPE_USER_CANCELED",
+            )
             .with("error", "cancelled"),
     );
     let v = locked(&mut app);
@@ -264,12 +276,20 @@ fn passkeys_and_passwords_from_the_platform() {
     app.state();
     let opened = app.host.opened.lock().unwrap().clone().unwrap_or_default();
     assert!(opened.contains("/auth/?mode=app"), "{opened}");
-    assert!(app.state().get("vault").get("pairingCode").as_str().is_some());
+    assert!(app
+        .state()
+        .get("vault")
+        .get("pairingCode")
+        .as_str()
+        .is_some());
 
     // Other platforms go to the browser directly.
     let mut desktop = App::new("native-cred-desktop");
     desktop.connect(&url);
-    assert!(!desktop.state().get("vault").bool_or("platformCredentials", true));
+    assert!(!desktop
+        .state()
+        .get("vault")
+        .bool_or("platformCredentials", true));
     desktop.cmd(Value::object().with("cmd", "vault.nativeSignIn"));
     assert!(desktop.host.opened.lock().unwrap().is_some());
 

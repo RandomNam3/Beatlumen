@@ -439,7 +439,11 @@ pub fn start(config: Config) -> Result<Server, String> {
     let web = web::WebClient::resolve(config.web_dir.as_deref());
     tls::install();
     let rp = match &config.public_url {
-        Some(url) => Some(webauthn::RelyingParty::new(url, &config.name, &config.all_android_certs())?),
+        Some(url) => Some(webauthn::RelyingParty::new(
+            url,
+            &config.name,
+            &config.all_android_certs(),
+        )?),
         None => None,
     };
     let push = push::Push::open(

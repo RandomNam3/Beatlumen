@@ -58,7 +58,10 @@ pub struct Config {
 impl Config {
     /// Configured and built-in Android certificate fingerprints.
     pub fn all_android_certs(&self) -> Vec<String> {
-        let mut v: Vec<String> = official_android_cert().map(str::to_string).into_iter().collect();
+        let mut v: Vec<String> = official_android_cert()
+            .map(str::to_string)
+            .into_iter()
+            .collect();
         for c in &self.android_certs {
             if !v.contains(c) {
                 v.push(c.clone());
@@ -112,7 +115,10 @@ pub enum Action {
     Users(Box<Config>),
     /// Writes the integrity manifest of a web client folder (and signs it
     /// when `BEATLUMEN_RELEASE_SIGNING_KEY` is set).
-    WebManifest { dir: PathBuf, version: String },
+    WebManifest {
+        dir: PathBuf,
+        version: String,
+    },
     /// Creates a release signing key.
     ReleaseKeygen,
     Help,
@@ -190,7 +196,9 @@ fn registration(v: &str) -> Result<bool, String> {
     match v.trim().to_ascii_lowercase().as_str() {
         "invite" | "on" => Ok(true),
         "off" => Ok(false),
-        other => Err(format!("registration: expected \"invite\" or \"off\", got \"{other}\"")),
+        other => Err(format!(
+            "registration: expected \"invite\" or \"off\", got \"{other}\""
+        )),
     }
 }
 
@@ -265,7 +273,10 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             .collect();
     }
     if let Some(v) = get("BEATLUMEN_PUSH_ALLOW_PRIVATE") {
-        cfg.push_allow_private = matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on");
+        cfg.push_allow_private = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
     }
     if let Some(v) = get("BEATLUMEN_REGISTRATION") {
         cfg.registration = registration(&v)?;
@@ -495,12 +506,15 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     .collect::<Result<_, _>>()?
             }
             "pushAllowPrivate" => {
-                cfg.push_allow_private = val.as_bool().ok_or_else(|| err("expected true or false"))?
+                cfg.push_allow_private =
+                    val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
             "registration" => {
-                cfg.registration =
-                    registration(val.as_str().ok_or_else(|| err("expected \"invite\" or \"off\""))?)
-                        .map_err(|e| err(&e))?
+                cfg.registration = registration(
+                    val.as_str()
+                        .ok_or_else(|| err("expected \"invite\" or \"off\""))?,
+                )
+                .map_err(|e| err(&e))?
             }
             "vaultQuotaMb" => {
                 cfg.vault_quota_mb = val
@@ -630,8 +644,12 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--registration" => cfg.registration = registration(&v)?,
             "--push-allow-private" => cfg.push_allow_private = true,
             "--public-url" => cfg.public_url = Some(v.trim_end_matches('/').to_string()),
-            "--android-cert" => cfg.android_certs.push(v.replace(':', "").to_ascii_lowercase()),
-            "--days" if command.as_deref() == Some("invite") => days = num(&flag, &v)?.clamp(1, 365),
+            "--android-cert" => cfg
+                .android_certs
+                .push(v.replace(':', "").to_ascii_lowercase()),
+            "--days" if command.as_deref() == Some("invite") => {
+                days = num(&flag, &v)?.clamp(1, 365)
+            }
             "--days" => return Err("--days only applies to `invite`".into()),
             _ => {}
         }
