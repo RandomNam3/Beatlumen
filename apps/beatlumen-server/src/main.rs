@@ -20,6 +20,25 @@ fn main() {
             return;
         }
         Action::Run(cfg) => *cfg,
+        Action::Invite(cfg, days) => {
+            match beatlumen_server::vault::create_invite(&cfg.data_dir, days) {
+                Ok(code) => {
+                    println!("{code}");
+                    eprintln!("Invitation for one account, valid for {days} days. Enter it in the app when creating the account.");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Action::Users(cfg) => {
+            for u in beatlumen_server::vault::list_users(&cfg.data_dir) {
+                println!("{u}");
+            }
+            return;
+        }
         Action::HealthCheck(cfg) => {
             std::process::exit(if beatlumen_server::health_check(&cfg) {
                 0

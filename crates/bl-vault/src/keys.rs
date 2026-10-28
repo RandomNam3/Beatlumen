@@ -16,6 +16,28 @@ use crate::{aead, derive, random, sha256, Error, Secret};
 use zeroize::Zeroize;
 
 pub const SALT_LEN: usize = 16;
+/// Size of a wrapped master key.
+pub const WRAPPED_MASTER_LEN: usize = 32 + aead::OVERHEAD;
+/// Size of wrapped identity private keys.
+pub const WRAPPED_IDENTITY_LEN: usize = 64 + aead::OVERHEAD;
+
+/// The canonical form of a user name (lower case `a-z 0-9 . _ -`, 1 to 32
+/// characters, starting with a letter or digit). Names are part of the
+/// associated data of wrapped keys, so client and server must agree on it.
+pub fn normalize_user(name: &str) -> Result<String, Error> {
+    let n = name.trim().to_ascii_lowercase();
+    let ok = (1..=32).contains(&n.len())
+        && n.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+        && n.as_bytes()[0].is_ascii_alphanumeric();
+    if ok {
+        Ok(n)
+    } else {
+        Err(Error::Format(
+            "user name: 1 to 32 characters a-z, 0-9, '.', '_', '-'",
+        ))
+    }
+}
 
 /// Argon2id parameters, chosen by the client at registration and stored on
 /// the server.
@@ -31,7 +53,11 @@ pub struct KdfParams {
 
 impl KdfParams {
     /// 64 MiB, 3 passes, 1 lane.
-    pub const DEFAULT: KdfParams = KdfParams { m_kib: 64 * 1024, t: 3, p: 1 };
+    pub const DEFAULT: KdfParams = KdfParams {
+        m_kib: 64 * 1024,
+        t: 3,
+        p: 1,
+    };
 
     /// Rejects parameters below the default (a malicious server could hand
     /// out weak ones to make the password easy to guess) and absurd ones (a
@@ -57,7 +83,11 @@ pub struct PasswordKeys {
 
 impl PasswordKeys {
     /// Runs Argon2id (slow by design: about a second on a phone).
-    pub fn derive(password: &str, salt: &[u8; SALT_LEN], params: KdfParams) -> Result<PasswordKeys, Error> {
+    pub fn derive(
+        password: &str,
+        salt: &[u8; SALT_LEN],
+        params: KdfParams,
+    ) -> Result<PasswordKeys, Error> {
         params.check()?;
         let argon = argon2::Argon2::new(
             argon2::Algorithm::Argon2id,
@@ -173,7 +203,11 @@ pub struct Account {
 impl Account {
     /// Creates a new account. The recovery code must be shown to the user
     /// once; it is not stored anywhere.
-    pub fn register(user: &str, password: &str) -> Result<(Account, Registration, RecoveryCode), Error> {
+    pub fn register(
+        user: &str,
+        password: &str,
+    ) -> Result<(Account, Registration, RecoveryCode), Error> {
+        let user = &normalize_user(user)?;
         let master = Secret::random()?;
         let identity = Identity::generate()?;
         let code = RecoveryCode::generate()?;
@@ -190,14 +224,23 @@ impl Account {
             identity: identity.wrap(&master)?,
             public: identity.public(),
         };
-        let reg = Registration { bundle, auth: pk.auth.clone(), recovery_auth: rk.auth.clone() };
-        let account = Account { user: user.to_string(), master, identity };
+        let reg = Registration {
+            bundle,
+            auth: pk.auth.clone(),
+            recovery_auth: rk.auth.clone(),
+        };
+        let account = Account {
+            user: user.to_string(),
+            master,
+            identity,
+        };
         Ok((account, reg, code))
     }
 
     /// Unlocks with the password keys (derived before login, since the
     /// auth key is needed to get the bundle).
     pub fn unlock(user: &str, keys: &PasswordKeys, bundle: &KeyBundle) -> Result<Account, Error> {
+        let user = &normalize_user(user)?;
         let master = unwrap_master(&keys.kek, user, "password", &bundle.master_by_password)?;
         Account::open(user, master, bundle)
     }
@@ -205,6 +248,7 @@ impl Account {
     /// Unlocks with the recovery code. Set a new password and a new
     /// recovery code right after.
     pub fn recover(user: &str, code: &RecoveryCode, bundle: &KeyBundle) -> Result<Account, Error> {
+        let user = &normalize_user(user)?;
         let rk = RecoveryKeys::derive(code);
         let master = unwrap_master(&rk.kek, user, "recovery", &bundle.master_by_recovery)?;
         Account::open(user, master, bundle)
@@ -217,7 +261,11 @@ impl Account {
         if identity.public() != bundle.public {
             return Err(Error::Signature);
         }
-        Ok(Account { user: user.to_string(), master, identity })
+        Ok(Account {
+            user: user.to_string(),
+            master,
+            identity,
+        })
     }
 
     pub fn change_password(&self, new_password: &str) -> Result<PasswordChange, Error> {
@@ -266,14 +314,18 @@ mod tests {
         assert!(Account::unlock("bob", &pk, b).is_err());
         let mut swapped = b.clone();
         swapped.public = Identity::generate().unwrap().public();
-        assert_eq!(Account::unlock("alice", &pk, &swapped).err(), Some(Error::Signature));
+        assert_eq!(
+            Account::unlock("alice", &pk, &swapped).err(),
+            Some(Error::Signature)
+        );
         // The password wrapping cannot be used as the recovery wrapping.
         let mut mixed = b.clone();
         mixed.master_by_recovery = b.master_by_password.clone();
         assert!(Account::recover("alice", &code, &mixed).is_err());
 
         // Recovery, then a new password and a new code.
-        let rec = Account::recover("alice", &RecoveryCode::parse(&code.display()).unwrap(), b).unwrap();
+        let rec =
+            Account::recover("alice", &RecoveryCode::parse(&code.display()).unwrap(), b).unwrap();
         let ch = rec.change_password("new secret").unwrap();
         let (rc, code2) = rec.new_recovery_code().unwrap();
         let mut b2 = b.clone();
@@ -292,10 +344,32 @@ mod tests {
     #[test]
     fn weak_parameters_are_refused() {
         let salt = [1; SALT_LEN];
-        let weak = KdfParams { m_kib: 1024, t: 1, p: 1 };
-        assert_eq!(PasswordKeys::derive("pw", &salt, weak).err(), Some(Error::WeakParameters));
-        let huge = KdfParams { m_kib: u32::MAX, t: 3, p: 1 };
+        let weak = KdfParams {
+            m_kib: 1024,
+            t: 1,
+            p: 1,
+        };
+        assert_eq!(
+            PasswordKeys::derive("pw", &salt, weak).err(),
+            Some(Error::WeakParameters)
+        );
+        let huge = KdfParams {
+            m_kib: u32::MAX,
+            t: 3,
+            p: 1,
+        };
         assert!(PasswordKeys::derive("pw", &salt, huge).is_err());
+    }
+
+    #[test]
+    fn user_names() {
+        assert_eq!(normalize_user(" Alice.B-1 ").unwrap(), "alice.b-1");
+        for bad in ["", ".x", "a b", "ä", "a/b", &"x".repeat(33)] {
+            assert!(normalize_user(bad).is_err(), "{bad}");
+        }
+        let (_, reg, _) = Account::register("alice", "pw").unwrap();
+        assert_eq!(reg.bundle.master_by_password.len(), WRAPPED_MASTER_LEN);
+        assert_eq!(reg.bundle.identity.len(), WRAPPED_IDENTITY_LEN);
     }
 
     #[test]
@@ -321,11 +395,28 @@ mod stability {
     /// independent implementation (argon2-cffi and Python's hmac).
     #[test]
     fn derivation_is_stable() {
-        let pk = PasswordKeys::derive("Beatlumen \u{266b} passwort", &[7; SALT_LEN], KdfParams::DEFAULT).unwrap();
-        assert_eq!(hex(pk.auth.as_bytes()), "d31d1f2bb78ffe675c60daae7eddfae464d1fa6acaedb8e0ae81e2a5bc809ce8");
-        assert_eq!(hex(pk.kek.as_bytes()), "3d5beb2af51bc2da3878ecae9c55a15f3eaa1c8f11bfde1c06b481e37cbffbca");
+        let pk = PasswordKeys::derive(
+            "Beatlumen \u{266b} passwort",
+            &[7; SALT_LEN],
+            KdfParams::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(
+            hex(pk.auth.as_bytes()),
+            "d31d1f2bb78ffe675c60daae7eddfae464d1fa6acaedb8e0ae81e2a5bc809ce8"
+        );
+        assert_eq!(
+            hex(pk.kek.as_bytes()),
+            "3d5beb2af51bc2da3878ecae9c55a15f3eaa1c8f11bfde1c06b481e37cbffbca"
+        );
         let rk = RecoveryKeys::derive(&RecoveryCode::from_secret(Secret::from_bytes([9; 32])));
-        assert_eq!(hex(rk.auth.as_bytes()), "05681e697f4310d7836464ecd80698b2df12017e86436bab7b9e4a2697dbbcb4");
-        assert_eq!(hex(rk.kek.as_bytes()), "d14b9f0dc666dd2853a4dca3d0b4d9f227ea63f6a921a2e9fd434f74351532b2");
+        assert_eq!(
+            hex(rk.auth.as_bytes()),
+            "05681e697f4310d7836464ecd80698b2df12017e86436bab7b9e4a2697dbbcb4"
+        );
+        assert_eq!(
+            hex(rk.kek.as_bytes()),
+            "d14b9f0dc666dd2853a4dca3d0b4d9f227ea63f6a921a2e9fd434f74351532b2"
+        );
     }
 }

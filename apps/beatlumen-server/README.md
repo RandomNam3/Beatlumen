@@ -34,6 +34,8 @@ installed) or add the server in an Beatlumen app.
 | `--scan-threads N` | automatic (up to 4) | Threads reading tags during scans |
 | `--config FILE` | none | JSON configuration file |
 | `--verbose` | off | Log every request and per-file tag problems |
+| `--vault-pepper-file FILE` | `<data>/vault/pepper` | Secret (32+ bytes) mixed into the account verifiers; keep it outside the data folder, e.g. as a container secret |
+| `--vault-quota-mb MB` | `10240` | Encrypted storage per account, `0` = unlimited |
 | `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
 | `-h`, `--help` / `-V`, `--version` | | |
 
@@ -44,6 +46,7 @@ containers): `BEATLUMEN_MUSIC`, `BEATLUMEN_IMAGES` (folders separated like
 secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
 (comma separated), `BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
 `BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
+`BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`,
 `BEATLUMEN_VERBOSE`. A container image, `compose.yml` and AppArmor/SELinux
 profiles are in [`container/`](../../container/README.md).
 
@@ -188,6 +191,7 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 | `PUT /api/presets/{name}` | stores the body (a JSON object with an `effects` array, max 4 MB) → 201 created / 200 replaced |
 | `DELETE /api/presets/{name}` | 204 |
 | `GET /…` | static web client |
+| `/api/vault/…` | accounts and end-to-end encrypted files, see below |
 
 Preset names (percent-encoded in the URL) must be 1..100 characters without
 `/`, `\`, `..`, control characters, `:*?"<>|`, leading `.`, trailing `.` or
@@ -230,6 +234,52 @@ static web client itself is public so that it can show its login screen.
   with 429. Behind a reverse proxy on the same machine the address is taken
   from `X-Forwarded-For` / `X-Real-IP`. Use a long password (12+ characters)
   if the server can be reached from the internet.
+
+### Accounts and encrypted files
+
+Users with an account store files on the server that only they and the
+people they share them with can read (design and threat model:
+[`docs/ENCRYPTION.md`](../../docs/ENCRYPTION.md)). Passwords, keys and file
+contents never reach the server; the apps encrypt on the device.
+
+The admin creates invitations on the command line; each code creates one
+account and expires after 7 days (`--days N`):
+
+```sh
+beatlumen-server invite --data /var/lib/beatlumen
+docker exec beatlumen /beatlumen-server invite      # container
+beatlumen-server users --data /var/lib/beatlumen    # list accounts
+```
+
+A session token from `/api/vault/login` also opens the library of a
+password-protected server. Binary values are base64 in JSON.
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/vault/prelogin` | `{"user"}` → `{"salt", "params": {"m","t","p"}}` for Argon2id; made-up but stable values for unknown names |
+| `POST /api/vault/register` | `{"invite", "user", "auth", "recoveryAuth", "bundle"}` → 201 `{"token", "user"}`; 403 invalid invitation, 409 name taken |
+| `POST /api/vault/login` | `{"user", "auth"}` → `{"token", "user", "bundle"}`; 401 wrong, 429 locked |
+| `POST /api/vault/recover` | `{"user", "recoveryAuth"}` → like login |
+| `POST /api/vault/logout` | ends the session → 204 |
+| `GET /api/vault/account` | `{"user", "bundle"}` (salt, params, wrapped master key ×2, wrapped identity, public key) |
+| `PUT /api/vault/account/keys` | `{"proof": {"auth"} or {"recoveryAuth"}, "password"?: {"salt","params","auth","masterByPassword"}, "recovery"?: {"recoveryAuth","masterByRecovery"}}` → `{"token"?}`; a new password ends all other sessions |
+| `DELETE /api/vault/account` | `{"proof"}` → 204; deletes the account and its files |
+| `GET /api/vault/users` | `[{"name", "public"}]` (public keys for sharing) |
+| `GET /api/vault/users/{name}` | `{"name", "public"}` |
+| `GET /api/vault/files` | `{"files": [entry], "used", "quota"}`: own files and files shared with the user |
+| `POST /api/vault/files` | `{"header", "meta", "signature", "key"}` → 201 entry; 507 over quota |
+| `PUT /api/vault/files/{id}/data?offset=N` | appends up to 4 MB of the encrypted file at `N` (must equal `received`) → `{"received", "complete"}` |
+| `GET /api/vault/files/{id}` | entry: `id, owner, size, received, complete, header, meta, signature, key` (the caller's sealed key), `recipients` (owner only) |
+| `GET /api/vault/files/{id}/data` | the encrypted file, `Range` supported |
+| `PUT /api/vault/files/{id}/meta` | `{"meta", "signature"}` → 204 (owner) |
+| `POST /api/vault/files/{id}/keys` | `{"user", "key"}` → 204: share (owner) |
+| `DELETE /api/vault/files/{id}/keys/{user}` | revoke (owner) or leave (recipient) → 204 |
+| `DELETE /api/vault/files/{id}` | 204 (owner) |
+
+The server stores only hashes of the auth keys mixed with the pepper, and
+checks them in constant time. Failed logins, recoveries and password proofs
+cost 300 ms; after 10 failures for one account or 20 from one address
+within 15 minutes further attempts get 429. Sessions last 90 days.
 
 ## Security notes
 

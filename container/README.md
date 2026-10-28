@@ -53,7 +53,8 @@ platform of the build host (x86-64, arm64, …); `docker buildx build
 cd container
 cp example.env .env            # music and image folders, port, name
 printf '%s' 'a-long-password' > password.txt
-chmod 0444 password.txt        # readable by the container user (see Secrets)
+head -c 32 /dev/urandom > pepper.bin   # secret for user accounts
+chmod 0444 password.txt pepper.bin     # readable by the container user (see Secrets)
 docker compose up -d --build   # or: podman compose up -d --build
 docker compose logs -f
 ```
@@ -68,6 +69,8 @@ docker run -d --name beatlumen --init --restart unless-stopped \
   -v beatlumen-data:/data:Z \
   -e BEATLUMEN_PASSWORD_FILE=/run/secrets/password \
   -v "$PWD/password.txt":/run/secrets/password:ro,z \
+  -e BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/pepper \
+  -v "$PWD/pepper.bin":/run/secrets/pepper:ro,z \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   beatlumen-server
 ```
@@ -113,8 +116,8 @@ reachable for a proxy on the same host only.
 |---|---|---|
 | `/music` | read-only | Music library, scanned recursively. Several folders: mount them below `/music` (e.g. `/music/nas`, `/music/local`) or set `BEATLUMEN_MUSIC` |
 | `/images` | read-only | Background images |
-| `/data` | read-write | Library cache, analyses, covers, playlists, presets, uploads, login tokens (keep it: a backup of this volume keeps everything) |
-| `/run/secrets/…` | read-only | Password file (optional) |
+| `/data` | read-write | Library cache, analyses, covers, playlists, presets, uploads, login tokens, accounts and their encrypted files (keep it: a backup of this volume and the pepper keeps everything) |
+| `/run/secrets/…` | read-only | Password file and pepper (optional) |
 
 The container user is `10001:10001`. The music and image folders only need
 to be readable for it (world-readable files are). `/data` is a named volume
@@ -143,6 +146,8 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_ANALYSIS_MAX_MINUTES` | `20` | Longest track analysed on the server, `0` = unlimited |
 | `BEATLUMEN_SCAN_THREADS` | `0` (automatic) | Threads reading tags during scans |
 | `BEATLUMEN_WEB_DIR` | embedded | Web client from a mounted folder instead of the embedded one (a `x.gz` next to a file is sent to browsers that accept gzip) |
+| `BEATLUMEN_VAULT_PEPPER_FILE` | `/data/vault/pepper` | Secret (at least 32 bytes) mixed into the account verifiers. As a secret outside `/data`, a copy of the volume alone does not even allow testing password guesses. Losing it locks every account out (the files stay encrypted and are lost with it) |
+| `BEATLUMEN_VAULT_QUOTA_MB` | `10240` | Encrypted storage per account in MiB, `0` = unlimited |
 | `BEATLUMEN_VERBOSE` | `false` | `true`: log every request and per-file tag problems |
 
 Without a password the server accepts every client in the network. Set one
@@ -173,12 +178,31 @@ environment variables:
 | `--analysis-max-minutes M` | Longest track analysed |
 | `--scan-threads N` | Tag reading threads |
 | `--config FILE` | JSON configuration file (mount it read-only) |
+| `--vault-pepper-file FILE` | Pepper of the account verifiers |
+| `--vault-quota-mb MB` | Encrypted storage per account |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |
 | `--help`, `--version` | |
 
 Precedence: built-in defaults < `--config` file < environment variables <
 command line parameters.
+
+## User accounts
+
+Users with an account store end-to-end encrypted files on the server and
+share them with each other; neither the admin nor an attacker on the server
+can read them (see [`docs/ENCRYPTION.md`](../docs/ENCRYPTION.md)). Accounts
+are created in the apps with an invitation code from the admin:
+
+```sh
+docker exec beatlumen /beatlumen-server invite            # one account, 7 days
+docker exec beatlumen /beatlumen-server invite --days 1
+docker exec beatlumen /beatlumen-server users             # list accounts
+```
+
+(Compose: `docker compose exec server /beatlumen-server invite`.) The
+pepper (`pepper.bin`) belongs in the backup next to the `/data` volume, but
+stored separately from it.
 
 ## Health check
 

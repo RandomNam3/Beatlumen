@@ -141,7 +141,10 @@ fn pad(data: &[u8], to: usize) -> Vec<u8> {
 }
 
 fn unpad(mut v: Vec<u8>) -> Result<Vec<u8>, Error> {
-    let end = v.iter().rposition(|&b| b != 0).ok_or(Error::Format("padding"))?;
+    let end = v
+        .iter()
+        .rposition(|&b| b != 0)
+        .ok_or(Error::Format("padding"))?;
     if v[end] != 0x80 {
         return Err(Error::Format("padding"));
     }
@@ -157,7 +160,12 @@ pub fn encrypt_chunk(key: &Secret, h: &Header, index: u64, plain: &[u8]) -> Resu
         return Err(Error::Format("chunk length"));
     }
     let buf = if last { pad(plain, cs) } else { plain.to_vec() };
-    Ok(aead::seal_with_nonce(key, &h.nonce(index), &h.to_bytes(), &buf))
+    Ok(aead::seal_with_nonce(
+        key,
+        &h.nonce(index),
+        &h.to_bytes(),
+        &buf,
+    ))
 }
 
 /// Decrypts chunk `index` (the padding of the last chunk is removed).
@@ -196,7 +204,12 @@ pub fn decrypt(key: &Secret, data: &[u8]) -> Result<Vec<u8>, Error> {
     let mut out = Vec::with_capacity(data.len());
     for i in 0..h.chunks {
         let at = h.chunk_offset(i) as usize;
-        out.extend(decrypt_chunk(key, &h, i, &data[at..at + h.chunk_len() as usize])?);
+        out.extend(decrypt_chunk(
+            key,
+            &h,
+            i,
+            &data[at..at + h.chunk_len() as usize],
+        )?);
     }
     Ok(out)
 }
@@ -238,7 +251,13 @@ pub fn sign(owner: &Identity, h: &Header, meta: &[u8], key: &Secret) -> [u8; 64]
     owner.sign(&signed_digest(h, meta, key))
 }
 
-pub fn verify(owner: &PublicIdentity, h: &Header, meta: &[u8], key: &Secret, sig: &[u8; 64]) -> Result<(), Error> {
+pub fn verify(
+    owner: &PublicIdentity,
+    h: &Header,
+    meta: &[u8],
+    key: &Secret,
+    sig: &[u8; 64],
+) -> Result<(), Error> {
     owner.verify_signature(&signed_digest(h, meta, key), sig)
 }
 
@@ -315,7 +334,10 @@ mod tests {
         t[a..a + cl].copy_from_slice(&other[a..a + cl]);
         assert!(decrypt(&key, &t).is_err());
         // A wrong key.
-        assert_eq!(decrypt(&Secret::random().unwrap(), &enc), Err(Error::Decrypt));
+        assert_eq!(
+            decrypt(&Secret::random().unwrap(), &enc),
+            Err(Error::Decrypt)
+        );
         // Garbage and bad headers.
         assert!(decrypt(&key, b"BLV1").is_err());
         let mut t = enc.clone();
@@ -334,7 +356,10 @@ mod tests {
         let (h, _) = encrypt(&key, b"song").unwrap();
         let meta = seal_meta(&key, &h, br#"{"name":"song.flac"}"#).unwrap();
         assert_eq!(meta.len(), META_BLOCK + aead::OVERHEAD);
-        assert_eq!(open_meta(&key, &h, &meta).unwrap(), br#"{"name":"song.flac"}"#);
+        assert_eq!(
+            open_meta(&key, &h, &meta).unwrap(),
+            br#"{"name":"song.flac"}"#
+        );
         let (h_other, _) = encrypt(&key, b"song").unwrap();
         assert!(open_meta(&key, &h_other, &meta).is_err());
 
@@ -342,7 +367,12 @@ mod tests {
         // Bob receives the key sealed to him and checks Alice's signature.
         let aad = sealed::file_key_aad(&h.file_id, "bob");
         let boxed = sealed::seal(&bob.public().dh, &aad, key.as_bytes()).unwrap();
-        let got = Secret::from_bytes(sealed::open(&bob, &aad, &boxed).unwrap().try_into().unwrap());
+        let got = Secret::from_bytes(
+            sealed::open(&bob, &aad, &boxed)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        );
         verify(&alice.public(), &h, &meta, &got, &sig).unwrap();
         // A key the server made up, other metadata, another signer.
         let fake = Secret::random().unwrap();

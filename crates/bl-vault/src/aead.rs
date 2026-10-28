@@ -36,7 +36,13 @@ pub(crate) fn seal_with_nonce(
     plaintext: &[u8],
 ) -> Vec<u8> {
     XChaCha20Poly1305::new(key.as_bytes().into())
-        .encrypt(XNonce::from_slice(nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .expect("encryption of in-memory data does not fail")
 }
 
@@ -65,7 +71,10 @@ mod tests {
         let mut t = c.clone();
         t[30] ^= 1;
         assert_eq!(open(&k, b"aad", &t), Err(Error::Decrypt));
-        assert_eq!(open(&Secret::random().unwrap(), b"aad", &c), Err(Error::Decrypt));
+        assert_eq!(
+            open(&Secret::random().unwrap(), b"aad", &c),
+            Err(Error::Decrypt)
+        );
         assert_eq!(open(&k, b"aad", &c[..10]), Err(Error::Decrypt));
         // Fresh nonces: the same message encrypts differently.
         assert_ne!(seal(&k, b"aad", b"hello").unwrap(), c);
@@ -75,7 +84,10 @@ mod tests {
     fn xchacha20poly1305_test_vector() {
         // draft-irtf-cfrg-xchacha-03, appendix A.3.1.
         let hex = |s: &str| -> Vec<u8> {
-            (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
         };
         let key = Secret::from_bytes(
             hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
@@ -88,11 +100,11 @@ mod tests {
         let aad = hex("50515253c0c1c2c3c4c5c6c7");
         let pt = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
         let ct = seal_with_nonce(&key, &nonce, &aad, pt);
+        assert_eq!(&ct[..16], &hex("bd6d179d3e83d43b9576579493c0e939")[..],);
         assert_eq!(
-            &ct[..16],
-            &hex("bd6d179d3e83d43b9576579493c0e939")[..],
+            &ct[ct.len() - 16..],
+            &hex("c0875924c1c7987947deafd8780acf49")[..]
         );
-        assert_eq!(&ct[ct.len() - 16..], &hex("c0875924c1c7987947deafd8780acf49")[..]);
         assert_eq!(open_with_nonce(&key, &nonce, &aad, &ct).unwrap(), pt);
     }
 }

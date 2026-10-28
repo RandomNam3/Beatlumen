@@ -16,6 +16,9 @@ issue.
 * **Few dependencies.** Decoders, the HTTP stack, JSON and image codecs are
   part of this repository (Rust, `#![forbid(unsafe_code)]` where possible)
   rather than large third-party libraries; Qt is the only external runtime.
+  Cryptography is the exception: the end-to-end encryption uses the audited
+  RustCrypto and dalek crates, pinned to exact versions, instead of an own
+  implementation.
 * **No connections except the configured ones.** The apps contact only
   the server the user entered; the server connects only to remote sources
   its admin configures (none today): no update checks, telemetry or
@@ -55,13 +58,39 @@ issue.
   front of it (see the server README). The apps and the web app connect to
   `https://` addresses.
 
+## Accounts and encrypted files
+
+User files on the server are end-to-end encrypted; the design, threat
+model and file format are in [`docs/ENCRYPTION.md`](docs/ENCRYPTION.md).
+In short:
+
+* Passwords never leave the device: Argon2id (64 MiB) derives an auth key
+  for the server and a key that unwraps a random master key. The server
+  stores only SHA-256 hashes of the auth keys mixed with a pepper kept
+  outside the data folder. Apps refuse weaker Argon2 parameters, so a
+  malicious server cannot make the password cheaper to guess.
+* Files are encrypted on the device (XChaCha20-Poly1305, 64 KiB chunks
+  bound to position and file, sizes padded to whole chunks, encrypted
+  names) and signed by the owner (Ed25519, over a commitment to the file
+  key). Sharing seals the file key to the recipient's X25519 key; the apps
+  pin public keys and show safety numbers to compare in person.
+* A forgotten password is replaced with the recovery code shown once at
+  registration; without either the files cannot be decrypted by anyone.
+* Accounts need an invitation from the admin (single use, expiring).
+  Logins and password proofs are rate limited per account and address;
+  password changes need the current password and end all other sessions.
+* What a compromised server can still do: delete or withhold files, see
+  who shares how many files of which size with whom and when, and serve a
+  modified web client (see the web client integrity checks in the design).
+
 ## Container
 
 * The image (`container/Containerfile`) holds only the static server
   binary; it runs as an unprivileged user (10001) and is meant to run with
   a read-only root file system, no capabilities and `no-new-privileges`
   (as in `container/compose.yml`).
-* The password can come from a file (`BEATLUMEN_PASSWORD_FILE`, Docker and
+* The password and the account pepper come from files
+  (`BEATLUMEN_PASSWORD_FILE`, `BEATLUMEN_VAULT_PEPPER_FILE`; Docker and
   Podman secrets) instead of the environment, which `docker inspect` shows.
 * Optional AppArmor (`container/apparmor/`) and SELinux
   (`container/selinux/`) profiles confine it further; see

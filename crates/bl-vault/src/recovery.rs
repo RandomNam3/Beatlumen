@@ -120,7 +120,10 @@ mod tests {
         let mut chars: Vec<char> = shown.chars().collect();
         chars[0] = if chars[0] == 'A' { 'B' } else { 'A' };
         let typo: String = chars.into_iter().collect();
-        assert!(RecoveryCode::parse(&typo).is_err() || RecoveryCode::parse(&typo).unwrap().secret() != c.secret());
+        assert!(
+            RecoveryCode::parse(&typo).is_err()
+                || RecoveryCode::parse(&typo).unwrap().secret() != c.secret()
+        );
         assert!(RecoveryCode::parse("too-short").is_err());
         assert!(RecoveryCode::parse(&shown.replace('-', "U")).is_err());
     }

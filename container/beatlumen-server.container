@@ -6,7 +6,8 @@
 #         systemctl [--user] start beatlumen-server
 #
 # Build the image first: podman build -f container/Containerfile -t beatlumen-server .
-# Create the password secret: printf '%s' 'a-long-password' | podman secret create beatlumen_password -
+# Create the secrets: printf '%s' 'a-long-password' | podman secret create beatlumen_password -
+#                     head -c 32 /dev/urandom | podman secret create beatlumen_pepper -
 # Adjust the music and image folders below.
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -25,6 +26,8 @@ Volume=%h/Pictures/Backgrounds:/images:ro,z
 Volume=beatlumen-data:/data:Z
 Secret=beatlumen_password,mode=0400,uid=10001
 Environment=BEATLUMEN_PASSWORD_FILE=/run/secrets/beatlumen_password
+Secret=beatlumen_pepper,mode=0400,uid=10001
+Environment=BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/beatlumen_pepper
 Environment=BEATLUMEN_NAME=Beatlumen Server
 RunInit=true
 ReadOnly=true

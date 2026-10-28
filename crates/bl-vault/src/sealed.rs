@@ -12,6 +12,9 @@ use zeroize::Zeroize;
 
 const LABEL: &str = "beatlumen seal v1";
 
+/// Size of a sealed file key.
+pub const SEALED_KEY_LEN: usize = 32 + 32 + aead::OVERHEAD;
+
 fn box_key(shared: &[u8; 32], eph: &[u8; 32], recipient: &[u8; 32]) -> Secret {
     let mut ikm = Vec::with_capacity(96);
     ikm.extend_from_slice(shared);
@@ -45,7 +48,9 @@ pub fn open(identity: &Identity, aad: &[u8], data: &[u8]) -> Result<Vec<u8>, Err
         return Err(Error::Decrypt);
     }
     let eph_pub: [u8; 32] = data[..32].try_into().expect("32");
-    let shared = identity.dh_secret().diffie_hellman(&PublicKey::from(eph_pub));
+    let shared = identity
+        .dh_secret()
+        .diffie_hellman(&PublicKey::from(eph_pub));
     if !shared.was_contributory() {
         return Err(Error::Decrypt);
     }
@@ -73,6 +78,10 @@ mod tests {
         let aad = file_key_aad(&[7; 16], "bob");
         let boxed = seal(&bob.public().dh, &aad, b"file key").unwrap();
         assert_eq!(open(&bob, &aad, &boxed).unwrap(), b"file key");
+        assert_eq!(
+            seal(&bob.public().dh, &aad, &[0; 32]).unwrap().len(),
+            SEALED_KEY_LEN
+        );
         // Other recipient, other file or other name: no.
         assert!(open(&eve, &aad, &boxed).is_err());
         assert!(open(&bob, &file_key_aad(&[8; 16], "bob"), &boxed).is_err());

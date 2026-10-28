@@ -8,3 +8,4 @@
 # Local container settings and secrets
 /container/.env
 /container/password.txt
+/container/pepper.bin

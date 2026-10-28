@@ -160,9 +160,11 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 not_allowed("POST")
             }
         }
+        ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         _ => {}
     }
-    if !state.auth.authorized(req) {
+    // Users with an account may use the library as well.
+    if !state.auth.authorized(req) && state.vault.session_user(req).is_none() {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }

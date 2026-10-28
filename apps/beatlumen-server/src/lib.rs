@@ -1,7 +1,7 @@
 //! Beatlumen server: serves music libraries from local folders to
 //! Beatlumen clients (native apps and the web client) over HTTP.
 //!
-//! The server never opens outgoing network connections.
+//! The server connects only to remote sources the admin configures.
 //!
 //! Module overview:
 //! * [`config`]: command line / JSON configuration.
@@ -10,6 +10,7 @@
 //! * [`routes`]: the HTTP API (see `README.md` for the endpoint list).
 //! * [`auth`], [`playlists`], [`presets`], [`images`], [`covers`],
 //!   [`analysis`], [`web`]: the individual services.
+//! * [`vault`]: user accounts and end-to-end encrypted files.
 //! * [`util`], [`log`], [`sha256`], [`random`]: helpers.
 //!
 //! [`start`] binds the listener, loads the cached index, starts the scanner
@@ -31,6 +32,7 @@ pub mod random;
 pub mod routes;
 pub mod sha256;
 pub mod util;
+pub mod vault;
 pub mod web;
 
 pub use config::Config;
@@ -114,6 +116,7 @@ pub struct State {
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
     pub web: web::WebSource,
+    pub vault: vault::Vault,
 }
 
 impl State {
@@ -428,6 +431,11 @@ pub fn start(config: Config) -> Result<Server, String> {
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
 
     let web = web::WebSource::resolve(config.web_dir.as_deref());
+    let vault = vault::Vault::open(
+        &data.root,
+        config.vault_pepper_file.as_deref(),
+        config.vault_quota_mb.saturating_mul(1024 * 1024),
+    )?;
     let state = Arc::new(State {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),
         playlists: playlists::Playlists::load(data.playlists.clone()),
@@ -449,6 +457,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         roots,
         data,
         web,
+        vault,
         config,
     });
 

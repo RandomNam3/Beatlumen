@@ -21,3 +21,4 @@ bl-media = { path = "../../crates/bl-media" }
 bl-image = { path = "../../crates/bl-image" }
 bl-analysis = { path = "../../crates/bl-analysis" }
 bl-fx = { path = "../../crates/bl-fx" }
+bl-vault = { path = "../../crates/bl-vault" }

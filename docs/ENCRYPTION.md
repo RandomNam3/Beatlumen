@@ -189,7 +189,8 @@ with an app.
    derivation values (checked against an independent implementation) and
    tests for tampering (changed chunks, swapped chunks, truncation, wrong
    keys, substituted public keys).
-2. Server: user accounts with invitations, the login and recovery flows,
+2. Server (done, `apps/beatlumen-server/src/vault.rs`, API in the server
+   README): user accounts with invitations, the login and recovery flows,
    storage of key bundles, encrypted blobs (with byte ranges), sealed keys
    and signatures. The server never handles plaintext.
 3. Apps: account setup with recovery code, unlocking, encrypted upload and

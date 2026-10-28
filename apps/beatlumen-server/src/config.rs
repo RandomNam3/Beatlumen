@@ -40,6 +40,10 @@ pub struct Config {
     pub scan_threads: usize,
     /// Log every request and per-file scan problems.
     pub verbose: bool,
+    /// The secret mixed into account verifiers; default `<data>/vault/pepper`.
+    pub vault_pepper_file: Option<PathBuf>,
+    /// Encrypted storage per user in MiB (0 = unlimited).
+    pub vault_quota_mb: u64,
 }
 
 impl Default for Config {
@@ -58,6 +62,8 @@ impl Default for Config {
             analysis_max_minutes: 20,
             scan_threads: 0,
             verbose: false,
+            vault_pepper_file: None,
+            vault_quota_mb: 10 * 1024,
         }
     }
 }
@@ -69,6 +75,10 @@ pub enum Action {
     /// Checks that a server with this configuration answers (container
     /// health checks); exit status 0 when it does.
     HealthCheck(Box<Config>),
+    /// Creates an account invitation valid for some days.
+    Invite(Box<Config>, u64),
+    /// Lists the accounts.
+    Users(Box<Config>),
     Help,
     Version,
 }
@@ -110,6 +120,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "threads reading tags, 0 = automatic",
     ),
     ("BEATLUMEN_VERBOSE", "1/true: log every request"),
+    (
+        "BEATLUMEN_VAULT_PEPPER_FILE",
+        "secret for account verifiers (default: in the data folder)",
+    ),
+    (
+        "BEATLUMEN_VAULT_QUOTA_MB",
+        "encrypted storage per user in MiB, 0 = unlimited",
+    ),
 ];
 
 /// Applies `BEATLUMEN_*` variables (read through `get`) to `cfg`.
@@ -166,6 +184,12 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     if let Some(v) = get("BEATLUMEN_SCAN_THREADS") {
         cfg.scan_threads = num("BEATLUMEN_SCAN_THREADS", &v)? as usize;
     }
+    if let Some(v) = get("BEATLUMEN_VAULT_PEPPER_FILE") {
+        cfg.vault_pepper_file = Some(PathBuf::from(v.trim()));
+    }
+    if let Some(v) = get("BEATLUMEN_VAULT_QUOTA_MB") {
+        cfg.vault_quota_mb = num("BEATLUMEN_VAULT_QUOTA_MB", &v)?;
+    }
     if let Some(v) = get("BEATLUMEN_VERBOSE") {
         cfg.verbose = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -180,6 +204,8 @@ beatlumen-server - serves local music folders to Beatlumen clients over HTTP
 
 USAGE:
     beatlumen-server [OPTIONS]
+    beatlumen-server invite [--days N] [OPTIONS]   Create an account invitation
+    beatlumen-server users [OPTIONS]               List the accounts
 
 OPTIONS:
     --music DIR             Music folder to serve (repeatable)
@@ -208,7 +234,14 @@ OPTIONS:
     --scan-threads N        Threads reading tags during scans [default: automatic]
     --config FILE           JSON configuration file (keys: music, images, data,
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
-                            analysisMaxMinutes, scanThreads, verbose)
+                            analysisMaxMinutes, scanThreads, vaultPepperFile,
+                            vaultQuotaMb, verbose)
+    --vault-pepper-file FILE
+                            Secret mixed into the account verifiers, at least 32
+                            bytes; keep it outside the data folder (e.g. a
+                            container secret) so a copy of the data alone is useless
+                            [default: <data>/vault/pepper, created on first start]
+    --vault-quota-mb MB     Encrypted storage per user; 0 = unlimited [default: 10240]
     --verbose               Log every request and per-file scan problems
     --health-check          Check that the server configured this way answers
                             (exit status 0), for container health checks
@@ -221,13 +254,20 @@ ENVIRONMENT:
     BEATLUMEN_PASSWORD_FILE, BEATLUMEN_WEB_DIR, BEATLUMEN_NAME,
     BEATLUMEN_ALLOWED_HOSTS (comma separated), BEATLUMEN_SOURCE_URL,
     BEATLUMEN_RESCAN_INTERVAL, BEATLUMEN_ANALYSIS_MAX_MINUTES,
-    BEATLUMEN_SCAN_THREADS, BEATLUMEN_VERBOSE
+    BEATLUMEN_SCAN_THREADS, BEATLUMEN_VAULT_PEPPER_FILE,
+    BEATLUMEN_VAULT_QUOTA_MB, BEATLUMEN_VERBOSE
     They override the --config file; command line flags override them.
 
 The server connects only to remote sources you configure (no update checks,
 telemetry or metadata lookups). It does not provide TLS:
 for access over the internet use a VPN, or a reverse proxy with HTTPS
 together with --allow-host.
+
+ACCOUNTS:
+    Users with an account store end-to-end encrypted files on the server and
+    share them with each other; the server cannot read them. Accounts are
+    created in the apps with an invitation code from `beatlumen-server invite`
+    (in a container: `docker exec <container> /beatlumen-server invite`).
 ";
 
 fn path_list(v: &Value, base: &Path) -> Result<Vec<PathBuf>, String> {
@@ -331,6 +371,17 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "verbose" => {
                 cfg.verbose = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "vaultPepperFile" => {
+                cfg.vault_pepper_file = Some(resolve(
+                    base,
+                    val.as_str().ok_or_else(|| err("expected a path"))?,
+                ))
+            }
+            "vaultQuotaMb" => {
+                cfg.vault_quota_mb = val
+                    .as_u64()
+                    .ok_or_else(|| err("expected a non-negative integer"))?
+            }
             _ => crate::warn!("ignoring unknown configuration key \"{k}\""),
         }
     }
@@ -341,7 +392,15 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
 pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, String> {
     // Split `--flag=value` and collect (flag, value) pairs first.
     let mut items: Vec<(String, Option<String>)> = Vec::new();
-    let mut it = args.into_iter();
+    let mut it = args.into_iter().peekable();
+    let command = match it.peek().map(String::as_str) {
+        Some(c @ ("invite" | "users")) => {
+            let c = c.to_string();
+            it.next();
+            Some(c)
+        }
+        _ => None,
+    };
     while let Some(a) = it.next() {
         let (flag, inline) = match a.split_once('=') {
             Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
@@ -362,6 +421,9 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--config"
                 | "--analysis-max-minutes"
                 | "--scan-threads"
+                | "--vault-pepper-file"
+                | "--vault-quota-mb"
+                | "--days"
         );
         match flag.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
@@ -398,6 +460,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
     let mut music_cli = Vec::new();
     let mut images_cli = Vec::new();
     let mut health_check = false;
+    let mut days = crate::vault::INVITE_DAYS;
     for (flag, v) in items {
         let v = v.unwrap_or_default();
         match flag.as_str() {
@@ -415,6 +478,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
             "--verbose" => cfg.verbose = true,
             "--health-check" => health_check = true,
+            "--vault-pepper-file" => cfg.vault_pepper_file = Some(PathBuf::from(v)),
+            "--vault-quota-mb" => cfg.vault_quota_mb = num(&flag, &v)?,
+            "--days" if command.as_deref() == Some("invite") => days = num(&flag, &v)?.clamp(1, 365),
+            "--days" => return Err("--days only applies to `invite`".into()),
             _ => {}
         }
     }
@@ -426,6 +493,11 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
     }
     if cfg.name.trim().is_empty() {
         cfg.name = Config::default().name;
+    }
+    match command.as_deref() {
+        Some("invite") => return Ok(Action::Invite(Box::new(cfg), days)),
+        Some("users") => return Ok(Action::Users(Box::new(cfg))),
+        _ => {}
     }
     if health_check {
         return Ok(Action::HealthCheck(Box::new(cfg)));

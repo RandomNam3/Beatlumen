@@ -40,6 +40,7 @@ dependencies = [
  "bl-json",
  "bl-media",
  "bl-net",
+ "bl-vault",
 ]
 
 [[package]]
