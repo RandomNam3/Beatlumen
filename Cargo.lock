@@ -35,6 +35,7 @@ name = "beatlumen-server"
 version = "0.1.0"
 dependencies = [
  "bl-analysis",
+ "bl-core",
  "bl-fx",
  "bl-image",
  "bl-json",
@@ -71,6 +72,7 @@ dependencies = [
  "bl-media",
  "bl-net",
  "bl-render",
+ "bl-vault",
 ]
 
 [[package]]

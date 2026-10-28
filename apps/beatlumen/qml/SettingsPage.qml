@@ -8,6 +8,7 @@ Item {
     id: page
     signal addFolder()
     signal login()
+    signal openVault()
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
     readonly property string server: Core.state.server || "disabled"
@@ -278,6 +279,30 @@ Item {
                 wrapMode: Text.WordWrap
                 color: Theme.textFaint
                 font.pixelSize: 12
+            }
+
+            // ---- account ----------------------------------------------------
+            SectionLabel { text: Theme.tr("Account"); visible: page.server === "connected" || page.server === "login" }
+            ColumnLayout {
+                readonly property var v: Core.state.vault || ({})
+                visible: page.server === "connected" || page.server === "login"
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 6
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    text: parent.v.state === "ready" ? Theme.tr("Unlocked as") + " " + parent.v.user
+                        : Theme.tr("With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them.")
+                }
+                Button {
+                    text: parent.v.state === "ready" ? Theme.tr("Encrypted files") : Theme.tr("Unlock or create account")
+                    icon.source: Theme.icon(parent.v.state === "ready" ? "lock" : "lock_open")
+                    onClicked: page.openVault()
+                }
             }
 
             // ---- performance ----------------------------------------------

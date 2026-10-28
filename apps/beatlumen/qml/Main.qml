@@ -230,6 +230,7 @@ ApplicationWindow {
                     onAddFolder: win.addFolder()
                     onOpenFiles: dialogs.openAudio()
                     onConnectServer: win.page = 3
+                    onUploadVault: dialogs.openUpload()
                 }
             }
             Loader {
@@ -249,6 +250,7 @@ ApplicationWindow {
                 sourceComponent: SettingsPage {
                     onAddFolder: win.addFolder()
                     onLogin: loginPrompt.open()
+                    onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
                 }
             }
         }

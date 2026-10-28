@@ -78,6 +78,8 @@ pub(crate) enum Req {
     BgImage(String),
     Upload(String),
     Rescan,
+    /// A vault request and the session it was sent with.
+    Vault(crate::vault::VaultReq, String),
 }
 
 pub(crate) struct Gfx {
@@ -242,6 +244,7 @@ pub struct Core {
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
+    pub(crate) vault: crate::vault::Vault,
     started: bool,
 }
 
@@ -409,6 +412,7 @@ impl Core {
             time: 0.0,
             download_progress: None,
             airplay: Default::default(),
+            vault: Default::default(),
             started: false,
         };
         core.engine.set_intensity(core.settings.intensity);
@@ -597,6 +601,7 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("airplay", self.airplay_json())
+            .with("vault", self.vault_json(host))
             .with("settings", self.settings_json())
     }
 
@@ -677,6 +682,9 @@ impl Core {
                 _ => None,
             }
         };
+        if let Req::Vault(v, token) = req {
+            return self.vault_http(host, v, &token, res);
+        }
         let status = res.as_ref().map(|r| r.status).unwrap_or(0);
         if status == 401 && !matches!(req, Req::Login | Req::Info) {
             if let ServerState::Connected(info) = &self.server.state {
@@ -855,6 +863,7 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
+            Req::Vault(..) => {}
         }
     }
 
@@ -1078,6 +1087,9 @@ impl Core {
         if let Some(t) = self.extra_tracks.get(id) {
             return t.clone();
         }
+        if let Some(t) = self.vault_track(id) {
+            return t;
+        }
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
@@ -1173,6 +1185,10 @@ impl Core {
                 }
                 Err(e) => self.toast(e, true),
             }
+        } else if id.starts_with(crate::vault::ID_PREFIX) {
+            // Encrypted file without streaming: downloaded first.
+            self.player.stop(host);
+            self.vault_download(host, &id, autoplay);
         } else if !id.starts_with("mem:") {
             // Server track without threads: downloaded first.
             self.player.stop(host);
@@ -1227,6 +1243,9 @@ impl Core {
                     ext,
                 ))
             }));
+        }
+        if id.starts_with(crate::vault::ID_PREFIX) {
+            return self.vault_opener(host, id);
         }
         if !host.has_threads() || host.audio_is_push() {
             return None;
@@ -1355,6 +1374,16 @@ impl Core {
                 }));
             } else {
                 mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)));
+            }
+        } else if id.starts_with(crate::vault::ID_PREFIX) {
+            let Some(opener) = self.vault_opener(host, id) else {
+                return;
+            };
+            let job = move || mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))));
+            if host.has_threads() {
+                host.spawn(Box::new(job));
+            } else {
+                job();
             }
         } else if self.server.is_connected() {
             let rid = self
@@ -1656,6 +1685,21 @@ impl Core {
             if let Some(data) = self.memory_files.get(name).cloned() {
                 let res = analyze(Box::new(std::io::Cursor::new(data)), extension(name), cfg);
                 self.analysis_box.post((key, res));
+            }
+        } else if track.id.starts_with(crate::vault::ID_PREFIX) {
+            // Encrypted: only this device can analyse it. Without streaming
+            // the file is analysed once it has been downloaded.
+            if let Some(opener) = self.vault_opener(host, &track.id) {
+                let mailbox = self.analysis_box.clone();
+                let job = move || {
+                    let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                };
+                if host.has_threads() {
+                    host.spawn(Box::new(job));
+                } else {
+                    job();
+                }
             }
         } else if self.server.is_connected() {
             let cfg_json = Value::object()
@@ -2066,6 +2110,12 @@ impl Core {
     /// command line): audio is queued and played, images become
     /// backgrounds, presets are imported.
     pub(crate) fn open_paths(&mut self, host: &mut dyn Host, paths: Vec<String>, play: bool) {
+        // Files picked for the encrypted storage (Android's picker hands
+        // them over as copied local files).
+        if std::mem::take(&mut self.vault.expect_upload) {
+            self.vault_upload_paths(host, paths);
+            return;
+        }
         let mut audio = Vec::new();
         let mut images = Vec::new();
         for p in paths {
@@ -2100,6 +2150,10 @@ impl Core {
 
     /// Like [`Core::open_paths`] for files given as bytes (browser).
     pub fn open_data(&mut self, host: &mut dyn Host, name: String, data: Vec<u8>) {
+        if std::mem::take(&mut self.vault.expect_upload) {
+            self.vault_upload_data(host, name, data);
+            return;
+        }
         let ext = extension(&name).unwrap_or_default();
         if ext == "hfx" {
             let stem = name.trim_end_matches(".hfx").to_string();
@@ -2156,6 +2210,7 @@ impl Core {
         for (id, res) in host.http_poll() {
             self.handle_http(host, id, res);
         }
+        self.poll_vault(host);
         if let Some((name, items)) = self.pending_playlist_items.clone() {
             if let Some(mut pl) = self
                 .server_playlists

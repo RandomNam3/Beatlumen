@@ -261,6 +261,105 @@ pub fn verify(
     owner.verify_signature(&signed_digest(h, meta, key), sig)
 }
 
+/// Reads the plaintext of an encrypted file from a seekable source of the
+/// ciphertext (a file or an HTTP stream with byte ranges), chunk by chunk.
+/// The exact size comes from the last chunk, not from untrusted metadata.
+pub struct Reader<R: std::io::Read + std::io::Seek> {
+    inner: R,
+    key: Secret,
+    header: Header,
+    len: u64,
+    pos: u64,
+    chunk: Option<(u64, Vec<u8>)>,
+}
+
+fn invalid(e: Error) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+}
+
+impl<R: std::io::Read + std::io::Seek> Reader<R> {
+    /// Checks that the source starts with `header` and reads the last
+    /// chunk to learn the exact size.
+    pub fn new(mut inner: R, key: Secret, header: Header) -> std::io::Result<Self> {
+        let mut first = [0u8; HEADER_LEN];
+        inner.seek(std::io::SeekFrom::Start(0))?;
+        inner.read_exact(&mut first)?;
+        if first != header.to_bytes() {
+            return Err(invalid(Error::Format("header does not match")));
+        }
+        let mut r = Reader {
+            inner,
+            key,
+            header,
+            len: 0,
+            pos: 0,
+            chunk: None,
+        };
+        let last = r.header.chunks - 1;
+        r.load(last)?;
+        let tail = r.chunk.as_ref().map_or(0, |(_, c)| c.len() as u64);
+        r.len = last * r.header.chunk_size as u64 + tail;
+        Ok(r)
+    }
+
+    /// Plaintext size.
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn load(&mut self, index: u64) -> std::io::Result<()> {
+        if self.chunk.as_ref().is_some_and(|(i, _)| *i == index) {
+            return Ok(());
+        }
+        let mut buf = vec![0u8; self.header.chunk_len() as usize];
+        self.inner
+            .seek(std::io::SeekFrom::Start(self.header.chunk_offset(index)))?;
+        self.inner.read_exact(&mut buf)?;
+        let plain = decrypt_chunk(&self.key, &self.header, index, &buf).map_err(invalid)?;
+        self.chunk = Some((index, plain));
+        Ok(())
+    }
+}
+
+impl<R: std::io::Read + std::io::Seek> std::io::Read for Reader<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.len || out.is_empty() {
+            return Ok(0);
+        }
+        let cs = self.header.chunk_size as u64;
+        let index = self.pos / cs;
+        self.load(index)?;
+        let chunk = &self.chunk.as_ref().expect("loaded").1;
+        let at = (self.pos - index * cs) as usize;
+        let n = out.len().min(chunk.len().saturating_sub(at));
+        out[..n].copy_from_slice(&chunk[at..at + n]);
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: std::io::Read + std::io::Seek> std::io::Seek for Reader<R> {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        let new = match to {
+            std::io::SeekFrom::Start(p) => p as i128,
+            std::io::SeekFrom::End(d) => self.len as i128 + d as i128,
+            std::io::SeekFrom::Current(d) => self.pos as i128 + d as i128,
+        };
+        if new < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
+        }
+        self.pos = new.min(u64::MAX as i128) as u64;
+        Ok(self.pos)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +396,31 @@ mod tests {
         let chunk = decrypt_chunk(&key, &h, i, &enc[at..at + h.chunk_len() as usize]).unwrap();
         assert_eq!(chunk[12345], plain[off as usize]);
         assert_eq!(h.chunk_for(u64::MAX), h.chunks - 1);
+    }
+
+    #[test]
+    fn reader_streams_and_seeks() {
+        use std::io::{Read, Seek, SeekFrom};
+        let key = Secret::random().unwrap();
+        let plain = data(3 * CHUNK_SIZE as usize + 777);
+        let (h, enc) = encrypt(&key, &plain).unwrap();
+        let mut r = Reader::new(std::io::Cursor::new(enc.clone()), key.clone(), h.clone()).unwrap();
+        assert_eq!(r.len(), plain.len() as u64);
+        let mut all = Vec::new();
+        r.read_to_end(&mut all).unwrap();
+        assert_eq!(all, plain);
+        r.seek(SeekFrom::Start(CHUNK_SIZE as u64 * 2 - 3)).unwrap();
+        let mut six = [0u8; 6];
+        r.read_exact(&mut six).unwrap();
+        assert_eq!(six[..], plain[CHUNK_SIZE as usize * 2 - 3..][..6]);
+        assert_eq!(r.seek(SeekFrom::End(-1)).unwrap(), plain.len() as u64 - 1);
+        // Another file's header, a changed chunk.
+        let (h2, _) = encrypt(&key, &plain).unwrap();
+        assert!(Reader::new(std::io::Cursor::new(enc.clone()), key.clone(), h2).is_err());
+        let mut bad = enc.clone();
+        bad[HEADER_LEN + 5] ^= 1;
+        let mut r = Reader::new(std::io::Cursor::new(bad), key, h).unwrap();
+        assert!(r.read_to_end(&mut Vec::new()).is_err());
     }
 
     #[test]

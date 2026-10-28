@@ -193,8 +193,10 @@ with an app.
    README): user accounts with invitations, the login and recovery flows,
    storage of key bundles, encrypted blobs (with byte ranges), sealed keys
    and signatures. The server never handles plaintext.
-3. Apps: account setup with recovery code, unlocking, encrypted upload and
-   download, sharing with safety numbers and key pinning, password change
-   and recovery.
+3. Apps (done for Linux, Windows, Android and the web: `bl-core/src/vault.rs`,
+   `VaultPage.qml`): account setup with recovery code, unlocking, encrypted
+   upload, streaming playback that decrypts chunk by chunk (downloaded
+   first in the browser), on-device analysis, sharing with safety numbers
+   and key pinning, password change and recovery.
 4. Web client integrity: manifest and signing in CI, server self-check,
    Subresource Integrity, verification in the apps.

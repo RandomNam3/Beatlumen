@@ -11,6 +11,7 @@ Item {
     signal addFolder()
     signal openFiles()
     signal connectServer()
+    signal uploadVault()
 
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
@@ -30,6 +31,10 @@ Item {
     }
     function reloadPlaylists() {
         playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "track")
+    }
+    function openVault() {
+        if (!(stack.currentItem instanceof VaultPage))
+            stack.push(vaultView)
     }
     function back() {
         if (stack.depth > 1) {
@@ -67,6 +72,15 @@ Item {
         id: stack
         anchors.fill: parent
         initialItem: mainView
+    }
+
+    Component {
+        id: vaultView
+        VaultPage {
+            back: true
+            onBackClicked: stack.pop()
+            onUpload: page.uploadVault()
+        }
     }
 
     // ---- building blocks --------------------------------------------------
@@ -155,6 +169,12 @@ Item {
                 title: Theme.tr("Library")
                 subtitle: Core.state.scanning ? Theme.tr("Scanning library…") + " " + (Core.state.scanProcessed || 0) + " / " + (Core.state.scanFound || 0)
                                               : page.count(page.trackCount, "song", "songs") + " · " + page.count(page.albums.length, "album", "albums")
+                IconButton {
+                    visible: Core.state.server === "connected" || Core.state.server === "login"
+                    iconName: "lock"
+                    tip: Theme.tr("Encrypted files")
+                    onClicked: page.openVault()
+                }
                 IconButton {
                     iconName: "add"
                     tip: Theme.tr("Add music folder")

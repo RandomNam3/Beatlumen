@@ -870,6 +870,7 @@ impl Core {
                     url
                 };
                 if url != self.server.base {
+                    self.vault_lock(host);
                     self.server.token.clear();
                     self.settings.server_token.clear();
                     self.settings.server_cert_pin.clear();
@@ -906,6 +907,7 @@ impl Core {
                 ok()
             }
             "server.disconnect" => {
+                self.vault_lock(host);
                 self.settings.use_server = false;
                 self.server.state = crate::server::ServerState::Disabled;
                 self.library.set_remote(Default::default());
@@ -938,6 +940,7 @@ impl Core {
                 self.save_settings(host);
                 ok()
             }
+            n if n.starts_with("vault.") => self.vault_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }
     }

@@ -10,6 +10,7 @@ Item {
 
     function openAudio() { audioDialog.open() }
     function openImages() { imageDialog.open() }
+    function openUpload() { uploadDialog.open() }
     function addMusicFolder() { folderDialog.open() }
     function addImageFolder() { imageFolderDialog.open() }
 
@@ -37,6 +38,13 @@ Item {
         fileMode: FileDialog.OpenFiles
         nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "Styles (*.hfx)", "* (*)"]
         onAccepted: Core.openUrls(selectedFiles)
+    }
+    FileDialog {
+        id: uploadDialog
+        title: Theme.tr("Upload files")
+        fileMode: FileDialog.OpenFiles
+        nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "* (*)"]
+        onAccepted: Core.call("vault.upload", { paths: Core.localPaths(selectedFiles) })
     }
     FileDialog {
         id: imageDialog

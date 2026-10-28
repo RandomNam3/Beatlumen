@@ -15,3 +15,4 @@ bl-gl = { path = "../bl-gl" }
 bl-render = { path = "../bl-render" }
 bl-net = { path = "../bl-net" }
 bl-airplay = { path = "../bl-airplay" }
+bl-vault = { path = "../bl-vault" }

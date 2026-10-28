@@ -20,6 +20,7 @@ pub mod queue;
 pub mod server;
 pub mod settings;
 pub mod strings;
+mod vault;
 mod visual;
 
 pub use crate::core::{Core, LaunchArgs};
