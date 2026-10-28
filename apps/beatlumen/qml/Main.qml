@@ -37,6 +37,9 @@ ApplicationWindow {
             Core.requestMediaPermission()
         }
     }
+    // Android's status and navigation bars go with the controls (a swipe
+    // from the edge shows them briefly).
+    onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
     onPageChanged: {
         Core.call("ui.blur", { value: page >= 0 ? 2.0 : 0.0 })
         poke()
@@ -126,7 +129,8 @@ ApplicationWindow {
         anchors.bottom: playerBar.top
         width: 88
         current: win.page
-        onSelected: (i) => win.page = i
+        // The page floats over the visual: its entry closes it again.
+        onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
         enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }

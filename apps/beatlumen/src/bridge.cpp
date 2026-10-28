@@ -629,6 +629,36 @@ void Bridge::setKeepScreenOn(bool on)
 #endif
 }
 
+void Bridge::setSystemBarsHidden(bool hidden)
+{
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([hidden]() {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (!window.isValid())
+            return;
+        if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
+            QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
+            if (!ctl.isValid())
+                return;
+            const jint bars = QJniObject::callStaticMethod<jint>("android/view/WindowInsets$Type", "systemBars", "()I");
+            if (hidden) {
+                ctl.callMethod<void>("setSystemBarsBehavior", "(I)V", jint(2)); // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                ctl.callMethod<void>("hide", "(I)V", bars);
+            } else {
+                ctl.callMethod<void>("show", "(I)V", bars);
+            }
+        } else {
+            QJniObject decor = window.callObjectMethod("getDecorView", "()Landroid/view/View;");
+            // SYSTEM_UI_FLAG_IMMERSIVE_STICKY | FULLSCREEN | HIDE_NAVIGATION
+            decor.callMethod<void>("setSystemUiVisibility", "(I)V", jint(hidden ? 0x1000 | 0x4 | 0x2 : 0));
+        }
+    });
+#else
+    Q_UNUSED(hidden);
+#endif
+}
+
 void Bridge::requestMediaPermission()
 {
 #ifdef Q_OS_ANDROID

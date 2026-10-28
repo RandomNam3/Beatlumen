@@ -50,6 +50,8 @@ public:
     // copied into the cache first).
     Q_INVOKABLE QStringList localPaths(const QList<QUrl> &urls);
     Q_INVOKABLE void setKeepScreenOn(bool on);
+    // Hides Android's status and navigation bars (immersive mode).
+    Q_INVOKABLE void setSystemBarsHidden(bool hidden);
     Q_INVOKABLE void requestMediaPermission();
     Q_INVOKABLE void copyText(const QString &text);
     // Android: sends the app to the background (returns false elsewhere).
