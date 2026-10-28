@@ -45,6 +45,10 @@ pub struct ServerInfo {
     pub revision: u64,
     /// Source code of the server's version (AGPL section 13).
     pub source_url: String,
+    /// Result of the server's check of its web client: "verified" (signed
+    /// manifest, all files match), "unsigned" (files match an unsigned
+    /// manifest), "modified", "unchecked" (no manifest), "none".
+    pub web_integrity: String,
 }
 
 impl ServerInfo {
@@ -58,6 +62,7 @@ impl ServerInfo {
             .with("scanning", self.scanning)
             .with("revision", self.revision)
             .with("sourceUrl", self.source_url.as_str())
+            .with("webIntegrity", self.web_integrity.as_str())
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -69,6 +74,7 @@ impl ServerInfo {
             scanning: v.bool_or("scanning", false),
             revision: u(v, "revision"),
             source_url: s(v, "sourceUrl"),
+            web_integrity: s(v, "webIntegrity"),
         }
     }
 }

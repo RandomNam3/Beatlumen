@@ -260,6 +260,39 @@ Item {
                     onClicked: Core.call("server.trustCertificate", { fingerprint: parent.fp })
                 }
             }
+            // The server's web app, checked from this app against the signed
+            // manifest (the browser version cannot check itself).
+            RowLayout {
+                readonly property var wc: Core.state.webCheck || ({})
+                readonly property string reported: Core.state.serverWebIntegrity || ""
+                visible: Core.platform !== "web" && page.server === "connected" && reported !== "none" && reported !== ""
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Icon {
+                    name: parent.wc.state === "verified" ? "verified_user" : parent.wc.state === "failed" ? "warning" : "info"
+                    size: 22
+                    color: parent.wc.state === "failed" ? Theme.danger : parent.wc.state === "verified" ? Theme.accent : Theme.textDim
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: parent.wc.state === "failed" ? Theme.danger : Theme.textDim
+                    text: parent.wc.state === "verified" ? Theme.tr("Web app on the server: unchanged official release") + " " + parent.wc.detail
+                        : parent.wc.state === "unsigned" ? Theme.tr("Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)")
+                        : parent.wc.state === "failed" ? Theme.tr("Warning: the web app on the server was modified.") + " " + parent.wc.detail
+                        : parent.wc.state === "running" ? Theme.tr("Checking the web app…") + " " + parent.wc.detail
+                        : Theme.tr("Web app on the server: not checked yet")
+                }
+                Button {
+                    text: Theme.tr("Check")
+                    flat: true
+                    enabled: parent.wc.state !== "running"
+                    onClicked: Core.call("server.verifyWeb")
+                }
+            }
             Label {
                 textFormat: Text.PlainText
                 visible: page.insecureRemote(url.text)

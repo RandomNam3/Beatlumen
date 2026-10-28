@@ -906,6 +906,11 @@ impl Core {
                 self.connect_server(host);
                 ok()
             }
+            // Checks the server's web app against the signed manifest.
+            "server.verifyWeb" => {
+                self.webcheck_start(host);
+                ok()
+            }
             "server.disconnect" => {
                 self.vault_lock(host);
                 self.settings.use_server = false;

@@ -29,6 +29,7 @@ pub mod library;
 pub mod playlists;
 pub mod presets;
 pub mod random;
+pub mod release;
 pub mod routes;
 pub mod sha256;
 pub mod util;
@@ -115,7 +116,7 @@ pub struct State {
     pub images: images::Images,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
-    pub web: web::WebSource,
+    pub web: web::WebClient,
     pub vault: vault::Vault,
 }
 
@@ -168,6 +169,7 @@ impl State {
             scanning: self.scanning(),
             revision: idx.revision,
             source_url: self.config.source_url.clone(),
+            web_integrity: self.web.integrity.status.to_string(),
         }
     }
 
@@ -430,7 +432,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         .map_err(|e| format!("cannot listen on {}: {e}", config.bind))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
 
-    let web = web::WebSource::resolve(config.web_dir.as_deref());
+    let web = web::WebClient::resolve(config.web_dir.as_deref());
     let vault = vault::Vault::open(
         &data.root,
         config.vault_pepper_file.as_deref(),

@@ -12,6 +12,9 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
 fn de(s: &str) -> Option<&'static str> {
     Some(match s {
         "(copy)" => "(Kopie)",
+        "The server's web app has no integrity manifest" => "Die Web-App des Servers hat kein Integritätsmanifest",
+        "The manifest is not signed with the release key" => "Das Manifest ist nicht mit dem Release-Schlüssel signiert",
+        "Modified files:" => "Veränderte Dateien:",
         "Unlocking…" => "Entsperren…",
         "Creating keys…" => "Schlüssel werden erzeugt…",
         "Recovering…" => "Wiederherstellen…",

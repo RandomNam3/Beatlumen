@@ -81,7 +81,11 @@ In short:
   password changes need the current password and end all other sessions.
 * What a compromised server can still do: delete or withhold files, see
   who shares how many files of which size with whom and when, and serve a
-  modified web client (see the web client integrity checks in the design).
+  modified web client. Against the last one: the server checks its web
+  client against a signed manifest and refuses modified files, the page
+  pins its scripts and WebAssembly module by hash, and the native apps
+  can verify the server's web client against the release signature
+  (Settings → Server → Check).
 
 ## Container
 

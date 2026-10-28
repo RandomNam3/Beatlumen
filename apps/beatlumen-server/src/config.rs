@@ -82,6 +82,11 @@ pub enum Action {
     Invite(Box<Config>, u64),
     /// Lists the accounts.
     Users(Box<Config>),
+    /// Writes the integrity manifest of a web client folder (and signs it
+    /// when `BEATLUMEN_RELEASE_SIGNING_KEY` is set).
+    WebManifest { dir: PathBuf, version: String },
+    /// Creates a release signing key.
+    ReleaseKeygen,
     Help,
     Version,
 }
@@ -224,6 +229,10 @@ USAGE:
     beatlumen-server [OPTIONS]
     beatlumen-server invite [--days N] [OPTIONS]   Create an account invitation
     beatlumen-server users [OPTIONS]               List the accounts
+    beatlumen-server web-manifest DIR [--version V]
+                                    Write the integrity manifest of a web client
+                                    (signed when BEATLUMEN_RELEASE_SIGNING_KEY is set)
+    beatlumen-server release-keygen  Create a release signing key
 
 OPTIONS:
     --music DIR             Music folder to serve (repeatable)
@@ -418,6 +427,25 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
     // Split `--flag=value` and collect (flag, value) pairs first.
     let mut items: Vec<(String, Option<String>)> = Vec::new();
     let mut it = args.into_iter().peekable();
+    // Release tools.
+    match it.peek().map(String::as_str) {
+        Some("release-keygen") => return Ok(Action::ReleaseKeygen),
+        Some("web-manifest") => {
+            it.next();
+            let mut dir = None;
+            let mut version = env!("CARGO_PKG_VERSION").to_string();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--version" => version = it.next().ok_or("--version needs a value")?,
+                    _ if dir.is_none() && !a.starts_with("--") => dir = Some(PathBuf::from(a)),
+                    _ => return Err(format!("unknown argument: {a}")),
+                }
+            }
+            let dir = dir.ok_or("usage: beatlumen-server web-manifest DIR [--version V]")?;
+            return Ok(Action::WebManifest { dir, version });
+        }
+        _ => {}
+    }
     let command = match it.peek().map(String::as_str) {
         Some(c @ ("invite" | "users")) => {
             let c = c.to_string();

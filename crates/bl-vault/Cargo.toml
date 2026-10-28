@@ -9,6 +9,7 @@ rust-version.workspace = true
 # Cryptography from the RustCrypto project, pinned exactly; updates are
 # deliberate (see docs/ENCRYPTION.md).
 [dependencies]
+bl-json = { path = "../bl-json" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc"] }
 chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }

@@ -9,6 +9,10 @@ on:
 env:
   QT_VERSION: "6.11.3"
   CARGO_TERM_COLOR: always
+  # Public release key (repository variable, from `beatlumen-server
+  # release-keygen`): apps and servers built with it verify the signed
+  # manifest of the web client. Empty in forks and unofficial builds.
+  BEATLUMEN_RELEASE_KEY: ${{ vars.BEATLUMEN_RELEASE_KEY }}
 
 jobs:
   rust:
@@ -123,6 +127,9 @@ jobs:
           set-env: false
           dir: ${{ runner.temp }}/qt-host
       - name: Build
+        env:
+          # Signs the web client's integrity manifest (repository secret).
+          BEATLUMEN_RELEASE_SIGNING_KEY: ${{ secrets.BEATLUMEN_RELEASE_SIGNING_KEY }}
         run: |
           sudo apt-get install -y ninja-build
           QT_WASM="$(dirname "$(dirname "$(find "$RUNNER_WORKSPACE/Qt" -path '*wasm_singlethread/bin/qt-cmake' | head -1)")")" \
@@ -144,7 +151,7 @@ jobs:
           name: beatlumen-web
           path: dist/web
       - name: Build
-        run: docker build -f container/Containerfile -t beatlumen-server:ci .
+        run: docker build -f container/Containerfile --build-arg BEATLUMEN_RELEASE_KEY -t beatlumen-server:ci .
       - name: Smoke test (read-only, no capabilities, health check)
         run: |
           set -eu

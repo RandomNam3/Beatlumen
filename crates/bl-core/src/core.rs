@@ -80,6 +80,7 @@ pub(crate) enum Req {
     Rescan,
     /// A vault request and the session it was sent with.
     Vault(crate::vault::VaultReq, String),
+    WebCheck(crate::webcheck::WebReq),
 }
 
 pub(crate) struct Gfx {
@@ -245,6 +246,7 @@ pub struct Core {
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) vault: crate::vault::Vault,
+    pub(crate) webcheck: crate::webcheck::WebCheckState,
     started: bool,
 }
 
@@ -413,6 +415,7 @@ impl Core {
             download_progress: None,
             airplay: Default::default(),
             vault: Default::default(),
+            webcheck: Default::default(),
             started: false,
         };
         core.engine.set_intensity(core.settings.intensity);
@@ -602,6 +605,14 @@ impl Core {
             .with("settingsRev", self.revs.settings)
             .with("airplay", self.airplay_json())
             .with("vault", self.vault_json(host))
+            .with("webCheck", self.webcheck_json())
+            .with(
+                "serverWebIntegrity",
+                match &self.server.state {
+                    ServerState::Connected(i) | ServerState::NeedsLogin(i) => i.web_integrity.clone(),
+                    _ => String::new(),
+                },
+            )
             .with("settings", self.settings_json())
     }
 
@@ -684,6 +695,9 @@ impl Core {
         };
         if let Req::Vault(v, token) = req {
             return self.vault_http(host, v, &token, res);
+        }
+        if let Req::WebCheck(w) = req {
+            return self.webcheck_http(host, w, res);
         }
         let status = res.as_ref().map(|r| r.status).unwrap_or(0);
         if status == 401 && !matches!(req, Req::Login | Req::Info) {
@@ -863,7 +877,7 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
-            Req::Vault(..) => {}
+            Req::Vault(..) | Req::WebCheck(_) => {}
         }
     }
 

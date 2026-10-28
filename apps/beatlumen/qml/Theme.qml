@@ -80,6 +80,12 @@ QtObject {
 
     readonly property var de: ({
         "Now playing": "Wiedergabe",
+        "Web app on the server: unchanged official release": "Web-App auf dem Server: unverändertes offizielles Release",
+        "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)": "Web-App auf dem Server: Dateien stimmen mit dem Manifest überein, aber diese App kann die Release-Signatur nicht prüfen (inoffizieller Build)",
+        "Warning: the web app on the server was modified.": "Warnung: Die Web-App auf dem Server wurde verändert.",
+        "Checking the web app…": "Web-App wird geprüft…",
+        "Web app on the server: not checked yet": "Web-App auf dem Server: noch nicht geprüft",
+        "Check": "Prüfen",
         "Accept the new key": "Neuen Schlüssel akzeptieren",
         "Account": "Konto",
         "Ask the other person to open your name in their list and compare the numbers.": "Bitte die andere Person, deinen Namen in ihrer Liste zu öffnen und die Nummern zu vergleichen.",

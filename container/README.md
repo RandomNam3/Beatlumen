@@ -38,6 +38,12 @@ The **web client** (`http://<server>:7878/` in a browser) is embedded when
 `beatlumen-web` artifact of a CI run to `dist/web`. Without it, the server
 shows a placeholder page; the apps work either way.
 
+Build argument `BEATLUMEN_RELEASE_KEY` (hex public key, official builds)
+makes the server accept only a web client with a valid release signature;
+without it, the embedded web client is checked against its unsigned
+manifest. Either way modified files are not served (see "Web client
+integrity" in [`docs/ENCRYPTION.md`](../docs/ENCRYPTION.md)).
+
 Build argument `RUST_IMAGE` selects the Rust build image (default
 `docker.io/library/rust:1.99-alpine3.22`; it is only used for building and
 is not part of the result). When Docker Hub limits anonymous pulls, use a

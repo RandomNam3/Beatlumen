@@ -158,6 +158,7 @@ name = "bl-vault"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "bl-json",
  "chacha20poly1305",
  "ed25519-dalek",
  "getrandom",

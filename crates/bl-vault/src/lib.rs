@@ -14,6 +14,7 @@ pub mod aead;
 pub mod file;
 pub mod identity;
 pub mod keys;
+pub mod manifest;
 pub mod recovery;
 pub mod sealed;
 

@@ -22,5 +22,6 @@ pub mod settings;
 pub mod strings;
 mod vault;
 mod visual;
+mod webcheck;
 
 pub use crate::core::{Core, LaunchArgs};

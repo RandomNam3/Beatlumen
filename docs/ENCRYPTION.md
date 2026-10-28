@@ -163,25 +163,42 @@ signature: Ed25519(owner, SHA-256(header ‖ SHA-256(meta) ‖ SHA-256("key comm
 ## Web client integrity
 
 The browser version comes from the server, so it can only be as
-trustworthy as the server. Three checks make manipulation visible:
+trustworthy as the server. Four checks make manipulation visible:
 
-1. **Signed manifest**: the official build writes the SHA-256 of every web
-   client file into `manifest.json`, signed with the project's release
-   key (Ed25519; the private key is a CI secret, the public key is part of
-   the apps and the server).
+1. **Signed manifest**: the web build (`apps/beatlumen/web/finish.sh`)
+   writes `manifest.json` with the SHA-256 of every file and, in official
+   builds, `manifest.sig`: the Ed25519 signature of the manifest with the
+   project's release key. The private key is a CI secret
+   (`BEATLUMEN_RELEASE_SIGNING_KEY`); the public key
+   (`BEATLUMEN_RELEASE_KEY`, a repository variable) is compiled into the
+   apps and the server.
 2. **Server self-check**: on start the server checks the web client it
-   would serve against the manifest and refuses to serve changed files.
-   This catches tampering with the files on disk, not a malicious admin
-   (who can replace the server too).
-3. **Check from outside**: the native apps fetch the web client from the
-   server, verify it against the signed manifest and show the result
-   ("web version verified" or a warning). Script and WebAssembly files are
-   referenced with Subresource Integrity hashes, so a proxy cannot alter
-   them either.
+   serves (folder or embedded) against the manifest, verifies the
+   signature when it was built with the release key, checks a file again
+   whenever it changes on disk, and refuses to serve modified, added or
+   unsigned files (503). `/api/info` reports the result (`webIntegrity`).
+   This catches tampering with the files, not a malicious admin (who can
+   replace the server too).
+3. **In the browser**: `index.html` pins its scripts and style with
+   Subresource Integrity hashes, and `start.js` checks the SHA-256 of the
+   WebAssembly module before compiling it, so nothing between the page
+   and its files (a cache, a proxy, a changed file) can swap them.
+4. **Check from outside**: the native apps fetch the manifest and every
+   file from the server, verify the signature with their built-in release
+   key and compare the hashes (Settings → Server → Check). This also
+   catches a server whose admin changed the web client.
 
-The web version shows a short note that encrypted files are only as safe
-as the server's admin when opened in the browser, with a link to verify it
-with an app.
+The web version shows a short note that encrypted files in the browser
+are only as safe as the web app the server delivers, with the advice to
+use an app for the best protection.
+
+Setting up the release key (once, by the maintainer):
+
+```sh
+beatlumen-server release-keygen
+# BEATLUMEN_RELEASE_SIGNING_KEY=…   → GitHub: Settings → Secrets → Actions
+# BEATLUMEN_RELEASE_KEY=…           → GitHub: Settings → Variables → Actions
+```
 
 ## Implementation steps
 
@@ -198,5 +215,6 @@ with an app.
    upload, streaming playback that decrypts chunk by chunk (downloaded
    first in the browser), on-device analysis, sharing with safety numbers
    and key pinning, password change and recovery.
-4. Web client integrity: manifest and signing in CI, server self-check,
-   Subresource Integrity, verification in the apps.
+4. Web client integrity (done): manifest and signing in CI, server
+   self-check, Subresource Integrity and the WebAssembly hash check,
+   verification in the apps.

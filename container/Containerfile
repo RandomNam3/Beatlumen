@@ -22,6 +22,9 @@ WORKDIR /src
 COPY . .
 # musl targets link statically; symbols are stripped to keep the image small.
 ENV CARGO_PROFILE_RELEASE_STRIP=true
+# Public release key (hex) of official builds: the server then accepts only
+# a web client whose integrity manifest carries the release signature.
+ARG BEATLUMEN_RELEASE_KEY=
 RUN set -eu; \
     if [ -f dist/web/index.html ]; then export BEATLUMEN_EMBED_WEB=/src/dist/web; fi; \
     cargo build --release --locked -p beatlumen-server; \
