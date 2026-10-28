@@ -72,7 +72,7 @@ jobs:
           cmake --build build/windows
           New-Item -ItemType Directory -Force dist/windows | Out-Null
           Copy-Item build/windows/beatlumen.exe dist/windows/
-          windeployqt --release --qmldir apps/beatlumen/qml --no-translations dist/windows/beatlumen.exe
+          windeployqt --release --qmldir apps/beatlumen/qml --qmldir build/windows/qml --no-translations dist/windows/beatlumen.exe
           cargo build --release -p beatlumen-server
           Copy-Item target/release/beatlumen-server.exe dist/windows/
           # Visual C++ runtime next to the programs (no separate install).
