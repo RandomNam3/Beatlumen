@@ -33,6 +33,12 @@ are cached locally.
   - Login with the user's Jellyfin account; only the access token is stored.
   - Playback is reported back to Jellyfin, so play counts and "resume" stay
     correct.
+- **Subsonic / OpenSubsonic:** servers with the Subsonic API (Navidrome,
+  Gonic, Airsonic-Advanced, Ampache, …).
+  - Browse artists, albums and playlists; stream the original files
+    (no transcoding) for full analysis.
+  - Token authentication (salted, no plain password on the wire); playback
+    is reported ("scrobble") to the server.
 - **Nextcloud / WebDAV:** music folders on any WebDAV server (Nextcloud,
   ownCloud, NAS systems).
   - Uses the existing HTTP/TLS client, including certificate pinning.
@@ -46,6 +52,31 @@ are cached locally.
   for Beatlumen, so it works today. Planned: robustness for slow mounts
   (scanning with timeouts, periodic rescans where file change notifications
   do not work, no blocking of the UI).
+- **DLNA / UPnP AV** (Fritz!Box, NAS systems, media servers on TVs and
+  receivers):
+  - Client: browse and play from DLNA media servers in the local network.
+  - Renderer (optional, off by default): other devices and apps can send
+    music to Beatlumen, which plays and visualises it with full analysis.
+  - Discovery (SSDP) only in the local network and only while the user
+    searches; servers can also be entered by address.
+- **Internet radio:** Icecast/Shoutcast streams (MP3, AAC, Ogg, Opus) and
+  HLS.
+  - Station files (`.pls`, `.m3u`, `.xspf`) and stream URLs can be added as
+    stations; stations can be saved as favourites.
+  - Current title from the stream metadata (ICY).
+  - Adjustable delay (a few seconds of buffer) gives the analysis look-ahead,
+    so effects can anticipate beats like with files.
+- **Web sources (HTTP/HTTPS):** direct links to audio files, and web pages or
+  directory listings (e.g. Apache/nginx index pages) whose links point to
+  audio files.
+  - Links are read from the page's HTML; no scripts are run, and only links
+    to audio files on the same host are followed.
+  - Size and depth limits when reading pages.
+- **M3U playlists:** import and export of M3U/M3U8 (with `#EXTINF`), also PLS.
+  - Relative paths, local files and URLs.
+  - M3U files inside library folders show up as playlists.
+  - Entries only resolve to files inside the library folders or the
+    playlist's own source (no access to arbitrary paths through a playlist).
 - Common to all:
   - Credentials stored in the system keystore where available (Android
     Keystore, Secret Service, Windows Credential Manager).
