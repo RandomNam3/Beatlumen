@@ -22,6 +22,45 @@ explicitly sets them up for app-only use.
 - Sharing music between users on the same server.
 - Public share links (with optional expiry and password).
 
+## Devices: remote control and individual playback
+With an active server connection, all apps and devices logged in to the
+server see each other.
+
+- Device list with name, type, online state and what is playing.
+- Each device plays on its own by default (own queue, own position).
+- Remote control of any device: play/pause, seek, skip, volume, edit the
+  queue, and start music on a chosen device ("play on …").
+- Transfer playback: move the queue and position from one device to
+  another.
+- Optional later: groups of devices that play in sync (multi-room).
+- Security:
+  - Commands run through the existing authenticated server connection; the
+    devices open no ports for this.
+  - Only devices of the same account (with user accounts: the same user or
+    users it was shared with) can control each other.
+  - Each device can turn off being remote-controlled.
+
+## Receiving from other devices (cast target)
+Beatlumen as a target that other devices and apps can send music to. It
+plays and visualises what it receives. Every receiver is off by default,
+only works in the local network, and new senders can be required to confirm
+with a PIN.
+
+- **DLNA/UPnP renderer:** see Music sources; covers many Android apps
+  (BubbleUPnP, Fritz!App …), Windows "Play to" and TVs/receivers.
+- **AirPlay (audio)** from iPhone, iPad and Mac (AirPlay 2 and 1).
+  - Desktop and server first, through Shairport Sync as an external program
+    whose audio Beatlumen reads (pipe output).
+  - A built-in receiver for Android later.
+  - AirPlay buffers about two seconds, which gives the analysis look-ahead.
+  - The protocol is re-implemented (as in Shairport Sync), not certified by
+    Apple.
+- **Share target:** "Share" on Android and "Open with" on desktop send files
+  and links to this or another Beatlumen device (through the server).
+- **Google Cast (Chromecast): not possible.** Cast senders check a
+  Google-signed device certificate, which only certified devices have.
+  Android apps can reach Beatlumen through DLNA or the share target instead.
+
 ## Music sources
 Self-hosted and generic sources the user owns or controls. They deliver the
 audio files themselves, so playback gets the full look-ahead analysis like
