@@ -119,6 +119,7 @@ QtObject {
         "Stop": "Beenden",
         "Visualizing other apps": "Visualisiert andere Apps",
         "Visualizing and controlling": "Visualisiert und steuert",
+        "Shows visuals for what the computer plays (Spotify, the browser, any player) and controls the playing app from here. Only the sound is used.": "Zeigt Effekte zu dem, was der Computer abspielt (Spotify, Browser, jeder Player), und steuert die spielende App von hier aus. Genutzt wird nur der Ton.",
         "Visualizing other apps; no playing app found to control": "Visualisiert andere Apps; keine spielende App zum Steuern gefunden",
         "Visualizing other apps; controlling them needs notification access": "Visualisiert andere Apps; zum Steuern fehlt der Zugriff auf Benachrichtigungen",
         "Visualize other apps": "Andere Apps visualisieren",

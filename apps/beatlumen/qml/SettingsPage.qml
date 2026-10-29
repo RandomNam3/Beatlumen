@@ -466,7 +466,9 @@ Item {
                 Label {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true
-                    text: Theme.tr("Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.")
+                    text: Core.platform === "android"
+                          ? Theme.tr("Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.")
+                          : Theme.tr("Shows visuals for what the computer plays (Spotify, the browser, any player) and controls the playing app from here. Only the sound is used.")
                     color: Theme.textDim
                     wrapMode: Text.WordWrap
                 }

@@ -30,6 +30,9 @@
 #if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
 #include "media_desktop.h"
 #endif
+#if defined(BEATLUMEN_DESKTOP_CAPTURE)
+#include "desktop_capture.h"
+#endif
 
 #ifdef Q_OS_ANDROID
 #include "android_capture.h"
@@ -303,6 +306,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
         cb.audio_start = audioStartCallback;
     cb.open_url = openUrlCallback;
     secrets::configure(cb, this);
+#if defined(BEATLUMEN_DESKTOP_CAPTURE)
+    desktopcapture::configure(cb, this);
+#endif
 #ifdef Q_OS_ANDROID
     cb.service_register = serviceRegister;
     cb.service_unregister = serviceUnregister;
