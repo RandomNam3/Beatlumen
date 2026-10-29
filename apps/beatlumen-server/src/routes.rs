@@ -200,6 +200,23 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             json(202, &Value::object().with("scanning", true))
         }
         ["rescan"] => not_allowed("POST"),
+        ["tracks", id, "lyrics", "sync"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            if !state.lyrics_sync.available() {
+                return Response::error(501, "speech recognition is not set up on this server");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &state.lyrics_sync.status_json(&e.track.id)),
+                "POST" => {
+                    state.lyrics_sync.request(&e.track.id);
+                    json(202, &state.lyrics_sync.status_json(&e.track.id))
+                }
+                _ => not_allowed("GET, HEAD, POST"),
+            }
+        }
         ["tracks", id, "lyrics"] => {
             let idx = state.library();
             let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {

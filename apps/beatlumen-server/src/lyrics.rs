@@ -23,16 +23,40 @@ impl Lyrics {
         self.dir.join(format!("{id}.lrc"))
     }
 
-    /// `{"text", "source"}` of a track, `None` without a song text.
+    /// The song text from the import or the library (not the computed
+    /// timings) and its source.
+    pub fn source_text(&self, e: &Entry) -> Option<(String, &'static str)> {
+        if let Some(t) = bl_media::lyrics::read_text_file(&self.imported(&e.track.id)) {
+            return Some((t, "imported"));
+        }
+        bl_media::lyrics::find_lyrics(&e.abs).map(|(t, s)| (t, s.name()))
+    }
+
+    /// `{"text", "source"}` of a track, `None` without a song text. Timings
+    /// computed by speech recognition stand in for a plain (or missing) text.
     pub fn get(&self, e: &Entry) -> Option<Value> {
-        let (text, source) = match bl_media::lyrics::read_text_file(&self.imported(&e.track.id)) {
-            Some(t) => (t, "imported"),
-            None => {
-                let (t, s) = bl_media::lyrics::find_lyrics(&e.abs)?;
-                (t, s.name())
+        let found = self.source_text(e);
+        let (text, source) = match found {
+            Some((t, s)) if crate::lyrics_sync::is_synced(&t) => (t, s),
+            other => {
+                let id = &e.track.id;
+                let computed = [
+                    (self.dir.join(format!("{id}.synced.lrc")), "synced"),
+                    (self.dir.join(format!("{id}.recognized.lrc")), "recognized"),
+                ]
+                .into_iter()
+                .find_map(|(p, s)| bl_media::lyrics::read_text_file(&p).map(|t| (t, s)));
+                computed.or(other)?
             }
         };
         Some(Value::object().with("text", text).with("source", source))
+    }
+
+    /// Removes computed timings (the text they were made from changed).
+    fn forget_computed(&self, id: &str) {
+        for suffix in ["synced.lrc", "recognized.lrc", "failed"] {
+            let _ = std::fs::remove_file(self.dir.join(format!("{id}.{suffix}")));
+        }
     }
 
     /// Stores an imported song text for the track.
@@ -52,11 +76,14 @@ impl Lyrics {
                     text.replace("\r\n", "\n").as_bytes(),
                 )
             })
-            .map_err(|err| (500, format!("cannot store the song text: {err}")))
+            .map_err(|err| (500, format!("cannot store the song text: {err}")))?;
+        self.forget_computed(&e.track.id);
+        Ok(())
     }
 
     /// Removes an imported song text; false when there was none.
     pub fn delete(&self, e: &Entry) -> bool {
+        self.forget_computed(&e.track.id);
         std::fs::remove_file(self.imported(&e.track.id)).is_ok()
     }
 }

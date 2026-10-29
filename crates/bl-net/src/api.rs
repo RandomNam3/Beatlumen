@@ -51,6 +51,8 @@ pub struct ServerInfo {
     pub web_integrity: String,
     /// Passkeys can be used (the server knows its public https address).
     pub passkeys: bool,
+    /// Song texts can be timed by speech recognition.
+    pub speech: bool,
 }
 
 impl ServerInfo {
@@ -66,6 +68,7 @@ impl ServerInfo {
             .with("sourceUrl", self.source_url.as_str())
             .with("webIntegrity", self.web_integrity.as_str())
             .with("passkeys", self.passkeys)
+            .with("speech", self.speech)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -79,6 +82,7 @@ impl ServerInfo {
             source_url: s(v, "sourceUrl"),
             web_integrity: s(v, "webIntegrity"),
             passkeys: v.bool_or("passkeys", false),
+            speech: v.bool_or("speech", false),
         }
     }
 }

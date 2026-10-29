@@ -1,0 +1,8 @@
+[package]
+name = "bl-asr"
+description = "Speech recognition (Whisper models in ggml format), for synced song texts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

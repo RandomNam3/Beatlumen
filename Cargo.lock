@@ -67,6 +67,7 @@ version = "0.1.0"
 dependencies = [
  "bl-airplay",
  "bl-analysis",
+ "bl-asr",
  "bl-cast",
  "bl-core",
  "bl-fx",
@@ -97,6 +98,10 @@ dependencies = [
 
 [[package]]
 name = "bl-analysis"
+version = "0.1.0"
+
+[[package]]
+name = "bl-asr"
 version = "0.1.0"
 
 [[package]]

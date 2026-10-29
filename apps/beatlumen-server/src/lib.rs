@@ -28,6 +28,7 @@ pub mod extensions;
 pub mod images;
 pub mod library;
 pub mod lyrics;
+pub mod lyrics_sync;
 pub mod playlists;
 pub mod presets;
 pub mod push;
@@ -124,6 +125,7 @@ pub struct State {
     pub presets: presets::Presets,
     pub images: images::Images,
     pub lyrics: lyrics::Lyrics,
+    pub lyrics_sync: Arc<lyrics_sync::LyricsSync>,
     pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
@@ -183,6 +185,7 @@ impl State {
             source_url: self.config.source_url.clone(),
             web_integrity: self.web.integrity.status.to_string(),
             passkeys: self.vault.rp.is_some(),
+            speech: self.lyrics_sync.available(),
         }
     }
 
@@ -484,6 +487,11 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.image_cache.clone(),
         ),
         lyrics: lyrics::Lyrics::new(data.lyrics.clone()),
+        lyrics_sync: Arc::new(lyrics_sync::LyricsSync::new(
+            config.speech_model.clone(),
+            config.auto_sync_lyrics,
+            data.lyrics.clone(),
+        )),
         user_data: userdata::UserData::default(),
         analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
@@ -502,6 +510,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         config,
     });
     state.extensions.attach(&state);
+    state.lyrics_sync.attach(&state);
 
     info!(
         "Beatlumen server {} listening on http://{addr}",

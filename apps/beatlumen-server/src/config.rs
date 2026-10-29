@@ -57,6 +57,10 @@ pub struct Config {
     pub extensions: Vec<(String, String)>,
     /// File holding the secret the server sends to its extensions.
     pub extension_token_file: Option<PathBuf>,
+    /// Whisper model (ggml file) for timing song texts.
+    pub speech_model: Option<PathBuf>,
+    /// Time the song texts of the whole library in the background.
+    pub auto_sync_lyrics: bool,
 }
 
 impl Config {
@@ -104,6 +108,8 @@ impl Default for Config {
             android_certs: Vec::new(),
             extensions: Vec::new(),
             extension_token_file: None,
+            speech_model: None,
+            auto_sync_lyrics: false,
         }
     }
 }
@@ -233,6 +239,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "BEATLUMEN_EXTENSION_TOKEN_FILE",
         "file with the secret sent to the extensions",
     ),
+    (
+        "BEATLUMEN_SPEECH_MODEL",
+        "speech recognition model (Whisper, ggml file) for timing song texts",
+    ),
+    (
+        "BEATLUMEN_AUTO_SYNC_LYRICS",
+        "true: time the song texts of the whole library in the background",
+    ),
 ];
 
 fn registration(v: &str) -> Result<bool, String> {
@@ -334,6 +348,15 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     if let Some(v) = get("BEATLUMEN_REGISTRATION") {
         cfg.registration = registration(&v)?;
     }
+    if let Some(v) = get("BEATLUMEN_SPEECH_MODEL") {
+        cfg.speech_model = (!v.trim().is_empty()).then(|| PathBuf::from(v.trim()));
+    }
+    if let Some(v) = get("BEATLUMEN_AUTO_SYNC_LYRICS") {
+        cfg.auto_sync_lyrics = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_VERBOSE") {
         cfg.verbose = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -384,7 +407,8 @@ OPTIONS:
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
-                            androidCerts, extensions, extensionTokenFile, verbose)
+                            androidCerts, extensions, extensionTokenFile, speechModel,
+                            autoSyncLyrics, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -398,6 +422,10 @@ OPTIONS:
                             docs/EXTENSIONS.md)
     --extension-token-file FILE
                             Secret sent to the extensions (they check it)
+    --speech-model FILE     Speech recognition model (Whisper in ggml format, e.g.
+                            ggml-base.bin) for timing song texts on request
+    --auto-sync-lyrics      Also time the song texts of the whole library in the
+                            background (needs --speech-model)
     --public-url URL        The server's https:// address as users reach it (e.g. the
                             reverse proxy's). Enables passkeys, whose relying party
                             is this host
@@ -554,6 +582,15 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "verbose" => {
                 cfg.verbose = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "speechModel" => {
+                cfg.speech_model = Some(resolve(
+                    base,
+                    val.as_str().ok_or_else(|| err("expected a path"))?,
+                ))
+            }
+            "autoSyncLyrics" => {
+                cfg.auto_sync_lyrics = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "vaultPepperFile" => {
                 cfg.vault_pepper_file = Some(resolve(
                     base,
@@ -661,12 +698,15 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--android-cert"
                 | "--extension"
                 | "--extension-token-file"
+                | "--speech-model"
                 | "--days"
         );
         match flag.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "-V" | "--version" => return Ok(Action::Version),
-            "--verbose" | "--health-check" | "--push-allow-private" => items.push((flag, None)),
+            "--verbose" | "--health-check" | "--push-allow-private" | "--auto-sync-lyrics" => {
+                items.push((flag, None))
+            }
             _ if takes_value => {
                 let v = match inline {
                     Some(v) => v,
@@ -726,6 +766,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 .push(v.replace(':', "").to_ascii_lowercase()),
             "--extension" => cfg.extensions.push(parse_extension(&v)?),
             "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
+            "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
+            "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
             "--days" if command.as_deref() == Some("invite") => {
                 days = num(&flag, &v)?.clamp(1, 365)
             }
