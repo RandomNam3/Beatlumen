@@ -959,6 +959,7 @@ impl Core {
             }
             n if n.starts_with("vault.") => self.vault_command(host, n, c),
             n if n.starts_with("outputs.") => self.outputs_command(host, n, c),
+            n if n.starts_with("extensions.") => self.extensions_command(host, n, c),
             n if n.starts_with("capture.") => self
                 .capture_command(host, n, c)
                 .unwrap_or_else(|| err(format!("unknown command {name}"))),

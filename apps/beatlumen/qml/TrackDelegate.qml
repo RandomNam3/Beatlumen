@@ -10,6 +10,7 @@ ItemDelegate {
     property int number: -1
     property bool current: false
     property bool showCover: true
+    property bool showMenu: true
     signal play()
     signal menu(var track, Item anchor)
 
@@ -18,7 +19,7 @@ ItemDelegate {
     padding: 0
     highlighted: current
     onClicked: play()
-    onPressAndHold: menu(track, menuButton)
+    onPressAndHold: if (showMenu) menu(track, menuButton)
 
     Component.onCompleted: if (track.local && !track.cover) Covers.request(track.id)
 
@@ -89,6 +90,7 @@ ItemDelegate {
         }
         IconButton {
             id: menuButton
+            visible: d.showMenu
             iconName: "more_vert"
             iconColor: Theme.textDim
             tip: Theme.tr("More")

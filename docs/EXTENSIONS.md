@@ -105,3 +105,15 @@ Every endpoint needs a logged-in user (the server password or an account).
 At most three imports run at once; the same song imported again while it
 runs joins the running import. `track` is set once the library scan has
 picked up a kept import.
+
+## In the apps
+
+With a server that has extensions, the library search offers them next to
+the library ("Library | YouTube"). A result plays right away: the app
+streams the import while the server writes it (in the browser, once it is
+finished). The first time, the app asks where songs go — the library on
+the server (everyone using the server) or the user's encrypted files (the
+app downloads the finished import and encrypts it; the server deletes its
+temporary copy after two hours). The choice is remembered and can be
+changed in the settings. When a library import is finished, playback
+continues with the library track and its full analysis.

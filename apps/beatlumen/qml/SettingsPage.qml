@@ -338,6 +338,26 @@ Item {
                 }
             }
 
+            // ---- songs from server extensions --------------------------------
+            SectionLabel {
+                text: Theme.tr("Songs from") + " " + ((((Core.state.extensions || {}).list || [])[0] || {}).name || "")
+                visible: (((Core.state.extensions || {}).list) || []).length > 0
+            }
+            RowLayout {
+                visible: (((Core.state.extensions || {}).list) || []).length > 0
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Label { textFormat: Text.PlainText; text: Theme.tr("Save in"); color: Theme.text; Layout.preferredWidth: 120 }
+                ComboBox {
+                    Layout.fillWidth: true
+                    readonly property var choices: ["", "library", "vault"]
+                    model: [Theme.tr("Ask"), Theme.tr("Library on the server"), Theme.tr("My encrypted files")]
+                    currentIndex: Math.max(0, choices.indexOf(page.settings.extensionTarget || ""))
+                    onActivated: (i) => Core.call("settings.set", { key: "extensionTarget", value: choices[i] })
+                }
+            }
+
             // ---- performance ----------------------------------------------
             // ---- AirPlay ----------------------------------------------------
             SectionLabel { text: Theme.tr("Speaker for other devices"); visible: Core.platform !== "web" }

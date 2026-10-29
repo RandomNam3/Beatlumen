@@ -81,6 +81,7 @@ pub(crate) enum Req {
     /// A vault request and the session it was sent with.
     Vault(crate::vault::VaultReq, String),
     WebCheck(crate::webcheck::WebReq),
+    Ext(crate::extensions::ExtReq),
 }
 
 pub(crate) struct Gfx {
@@ -251,6 +252,7 @@ pub struct Core {
     pub(crate) outputs: crate::outputs::Outputs,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
+    pub(crate) ext: crate::extensions::ExtState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -428,6 +430,7 @@ impl Core {
             outputs: Default::default(),
             dlna: Default::default(),
             capture: Default::default(),
+            ext: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -630,6 +633,7 @@ impl Core {
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
+            .with("extensions", self.extensions_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -696,6 +700,7 @@ impl Core {
             let id = self.server.get(host, p);
             self.requests.insert(id, r);
         }
+        self.extensions_refresh(host);
     }
 
     pub(crate) fn server_rescan(&mut self, host: &mut dyn Host) {
@@ -726,6 +731,9 @@ impl Core {
         }
         if let Req::WebCheck(w) = req {
             return self.webcheck_http(host, w, res);
+        }
+        if let Req::Ext(e) = req {
+            return self.ext_http(host, e, res);
         }
         let status = res.as_ref().map(|r| r.status).unwrap_or(0);
         if status == 401 && !matches!(req, Req::Login | Req::Info) {
@@ -905,7 +913,7 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
-            Req::Vault(..) | Req::WebCheck(_) => {}
+            Req::Vault(..) | Req::WebCheck(_) | Req::Ext(_) => {}
         }
     }
 
@@ -1294,6 +1302,14 @@ impl Core {
         if id.starts_with(crate::dlna_receiver::ID_PREFIX) {
             return self.dlna_opener();
         }
+        if id.starts_with(crate::extensions::ID_PREFIX) {
+            // Still being imported: the server streams what it has so far.
+            let url = self.ext_stream_url(id)?;
+            let headers = self.server.headers();
+            return Some(Box::new(move || {
+                Ok((http_stream(&url, &headers)?, Some("opus".to_string())))
+            }));
+        }
         if !host.has_threads() || host.audio_is_push() {
             return None;
         }
@@ -1350,7 +1366,7 @@ impl Core {
     /// Normalization gain of a track: 1 when normalization is off, None
     /// while its loudness is being measured (the measurement is started).
     fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
-        if !self.settings.normalize {
+        if !self.settings.normalize || id.starts_with(crate::extensions::ID_PREFIX) {
             return Some(1.0);
         }
         match self.loudness.get(id) {
@@ -1690,6 +1706,7 @@ impl Core {
         if track.id.starts_with(crate::airplay::ID_PREFIX)
             || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
             || track.id.starts_with(crate::capture::ID_PREFIX)
+            || track.id.starts_with(crate::extensions::ID_PREFIX)
         {
             // Live or foreign stream: the visuals follow the audio as it plays.
             return;
@@ -1810,6 +1827,8 @@ impl Core {
             self.dlna.cover_url().to_string()
         } else if t.id.starts_with(crate::capture::ID_PREFIX) {
             self.capture.cover_url().to_string()
+        } else if t.id.starts_with(crate::extensions::ID_PREFIX) {
+            self.ext_cover_url(&t.id)
         } else if library::is_local(&t.id) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
@@ -2304,6 +2323,7 @@ impl Core {
         }
         self.update_airplay(host);
         self.update_dlna(host);
+        self.update_extensions(host);
         self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {

@@ -22,6 +22,10 @@ Item {
     property var playlists: []
     property var results: []
     property bool loaded: false
+    // Server extensions that search (e.g. YouTube) and the search's source.
+    readonly property var extList: (Core.state.extensions || {}).list || []
+    property string searchSource: "library"
+    onExtListChanged: if (searchSource !== "library" && !extList.some(e => e.id === searchSource)) searchSource = "library"
 
     function reload() {
         tracks = Core.call("library.tracks") || []
@@ -205,7 +209,7 @@ Item {
                 Layout.leftMargin: 12
                 Layout.rightMargin: 12
                 Layout.topMargin: 4
-                visible: page.trackCount > 0
+                visible: page.trackCount > 0 || page.extList.length > 0
                 implicitHeight: 46
                 leftPadding: 46
                 rightPadding: clearButton.visible ? 46 : 16
@@ -318,7 +322,7 @@ Item {
                 EmptyState {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - 48, 420)
-                    visible: page.loaded && page.trackCount === 0
+                    visible: page.loaded && page.trackCount === 0 && !main.searching
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
@@ -334,23 +338,64 @@ Item {
                     }
                 }
 
-                // Search results
+                // Search results: the library or a server extension.
                 Item {
                     anchors.fill: parent
                     visible: main.searching
-                    TrackListView {
-                        anchors.fill: parent
-                        anchors.topMargin: 8
-                        tracks: page.results
-                        onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                    Row {
+                        id: sourceChips
+                        x: 12
+                        y: 8
+                        spacing: 6
+                        visible: page.extList.length > 0
+                        Chip {
+                            text: Theme.tr("Library")
+                            checked: page.searchSource === "library"
+                            onClicked: page.searchSource = "library"
+                        }
+                        Repeater {
+                            model: page.extList
+                            Chip {
+                                required property var modelData
+                                text: modelData.name
+                                checked: page.searchSource === modelData.id
+                                onClicked: page.searchSource = modelData.id
+                            }
+                        }
                     }
-                    EmptyState {
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - 48, 420)
-                        visible: page.results.length === 0 && !searchTimer.running
-                        iconName: "search"
-                        title: Theme.tr("No results")
-                        text: Theme.tr("Try a different title, artist or album.")
+                    Item {
+                        anchors.fill: parent
+                        anchors.topMargin: sourceChips.visible ? sourceChips.height + 12 : 0
+                        TrackListView {
+                            anchors.fill: parent
+                            anchors.topMargin: 8
+                            visible: page.searchSource === "library"
+                            tracks: page.results
+                            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                        }
+                        EmptyState {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 420)
+                            visible: page.searchSource === "library" && page.results.length === 0 && !searchTimer.running
+                            iconName: "search"
+                            title: Theme.tr("No results")
+                            text: Theme.tr("Try a different title, artist or album.")
+                            Repeater {
+                                model: page.extList
+                                AccentButton {
+                                    required property var modelData
+                                    text: Theme.tr("Search on") + " " + modelData.name
+                                    highlighted: true
+                                    icon.source: Theme.icon("search")
+                                    onClicked: page.searchSource = modelData.id
+                                }
+                            }
+                        }
+                        Loader {
+                            anchors.fill: parent
+                            active: main.searching && page.searchSource !== "library"
+                            sourceComponent: ExtensionSearch { query: search.text }
+                        }
                     }
                 }
 

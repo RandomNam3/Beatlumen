@@ -15,6 +15,7 @@ mod dlna_receiver;
 #[cfg(target_arch = "wasm32")]
 #[path = "dlna_receiver_web.rs"]
 mod dlna_receiver;
+mod extensions;
 pub mod host;
 pub mod icon;
 pub mod jobs;

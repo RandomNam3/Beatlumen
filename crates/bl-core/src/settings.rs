@@ -146,6 +146,8 @@ pub struct Settings {
     pub airplay: bool,
     /// Reachable as a DLNA/UPnP speaker (media renderer).
     pub dlna_receiver: bool,
+    /// Where songs from server extensions go: "" (ask), "library", "vault".
+    pub extension_target: String,
     /// The renderer's stable UPnP device id.
     pub dlna_uuid: String,
     /// Name shown on AirPlay senders (empty = "Beatlumen").
@@ -204,6 +206,7 @@ impl Default for Settings {
             skip_silence: true,
             airplay: false,
             dlna_receiver: false,
+            extension_target: String::new(),
             dlna_uuid: String::new(),
             airplay_name: String::new(),
             vault_user: String::new(),
@@ -275,6 +278,10 @@ impl Settings {
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
+            extension_target: match v.str_or("extensionTarget", "") {
+                t @ ("library" | "vault") => t.to_string(),
+                _ => String::new(),
+            },
             dlna_uuid: v.str_or("dlnaUuid", "").chars().take(48).collect(),
             airplay_name: v.str_or("airplayName", "").chars().take(48).collect(),
             vault_user: v.str_or("vaultUser", "").chars().take(32).collect(),
@@ -329,6 +336,7 @@ impl Settings {
             .with("skipSilence", self.skip_silence)
             .with("airplay", self.airplay)
             .with("dlnaReceiver", self.dlna_receiver)
+            .with("extensionTarget", self.extension_target.as_str())
             .with("dlnaUuid", self.dlna_uuid.as_str())
             .with("airplayName", self.airplay_name.as_str())
             .with("vaultUser", self.vault_user.as_str())
