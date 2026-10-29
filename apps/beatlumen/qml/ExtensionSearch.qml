@@ -67,7 +67,7 @@ Item {
         text: es.ext.error || Theme.tr("Try a different title, artist or album.")
     }
 
-    Dialog {
+    AppDialog {
         id: target
         readonly property bool vaultReady: (Core.state.vault || {}).state === "ready"
         function choose(where) {

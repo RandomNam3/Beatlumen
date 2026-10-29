@@ -764,7 +764,13 @@ mod tests {
         let pw = dir.join("pw");
         std::fs::write(&pw, "geheim\n").unwrap();
         let env: std::collections::HashMap<&str, String> = [
-            ("BEATLUMEN_MUSIC", "/m1:/m2".to_string()),
+            (
+                "BEATLUMEN_MUSIC",
+                std::env::join_paths(["/m1", "/m2"])
+                    .unwrap()
+                    .into_string()
+                    .unwrap(),
+            ),
             ("BEATLUMEN_DATA", "/data".into()),
             ("BEATLUMEN_PASSWORD_FILE", pw.display().to_string()),
             (
@@ -846,9 +852,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ocs-config-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("server.json");
-        std::fs::write(&file, r#"{"music":["m1","/abs/m2"],"images":"img","data":"d","password":"pw","rescanInterval":5,"name":"Home"}"#).unwrap();
+        let abs = std::env::temp_dir().join("abs-m2");
+        let json = format!(
+            r#"{{"music":["m1","{}"],"images":"img","data":"d","password":"pw","rescanInterval":5,"name":"Home"}}"#,
+            abs.to_str().unwrap().replace('\\', "\\\\")
+        );
+        std::fs::write(&file, json).unwrap();
         let c = run(&["--config", file.to_str().unwrap(), "--rescan-interval", "7"]);
-        assert_eq!(c.music_dirs, vec![dir.join("m1"), PathBuf::from("/abs/m2")]);
+        assert_eq!(c.music_dirs, vec![dir.join("m1"), abs]);
         assert_eq!(c.image_dirs, vec![dir.join("img")]);
         assert_eq!(c.data_dir, dir.join("d"));
         assert_eq!(c.password.as_deref(), Some("pw"));

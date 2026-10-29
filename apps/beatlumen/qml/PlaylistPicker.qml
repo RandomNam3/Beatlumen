@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Beatlumen.Core
 
 // Adds songs to an existing or a new playlist.
-Dialog {
+AppDialog {
     id: dlg
     property var ids: []
     property var playlists: []

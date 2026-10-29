@@ -61,7 +61,10 @@ int main(int argc, char *argv[])
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
 #endif
-    fmt.setDepthBufferSize(0);
+    // Qt Quick draws opaque items first and relies on the depth buffer to
+    // keep translucent items behind them; without one (Windows picks a
+    // depth-less pixel format for 0) panels cover opaque images.
+    fmt.setDepthBufferSize(24);
     fmt.setStencilBufferSize(8);
     fmt.setSwapInterval(1);
     QSurfaceFormat::setDefaultFormat(fmt);

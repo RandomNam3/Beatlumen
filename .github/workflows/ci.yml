@@ -34,12 +34,13 @@ jobs:
   rust-windows:
     name: Rust core and server (Windows tests)
     runs-on: windows-2022
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install ffmpeg (test fixtures)
         run: choco install ffmpeg -y --no-progress
       - name: Test
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --no-fail-fast --exclude bl-ffi
 
   linux:
     name: Linux app (AppImage)

@@ -529,7 +529,7 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: confirmDelete
         modal: true
         anchors.centerIn: Overlay.overlay
@@ -545,7 +545,7 @@ Item {
         onAccepted: Core.call(fileMenu.file.mine ? "vault.delete" : "vault.leave", { id: fileMenu.file.id.replace("vault:", "") })
     }
 
-    Dialog {
+    AppDialog {
         id: shareDialog
         property var file: ({})
         function show(f) { file = f; shareError.text = ""; open() }
@@ -590,7 +590,7 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: safety
         property var contact: ({})
         function show(c) { contact = c; open() }
@@ -642,7 +642,7 @@ Item {
     }
 
     // Shown once after creating the account or a new code.
-    Dialog {
+    AppDialog {
         id: codeDialog
         modal: true
         closePolicy: Popup.NoAutoClose
@@ -677,7 +677,7 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: changePw
         modal: true
         anchors.centerIn: Overlay.overlay
@@ -702,7 +702,7 @@ Item {
     }
 
     // A passkey in the system's credential manager (Android).
-    Dialog {
+    AppDialog {
         id: addPasskey
         modal: true
         anchors.centerIn: Overlay.overlay

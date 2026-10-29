@@ -343,7 +343,7 @@ ApplicationWindow {
     }
     // Visualising other apps without access to their media sessions: the
     // title, cover and full control need it; offered once per start.
-    Dialog {
+    AppDialog {
         id: captureAccess
         property bool asked: false
         modal: true

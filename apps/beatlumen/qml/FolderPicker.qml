@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Beatlumen.Core
 
 // In-app folder browser (Android needs real paths for library scanning).
-Dialog {
+AppDialog {
     id: dlg
     property string path: ""
     property var entries: []

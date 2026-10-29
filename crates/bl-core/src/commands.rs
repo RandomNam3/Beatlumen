@@ -32,6 +32,20 @@ fn strs(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A local folder path with "/" separators and no trailing one, for
+/// comparing paths that mix "/" and "\" (Windows).
+fn folder_key(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+/// Whether the local file `path` lies inside `folder`.
+fn in_folder(path: &str, folder: &str) -> bool {
+    let folder = folder_key(folder);
+    let path = path.replace('\\', "/");
+    path.strip_prefix(folder.as_str())
+        .is_some_and(|r| r.starts_with('/'))
+}
+
 /// A form field for the effect / analysis editors.
 fn field_json(f: &Field, obj: &Value, tr: &dyn Fn(&str) -> String) -> Value {
     let mut v = Value::object()
@@ -1224,7 +1238,7 @@ impl Core {
                     .library
                     .tracks
                     .iter()
-                    .filter(|t| library::is_local(&t.id) && t.path.starts_with(f.as_str()))
+                    .filter(|t| library::is_local(&t.id) && in_folder(&t.path, f))
                     .count();
                 let name = std::path::Path::new(f)
                     .file_name()
@@ -1240,14 +1254,12 @@ impl Core {
                 ));
             }
         } else {
+            // Local paths may mix "/" and "\" on Windows (a folder picked as
+            // "C:/Music" scanned into "C:/Music\Rock\a.mp3"): compare and
+            // list them with "/" only.
             let (is_server, prefix) = match path.strip_prefix("server:") {
                 Some(p) => (true, p.trim_end_matches('/').to_string()),
-                None => (false, path.trim_end_matches(['/', '\\']).to_string()),
-            };
-            let sep = if is_server || !prefix.contains('\\') {
-                '/'
-            } else {
-                '\\'
+                None => (false, folder_key(path)),
             };
             let mut sub: std::collections::BTreeMap<String, usize> =
                 std::collections::BTreeMap::new();
@@ -1255,15 +1267,19 @@ impl Core {
                 if library::is_local(&t.id) == is_server {
                     continue;
                 }
-                let rest = if prefix.is_empty() {
-                    Some(t.path.as_str())
+                let full = if is_server {
+                    std::borrow::Cow::Borrowed(t.path.as_str())
                 } else {
-                    t.path
-                        .strip_prefix(prefix.as_str())
-                        .and_then(|r| r.strip_prefix(sep))
+                    std::borrow::Cow::Owned(t.path.replace('\\', "/"))
+                };
+                let rest = if prefix.is_empty() {
+                    Some(full.as_ref())
+                } else {
+                    full.strip_prefix(prefix.as_str())
+                        .and_then(|r| r.strip_prefix('/'))
                 };
                 let Some(rest) = rest else { continue };
-                match rest.split_once(sep) {
+                match rest.split_once('/') {
                     Some((dir, _)) => *sub.entry(dir.to_string()).or_default() += 1,
                     None => tracks.push(self.track_json(t)),
                 }
@@ -1272,7 +1288,7 @@ impl Core {
                 let full = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{prefix}{sep}{name}")
+                    format!("{prefix}/{name}")
                 };
                 let full = if is_server {
                     format!("server:{full}")
@@ -1395,5 +1411,19 @@ impl Core {
             self.server_playlists.retain(|p| p.id != id);
             self.revs.playlists += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folders_with_mixed_separators() {
+        assert_eq!(folder_key("C:\\Music\\"), "C:/Music");
+        assert!(in_folder("C:/Music\\Rock\\a.mp3", "C:/Music"));
+        assert!(in_folder("C:\\Music\\a.mp3", "C:/Music/"));
+        assert!(!in_folder("C:/Music2/a.mp3", "C:/Music"));
+        assert!(in_folder("/a.mp3", "/"));
     }
 }
