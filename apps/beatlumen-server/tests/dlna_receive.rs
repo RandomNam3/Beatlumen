@@ -159,9 +159,15 @@ fn control_point_plays_on_the_app() {
     events.set_nonblocking(false).unwrap();
     let (mut ev, _) = events.accept().unwrap();
     ev.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let mut first = vec![0u8; 8192];
-    let n = ev.read(&mut first).unwrap();
-    let first = String::from_utf8_lossy(&first[..n]).into_owned();
+    // Headers and body may arrive in separate packets.
+    let mut first = Vec::new();
+    let mut buf = vec![0u8; 8192];
+    while !String::from_utf8_lossy(&first).contains("propertyset>") {
+        let n = ev.read(&mut buf).unwrap();
+        assert!(n > 0, "event ended early: {}", String::from_utf8_lossy(&first));
+        first.extend_from_slice(&buf[..n]);
+    }
+    let first = String::from_utf8_lossy(&first).into_owned();
     assert!(
         first.starts_with("NOTIFY /cb") && first.contains("TransportState"),
         "{first}"
