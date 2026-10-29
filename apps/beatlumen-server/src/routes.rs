@@ -116,8 +116,15 @@ fn route(state: &State, req: &Request) -> Response {
         return Response::error(400, "invalid path");
     }
     let segs = req.segments();
-    match segs.first() {
-        Some(&"api") => api(state, req, &segs[1..]),
+    // Android lets the app use passkeys of this domain only when the domain
+    // names the app (Digital Asset Links).
+    if segs == [".well-known", "assetlinks.json"] && matches!(req.method.as_str(), "GET" | "HEAD") {
+        return assetlinks(state);
+    }
+    match segs.as_slice() {
+        ["api", rest @ ..] => api(state, req, rest),
+        // Public links (/share/<id>#<secret>) open the share page.
+        ["share", id] if !id.contains('.') => state.web.serve(req, &["share", "index.html"]),
         _ => state.web.serve(req, &segs),
     }
 }
@@ -160,12 +167,23 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 not_allowed("POST")
             }
         }
+        ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
+        // Public links to encrypted files: no account needed.
+        ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),
         _ => {}
     }
-    if !state.auth.authorized(req) {
+    // Users with an account may use the library as well; their playlists
+    // and presets are their own.
+    let user = state.vault.session_user(req);
+    if !state.auth.authorized(req) && user.is_none() {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
+    let store = user
+        .as_deref()
+        .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
+    let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
+    let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
     match segs {
         ["logout"] => match m {
             "POST" => {
@@ -175,12 +193,51 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             _ => not_allowed("POST"),
         },
         ["library"] if get => library(state, req),
+        ["extensions", rest @ ..] => state.extensions.handle(state, req, rest),
         ["library"] => not_allowed("GET, HEAD"),
         ["rescan"] if m == "POST" => {
             state.request_scan();
             json(202, &Value::object().with("scanning", true))
         }
         ["rescan"] => not_allowed("POST"),
+        ["tracks", id, "lyrics", "sync"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            if !state.lyrics_sync.available() {
+                return Response::error(501, "speech recognition is not set up on this server");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &state.lyrics_sync.status_json(&e.track.id)),
+                "POST" => {
+                    state.lyrics_sync.request(&e.track.id);
+                    json(202, &state.lyrics_sync.status_json(&e.track.id))
+                }
+                _ => not_allowed("GET, HEAD, POST"),
+            }
+        }
+        ["tracks", id, "lyrics"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            match m {
+                "GET" | "HEAD" => match state.lyrics.get(e) {
+                    Some(v) => json(200, &v).with_header("Cache-Control", "private, no-cache"),
+                    None => Response::error(404, "no song text"),
+                },
+                "PUT" => match state.lyrics.put(e, &req.body) {
+                    Ok(()) => Response::new(204),
+                    Err(err) => fail(err),
+                },
+                "DELETE" => {
+                    state.lyrics.delete(e);
+                    Response::new(204)
+                }
+                _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
         ["tracks", id, what] => {
             if !get {
                 return not_allowed("GET, HEAD");
@@ -215,8 +272,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             }
         }
         ["playlists"] => match m {
-            "GET" | "HEAD" => json(200, &state.playlists.list_json()),
-            "POST" => match state.playlists.create(&req.body) {
+            "GET" | "HEAD" => json(200, &playlists.list_json()),
+            "POST" => match playlists.create(&req.body) {
                 Ok(p) => json(201, &p.to_json()),
                 Err(e) => fail(e),
             },
@@ -227,15 +284,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 return Response::error(404, "playlist not found");
             }
             match m {
-                "GET" | "HEAD" => match state.playlists.get(id) {
+                "GET" | "HEAD" => match playlists.get(id) {
                     Some(p) => json(200, &p.to_json()),
                     None => Response::error(404, "playlist not found"),
                 },
-                "PUT" => match state.playlists.update(id, &req.body) {
+                "PUT" => match playlists.update(id, &req.body) {
                     Ok(p) => json(200, &p.to_json()),
                     Err(e) => fail(e),
                 },
-                "DELETE" => match state.playlists.delete(id) {
+                "DELETE" => match playlists.delete(id) {
                     Ok(()) => Response::new(204),
                     Err(e) => fail(e),
                 },
@@ -263,7 +320,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, DELETE"),
             }
         }
-        ["presets"] if get => json(200, &state.presets.list()),
+        ["presets"] if get => json(200, &presets.list()),
         ["presets"] => not_allowed("GET, HEAD"),
         ["presets", ..] => {
             // The name is everything after the prefix (already decoded); a
@@ -274,18 +331,18 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 .strip_prefix("/api/presets/")
                 .unwrap_or("");
             match m {
-                "GET" | "HEAD" => match state.presets.get(name) {
+                "GET" | "HEAD" => match presets.get(name) {
                     Ok(data) => Response::bytes(200, "application/json", data),
                     Err(e) => fail(e),
                 },
-                "PUT" => match state.presets.put(name, &req.body) {
+                "PUT" => match presets.put(name, &req.body) {
                     Ok(created) => json(
                         if created { 201 } else { 200 },
                         &Value::object().with("name", name),
                     ),
                     Err(e) => fail(e),
                 },
-                "DELETE" => match state.presets.delete(name) {
+                "DELETE" => match presets.delete(name) {
                     Ok(()) => Response::new(204),
                     Err(e) => fail(e),
                 },
@@ -452,4 +509,36 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
         }
         Err(msg) => Response::error(500, &format!("cannot decode image: {msg}")),
     }
+}
+
+fn assetlinks(state: &State) -> Response {
+    let certs = state.config.all_android_certs();
+    if certs.is_empty() || state.vault.rp.is_none() {
+        return Response::error(404, "not found");
+    }
+    let fingerprints: Vec<Value> = certs
+        .iter()
+        .map(|c| {
+            let pairs: Vec<String> = (0..c.len() / 2)
+                .map(|i| c[i * 2..i * 2 + 2].to_ascii_uppercase())
+                .collect();
+            Value::from(pairs.join(":"))
+        })
+        .collect();
+    let v = Value::Array(vec![Value::object()
+        .with(
+            "relation",
+            Value::Array(vec![
+                Value::from("delegate_permission/common.handle_all_urls"),
+                Value::from("delegate_permission/common.get_login_creds"),
+            ]),
+        )
+        .with(
+            "target",
+            Value::object()
+                .with("namespace", "android_app")
+                .with("package_name", "io.github.randomnam3.beatlumen")
+                .with("sha256_cert_fingerprints", Value::Array(fingerprints)),
+        )]);
+    Response::json(200, &v).with_header("Cache-Control", "public, max-age=3600")
 }

@@ -1,0 +1,82 @@
+# Beatlumen Server with Docker Compose or Podman Compose.
+#
+#   cd container
+#   cp example.env .env              # set MUSIC_DIR, IMAGES_DIR, ...
+#   printf '%s' 'a-long-password' > password.txt && chmod 0444 password.txt
+#   head -c 32 /dev/urandom > pepper.bin && chmod 0444 pepper.bin
+#   docker compose up -d --build     # or: podman compose up -d --build
+#
+# Ports, variables and security options: see container/README.md.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: beatlumen
+
+services:
+  server:
+    image: localhost/beatlumen-server:latest
+    build:
+      context: ..
+      dockerfile: container/Containerfile
+    restart: unless-stopped
+    # Small init process as PID 1: forwards SIGTERM, reaps processes.
+    init: true
+    ports:
+      # Host port : container port. Use "127.0.0.1:7878:7878" behind a
+      # reverse proxy on the same machine.
+      - "${BEATLUMEN_PORT:-7878}:7878/tcp"
+    environment:
+      BEATLUMEN_NAME: "${BEATLUMEN_NAME:-Beatlumen Server}"
+      BEATLUMEN_PASSWORD_FILE: /run/secrets/beatlumen_password
+      # Secret of the account verifiers, kept out of the data volume.
+      BEATLUMEN_VAULT_PEPPER_FILE: /run/secrets/beatlumen_pepper
+      BEATLUMEN_VAULT_QUOTA_MB: "${BEATLUMEN_VAULT_QUOTA_MB:-10240}"
+      BEATLUMEN_REGISTRATION: "${BEATLUMEN_REGISTRATION:-invite}"
+      # Domain of a reverse proxy (comma separated), e.g. music.example.org
+      BEATLUMEN_ALLOWED_HOSTS: "${BEATLUMEN_ALLOWED_HOSTS:-}"
+      BEATLUMEN_RESCAN_INTERVAL: "${BEATLUMEN_RESCAN_INTERVAL:-600}"
+      BEATLUMEN_ANALYSIS_MAX_MINUTES: "${BEATLUMEN_ANALYSIS_MAX_MINUTES:-20}"
+      BEATLUMEN_VERBOSE: "${BEATLUMEN_VERBOSE:-false}"
+    secrets:
+      - beatlumen_password
+      - beatlumen_pepper
+    volumes:
+      # Music and backgrounds read-only; "z" relabels them for SELinux
+      # (shared label, ignored on systems without SELinux).
+      - "${MUSIC_DIR:-./music}:/music:ro,z"
+      - "${IMAGES_DIR:-./images}:/images:ro,z"
+      # Caches, playlists, presets, uploads, login tokens, accounts and
+      # encrypted files.
+      - beatlumen-data:/data:Z
+    # Hardening: nothing to write except /data, no capabilities, no
+    # privilege gain, bounded resources.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # After installing the profiles from container/apparmor or
+      # container/selinux (see README.md), enable the matching line:
+      # - apparmor=beatlumen-server
+      # - label=type:beatlumen_server.process
+    pids_limit: 256
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "/beatlumen-server", "--health-check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  beatlumen-data:
+
+secrets:
+  beatlumen_password:
+    file: ./password.txt
+  beatlumen_pepper:
+    file: ./pepper.bin

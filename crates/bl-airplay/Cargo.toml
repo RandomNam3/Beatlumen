@@ -1,0 +1,11 @@
+[package]
+name = "bl-airplay"
+description = "AirPlay (RAOP) audio receiver and sender: service announcement and discovery, RTSP control and the audio stream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-media = { path = "../bl-media" }
+bl-net = { path = "../bl-net" }

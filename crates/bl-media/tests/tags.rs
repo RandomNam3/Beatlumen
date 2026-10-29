@@ -29,7 +29,11 @@ const META: &[&str] = &[
     "REPLAYGAIN_TRACK_GAIN=-6.50 dB",
     "-metadata",
     "REPLAYGAIN_TRACK_PEAK=0.988",
+    "-metadata",
+    "lyrics=[00:01.00]First line\n[00:02.50]Second line",
 ];
+
+const LYRICS: &str = "[00:01.00]First line\n[00:02.50]Second line";
 
 struct Case {
     file: &'static str,
@@ -270,6 +274,10 @@ fn tags_and_pictures() {
                     .is_some_and(|p| (p - 0.988).abs() < 1e-6),
                 "replaygain peak",
             );
+        }
+        // RIFF INFO and ADTS carry no lyrics; ffmpeg writes no ID3 into AIFF.
+        if !matches!(ext_of(&p).as_str(), "wav" | "aiff" | "aac") {
+            check(t.lyrics.as_deref() == Some(LYRICS), "lyrics");
         }
         if c.expect_picture {
             let png = std::fs::read(cover_png()).unwrap();

@@ -4,9 +4,10 @@
 //!
 //! Structure and numerical kernels are ported from minimp3
 //! (<https://github.com/lieff/minimp3>, CC0 1.0 / public domain). Deviations:
-//! Huffman region boundaries and count1 overrun handling follow the ISO
-//! reference decoder, the dequantization tables are computed in f64, and
-//! 8 kHz mixed blocks use the ISO band layout.
+//! Huffman region boundaries follow the ISO reference decoder, count1
+//! overrun handling follows ffmpeg (ISO except for the final quadruple),
+//! the dequantization tables are computed in f64, and 8 kHz mixed blocks
+//! use the ISO band layout.
 
 use crate::bits::BitReader;
 use crate::header::FrameHeader;
@@ -354,8 +355,11 @@ fn huffman(
                 br.skip(1);
             }
         }
-        if br.position() > limit {
-            // The last quadruple overran the granule: discard it (ISO).
+        // A quadruple that overran part2_3_length is discarded (ISO), but,
+        // as in ffmpeg, only if another quadruple would follow: ffmpeg checks
+        // the overrun before decoding the next one, so the final quadruple
+        // of the spectrum is kept. libshine streams rely on this.
+        if br.position() > limit && pos + 8 <= 576 {
             break;
         }
         for half in 0..2 {

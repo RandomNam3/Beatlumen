@@ -1,10 +1,12 @@
 #include "bridge.h"
 #include "audio.h"
 #include "testhooks.h"
+#include "secrets.h"
 #include "tls.h"
 #include "web.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -19,11 +21,28 @@
 #include <QOpenGLFunctions>
 #include <QPalette>
 #include <QPointer>
+#include <QProcess>
+#include <QSettings>
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QStyleHints>
 
+#if defined(BEATLUMEN_PORTAL)
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QDBusVariant>
+#endif
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+#include "media_desktop.h"
+#endif
+#if defined(BEATLUMEN_DESKTOP_CAPTURE)
+#include "desktop_capture.h"
+#endif
+
 #ifdef Q_OS_ANDROID
+#include "android_capture.h"
 #include "android_media.h"
 #include <QCoreApplication>
 #include <QJniEnvironment>
@@ -57,11 +76,213 @@ void logCallback(void *user, const char *msg)
     static_cast<Bridge *>(user)->log(QString::fromUtf8(msg));
 }
 
+int32_t openUrlCallback(void *, const char *url)
+{
+#if defined(Q_OS_WASM)
+    web::openUrl(QString::fromUtf8(url));
+    return 1;
+#else
+    return QDesktopServices::openUrl(QUrl(QString::fromUtf8(url))) ? 1 : 0;
+#endif
+}
+
 uint32_t audioStartCallback(void *user)
 {
     Q_UNUSED(user);
     return AudioOutput::instance()->start();
 }
+
+#ifdef Q_OS_ANDROID
+// AirPlay announcement through Android's NsdManager (ServiceAnnouncer.java).
+constexpr const char *kAnnouncer = "io/github/randomnam3/beatlumen/ServiceAnnouncer";
+
+int32_t serviceRegister(void *, const char *instance, const char *type, uint16_t port, const char *txt)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    const jboolean ok = QJniObject::callStaticMethod<jboolean>(
+        kAnnouncer, "register", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)Z",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>(),
+        QJniObject::fromString(QString::fromUtf8(type)).object<jstring>(), jint(port),
+        QJniObject::fromString(QString::fromUtf8(txt)).object<jstring>());
+    return ok ? 1 : 0;
+}
+
+void serviceUnregister(void *)
+{
+    QJniObject::callStaticMethod<void>(kAnnouncer, "unregister", "()V");
+}
+
+// UnifiedPush (UnifiedPush.java): registration with the distributor, and the
+// endpoint and decrypted messages coming back from Java.
+constexpr const char *kPush = "io/github/randomnam3/beatlumen/UnifiedPush";
+Bridge *g_pushBridge = nullptr;
+
+int32_t pushRegister(void *, const char *instance, const char *vapid)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    return QJniObject::callStaticMethod<jint>(kPush, "register", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>(),
+        QJniObject::fromString(QString::fromUtf8(vapid)).object<jstring>());
+}
+
+void pushUnregister(void *, const char *instance)
+{
+    QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>(kPush, "unregister", "(Landroid/content/Context;Ljava/lang/String;)V",
+        ctx.object(), QJniObject::fromString(QString::fromUtf8(instance)).object<jstring>());
+}
+
+QString jstr(JNIEnv *env, jstring s)
+{
+    if (!s)
+        return {};
+    const char *c = env->GetStringUTFChars(s, nullptr);
+    QString out = QString::fromUtf8(c);
+    env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+// Called on a Java thread: forwarded to the core on the main thread.
+void pushCommand(const QVariantMap &cmd)
+{
+    if (g_pushBridge)
+        QMetaObject::invokeMethod(g_pushBridge, [cmd]() { if (g_pushBridge) g_pushBridge->call(cmd.value(QStringLiteral("cmd")).toString(), cmd); }, Qt::QueuedConnection);
+}
+
+void JNICALL nativeEndpoint(JNIEnv *env, jclass, jstring instance, jstring endpoint, jstring p256dh, jstring auth)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.endpoint") },
+        { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("endpoint"), jstr(env, endpoint) },
+        { QStringLiteral("p256dh"), jstr(env, p256dh) }, { QStringLiteral("auth"), jstr(env, auth) } });
+}
+
+void JNICALL nativeMessage(JNIEnv *env, jclass, jstring json)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.message") }, { QStringLiteral("json"), jstr(env, json) } });
+}
+
+void JNICALL nativeFailed(JNIEnv *env, jclass, jstring instance, jstring reason)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("push.failed") },
+        { QStringLiteral("instance"), jstr(env, instance) }, { QStringLiteral("reason"), jstr(env, reason) } });
+}
+
+// Passkeys and saved passwords through Android's Credential Manager
+// (Credentials.java); results come back on the main thread as
+// "vault.credentialResult".
+constexpr const char *kCredentials = "io/github/randomnam3/beatlumen/Credentials";
+
+int32_t credentialRequest(void *, const char *kind, const char *json)
+{
+    const QJsonObject o = QJsonDocument::fromJson(QByteArray(json)).object();
+    QJniObject activity = QtAndroidPrivate::activity();
+    if (!activity.isValid())
+        return 0;
+    const QByteArray k(kind);
+    auto str = [&](const char *key) { return QJniObject::fromString(o.value(QLatin1String(key)).toString()); };
+    if (k == "get") {
+        QJniObject::callStaticMethod<void>(kCredentials, "get", "(Landroid/app/Activity;Ljava/lang/String;Z)V",
+            activity.object(), str("publicKey").object<jstring>(), jboolean(o.value(QStringLiteral("password")).toBool()));
+    } else if (k == "create") {
+        QJniObject::callStaticMethod<void>(kCredentials, "createPasskey", "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+            activity.object(), str("publicKey").object<jstring>(), str("user").object<jstring>());
+    } else if (k == "save") {
+        QJniObject::callStaticMethod<void>(kCredentials, "savePassword", "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+            activity.object(), str("user").object<jstring>(), str("password").object<jstring>());
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+void JNICALL nativeCredentialResult(JNIEnv *env, jclass, jstring kind, jboolean ok, jstring json)
+{
+    pushCommand({ { QStringLiteral("cmd"), QStringLiteral("vault.credentialResult") },
+        { QStringLiteral("kind"), jstr(env, kind) }, { QStringLiteral("ok"), bool(ok) }, { QStringLiteral("json"), jstr(env, json) } });
+}
+
+void setupCredentials()
+{
+    const JNINativeMethod methods[] = {
+        { "nativeResult", "(Ljava/lang/String;ZLjava/lang/String;)V", reinterpret_cast<void *>(nativeCredentialResult) },
+    };
+    QJniEnvironment env;
+    env.registerNativeMethods(kCredentials, methods, 1);
+}
+
+// Opened from the system's media controls after the app was closed
+// (ResumeService / MediaBridge.resumeInApp): play on. The flag is taken so
+// that a recreated activity does not play again.
+bool takeResume(QJniObject &intent)
+{
+    if (!intent.isValid())
+        return false;
+    const QJniObject key = QJniObject::fromString(QStringLiteral("io.github.randomnam3.beatlumen.RESUME"));
+    if (!intent.callMethod<jboolean>("getBooleanExtra", "(Ljava/lang/String;Z)Z", key.object<jstring>(), jboolean(false)))
+        return false;
+    intent.callMethod<void>("removeExtra", "(Ljava/lang/String;)V", key.object<jstring>());
+    return true;
+}
+
+// beatlumen://auth?state=…&result=… opened by the sign-in page in the
+// browser (passkeys), while the app runs or when the link starts it.
+struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
+    Bridge *bridge = nullptr;
+    bool handleNewIntent(JNIEnv *, jobject intent) override
+    {
+        QJniObject i(intent);
+        if (capture::takeTileRequest(i)) {
+            QPointer<Bridge> b = bridge;
+            QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("capture.start")); }, Qt::QueuedConnection);
+            return true;
+        }
+        if (takeResume(i)) {
+            QPointer<Bridge> b = bridge;
+            QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("play")); }, Qt::QueuedConnection);
+            return true;
+        }
+        QJniObject uri = i.callObjectMethod("getData", "()Landroid/net/Uri;");
+        if (!uri.isValid())
+            return false;
+        const QString url = uri.callObjectMethod("toString", "()Ljava/lang/String;").toString();
+        if (!url.startsWith(QStringLiteral("beatlumen://auth")))
+            return false;
+        QPointer<Bridge> b = bridge;
+        QMetaObject::invokeMethod(bridge, [b, url]() { if (b) b->call(QStringLiteral("vault.browserResult"), { { QStringLiteral("url"), url } }); }, Qt::QueuedConnection);
+        return true;
+    }
+};
+
+void setupAuthLinks(Bridge *bridge)
+{
+    static AuthLinkListener listener;
+    listener.bridge = bridge;
+    QtAndroidPrivate::registerNewIntentListener(&listener);
+    QJniObject activity = QtAndroidPrivate::activity();
+    QJniObject intent = activity.isValid() ? activity.callObjectMethod("getIntent", "()Landroid/content/Intent;") : QJniObject();
+    if (capture::takeTileRequest(intent)) {
+        QPointer<Bridge> b = bridge;
+        QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("capture.start")); });
+    } else if (takeResume(intent)) {
+        QPointer<Bridge> b = bridge;
+        // After the core restored the queue.
+        QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("play")); });
+    }
+}
+
+void setupPush(Bridge *bridge)
+{
+    g_pushBridge = bridge;
+    const JNINativeMethod methods[] = {
+        { "nativeEndpoint", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", reinterpret_cast<void *>(nativeEndpoint) },
+        { "nativeMessage", "(Ljava/lang/String;)V", reinterpret_cast<void *>(nativeMessage) },
+        { "nativeFailed", "(Ljava/lang/String;Ljava/lang/String;)V", reinterpret_cast<void *>(nativeFailed) },
+    };
+    QJniEnvironment env;
+    if (env.registerNativeMethods(kPush, methods, 3))
+        QJniObject::callStaticMethod<void>(kPush, "setNativeReady", "(Z)V", jboolean(true));
+}
+#endif
 
 } // namespace
 
@@ -90,7 +311,27 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     tls::configure(cb);
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
+    cb.open_url = openUrlCallback;
+    probeNativeDialogs();
+    secrets::configure(cb, this);
+#if defined(BEATLUMEN_DESKTOP_CAPTURE)
+    desktopcapture::configure(cb, this);
+#endif
+#ifdef Q_OS_ANDROID
+    cb.service_register = serviceRegister;
+    cb.service_unregister = serviceUnregister;
+    cb.push_register = pushRegister;
+    cb.push_unregister = pushUnregister;
+    cb.credential_request = credentialRequest;
+    capture::configure(cb, this);
+    setupPush(this);
+    setupCredentials();
+    setupAuthLinks(this);
+#endif
     m_core = bl_core_new(dataDir.toUtf8().constData(), argsJson.constData(), lang.constData(), platform().toUtf8().constData(), cb);
+#if defined(Q_OS_WASM)
+    web::listenAuth([this](const QString &query) { call(QStringLiteral("vault.browserResult"), { { QStringLiteral("url"), query } }); });
+#endif
 
     // Files picked through content URIs are copied into the cache; drop
     // copies older than a week (they are only needed while playing).
@@ -112,6 +353,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
             web::persistStorage();
         }
     });
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+    m_desktopMedia = new DesktopMedia(this);
+#endif
 #ifdef Q_OS_ANDROID
     // Background playback: media session, notification, foreground service.
     new AndroidMedia(this);
@@ -158,6 +402,40 @@ QString Bridge::platform() const
 #endif
 }
 
+// Linux: Qt's file dialogs are native only through the XDG desktop portal
+// (main.cpp selects that platform theme); without a portal they fall back to
+// a generic Qt Quick dialog, so the app's own picker is used instead.
+// BEATLUMEN_NATIVE_DIALOGS=0/1 overrides the check.
+void Bridge::probeNativeDialogs()
+{
+    const QByteArray force = qgetenv("BEATLUMEN_NATIVE_DIALOGS");
+    if (!force.isEmpty()) {
+        m_nativeDialogs = force != "0";
+        return;
+    }
+#if defined(BEATLUMEN_PORTAL)
+    if (qgetenv("QT_QPA_PLATFORMTHEME") != "xdgdesktopportal")
+        return;
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.freedesktop.portal.Desktop"),
+        QStringLiteral("/org/freedesktop/portal/desktop"),
+        QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"));
+    msg << QStringLiteral("org.freedesktop.portal.FileChooser") << QStringLiteral("version");
+    auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg, 10000), this);
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
+        QDBusPendingReply<QDBusVariant> r = *w;
+        w->deleteLater();
+        // Version 3 picks folders too.
+        if (!r.isError() && r.value().variant().toUInt() >= 3) {
+            m_nativeDialogs = true;
+            emit nativeDialogsChanged();
+        } else {
+            log(QStringLiteral("no file chooser portal: using the app's file picker"));
+        }
+    });
+#endif
+}
+
 bool Bridge::mobile() const
 {
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
@@ -180,6 +458,54 @@ bool Bridge::systemDark() const
     return scheme == Qt::ColorScheme::Dark;
 }
 
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+namespace {
+
+// "r,g,b" (QSettings reads it as a list).
+QColor rgbSetting(const QVariant &v)
+{
+    const QStringList parts = v.toStringList().size() == 3 ? v.toStringList() : v.toString().split(QLatin1Char(','));
+    if (parts.size() != 3)
+        return {};
+    return QColor(parts[0].trimmed().toInt(), parts[1].trimmed().toInt(), parts[2].trimmed().toInt());
+}
+
+// The accent of KDE Plasma (kdeglobals): the chosen accent colour, else the
+// colour scheme's selection colour. Read directly, as a Qt that ships with
+// the app (AppImage) does not load Plasma's own platform theme.
+QColor kdeAccent()
+{
+    const QString path = QStandardPaths::locate(QStandardPaths::GenericConfigLocation, QStringLiteral("kdeglobals"));
+    if (path.isEmpty())
+        return {};
+    QSettings s(path, QSettings::IniFormat);
+    QColor c = rgbSetting(s.value(QStringLiteral("General/AccentColor")));
+    if (!c.isValid())
+        c = rgbSetting(s.value(QStringLiteral("Colors:Selection/BackgroundNormal")));
+    return c;
+}
+
+// GNOME 47+ accent colour names.
+QColor gnomeAccent()
+{
+    QProcess p;
+    p.start(QStringLiteral("gsettings"), {QStringLiteral("get"), QStringLiteral("org.gnome.desktop.interface"), QStringLiteral("accent-color")});
+    if (!p.waitForFinished(500) || p.exitCode() != 0)
+        return {};
+    const QString name = QString::fromUtf8(p.readAllStandardOutput()).trimmed().remove(QLatin1Char('\''));
+    static const QHash<QString, QColor> colors = {
+        {QStringLiteral("blue"), QColor(0x35, 0x84, 0xe4)},   {QStringLiteral("teal"), QColor(0x21, 0x90, 0xa4)},
+        {QStringLiteral("green"), QColor(0x3a, 0x94, 0x4a)},  {QStringLiteral("yellow"), QColor(0xc8, 0x88, 0x00)},
+        {QStringLiteral("orange"), QColor(0xed, 0x5b, 0x00)}, {QStringLiteral("red"), QColor(0xe6, 0x2d, 0x42)},
+        {QStringLiteral("pink"), QColor(0xd5, 0x61, 0x99)},   {QStringLiteral("purple"), QColor(0x91, 0x41, 0xac)},
+        {QStringLiteral("slate"), QColor(0x6f, 0x83, 0x96)},
+    };
+    return colors.value(name);
+}
+
+} // namespace
+#endif
+
 QColor Bridge::systemAccent() const
 {
 #ifdef Q_OS_ANDROID
@@ -196,8 +522,25 @@ QColor Bridge::systemAccent() const
         }
     }
 #endif
+    // A usable accent: not (nearly) black, white or transparent, which some
+    // desktops report when no accent is known.
+    const auto usable = [](const QColor &c) {
+        return c.isValid() && c.alpha() > 200 && c.lightness() > 45 && c.lightness() < 225;
+    };
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    const QString desktop = qEnvironmentVariable("XDG_CURRENT_DESKTOP").toUpper();
+    if (desktop.contains(QStringLiteral("KDE"))) {
+        const QColor c = kdeAccent();
+        if (usable(c))
+            return c;
+    } else if (desktop.contains(QStringLiteral("GNOME"))) {
+        static const QColor c = gnomeAccent();
+        if (usable(c))
+            return c;
+    }
+#endif
     const QColor c = QGuiApplication::palette().color(QPalette::Accent);
-    return c.isValid() ? c : QColor(0xe9, 0x1e, 0x63);
+    return usable(c) ? c : QColor(0xe9, 0x1e, 0x63);
 }
 
 QJSValue Bridge::call(const QString &cmd, const QVariantMap &args)
@@ -278,6 +621,10 @@ void Bridge::attachWindow(QQuickWindow *window)
         return;
     m_window = window;
     window->setColor(Qt::black);
+#if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
+    if (m_desktopMedia)
+        m_desktopMedia->setWindow(window);
+#endif
     TestHooks::attach(window);
     connect(window, &QQuickWindow::beforeRenderPassRecording, this, &Bridge::renderUnderlay, Qt::DirectConnection);
     connect(window, &QQuickWindow::sceneGraphInvalidated, this, [this]() {
@@ -376,6 +723,36 @@ void Bridge::setKeepScreenOn(bool on)
         else
             window.callMethod<void>("clearFlags", "(I)V", flag);
     });
+#endif
+}
+
+void Bridge::setSystemBarsHidden(bool hidden)
+{
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([hidden]() {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (!window.isValid())
+            return;
+        if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
+            QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
+            if (!ctl.isValid())
+                return;
+            const jint bars = QJniObject::callStaticMethod<jint>("android/view/WindowInsets$Type", "systemBars", "()I");
+            if (hidden) {
+                ctl.callMethod<void>("setSystemBarsBehavior", "(I)V", jint(2)); // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                ctl.callMethod<void>("hide", "(I)V", bars);
+            } else {
+                ctl.callMethod<void>("show", "(I)V", bars);
+            }
+        } else {
+            QJniObject decor = window.callObjectMethod("getDecorView", "()Landroid/view/View;");
+            // SYSTEM_UI_FLAG_IMMERSIVE_STICKY | FULLSCREEN | HIDE_NAVIGATION
+            decor.callMethod<void>("setSystemUiVisibility", "(I)V", jint(hidden ? 0x1000 | 0x4 | 0x2 : 0));
+        }
+    });
+#else
+    Q_UNUSED(hidden);
 #endif
 }
 

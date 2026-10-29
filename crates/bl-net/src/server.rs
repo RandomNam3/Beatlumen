@@ -48,6 +48,9 @@ pub enum Body {
         start: u64,
         len: u64,
     },
+    /// Produced while it is sent (length unknown): sent chunked until the
+    /// reader ends.
+    Stream(Box<dyn Read + Send>),
 }
 
 pub struct Response {
@@ -428,11 +431,15 @@ fn write_response(
     close: bool,
 ) -> io::Result<()> {
     let len = match &resp.body {
-        Body::Empty => 0,
-        Body::Bytes(b) => b.len() as u64,
-        Body::File { len, .. } => *len,
+        Body::Empty => Some(0),
+        Body::Bytes(b) => Some(b.len() as u64),
+        Body::File { len, .. } => Some(*len),
+        Body::Stream(_) => None,
     };
-    resp.headers.set("Content-Length", len.to_string());
+    match len {
+        Some(len) => resp.headers.set("Content-Length", len.to_string()),
+        None => resp.headers.set("Transfer-Encoding", "chunked"),
+    }
     if close {
         resp.headers.set("Connection", "close");
     }
@@ -472,6 +479,25 @@ fn write_response(
                 w.write_all(&buf[..n])?;
                 remaining -= n as u64;
             }
+        }
+        Body::Stream(mut r) => {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = match r.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    // Ends the response early: the client sees no last chunk.
+                    Err(e) => return Err(e),
+                };
+                if n == 0 {
+                    break;
+                }
+                w.write_all(format!("{n:x}\r\n").as_bytes())?;
+                w.write_all(&buf[..n])?;
+                w.write_all(b"\r\n")?;
+                w.flush()?;
+            }
+            w.write_all(b"0\r\n\r\n")?;
         }
     }
     w.flush()

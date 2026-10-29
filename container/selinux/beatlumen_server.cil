@@ -1,0 +1,28 @@
+; SELinux policy (CIL) for the Beatlumen Server container (Podman, Docker
+; with SELinux enabled), built on the udica container templates.
+;
+; Compared with the default container type (container_t), the process gets
+; no Linux capabilities at all (the server runs as an unprivileged user and
+; needs none) and no extra file access: only the container's own files and
+; volumes labeled for containers (mount them with :z / :Z).
+;
+; Install (Fedora, RHEL, CentOS Stream: packages udica and container-selinux):
+;   sudo semodule -i container/selinux/beatlumen_server.cil \
+;       /usr/share/udica/templates/{base_container.cil,net_container.cil}
+; Use:
+;   podman run --security-opt label=type:beatlumen_server.process ...
+; Check for denials:
+;   sudo ausearch -m avc -ts recent | grep beatlumen_server
+; Remove:
+;   sudo semodule -r beatlumen_server
+;
+; SPDX-License-Identifier: AGPL-3.0-or-later
+
+(block beatlumen_server
+    ; Base container rules: its own files, /proc, CPU information.
+    (blockinherit container)
+    ; TCP/UDP sockets: listening on the published port (7878), the
+    ; container's own health check, and connections to configured remote
+    ; sources (with DNS).
+    (blockinherit net_container)
+)

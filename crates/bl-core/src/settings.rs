@@ -111,6 +111,8 @@ pub struct Settings {
     pub preset: String,
     pub audio_queue: Vec<String>,
     pub audio_index: Option<usize>,
+    /// Where the current track was (seconds), to continue after a restart.
+    pub audio_position: f64,
     pub shuffle: bool,
     pub repeat: Repeat,
     pub backgrounds: Vec<String>,
@@ -140,6 +142,26 @@ pub struct Settings {
     pub crossfade: f32,
     /// Skip silence at the end and start of tracks when moving on.
     pub skip_silence: bool,
+    /// Offer this device as an AirPlay speaker in the local network.
+    pub airplay: bool,
+    /// Reachable as a DLNA/UPnP speaker (media renderer).
+    pub dlna_receiver: bool,
+    /// Where songs from server extensions go: "" (ask), "library", "vault".
+    pub extension_target: String,
+    /// The renderer's stable UPnP device id.
+    pub dlna_uuid: String,
+    /// Name shown on AirPlay senders (empty = "Beatlumen").
+    /// Account name last used on the server (prefilled when unlocking).
+    /// Push notifications (UnifiedPush) when files are shared.
+    pub notifications: bool,
+    pub vault_user: String,
+    /// Keep the vault unlocked on this device (platform's protected store).
+    pub vault_remember: bool,
+    pub airplay_name: String,
+    /// Password AirPlay senders must enter (empty = none).
+    pub airplay_password: String,
+    /// Random device ID announced instead of a hardware address (hex).
+    pub airplay_id: String,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -160,6 +182,7 @@ impl Default for Settings {
             preset: "Balanced".into(),
             audio_queue: Vec::new(),
             audio_index: None,
+            audio_position: 0.0,
             shuffle: false,
             repeat: Repeat::None,
             backgrounds: Vec::new(),
@@ -181,6 +204,16 @@ impl Default for Settings {
             normalize: false,
             crossfade: 0.0,
             skip_silence: true,
+            airplay: false,
+            dlna_receiver: false,
+            extension_target: String::new(),
+            dlna_uuid: String::new(),
+            airplay_name: String::new(),
+            vault_user: String::new(),
+            vault_remember: true,
+            notifications: true,
+            airplay_password: String::new(),
+            airplay_id: String::new(),
             ui: Value::object(),
         }
     }
@@ -215,6 +248,7 @@ impl Settings {
             preset: v.str_or("preset", &d.preset).to_string(),
             audio_queue: strs(v.get("audioQueue")),
             audio_index: idx("audioIndex"),
+            audio_position: v.f64_or("audioPosition", 0.0).max(0.0),
             shuffle: v.bool_or("shuffle", false),
             repeat: Repeat::parse(v.str_or("repeat", "None")),
             backgrounds: strs(v.get("backgrounds")),
@@ -242,6 +276,19 @@ impl Settings {
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
+            airplay: v.bool_or("airplay", false),
+            dlna_receiver: v.bool_or("dlnaReceiver", false),
+            extension_target: match v.str_or("extensionTarget", "") {
+                t @ ("library" | "vault") => t.to_string(),
+                _ => String::new(),
+            },
+            dlna_uuid: v.str_or("dlnaUuid", "").chars().take(48).collect(),
+            airplay_name: v.str_or("airplayName", "").chars().take(48).collect(),
+            vault_user: v.str_or("vaultUser", "").chars().take(32).collect(),
+            vault_remember: v.bool_or("vaultRemember", true),
+            notifications: v.bool_or("notifications", true),
+            airplay_password: v.str_or("airplayPassword", "").chars().take(64).collect(),
+            airplay_id: v.str_or("airplayId", "").to_string(),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -265,6 +312,7 @@ impl Settings {
             .with("preset", self.preset.as_str())
             .with("audioQueue", self.audio_queue.clone())
             .with("audioIndex", self.audio_index)
+            .with("audioPosition", self.audio_position)
             .with("shuffle", self.shuffle)
             .with("repeat", self.repeat.name())
             .with("backgrounds", self.backgrounds.clone())
@@ -286,6 +334,16 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("airplay", self.airplay)
+            .with("dlnaReceiver", self.dlna_receiver)
+            .with("extensionTarget", self.extension_target.as_str())
+            .with("dlnaUuid", self.dlna_uuid.as_str())
+            .with("airplayName", self.airplay_name.as_str())
+            .with("vaultUser", self.vault_user.as_str())
+            .with("vaultRemember", self.vault_remember)
+            .with("notifications", self.notifications)
+            .with("airplayPassword", self.airplay_password.as_str())
+            .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
     }
 }

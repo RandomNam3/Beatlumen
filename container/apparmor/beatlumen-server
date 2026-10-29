@@ -1,0 +1,99 @@
+# AppArmor profile for the Beatlumen Server container (Docker and Podman).
+#
+# Stricter than the runtimes' default profile: the server may listen on TCP
+# and connect to the remote sources it is configured for (TCP, DNS over
+# UDP), read the music and image folders, write only its data folder, and
+# has no capabilities, no raw or packet sockets, no mounts and no ptrace.
+#
+#   sudo cp container/apparmor/beatlumen-server /etc/apparmor.d/
+#   sudo apparmor_parser -r -W /etc/apparmor.d/beatlumen-server
+#   docker run --security-opt apparmor=beatlumen-server ...
+#   podman run --security-opt apparmor=beatlumen-server ...
+#
+# Paths are the ones inside the container (see container/README.md).
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+abi <abi/3.0>,
+
+include <tunables/global>
+
+profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  # Network: TCP (listening, the health check, remote sources such as
+  # WebDAV or SFTP) and UDP for DNS lookups of those sources. No raw or
+  # packet sockets.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  deny network raw,
+  deny network packet,
+
+  # The process runs as an unprivileged user and needs no capability.
+  deny capability,
+
+  # Programs: the init process of the runtime and the server.
+  /sbin/docker-init ix,
+  /run/podman-init ix,
+  /dev/init ix,
+  /beatlumen-server mrix,
+
+  # Folders.
+  /data/ rw,
+  /data/** rwk,
+  /music/ r,
+  /music/** r,
+  /images/ r,
+  /images/** r,
+  # Speech recognition model (optional).
+  /models/ r,
+  /models/** r,
+  /run/secrets/ r,
+  /run/secrets/* r,
+  /usr/share/doc/beatlumen/** r,
+  # Name resolution and certificate authorities (provided by the runtime
+  # or mounted) for connections to remote sources.
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  /etc/nsswitch.conf r,
+  /etc/ssl/certs/ r,
+  /etc/ssl/certs/** r,
+  # Optional: web client from a mounted folder (BEATLUMEN_WEB_DIR=/web).
+  /web/ r,
+  /web/** r,
+
+  # Read by the standard library: CPU count and limits, cgroup quotas.
+  @{PROC}/@{pid}/cgroup r,
+  @{PROC}/@{pid}/mountinfo r,
+  @{PROC}/@{pid}/stat r,
+  @{PROC}/@{pid}/status r,
+  @{PROC}/@{pid}/task/@{tid}/comm rw,
+  /sys/fs/cgroup/** r,
+  /sys/devices/system/cpu/** r,
+
+  # Signals from the container runtime (stop) and between init and server.
+  signal (receive) peer=unconfined,
+  signal (send, receive) peer=beatlumen-server,
+
+  # Hardening as in the runtimes' default profile.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+  deny ptrace,
+  deny @{PROC}/* w,
+  deny @{PROC}/sys/** w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/mem rwklx,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}

@@ -17,6 +17,7 @@ namespace {
 
 std::function<void()> g_ready;
 std::function<void(const QString &, const QByteArray &)> g_picked;
+std::function<void(const QString &)> g_auth;
 
 QNetworkAccessManager *nam()
 {
@@ -39,6 +40,12 @@ EMSCRIPTEN_KEEPALIVE void bl_web_storage_ready()
         g_ready = nullptr;
         QTimer::singleShot(0, f);
     }
+}
+
+EMSCRIPTEN_KEEPALIVE void bl_web_auth_result(const char *query)
+{
+    if (g_auth)
+        g_auth(QString::fromUtf8(query));
 }
 
 EMSCRIPTEN_KEEPALIVE void bl_web_file_picked(const char *name, const uint8_t *data, int len)
@@ -141,6 +148,30 @@ void pickFiles(const QString &accept, bool multiple, std::function<void(const QS
     }, a.constData(), multiple ? 1 : 0);
 }
 
+void openUrl(const QString &url)
+{
+    const QByteArray u = url.toUtf8();
+    EM_ASM({ window.open(UTF8ToString($0), '_blank'); }, u.constData());
+}
+
+void listenAuth(std::function<void(const QString &)> done)
+{
+    g_auth = std::move(done);
+    // The sign-in page (another tab of this server) sends its sealed result
+    // over a same-origin channel.
+    EM_ASM({
+        const ch = new BroadcastChannel('beatlumen-auth');
+        ch.onmessage = function (e) {
+            const d = e.data || {};
+            if (typeof d.state !== 'string' || typeof d.result !== 'string')
+                return;
+            const q = stringToNewUTF8('?state=' + encodeURIComponent(d.state) + '&result=' + encodeURIComponent(d.result));
+            Module._bl_web_auth_result(q);
+            _free(q);
+        };
+    });
+}
+
 } // namespace web
 
 #else
@@ -151,6 +182,8 @@ void initStorage(std::function<void()> ready) { ready(); }
 void persistStorage() {}
 void httpRequest(void *, uint64_t, const char *, const char *, const char *, const uint8_t *, size_t) {}
 void pickFiles(const QString &, bool, std::function<void(const QString &, const QByteArray &)>) {}
+void openUrl(const QString &) {}
+void listenAuth(std::function<void(const QString &)>) {}
 } // namespace web
 
 #endif

@@ -16,8 +16,13 @@ issue.
 * **Few dependencies.** Decoders, the HTTP stack, JSON and image codecs are
   part of this repository (Rust, `#![forbid(unsafe_code)]` where possible)
   rather than large third-party libraries; Qt is the only external runtime.
-* **No connections except the configured server.** The apps contact only
-  the server the user entered; the server opens no outgoing connections.
+  Cryptography is the exception: the end-to-end encryption uses the audited
+  RustCrypto and dalek crates, pinned to exact versions, instead of an own
+  implementation.
+* **No connections except the configured ones.** The apps contact only
+  the server the user entered; the server connects only to remote sources
+  its admin configures and to the push services the users' devices
+  registered: no update checks, telemetry or metadata services.
 * **Untrusted input is bounded.** Every parser limits sizes before
   allocating (sample tables, image dimensions up to 32 megapixels, JSON
   nesting, preset effects and particles). Panics in the server are caught
@@ -53,6 +58,55 @@ issue.
   front of it (see the server README). The apps and the web app connect to
   `https://` addresses.
 
+## Accounts and encrypted files
+
+User files on the server are end-to-end encrypted; the design, threat
+model and file format are in [`docs/ENCRYPTION.md`](docs/ENCRYPTION.md).
+In short:
+
+* Passwords never leave the device: Argon2id (64 MiB) derives an auth key
+  for the server and a key that unwraps a random master key. The server
+  stores only SHA-256 hashes of the auth keys mixed with a pepper kept
+  outside the data folder. Apps refuse weaker Argon2 parameters, so a
+  malicious server cannot make the password cheaper to guess.
+* Files are encrypted on the device (XChaCha20-Poly1305, 64 KiB chunks
+  bound to position and file, sizes padded to whole chunks, encrypted
+  names) and signed by the owner (Ed25519, over a commitment to the file
+  key). Sharing seals the file key to the recipient's X25519 key; the apps
+  pin public keys and show safety numbers to compare in person.
+* A forgotten password is replaced with the recovery code shown once at
+  registration; without either the files cannot be decrypted by anyone.
+* Accounts need an invitation from the admin (single use, expiring).
+  Logins and password proofs are rate limited per account and address;
+  password changes need the current password and end all other sessions.
+* Share notifications use UnifiedPush: the server encrypts each message
+  for the device (RFC 8291) and signs it with its VAPID key; the push
+  service relays ciphertext only, and the app drops messages that do not
+  decrypt. No phone number, e-mail address or Google service is involved.
+  The server connects only to the registered endpoints, never to private
+  addresses unless the admin allows it (no requests into the server's
+  network on a user's behalf).
+* What a compromised server can still do: delete or withhold files, see
+  who shares how many files of which size with whom and when, and serve a
+  modified web client. Against the last one: the server checks its web
+  client against a signed manifest and refuses modified files, the page
+  pins its scripts and WebAssembly module by hash, and the native apps
+  can verify the server's web client against the release signature
+  (Settings → Server → Check).
+
+## Container
+
+* The image (`container/Containerfile`) holds only the static server
+  binary; it runs as an unprivileged user (10001) and is meant to run with
+  a read-only root file system, no capabilities and `no-new-privileges`
+  (as in `container/compose.yml`).
+* The password and the account pepper come from files
+  (`BEATLUMEN_PASSWORD_FILE`, `BEATLUMEN_VAULT_PEPPER_FILE`; Docker and
+  Podman secrets) instead of the environment, which `docker inspect` shows.
+* Optional AppArmor (`container/apparmor/`) and SELinux
+  (`container/selinux/`) profiles confine it further; see
+  `container/README.md`.
+
 ## Apps
 
 * Text from tags, servers and presets is shown as plain text (no rich text,
@@ -72,6 +126,65 @@ issue.
   the app's own HTTP client so the same rules apply to them.
 * The app warns when a server outside the home network is used without
   encryption.
+
+## AirPlay receiver
+
+* Off by default; when switched on, the app listens in the local network
+  for AirPlay senders (RTSP over TCP and three UDP ports for the stream)
+  and announces itself through mDNS (Android: the system's NsdManager).
+* An optional password (HTTP digest, as AirPlay senders use it) keeps
+  others in the same network from playing on the device. Without one,
+  anyone in the network can stream to it, as with any AirPlay speaker.
+* Everything read from the network is bounded: request headers (16 KB),
+  bodies (4 MB, cover art), at most eight control connections, at most
+  eight seconds of buffered audio; UDP packets are only accepted from the
+  sender of the current stream. A new sender replaces the current one.
+* The audio is decrypted with the per-stream AES key that the sender wraps
+  with the RSA key of AirPlay 1 receivers. That key is public (published
+  in 2011 and used by all open-source receivers), so it protects nothing
+  against an attacker in the network; it only serves compatibility. The
+  RSA code is not constant time for that reason, as it only ever uses
+  this public key.
+* Received audio is played and analysed live, never stored. Cover art is
+  kept as a single file in the app's storage while a stream plays.
+
+## DLNA receiver
+
+* Off by default; when switched on, the app answers SSDP searches and
+  announces itself in the local network, and serves its UPnP descriptions
+  and control endpoints over HTTP.
+* UPnP has no authentication: while it is on, any device in the network
+  can make the app fetch and play a stream URL and control its playback.
+  It reads, lists and sends none of the user's files.
+* Requests, SOAP bodies and DIDL metadata are size limited; event
+  subscriptions are bounded in number and only call back to the address
+  that subscribed (no requests to third hosts on someone's behalf).
+
+## Other apps' playback (Android)
+
+* Only after the user starts it, each time: Android asks for consent to
+  record the screen (MediaProjection); the app uses only the playback
+  capture of other apps' audio (no microphone, no screen content). A
+  notification shows while it runs and stops it.
+* The audio is analysed live for the visuals and never stored or sent.
+  Apps that opt out of being recorded are not recorded.
+* Titles, covers and controls of the playing app come from Android's
+  media sessions, which need notification access. The listener reads no
+  notifications; it only exists to make the sessions available.
+
+## Source extensions (server)
+
+* Separate programs the admin configures (`docs/EXTENSIONS.md`); the
+  server sends them a shared token and connects to nothing else on their
+  behalf: no URLs from an extension are fetched, pictures and audio come
+  from the extension itself.
+* What an extension sends is bounded and checked: JSON (1 MiB) and text
+  lengths, item ids (a safe character set, used in URLs and file names),
+  pictures (4 MiB, decoded and re-encoded as JPEG before they reach apps
+  or files), at most three imports at once. File names come from
+  sanitised titles inside the extension's own folder.
+* Only logged-in users can search and import. Imports go into a library
+  folder of their own; temporary ones are deleted after two hours.
 
 ## Known limitations
 

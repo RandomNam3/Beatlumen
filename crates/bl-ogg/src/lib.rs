@@ -287,7 +287,12 @@ impl<R: Read + Seek> PacketReader<R> {
     /// Restores the current stream position afterwards.
     pub fn last_granule(&mut self, serial: u32) -> io::Result<Option<u64>> {
         let saved = self.inner.stream_position()?;
-        let end = self.inner.seek(SeekFrom::End(0))?;
+        let end = match self.inner.seek(SeekFrom::End(0)) {
+            Ok(e) => e,
+            // A stream still growing (or of unknown length): no total.
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => return Ok(None),
+            Err(e) => return Err(e),
+        };
         let mut chunk: u64 = 64 * 1024;
         let result;
         loop {
@@ -316,7 +321,12 @@ impl<R: Read + Seek> PacketReader<R> {
     /// the returned position (i.e. the granule at which decoding restarts),
     /// which callers use to compute how many samples to skip.
     pub fn seek_granule(&mut self, serial: u32, target: u64, data_start: u64) -> io::Result<u64> {
-        let end = self.inner.seek(SeekFrom::End(0))?;
+        // Unknown length: the linear scan from the start finds the page.
+        let end = match self.inner.seek(SeekFrom::End(0)) {
+            Ok(e) => e,
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => data_start,
+            Err(e) => return Err(e),
+        };
         let mut lo = data_start;
         let mut hi = end;
         // Best known page start whose granule < target, along with its granule.
@@ -409,10 +419,139 @@ pub fn write_page(
     out[start + 22..start + 26].copy_from_slice(&crc.to_le_bytes());
 }
 
+/// Writes one logical stream as Ogg pages. Packets may span pages; a page
+/// is emitted when 255 segments are full or on [`PageWriter::flush`].
+pub struct PageWriter {
+    serial: u32,
+    sequence: u32,
+    lacing: Vec<u8>,
+    data: Vec<u8>,
+    /// Granule of the last packet that ended on the current page.
+    granule: Option<i64>,
+    /// The current page starts with the rest of a packet.
+    continued: bool,
+    first: bool,
+}
+
+impl PageWriter {
+    pub fn new(serial: u32) -> PageWriter {
+        PageWriter {
+            serial,
+            sequence: 0,
+            lacing: Vec::new(),
+            data: Vec::new(),
+            granule: None,
+            continued: false,
+            first: true,
+        }
+    }
+
+    /// Bytes of the page being filled.
+    pub fn pending(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Adds a packet that ends at `granule`; full pages go to `out`.
+    pub fn packet(&mut self, out: &mut Vec<u8>, packet: &[u8], granule: i64) {
+        let mut rest = packet;
+        loop {
+            if self.lacing.len() == 255 {
+                self.emit(out, false);
+                self.continued = true;
+            }
+            let l = rest.len().min(255);
+            self.lacing.push(l as u8);
+            self.data.extend_from_slice(&rest[..l]);
+            rest = &rest[l..];
+            if l < 255 {
+                break;
+            }
+        }
+        self.granule = Some(granule);
+    }
+
+    /// Ends the current page (`eos`: the last page of the stream).
+    pub fn flush(&mut self, out: &mut Vec<u8>, eos: bool) {
+        if !self.lacing.is_empty() || eos {
+            self.emit(out, eos);
+            self.continued = false;
+        }
+    }
+
+    fn emit(&mut self, out: &mut Vec<u8>, eos: bool) {
+        // A page on which no packet ends has granule -1.
+        let complete = self.lacing.last().is_some_and(|&l| l < 255);
+        let granule = if complete {
+            self.granule.unwrap_or(0)
+        } else {
+            -1
+        };
+        let mut flags = 0u8;
+        if self.continued {
+            flags |= 1;
+        }
+        if self.first {
+            flags |= 2;
+        }
+        if eos {
+            flags |= 4;
+        }
+        let start = out.len();
+        out.extend_from_slice(CAPTURE);
+        out.push(0);
+        out.push(flags);
+        out.extend_from_slice(&granule.to_le_bytes());
+        out.extend_from_slice(&self.serial.to_le_bytes());
+        out.extend_from_slice(&self.sequence.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.push(self.lacing.len() as u8);
+        out.extend_from_slice(&self.lacing);
+        out.extend_from_slice(&self.data);
+        let crc = crc_update(0, &out[start..]);
+        out[start + 22..start + 26].copy_from_slice(&crc.to_le_bytes());
+        self.sequence += 1;
+        self.first = false;
+        self.lacing.clear();
+        self.data.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn page_writer_spans_pages() {
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let small = vec![9u8; 100];
+        let mut out = Vec::new();
+        let mut w = PageWriter::new(7);
+        w.packet(&mut out, b"head", 0);
+        w.flush(&mut out, false);
+        w.packet(&mut out, &big, 0);
+        w.flush(&mut out, false);
+        for i in 0..300 {
+            w.packet(&mut out, &small, 960 * (i + 1));
+        }
+        w.flush(&mut out, true);
+        let mut r = PacketReader::new(Cursor::new(out));
+        let p = r.next_packet().unwrap().unwrap();
+        assert_eq!(p.data, b"head");
+        assert!(p.bos);
+        assert_eq!(r.next_packet().unwrap().unwrap().data, big);
+        let mut n = 0;
+        let mut last = None;
+        while let Some(p) = r.next_packet().unwrap() {
+            assert_eq!(p.data, small);
+            n += 1;
+            last = Some(p);
+        }
+        assert_eq!(n, 300);
+        let last = last.unwrap();
+        assert!(last.eos);
+        assert_eq!(last.granule, Some(960 * 300));
+    }
 
     #[test]
     fn roundtrip_packets() {

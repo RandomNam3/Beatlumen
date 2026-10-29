@@ -1,7 +1,7 @@
 //! Beatlumen server: serves music libraries from local folders to
 //! Beatlumen clients (native apps and the web client) over HTTP.
 //!
-//! The server never opens outgoing network connections.
+//! The server connects only to remote sources the admin configures.
 //!
 //! Module overview:
 //! * [`config`]: command line / JSON configuration.
@@ -10,6 +10,7 @@
 //! * [`routes`]: the HTTP API (see `README.md` for the endpoint list).
 //! * [`auth`], [`playlists`], [`presets`], [`images`], [`covers`],
 //!   [`analysis`], [`web`]: the individual services.
+//! * [`vault`]: user accounts and end-to-end encrypted files.
 //! * [`util`], [`log`], [`sha256`], [`random`]: helpers.
 //!
 //! [`start`] binds the listener, loads the cached index, starts the scanner
@@ -23,15 +24,24 @@ pub mod analysis;
 pub mod auth;
 pub mod config;
 pub mod covers;
+pub mod extensions;
 pub mod images;
 pub mod library;
+pub mod lyrics;
+pub mod lyrics_sync;
 pub mod playlists;
 pub mod presets;
+pub mod push;
 pub mod random;
+pub mod release;
 pub mod routes;
 pub mod sha256;
+pub mod tls;
+pub mod userdata;
 pub mod util;
+pub mod vault;
 pub mod web;
+pub mod webauthn;
 
 pub use config::Config;
 
@@ -57,6 +67,8 @@ pub struct DataPaths {
     pub covers: PathBuf,
     pub analysis: PathBuf,
     pub image_cache: PathBuf,
+    /// Imported song texts.
+    pub lyrics: PathBuf,
 }
 
 impl DataPaths {
@@ -71,6 +83,7 @@ impl DataPaths {
             covers: cache.join("covers"),
             analysis: cache.join("analysis"),
             image_cache: cache.join("images"),
+            lyrics: root.join("lyrics"),
             root,
         }
     }
@@ -111,9 +124,14 @@ pub struct State {
     pub playlists: playlists::Playlists,
     pub presets: presets::Presets,
     pub images: images::Images,
+    pub lyrics: lyrics::Lyrics,
+    pub lyrics_sync: Arc<lyrics_sync::LyricsSync>,
+    pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
-    pub web: web::WebSource,
+    pub web: web::WebClient,
+    pub vault: vault::Vault,
+    pub extensions: extensions::Extensions,
 }
 
 impl State {
@@ -165,6 +183,9 @@ impl State {
             scanning: self.scanning(),
             revision: idx.revision,
             source_url: self.config.source_url.clone(),
+            web_integrity: self.web.integrity.status.to_string(),
+            passkeys: self.vault.rp.is_some(),
+            speech: self.lyrics_sync.available(),
         }
     }
 
@@ -228,6 +249,7 @@ impl State {
     /// Removes cached covers/analyses of tracks that no longer exist or
     /// changed, and scaled images of removed images.
     fn prune_caches(&self, idx: &Index) {
+        self.extensions.prune_temp();
         let mut removed = 0usize;
         let list = |dir: &PathBuf| -> Vec<(String, PathBuf)> {
             std::fs::read_dir(dir)
@@ -353,6 +375,51 @@ fn absolute(p: &std::path::Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
+/// Asks the server configured by `config` for its info page (container
+/// health checks). True when it answers with 200 within three seconds.
+pub fn health_check(config: &Config) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    let Some(mut addr) = config
+        .bind
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+    else {
+        return false;
+    };
+    // A wildcard address is reached through the loopback interface.
+    if addr.ip().is_unspecified() {
+        addr = match addr {
+            SocketAddr::V4(a) => SocketAddr::from(([127, 0, 0, 1], a.port())),
+            SocketAddr::V6(a) => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, a.port())),
+        };
+    }
+    let timeout = Duration::from_secs(3);
+    let Ok(mut s) = TcpStream::connect_timeout(&addr, timeout) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(timeout));
+    let _ = s.set_write_timeout(Some(timeout));
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        bl_net::api::paths::INFO
+    );
+    if s.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 16];
+    let mut n = 0;
+    while n < head.len() {
+        match s.read(&mut head[n..]) {
+            Ok(0) | Err(_) => break,
+            Ok(k) => n += k,
+        }
+    }
+    head[..n].starts_with(b"HTTP/1.1 200")
+}
+
 /// Starts the server: prepares the data folder, loads the cached library,
 /// binds the listener and starts the scanner and HTTP threads.
 pub fn start(config: Config) -> Result<Server, String> {
@@ -360,7 +427,12 @@ pub fn start(config: Config) -> Result<Server, String> {
     let data = DataPaths::new(absolute(&config.data_dir));
     data.create()
         .map_err(|e| format!("cannot create data folder {}: {e}", data.root.display()))?;
-    let roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
+    let mut roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
+    let extensions = extensions::Extensions::new(&config, &data.root)?;
+    if extensions.enabled() {
+        // Songs imported through extensions form one more music folder.
+        roots.push(extensions.imports.clone());
+    }
     let image_dirs: Vec<PathBuf> = config.image_dirs.iter().map(|p| absolute(p)).collect();
 
     let index = match library::load_cache(&data.library, &roots) {
@@ -382,7 +454,29 @@ pub fn start(config: Config) -> Result<Server, String> {
         .map_err(|e| format!("cannot listen on {}: {e}", config.bind))?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
 
-    let web = web::WebSource::resolve(config.web_dir.as_deref());
+    let web = web::WebClient::resolve(config.web_dir.as_deref());
+    tls::install();
+    let rp = match &config.public_url {
+        Some(url) => Some(webauthn::RelyingParty::new(
+            url,
+            &config.name,
+            &config.all_android_certs(),
+        )?),
+        None => None,
+    };
+    let push = push::Push::open(
+        &data.root.join("vault"),
+        &config.source_url,
+        config.push_allow_private,
+    )?;
+    let vault = vault::Vault::open(
+        &data.root,
+        config.vault_pepper_file.as_deref(),
+        config.vault_quota_mb.saturating_mul(1024 * 1024),
+        config.registration,
+        push,
+        rp,
+    )?;
     let state = Arc::new(State {
         auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),
         playlists: playlists::Playlists::load(data.playlists.clone()),
@@ -392,6 +486,13 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.uploads.clone(),
             data.image_cache.clone(),
         ),
+        lyrics: lyrics::Lyrics::new(data.lyrics.clone()),
+        lyrics_sync: Arc::new(lyrics_sync::LyricsSync::new(
+            config.speech_model.clone(),
+            config.auto_sync_lyrics,
+            data.lyrics.clone(),
+        )),
+        user_data: userdata::UserData::default(),
         analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),
@@ -404,8 +505,12 @@ pub fn start(config: Config) -> Result<Server, String> {
         roots,
         data,
         web,
+        vault,
+        extensions,
         config,
     });
+    state.extensions.attach(&state);
+    state.lyrics_sync.attach(&state);
 
     info!(
         "Beatlumen server {} listening on http://{addr}",

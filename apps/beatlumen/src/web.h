@@ -20,5 +20,10 @@ void persistStorage();
 void httpRequest(void *user, uint64_t id, const char *method, const char *url, const char *headers, const uint8_t *body, size_t len);
 // Opens the browser's file picker; `done` is called once per chosen file.
 void pickFiles(const QString &accept, bool multiple, std::function<void(const QString &, const QByteArray &)> done);
+// Opens a page in a new tab.
+void openUrl(const QString &url);
+// Results of the sign-in page (passkeys) from another tab; `done` gets
+// "?state=…&result=…".
+void listenAuth(std::function<void(const QString &)> done);
 
 } // namespace web

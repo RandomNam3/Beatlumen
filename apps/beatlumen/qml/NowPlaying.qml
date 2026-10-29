@@ -8,6 +8,9 @@ import Beatlumen.Core
 Item {
     id: np
     property bool showSpectrum: true
+    property bool showLyrics: false
+    property bool controlsVisible: true
+    signal addLyrics()
     readonly property var cur: Core.state.current || null
     readonly property bool compact: width < 600
 
@@ -64,6 +67,18 @@ Item {
             Layout.maximumWidth: 720
             visible: np.cur !== null
         }
+    }
+
+    LyricsView {
+        anchors.left: info.left
+        anchors.right: info.right
+        anchors.top: parent.top
+        anchors.bottom: info.top
+        anchors.topMargin: np.compact ? 64 : 72
+        anchors.bottomMargin: np.compact ? 16 : 28
+        visible: np.showLyrics && np.cur !== null
+        controlsVisible: np.controlsVisible
+        onAddLyrics: np.addLyrics()
     }
 
     function updateOverlay() {

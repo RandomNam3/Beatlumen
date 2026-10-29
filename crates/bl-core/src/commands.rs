@@ -32,6 +32,20 @@ fn strs(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A local folder path with "/" separators and no trailing one, for
+/// comparing paths that mix "/" and "\" (Windows).
+fn folder_key(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+/// Whether the local file `path` lies inside `folder`.
+fn in_folder(path: &str, folder: &str) -> bool {
+    let folder = folder_key(folder);
+    let path = path.replace('\\', "/");
+    path.strip_prefix(folder.as_str())
+        .is_some_and(|r| r.starts_with('/'))
+}
+
 /// A form field for the effect / analysis editors.
 fn field_json(f: &Field, obj: &Value, tr: &dyn Fn(&str) -> String) -> Value {
     let mut v = Value::object()
@@ -139,6 +153,10 @@ impl Core {
         let n = |k: &str| c.get(k).as_f64().unwrap_or(0.0);
         let b = |k: &str| c.get(k).as_bool().unwrap_or(false);
         let idx = |k: &str| c.get(k).as_u64().unwrap_or(0) as usize;
+        // Other apps' playback is shown: the transport controls are theirs.
+        if let Some(r) = self.capture_transport(host, &name, c) {
+            return r;
+        }
         match name.as_str() {
             // ---- state ----------------------------------------------------
             "state" => self.state(host),
@@ -147,7 +165,10 @@ impl Core {
             // ---- playback -------------------------------------------------
             "play" => {
                 let ids = strs(c.get("ids"));
-                if ids.is_empty() {
+                if ids.is_empty() && self.player.state() == crate::player::PlayState::Stopped {
+                    // Nothing loaded (e.g. after a restart): the queue's track.
+                    self.toggle_play(host);
+                } else if ids.is_empty() {
                     self.player.play(host);
                 } else {
                     self.play_tracks(host, ids, idx("start"));
@@ -155,7 +176,12 @@ impl Core {
                 ok()
             }
             "pause" => {
-                self.player.pause(host);
+                if self.playing_airplay() {
+                    // A speaker cannot pause its sender: stop receiving.
+                    self.release_airplay(host);
+                } else {
+                    self.player.pause(host);
+                }
                 ok()
             }
             "toggle" => {
@@ -163,6 +189,7 @@ impl Core {
                 ok()
             }
             "stop" => {
+                self.release_airplay(host);
                 self.player.stop(host);
                 ok()
             }
@@ -364,6 +391,31 @@ impl Core {
                     .collect(),
             ),
             "library.folder" => self.folder_view(&s("path")),
+            "lyrics.get" => self.lyrics_get(host),
+            "lyrics.import" => self.lyrics_import(host, &s("text")),
+            "lyrics.importFile" => match host.fs_read(&s("path")) {
+                Ok(d) => {
+                    self.lyrics_import_bytes(host, &d);
+                    ok()
+                }
+                Err(e) => err(e),
+            },
+            "lyrics.expectImport" => {
+                self.lyrics.expect_import = true;
+                ok()
+            }
+            "lyrics.remove" => self.lyrics_remove(host),
+            "lyrics.sync" => self.lyrics_sync(host),
+            "offline.save" => self.offline_save(host, strs(c.get("ids"))),
+            "offline.remove" => {
+                let ids = if c.bool_or("all", false) {
+                    self.offline.entries.keys().cloned().collect()
+                } else {
+                    strs(c.get("ids"))
+                };
+                self.offline_remove(ids);
+                ok()
+            }
             "library.rescan" => {
                 if !self.settings.library_folders.is_empty() {
                     self.rescan_local();
@@ -404,13 +456,25 @@ impl Core {
             "fs.list" => match host.fs_list(&s("path")) {
                 Ok(entries) => {
                     let images_too = b("images");
+                    // Files with these extensions only ("*": all files).
+                    let exts: Option<Vec<String>> = c.get("exts").as_array().map(|_| {
+                        strs(c.get("exts"))
+                            .iter()
+                            .map(|e| e.to_lowercase())
+                            .collect()
+                    });
                     Value::Array(
                         entries
                             .into_iter()
                             .filter(|e| {
                                 let ext = crate::jobs::extension(&e.name).unwrap_or_default();
-                                e.is_dir
-                                    || bl_media::is_supported_extension(&ext)
+                                if e.is_dir {
+                                    return true;
+                                }
+                                if let Some(exts) = &exts {
+                                    return exts.iter().any(|x| x == "*" || *x == ext);
+                                }
+                                bl_media::is_supported_extension(&ext)
                                     || (images_too && library::is_image_extension(&ext))
                                     || ext == "hfx"
                             })
@@ -533,6 +597,11 @@ impl Core {
                         }
                     }
                 }
+                ok()
+            }
+
+            "toast" => {
+                self.toast(s("text"), b("error"));
                 ok()
             }
 
@@ -864,6 +933,7 @@ impl Core {
                     url
                 };
                 if url != self.server.base {
+                    self.vault_lock(host);
                     self.server.token.clear();
                     self.settings.server_token.clear();
                     self.settings.server_cert_pin.clear();
@@ -899,7 +969,13 @@ impl Core {
                 self.connect_server(host);
                 ok()
             }
+            // Checks the server's web app against the signed manifest.
+            "server.verifyWeb" => {
+                self.webcheck_start(host);
+                ok()
+            }
             "server.disconnect" => {
+                self.vault_lock(host);
                 self.settings.use_server = false;
                 self.server.state = crate::server::ServerState::Disabled;
                 self.library.set_remote(Default::default());
@@ -932,6 +1008,13 @@ impl Core {
                 self.save_settings(host);
                 ok()
             }
+            n if n.starts_with("vault.") => self.vault_command(host, n, c),
+            n if n.starts_with("outputs.") => self.outputs_command(host, n, c),
+            n if n.starts_with("extensions.") => self.extensions_command(host, n, c),
+            n if n.starts_with("capture.") => self
+                .capture_command(host, n, c)
+                .unwrap_or_else(|| err(format!("unknown command {name}"))),
+            n if n.starts_with("push.") => self.push_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }
     }
@@ -946,6 +1029,20 @@ impl Core {
         v.set(key, value);
         let new = Settings::from_json(&v);
         let old = std::mem::replace(&mut self.settings, new);
+        if key.starts_with("airplay") || key.starts_with("dlna") {
+            // Retry starting the receivers with the new settings.
+            self.airplay.error = None;
+            self.dlna.error = None;
+        }
+        if old.notifications != self.settings.notifications {
+            if self.settings.notifications {
+                if self.vault_unlocked() {
+                    self.push_start(host);
+                }
+            } else {
+                self.push_stop(host);
+            }
+        }
         if (old.volume - self.settings.volume).abs() > 1e-6 || old.muted != self.settings.muted {
             self.player.set_volume(if self.settings.muted {
                 0.0
@@ -1152,6 +1249,8 @@ impl Core {
                 name,
                 self.server.image_url(&bl_net::api::paths::image(id, 384)),
             )
+        } else if let Some(id) = src.strip_prefix(crate::vault::BG_PREFIX) {
+            self.vault_background_info(id)
         } else if let Some(tid) = src.strip_prefix("cover:") {
             let t = self.track_for(tid);
             (t.title.clone(), self.cover_url_cached(&t))
@@ -1176,7 +1275,7 @@ impl Core {
                     .library
                     .tracks
                     .iter()
-                    .filter(|t| library::is_local(&t.id) && t.path.starts_with(f.as_str()))
+                    .filter(|t| library::is_local(&t.id) && in_folder(&t.path, f))
                     .count();
                 let name = std::path::Path::new(f)
                     .file_name()
@@ -1192,14 +1291,12 @@ impl Core {
                 ));
             }
         } else {
+            // Local paths may mix "/" and "\" on Windows (a folder picked as
+            // "C:/Music" scanned into "C:/Music\Rock\a.mp3"): compare and
+            // list them with "/" only.
             let (is_server, prefix) = match path.strip_prefix("server:") {
                 Some(p) => (true, p.trim_end_matches('/').to_string()),
-                None => (false, path.trim_end_matches(['/', '\\']).to_string()),
-            };
-            let sep = if is_server || !prefix.contains('\\') {
-                '/'
-            } else {
-                '\\'
+                None => (false, folder_key(path)),
             };
             let mut sub: std::collections::BTreeMap<String, usize> =
                 std::collections::BTreeMap::new();
@@ -1207,15 +1304,19 @@ impl Core {
                 if library::is_local(&t.id) == is_server {
                     continue;
                 }
-                let rest = if prefix.is_empty() {
-                    Some(t.path.as_str())
+                let full = if is_server {
+                    std::borrow::Cow::Borrowed(t.path.as_str())
                 } else {
-                    t.path
-                        .strip_prefix(prefix.as_str())
-                        .and_then(|r| r.strip_prefix(sep))
+                    std::borrow::Cow::Owned(t.path.replace('\\', "/"))
+                };
+                let rest = if prefix.is_empty() {
+                    Some(full.as_ref())
+                } else {
+                    full.strip_prefix(prefix.as_str())
+                        .and_then(|r| r.strip_prefix('/'))
                 };
                 let Some(rest) = rest else { continue };
-                match rest.split_once(sep) {
+                match rest.split_once('/') {
                     Some((dir, _)) => *sub.entry(dir.to_string()).or_default() += 1,
                     None => tracks.push(self.track_json(t)),
                 }
@@ -1224,7 +1325,7 @@ impl Core {
                 let full = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{prefix}{sep}{name}")
+                    format!("{prefix}/{name}")
                 };
                 let full = if is_server {
                     format!("server:{full}")
@@ -1347,5 +1448,19 @@ impl Core {
             self.server_playlists.retain(|p| p.id != id);
             self.revs.playlists += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folders_with_mixed_separators() {
+        assert_eq!(folder_key("C:\\Music\\"), "C:/Music");
+        assert!(in_folder("C:/Music\\Rock\\a.mp3", "C:/Music"));
+        assert!(in_folder("C:\\Music\\a.mp3", "C:/Music/"));
+        assert!(!in_folder("C:/Music2/a.mp3", "C:/Music"));
+        assert!(in_folder("/a.mp3", "/"));
     }
 }

@@ -35,7 +35,12 @@ fn run_case(c: &Case) -> Option<f64> {
         .args(["-c:a", "aac", "-b:a"])
         .arg(format!("{}", c.bitrate));
     cmd.args(c.extra).args(["-f", "adts"]).arg(&aac);
-    assert!(run(&mut cmd), "encoding failed");
+    if !run(&mut cmd) {
+        // Newer ffmpeg versions no longer encode some layouts (7.1).
+        assert!(c.channels > 6, "encoding failed");
+        eprintln!("{tag}: ffmpeg cannot encode this layout; skipped");
+        return None;
+    }
     let data = std::fs::read(&aac).unwrap();
     let reference = ffmpeg_decode(&aac).expect("reference decode failed");
     let t0 = std::time::Instant::now();

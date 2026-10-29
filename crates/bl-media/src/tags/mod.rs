@@ -60,6 +60,32 @@ pub(crate) fn set_str(field: &mut Option<String>, value: &str) {
     }
 }
 
+/// Longest song text kept (bytes).
+pub(crate) const MAX_LYRICS: usize = 256 * 1024;
+
+/// Sets the song text; synced text replaces unsynced text found earlier.
+pub(crate) fn set_lyrics(tags: &mut Tags, value: &str) {
+    let v = value.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    if v.is_empty() || v.len() > MAX_LYRICS {
+        return;
+    }
+    let synced = |s: &str| s.lines().any(|l| is_lrc_line(l.trim_start()));
+    match &tags.lyrics {
+        Some(old) if synced(old) || !synced(v) => {}
+        _ => tags.lyrics = Some(v.replace("\r\n", "\n")),
+    }
+}
+
+/// Whether a line starts with an LRC time tag ("[01:23.45]").
+fn is_lrc_line(l: &str) -> bool {
+    let b = l.as_bytes();
+    b.len() >= 7
+        && b[0] == b'['
+        && b[1].is_ascii_digit()
+        && l[1..].find(':').is_some_and(|c| (1..=4).contains(&c))
+        && l.find(']').is_some()
+}
+
 fn set_opt<T>(field: &mut Option<T>, value: Option<T>) {
     if field.is_none() {
         *field = value;
@@ -178,6 +204,7 @@ pub(crate) fn apply_common(tags: &mut Tags, key: &str, value: &str) -> bool {
             set_opt(&mut tags.disc_total, parse_leading_uint(value))
         }
         "COMMENT" | "DESCRIPTION" => set_str(&mut tags.comment, value),
+        "LYRICS" | "UNSYNCEDLYRICS" | "UNSYNCED_LYRICS" | "SYNCEDLYRICS" => set_lyrics(tags, value),
         "REPLAYGAIN_TRACK_GAIN" => set_opt(&mut tags.replaygain_track_gain, parse_float(value)),
         "REPLAYGAIN_TRACK_PEAK" => set_opt(&mut tags.replaygain_track_peak, parse_float(value)),
         "REPLAYGAIN_ALBUM_GAIN" => set_opt(&mut tags.replaygain_album_gain, parse_float(value)),
@@ -205,6 +232,7 @@ pub(crate) fn merge_missing(dst: &mut Tags, src: &Tags) {
         disc,
         disc_total,
         comment,
+        lyrics,
         replaygain_track_gain,
         replaygain_track_peak,
         replaygain_album_gain,

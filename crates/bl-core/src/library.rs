@@ -12,6 +12,11 @@ pub fn is_local(id: &str) -> bool {
     id.starts_with(LOCAL_PREFIX)
 }
 
+/// Whether `id` is a track of the server's library (no source prefix).
+pub fn is_server_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains(':')
+}
+
 pub fn local_path(id: &str) -> Option<&str> {
     id.strip_prefix(LOCAL_PREFIX)
 }

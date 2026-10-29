@@ -121,6 +121,10 @@ impl Index {
         }
     }
 
+    pub fn tracks(&self) -> &[Entry] {
+        &self.entries
+    }
+
     pub fn track(&self, id: &str) -> Option<&Entry> {
         self.by_id.get(id).map(|&i| &self.entries[i])
     }

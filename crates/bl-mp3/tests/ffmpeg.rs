@@ -186,8 +186,28 @@ fn layer2_lsf_mono() {
 
 #[test]
 fn shine_encoder() {
-    let args = stereo_args("anoisesrc=d=3:a=0.3", &["-c:a", "libshine", "-b:a", "128k"]);
-    check("shine.mp3", &args, 80.0, true);
+    // Fixed seed: this stream has a granule whose final count1 quadruple
+    // (lines 570..573) overruns part2_3_length; ffmpeg keeps it.
+    let args = stereo_args(
+        "anoisesrc=d=3:a=0.3:seed=5",
+        &["-c:a", "libshine", "-b:a", "128k"],
+    );
+    check("shine_seed5.mp3", &args, 80.0, true);
+}
+
+/// Sweeps noise seeds (`SEEDS` env var, default 40) through libshine.
+#[test]
+#[ignore]
+fn shine_seeds() {
+    let n: u32 = std::env::var("SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
+    for seed in 0..n {
+        let src = format!("anoisesrc=d=3:a=0.3:seed={seed}");
+        let args = stereo_args(&src, &["-c:a", "libshine", "-b:a", "128k"]);
+        check(&format!("shine_seed{seed}.mp3"), &args, 80.0, true);
+    }
 }
 
 /// Prints decoding speed (x real time); asserts a floor in release builds.

@@ -28,6 +28,7 @@ mod aiff;
 mod alac;
 mod downmix;
 mod flac;
+pub mod lyrics;
 mod mkv;
 mod mp3;
 mod mp4;
@@ -41,6 +42,7 @@ mod wav;
 mod window;
 
 pub use alac::{AlacConfig, AlacDecoder};
+pub use mkv::remux::{webm_opus_to_ogg, RemuxResult, RemuxTags};
 
 /// A seekable byte source (file, in-memory buffer, HTTP range reader, ...).
 pub trait Source: Read + Seek + Send {}
@@ -145,6 +147,9 @@ pub struct Tags {
     pub disc: Option<u32>,
     pub disc_total: Option<u32>,
     pub comment: Option<String>,
+    /// Song text. Synced lyrics are LRC text ("[mm:ss.xx]line"), also when
+    /// they come from an ID3 `SYLT` frame.
+    pub lyrics: Option<String>,
     /// ReplayGain values in dB / linear peak.
     pub replaygain_track_gain: Option<f32>,
     pub replaygain_track_peak: Option<f32>,
@@ -236,3 +241,40 @@ pub fn downmix_to_stereo(input: &[f32], channels: u16, out: &mut Vec<f32>) {
 }
 
 pub use resample::Resampler;
+
+/// Decodes a whole file to mono at `rate` Hz (the channels averaged), at
+/// most `max_secs` seconds. `keep_going` is asked between chunks.
+pub fn decode_mono(
+    src: Box<dyn Source>,
+    ext_hint: Option<&str>,
+    rate: u32,
+    max_secs: u32,
+    keep_going: &mut dyn FnMut() -> bool,
+) -> Result<Vec<f32>, Error> {
+    let mut dec = open(src, ext_hint)?;
+    let spec = dec.spec();
+    let ch = spec.channels.max(1) as usize;
+    let mut rs = Resampler::new(spec.sample_rate, rate, 1);
+    let limit = rate as usize * max_secs as usize;
+    let mut buf = Vec::new();
+    let mut mono = Vec::new();
+    let mut out = Vec::new();
+    loop {
+        buf.clear();
+        let more = dec.next_chunk(&mut buf)?;
+        mono.clear();
+        mono.extend(
+            buf.chunks_exact(ch)
+                .map(|f| f.iter().sum::<f32>() / ch as f32),
+        );
+        rs.process(&mono, &mut out);
+        if !more || out.len() >= limit {
+            break;
+        }
+        if !keep_going() {
+            return Err(Error::Unsupported("cancelled".into()));
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
+}

@@ -23,12 +23,52 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - Library with songs, albums, artists, folders, playlists and a play queue;
   artist and title are guessed from file names when tags are missing.
 - Background images from your folders, the server or the album cover.
+- **Offline copies**: songs from the server (with their song text, cover
+  and analysis) can be kept on the device in one file each and play
+  without a connection; the library shows them while the server is away.
+- **Song texts** over the visuals: from the file's tags, an `.lrc` or
+  `.txt` file next to it, or added in the app. Synced texts (LRC, also with
+  word timing) follow the song; tapping a line jumps there. With a
+  speech model, the server times plain texts by recognising the sung
+  words, or writes down what is sung (own implementation, runs on the
+  server; see `container/README.md`).
+- **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
+  iPad and Mac and plays and visualises what they send, with title, artist
+  and cover (Linux, Windows, Android; AirPlay 1 protocol).
+- **DLNA/UPnP receiver** (optional): apps such as BubbleUPnP, Windows
+  "Play to" and other control points can send music to the app and control
+  it (play, pause, seek, volume, next track).
+- **Play on speakers in the network**: AirPlay 1 receivers (AirPort
+  Express, AV receivers, shairport-sync, …; encrypted when the speaker
+  supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
+  devices; the last two fetch a live stream from the app. The visuals stay
+  in sync with the speaker.
+- **Visualize other apps** (Android 10+, Linux, Windows): music from
+  Spotify, YouTube, radio apps, the browser and others drives the visuals;
+  their title and cover are shown and they can be controlled from the app
+  (on Android, apps that block recording stay silent, their controls still
+  work).
+- **Server extensions** (`docs/EXTENSIONS.md`): separate programs can add
+  music sources to the server, e.g. search a video platform; the song plays
+  right away while the server stores it, with intros and outros left out,
+  in the shared library or the user's encrypted files.
+- System media controls and media keys: MPRIS on Linux, the media
+  overlay on Windows, the media notification and lock screen on Android.
+  After the app was closed, Android's media controls continue the last
+  track where it stopped.
+- **Public links** to encrypted files, with expiry and an optional
+  password: the receiver opens the file in a browser without an account;
+  the key is part of the link and never reaches the server.
+- **Encrypted files on the server** (end-to-end): only you and the people
+  you share with can open them; sign in with a password, passkeys or your
+  password manager (`docs/ENCRYPTION.md`).
 - Light/dark mode and accent colour follow your system.
 - **Beatlumen Server** shares a music folder on your network and serves the
   web version of the app.
 
 **Privacy:** the apps only ever connect to the server you configure; the
-server makes no outgoing connections at all. No accounts, no tracking.
+server connects only to remote sources its admin sets up (none by default).
+No tracking, no telemetry.
 
 ## Platforms and downloads
 
@@ -38,7 +78,7 @@ server makes no outgoing connections at all. No accounts, no tracking.
 | Windows | same, built by CI with MSVC (`windeployqt`) → installer `Beatlumen-Setup-x64.exe` (Inno Setup, `apps/beatlumen/windows/beatlumen.iss`) and a portable zip |
 | Android | `./build-android.sh` → `dist/android/beatlumen.apk` |
 | Web | `./build-web.sh` → `dist/web`, served by the server |
-| Server | `cargo build --release -p beatlumen-server` |
+| Server | `cargo build --release -p beatlumen-server`; container image for Docker/Podman with `compose.yml`, AppArmor and SELinux profiles: [`container/`](container/README.md) |
 
 ## Building
 
@@ -82,11 +122,18 @@ crates/bl-render        OpenGL / OpenGL ES / WebGL 2 renderer
 crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
                         bl-opus, bl-vorbis, bl-flac, bl-ogg
+crates/bl-gl            OpenGL bindings (loaded at run time)
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
+crates/bl-vault         end-to-end encryption of the user's files (+ bl-vault-wasm)
+crates/bl-airplay       AirPlay (RAOP) receiver and sender: RTSP, audio, mDNS
+crates/bl-upnp          DLNA/UPnP: control point and media renderer
+crates/bl-cast          Google Cast sender (Cast v2)
 ```
 
-The Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned
-features (lyrics, user accounts, sharing, provider integrations).
+Apart from the cryptography of the encrypted files (audited RustCrypto
+crates in `bl-vault`, pinned versions), the Rust crates use no third-party
+crates. See `docs/ROADMAP.md` for planned features (lyrics, devices, music
+sources).
 
 ## Security
 

@@ -66,6 +66,50 @@ pub struct BlCallbacks {
         unsafe extern "C" fn(handle: i64, buf: *const u8, len: usize, timeout_ms: u32) -> i64,
     >,
     pub tls_close: Option<unsafe extern "C" fn(handle: i64)>,
+    /// Announces a network service through the platform (Android's
+    /// NsdManager); `txt` is a JSON array of "key=value" strings. Returns
+    /// non-zero on success; null or zero lets the core answer mDNS itself.
+    pub service_register: Option<
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            instance: *const c_char,
+            service_type: *const c_char,
+            port: u16,
+            txt: *const c_char,
+        ) -> i32,
+    >,
+    pub service_unregister: Option<unsafe extern "C" fn(user: *mut c_void)>,
+    /// Registers with the UnifiedPush distributor: 1 started, -1 no
+    /// distributor, 0 not available. The endpoint comes back as the
+    /// `push.endpoint` command.
+    pub push_register: Option<
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            instance: *const c_char,
+            vapid: *const c_char,
+        ) -> i32,
+    >,
+    pub push_unregister: Option<unsafe extern "C" fn(user: *mut c_void, instance: *const c_char)>,
+    /// Opens a web page in the system browser; non-zero on success.
+    pub open_url: Option<unsafe extern "C" fn(user: *mut c_void, url: *const c_char) -> i32>,
+    /// The platform's credential manager (see `Host::credential_request`);
+    /// non-zero when the request was started.
+    pub credential_request: Option<
+        unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
+    >,
+    /// The platform's protected store (see `Host::secret_store`): keeps
+    /// `len` bytes under `key` (0 bytes: deletes).
+    pub secret_store: Option<
+        unsafe extern "C" fn(user: *mut c_void, key: *const c_char, data: *const u8, len: usize),
+    >,
+    /// Reads `key`; the value comes back as the `vault.secret` command.
+    /// Non-zero when the read was started.
+    pub secret_load: Option<unsafe extern "C" fn(user: *mut c_void, key: *const c_char) -> i32>,
+    /// Other apps' playback (see `Host::capture_request`); non-zero when
+    /// the request was taken. Null where the platform cannot record it.
+    pub capture_request: Option<
+        unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
+    >,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -89,7 +133,8 @@ mod tls {
     /// A TLS connection provided by the UI.
     struct TlsConn {
         handle: i64,
-        timeout_ms: u32,
+        read_timeout_ms: u32,
+        write_timeout_ms: u32,
         cb: TlsCallbacks,
     }
 
@@ -97,9 +142,16 @@ mod tls {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             // SAFETY: valid buffer; handle owned by this connection.
             let n = unsafe {
-                (self.cb.read)(self.handle, buf.as_mut_ptr(), buf.len(), self.timeout_ms)
+                (self.cb.read)(
+                    self.handle,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    self.read_timeout_ms,
+                )
             };
-            if n < 0 {
+            if n == -2 {
+                Err(std::io::ErrorKind::TimedOut.into())
+            } else if n < 0 {
                 Err(std::io::Error::other("TLS read failed"))
             } else {
                 Ok(n as usize)
@@ -110,8 +162,9 @@ mod tls {
     impl std::io::Write for TlsConn {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             // SAFETY: valid buffer; handle owned by this connection.
-            let n =
-                unsafe { (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.timeout_ms) };
+            let n = unsafe {
+                (self.cb.write)(self.handle, buf.as_ptr(), buf.len(), self.write_timeout_ms)
+            };
             if n < 0 {
                 Err(std::io::Error::other("TLS write failed"))
             } else {
@@ -138,6 +191,7 @@ mod tls {
         host: &str,
         port: u16,
         timeout: std::time::Duration,
+        io_timeout: std::time::Duration,
         pin: Option<&str>,
     ) -> std::io::Result<Box<dyn bl_net::client::Conn>> {
         let cb = *TLS
@@ -170,9 +224,12 @@ mod tls {
                 msg
             }));
         }
+        let io_ms = io_timeout.as_millis().clamp(1, u32::MAX as u128) as u32;
         Ok(Box::new(TlsConn {
             handle,
-            timeout_ms,
+            read_timeout_ms: io_ms,
+            // Writes are small; give them time even with short reads.
+            write_timeout_ms: io_ms.max(timeout_ms),
             cb,
         }))
     }
@@ -526,6 +583,107 @@ impl Host for UiHost {
             None => eprintln!("{msg}"),
         }
     }
+
+    fn service_register(
+        &mut self,
+        instance: &str,
+        service_type: &str,
+        port: u16,
+        txt: &[String],
+    ) -> bool {
+        let Some(f) = self.cb.service_register else {
+            return false;
+        };
+        let txt = bl_json::Value::Array(
+            txt.iter()
+                .map(|t| bl_json::Value::from(t.as_str()))
+                .collect(),
+        )
+        .to_json();
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (i, t, x) = (c(instance), c(service_type), c(&txt));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, i.as_ptr(), t.as_ptr(), port, x.as_ptr()) != 0 }
+    }
+
+    fn service_unregister(&mut self) {
+        if let Some(f) = self.cb.service_unregister {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user) }
+        }
+    }
+
+    fn push_register(&mut self, instance: &str, vapid: &str) -> i32 {
+        let Some(f) = self.cb.push_register else {
+            return 0;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (i, v) = (c(instance), c(vapid));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, i.as_ptr(), v.as_ptr()) }
+    }
+
+    fn open_url(&mut self, url: &str) -> bool {
+        let Some(f) = self.cb.open_url else {
+            return false;
+        };
+        let u = CString::new(url.replace('\0', "")).unwrap_or_default();
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, u.as_ptr()) != 0 }
+    }
+
+    fn has_secret_store(&self) -> bool {
+        self.cb.secret_store.is_some() && self.cb.secret_load.is_some()
+    }
+
+    fn secret_store(&mut self, key: &str, value: &[u8]) {
+        if let Some(f) = self.cb.secret_store {
+            let k = CString::new(key.replace('\0', "")).unwrap_or_default();
+            // SAFETY: UI callback contract; `value` outlives the call.
+            unsafe { f(self.cb.user, k.as_ptr(), value.as_ptr(), value.len()) }
+        }
+    }
+
+    fn secret_load(&mut self, key: &str) -> bool {
+        let Some(f) = self.cb.secret_load else {
+            return false;
+        };
+        let k = CString::new(key.replace('\0', "")).unwrap_or_default();
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr()) != 0 }
+    }
+
+    fn has_capture(&self) -> bool {
+        self.cb.capture_request.is_some()
+    }
+
+    fn capture_request(&mut self, kind: &str, json: &str) -> bool {
+        let Some(f) = self.cb.capture_request else {
+            return false;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (k, j) = (c(kind), c(json));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
+    }
+
+    fn credential_request(&mut self, kind: &str, json: &str) -> bool {
+        let Some(f) = self.cb.credential_request else {
+            return false;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (k, j) = (c(kind), c(json));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
+    }
+
+    fn push_unregister(&mut self, instance: &str) {
+        if let Some(f) = self.cb.push_unregister {
+            let i = CString::new(instance.replace('\0', "")).unwrap_or_default();
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user, i.as_ptr()) }
+        }
+    }
 }
 
 /// Opaque handle owned by the UI.
@@ -645,6 +803,18 @@ pub unsafe extern "C" fn bl_core_position(c: *mut BlCore) -> f64 {
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_is_playing(c: *mut BlCore) -> i32 {
     c.as_ref().map(|c| c.core.is_playing() as i32).unwrap_or(0)
+}
+
+/// Recorded audio of other apps (interleaved 16-bit PCM, `frames` frames
+/// of `channels` channels at `rate` Hz); from any thread.
+#[no_mangle]
+pub unsafe extern "C" fn bl_capture_push(pcm: *const i16, frames: usize, channels: u32, rate: u32) {
+    if pcm.is_null() || frames == 0 || channels == 0 || frames > 1 << 20 {
+        return;
+    }
+    // SAFETY: the caller passes `frames * channels` samples.
+    let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
+    bl_core::capture::push_pcm(s, channels, rate);
 }
 
 /// Loads GL with `get_proc` (a context must be current). `flavor`: 0 =

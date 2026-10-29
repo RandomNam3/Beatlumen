@@ -15,12 +15,19 @@ use std::time::Duration;
 pub trait Conn: Read + Write + Send {}
 impl<T: Read + Write + Send> Conn for T {}
 
-/// Opens a TLS connection to `host:port` with the given connect/IO
-/// timeout. The certificate must be trusted by the system and match the
-/// host name, or have the SHA-256 fingerprint `pin` (hex) if one is given
-/// (a self-signed certificate the user chose to trust).
-pub type TlsConnector =
-    fn(host: &str, port: u16, timeout: Duration, pin: Option<&str>) -> io::Result<Box<dyn Conn>>;
+/// Opens a TLS connection to `host:port` within `connect_timeout`; reads
+/// wait up to `io_timeout` and then fail with [`io::ErrorKind::TimedOut`]
+/// (the connection stays usable). The certificate must be trusted by the
+/// system and match the host name, or have the SHA-256 fingerprint `pin`
+/// (hex) if one is given (a self-signed certificate the user chose to
+/// trust).
+pub type TlsConnector = fn(
+    host: &str,
+    port: u16,
+    connect_timeout: Duration,
+    io_timeout: Duration,
+    pin: Option<&str>,
+) -> io::Result<Box<dyn Conn>>;
 
 static TLS: OnceLock<TlsConnector> = OnceLock::new();
 /// Trusted certificate fingerprints by "host:port".
@@ -46,6 +53,23 @@ pub fn set_tls_connector(f: TlsConnector) {
 /// Whether `https://` URLs can be used.
 pub fn tls_available() -> bool {
     TLS.get().is_some()
+}
+
+/// A TLS connection for protocols other than HTTP (see [`TlsConnector`]).
+pub fn tls_connect(
+    host: &str,
+    port: u16,
+    connect_timeout: Duration,
+    io_timeout: Duration,
+    pin: Option<&str>,
+) -> io::Result<Box<dyn Conn>> {
+    let tls = TLS.get().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "TLS is not available on this platform",
+        )
+    })?;
+    tls(host, port, connect_timeout, io_timeout, pin)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,12 +205,8 @@ fn connect(url: &Url, opts: &Options) -> io::Result<Box<dyn Conn>> {
             .iter()
             .find(|(h, _)| *h == key)
             .map(|(_, f)| f.clone());
-        return tls(
-            &url.host,
-            url.port,
-            opts.io_timeout.min(opts.connect_timeout * 4),
-            pin.as_deref(),
-        );
+        let timeout = opts.io_timeout.min(opts.connect_timeout * 4);
+        return tls(&url.host, url.port, timeout, timeout, pin.as_deref());
     }
     let mut last = io::Error::new(io::ErrorKind::NotFound, "host not found");
     for addr in (url.host.as_str(), url.port).to_socket_addrs()? {
@@ -337,12 +357,37 @@ pub fn request(
     Err("too many redirects".into())
 }
 
+/// Sends a request and returns the status, headers and the body as a
+/// reader (read while it arrives). Redirects are not followed.
+pub fn request_stream(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    opts: &Options,
+) -> Result<(u16, Headers, Box<dyn Read + Send>), String> {
+    let u = Url::parse(url)?;
+    let mut stream =
+        connect(&u, opts).map_err(|e| format!("connect {}:{}: {e}", u.host, u.port))?;
+    write_request(&mut stream, method, &u, headers, body).map_err(|e| format!("send: {e}"))?;
+    let mut r = BufReader::with_capacity(64 * 1024, stream);
+    let (status, h) = read_head(&mut r).map_err(|e| format!("receive: {e}"))?;
+    let reader = body_reader(r, method, status, &h);
+    Ok((status, h, Box::new(reader)))
+}
+
 /// A seekable byte stream over HTTP using range requests. Sequential reads
 /// reuse one long-running response; seeks reopen the connection.
+///
+/// A resource of unknown length (a file still growing on the server: a
+/// response without a length, or `Content-Range: bytes a-b/*`) reads until
+/// the server ends it; seeking from its end is not possible until a later
+/// response tells the length.
 pub struct HttpStream {
     url: Url,
     headers: Vec<(String, String)>,
     opts: Options,
+    /// `u64::MAX` while unknown.
     len: u64,
     pos: u64,
     conn: Option<(Body<BufReader<Box<dyn Conn>>>, u64)>,
@@ -364,12 +409,17 @@ impl HttpStream {
         Ok(s)
     }
 
+    /// The length; `u64::MAX` while unknown.
     pub fn len(&self) -> u64 {
         self.len
     }
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    fn known(&self) -> bool {
+        self.len != u64::MAX
     }
 
     fn reconnect(&mut self, at: u64) -> io::Result<()> {
@@ -382,20 +432,26 @@ impl HttpStream {
         let (status, h) = read_head(&mut r)?;
         match status {
             206 => {
-                // Content-Range: bytes a-b/total
+                // Content-Range: bytes a-b/total ("*": still unknown)
                 let total = h
                     .get("content-range")
                     .and_then(|v| v.rsplit('/').next())
-                    .and_then(|t| t.trim().parse::<u64>().ok())
+                    .map(|t| t.trim().to_string())
                     .ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "missing content-range")
                     })?;
-                self.len = total;
+                self.len = if total == "*" {
+                    u64::MAX
+                } else {
+                    total.parse::<u64>().map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidData, "bad content-range")
+                    })?
+                };
                 self.conn = Some((body_reader(r, "GET", status, &h), at));
             }
             200 => {
                 // Server ignored the range: skip to the wanted position.
-                self.len = h.content_length().unwrap_or(0);
+                self.len = h.content_length().unwrap_or(u64::MAX);
                 let mut body = body_reader(r, "GET", status, &h);
                 io::copy(&mut (&mut body).take(at), &mut io::sink())?;
                 self.conn = Some((body, at));
@@ -414,6 +470,7 @@ impl Read for HttpStream {
         if self.pos >= self.len || buf.is_empty() {
             return Ok(0);
         }
+        let known = self.known();
         for attempt in 0..3 {
             let reuse = matches!(&self.conn, Some((_, p)) if *p == self.pos);
             if !reuse {
@@ -423,6 +480,9 @@ impl Read for HttpStream {
                 return Ok(0);
             };
             match body.read(buf) {
+                // The end of a resource of unknown length (asked once more:
+                // the response may have ended early).
+                Ok(0) if !known && attempt >= 1 => return Ok(0),
                 Ok(0) if attempt < 2 => {
                     self.conn = None;
                     continue;
@@ -448,6 +508,12 @@ impl Seek for HttpStream {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new = match pos {
             SeekFrom::Start(p) => p as i64,
+            SeekFrom::End(_) if !self.known() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "length not known yet",
+                ))
+            }
             SeekFrom::End(d) => self.len as i64 + d,
             SeekFrom::Current(d) => self.pos as i64 + d,
         };

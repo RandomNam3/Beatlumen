@@ -24,6 +24,27 @@ use std::sync::{Arc, Mutex};
 pub type SourceOpener =
     Box<dyn FnOnce() -> Result<(Box<dyn bl_media::Source>, Option<String>), String> + Send>;
 
+/// Opens a ready decoder (live streams such as AirPlay).
+pub type DecoderOpener = Box<dyn FnOnce() -> Result<Box<dyn Decoder>, String> + Send>;
+
+/// What the decoder thread opens.
+enum Opener {
+    Source(SourceOpener),
+    Decoder(DecoderOpener),
+}
+
+impl Opener {
+    fn open(self) -> Result<Box<dyn Decoder>, String> {
+        match self {
+            Opener::Source(o) => {
+                let (src, ext) = o()?;
+                bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())
+            }
+            Opener::Decoder(o) => o(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
     Stopped,
@@ -282,6 +303,17 @@ pub struct Output {
     crossfade_ms: AtomicU32,
     skip_silence: AtomicBool,
     pub sample_rate: AtomicU32,
+    /// A speaker in the network plays instead of the device (the device
+    /// gets silence; the network output renders at full volume and sets the
+    /// speaker's own volume).
+    external: AtomicBool,
+    /// Counts resets (seeks, new tracks): a network output drops what the
+    /// speaker has buffered.
+    resets: AtomicU64,
+    /// The audio is already heard (other apps' playback being visualised):
+    /// the device gets silence but takes the samples at its own pace, so
+    /// the position and the visuals follow it.
+    monitor: AtomicBool,
 }
 
 impl Output {
@@ -303,7 +335,29 @@ impl Output {
             crossfade_ms: AtomicU32::new(0),
             skip_silence: AtomicBool::new(false),
             sample_rate: AtomicU32::new(48000),
+            external: AtomicBool::new(false),
+            resets: AtomicU64::new(0),
+            monitor: AtomicBool::new(false),
         }
+    }
+
+    pub(crate) fn set_external(&self, on: bool) {
+        self.external.store(on, Ordering::Relaxed);
+    }
+
+    pub(crate) fn resets(&self) -> u64 {
+        self.resets.load(Ordering::Relaxed)
+    }
+
+    /// Paused and faded out.
+    pub(crate) fn is_silent(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+            && self.current_gain.lock().map(|g| *g <= 1e-4).unwrap_or(true)
+    }
+
+    /// Renders for a network output (see [`Output::set_external`]).
+    pub(crate) fn render_external(&self, out: &mut [f32], latency_frames: u32) {
+        self.render_frames(out, latency_frames);
     }
 
     fn queued_frames(&self) -> usize {
@@ -329,6 +383,7 @@ impl Output {
     }
 
     fn reset(&self, base_frame: u64) {
+        self.resets.fetch_add(1, Ordering::Relaxed);
         self.streaming.store(false, Ordering::Relaxed);
         if let Ok(mut r) = self.ring.lock() {
             r.samples.clear();
@@ -353,9 +408,24 @@ impl Output {
 
 impl AudioSource for Output {
     fn render(&self, out: &mut [f32], latency_frames: u32) {
+        if self.external.load(Ordering::Relaxed) {
+            out.fill(0.0);
+            return;
+        }
+        self.render_frames(out, latency_frames);
+        if self.monitor.load(Ordering::Relaxed) {
+            out.fill(0.0);
+        }
+    }
+}
+
+impl Output {
+    fn render_frames(&self, out: &mut [f32], latency_frames: u32) {
         self.latency.store(latency_frames, Ordering::Relaxed);
         let target = if self.paused.load(Ordering::Relaxed) {
             0.0
+        } else if self.external.load(Ordering::Relaxed) {
+            1.0
         } else {
             f32::from_bits(self.volume.load(Ordering::Relaxed))
         };
@@ -612,6 +682,11 @@ impl Player {
         }
     }
 
+    /// See [`Output::monitor`].
+    pub fn set_monitor(&mut self, on: bool) {
+        self.output.monitor.store(on, Ordering::Relaxed);
+    }
+
     /// Crossfade length between tracks (0 = gapless) and whether silence at
     /// the end and start of tracks is skipped when moving on.
     pub fn set_transition(&mut self, crossfade_secs: f32, skip_silence: bool) {
@@ -688,6 +763,10 @@ impl Player {
         self.device_rate
     }
 
+    pub(crate) fn output(&self) -> Arc<Output> {
+        self.output.clone()
+    }
+
     /// Stops playback and releases the track.
     pub fn stop(&mut self, host: &mut dyn Host) {
         if let Some(t) = self.native.take() {
@@ -724,6 +803,21 @@ impl Player {
     /// Loads a track; `opener` opens the byte source (on a background
     /// thread on native platforms).
     pub fn load(&mut self, host: &mut dyn Host, opener: SourceOpener, autoplay: bool) {
+        self.load_with(host, Opener::Source(opener), autoplay);
+    }
+
+    /// Plays a ready decoder (a live stream: no preloading of a next track).
+    pub fn load_decoder(&mut self, host: &mut dyn Host, opener: DecoderOpener, autoplay: bool) {
+        self.load_with(host, Opener::Decoder(opener), autoplay);
+    }
+
+    /// Delay between audio leaving the decoder and being heard (output
+    /// latency reported by the device).
+    pub fn output_latency(&self) -> f64 {
+        self.output.latency.load(Ordering::Relaxed) as f64 / self.device_rate.max(1) as f64
+    }
+
+    fn load_with(&mut self, host: &mut dyn Host, opener: Opener, autoplay: bool) {
         self.stop(host);
         self.ensure_device(host);
         self.error = None;
@@ -752,9 +846,7 @@ impl Player {
             });
         } else {
             // Push mode: open synchronously.
-            match opener().and_then(|(src, ext)| {
-                bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())
-            }) {
+            match opener.open() {
                 Ok(dec) => {
                     let pipeline = Pipeline::new(dec, out_rate);
                     self.duration = pipeline.duration();
@@ -968,10 +1060,8 @@ impl Player {
     }
 }
 
-fn open_pipeline(opener: SourceOpener, out_rate: u32) -> Result<Pipeline, String> {
-    let (src, ext) = opener()?;
-    let dec = bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())?;
-    Ok(Pipeline::new(dec, out_rate))
+fn open_pipeline(opener: Opener, out_rate: u32) -> Result<Pipeline, String> {
+    Ok(Pipeline::new(opener.open()?, out_rate))
 }
 
 /// Level below which audio counts as silence (-50 dBFS).
@@ -1060,7 +1150,7 @@ fn skip_leading_silence(p: &mut Pipeline, out: &mut Vec<f32>, max: usize) -> usi
 }
 
 fn decoder_thread(
-    opener: SourceOpener,
+    opener: Opener,
     out_rate: u32,
     output: Arc<Output>,
     commands: std::sync::mpsc::Receiver<Command>,
@@ -1144,7 +1234,7 @@ fn decoder_thread(
                 let opener = next.take().expect("checked");
                 // On failure the track ends normally; loading the next one
                 // again reports the error.
-                if let Ok(mut b) = open_pipeline(opener, out_rate) {
+                if let Ok(mut b) = open_pipeline(Opener::Source(opener), out_rate) {
                     if silent_end {
                         output.trim_tail(silent_run);
                     }

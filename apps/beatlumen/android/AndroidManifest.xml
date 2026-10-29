@@ -19,8 +19,21 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Visualising other apps' playback (only after the user starts it):
+         recording what they play (playback capture, no microphone) in a
+         foreground service of type mediaProjection. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- UnifiedPush: find the installed distributors (Android 11+ package
+         visibility). -->
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <supports-screens
@@ -52,6 +65,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Return from the sign-in page in the browser (passkeys); the
+                 result is sealed to the app's one-time key. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="beatlumen" android:host="auth" />
+            </intent-filter>
 
             <meta-data
                 android:name="android.app.lib_name"
@@ -69,9 +90,58 @@
 
         <!-- Keeps the process alive while music plays in the background and
              shows the media notification (MediaPlaybackService.java). -->
+        <!-- UnifiedPush messages from the user's distributor (PushReceiver.java). -->
+        <receiver
+            android:name="io.github.randomnam3.beatlumen.PushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Playback resumption: the system's media controls keep the last
+             track after the app was closed (ResumeService.java). -->
+        <service
+            android:name="io.github.randomnam3.beatlumen.ResumeService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name="io.github.randomnam3.beatlumen.MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Other apps' playback: recording (CaptureService.java), their
+             media sessions (SessionListener.java; needs notification access,
+             notifications are not read) and a quick settings tile. -->
+        <service
+            android:name="io.github.randomnam3.beatlumen.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+        <service
+            android:name="io.github.randomnam3.beatlumen.SessionListener"
+            android:label="-- %%INSERT_APP_NAME%% --"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.github.randomnam3.beatlumen.CaptureTile"
+            android:label="@string/capture_tile"
+            android:icon="@drawable/ic_stat_beatlumen"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

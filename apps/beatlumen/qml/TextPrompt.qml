@@ -3,7 +3,7 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 // Small dialog asking for one line of text.
-Dialog {
+AppDialog {
     id: dlg
     property alias text: field.text
     property alias placeholder: field.placeholderText

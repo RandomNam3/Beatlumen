@@ -1,0 +1,10 @@
+[package]
+name = "bl-cast"
+description = "Google Cast (CastV2) sender: plays a stream on Chromecast devices with the Default Media Receiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b0a10">
+  <meta name="robots" content="noindex">
+  <title>Beatlumen</title>
+  <!-- SHA-256 of vault.wasm, filled in by finish.sh. -->
+  <meta name="beatlumen-vault-wasm" content="">
+  <link rel="icon" type="image/png" href="../icon.png">
+  <link rel="stylesheet" href="../auth/auth.css">
+  <link rel="stylesheet" href="share.css">
+</head>
+<body>
+  <main>
+    <header>
+      <img src="../icon.png" width="48" height="48" alt="">
+      <h1 data-t="Shared file">Shared file</h1>
+    </header>
+
+    <section id="file" class="note" hidden>
+      <p id="name" class="name"></p>
+      <p id="details" class="hint"></p>
+    </section>
+
+    <form id="pwform" hidden autocomplete="off">
+      <p class="hint" data-t="This link is protected with a password.">This link is protected with a password.</p>
+      <label><span data-t="Password">Password</span>
+        <input id="pw" type="password" required></label>
+      <button class="primary" type="submit" data-t="Open">Open</button>
+    </form>
+
+    <section id="ready" hidden>
+      <audio id="audio" controls hidden></audio>
+      <img id="image" alt="" hidden>
+      <a id="save" class="button primary" data-t="Download">Download</a>
+    </section>
+
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <p id="status" role="status"></p>
+    <p class="hint small" data-t="The file is decrypted in this browser; the server cannot read it.">The file is decrypted in this browser; the server cannot read it.</p>
+  </main>
+  <script src="share.js"></script>
+</body>
+</html>

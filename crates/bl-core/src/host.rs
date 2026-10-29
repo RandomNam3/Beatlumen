@@ -152,4 +152,78 @@ pub trait Host {
 
     /// Logs a message (stderr, logcat or the browser console).
     fn log(&self, msg: &str);
+
+    /// Announces a network service through the platform (Android's
+    /// NsdManager). Returns false where the platform has no registration
+    /// of its own; the core then answers mDNS queries itself.
+    fn service_register(
+        &mut self,
+        _instance: &str,
+        _service_type: &str,
+        _port: u16,
+        _txt: &[String],
+    ) -> bool {
+        false
+    }
+
+    /// Withdraws the service announced with [`Host::service_register`].
+    fn service_unregister(&mut self) {}
+
+    /// Registers `instance` with the user's UnifiedPush distributor
+    /// (`vapid`: the server's VAPID key, base64url). The endpoint arrives
+    /// later as the `push.endpoint` command. Returns 1 when registration
+    /// started, -1 when no distributor is installed, 0 when the platform
+    /// has no UnifiedPush.
+    fn push_register(&mut self, _instance: &str, _vapid: &str) -> i32 {
+        0
+    }
+
+    fn push_unregister(&mut self, _instance: &str) {}
+
+    /// Opens a web page in the system's browser.
+    fn open_url(&mut self, _url: &str) -> bool {
+        false
+    }
+
+    /// Asks the platform's credential manager (Android) for a passkey or
+    /// password (`kind` "get": {"publicKey": WebAuthn options JSON or "",
+    /// "password": bool}), to create a passkey ("create": {"publicKey",
+    /// "user"}) or to save a password ("save": {"user", "password"}).
+    /// "get" and "create" answer later with the `vault.credentialResult`
+    /// command. Returns false where there is none.
+    fn credential_request(&mut self, _kind: &str, _json: &str) -> bool {
+        false
+    }
+
+    /// Whether the platform can record other apps' playback and read their
+    /// media sessions (Android 10+).
+    fn has_capture(&self) -> bool {
+        false
+    }
+
+    /// Other apps' playback: "start" asks the user to allow recording and
+    /// records (the audio arrives through [`crate::capture::push_pcm`], the
+    /// state as the `capture.state` command, the other app's media session
+    /// as `capture.session`, whether sessions can be read as
+    /// `capture.access`), "stop" ends it, "access" asks for access to
+    /// media sessions, "control" ({"action": "play", "pause", "toggle",
+    /// "next", "prev" or "seek", "position": seconds}) controls the other app.
+    fn capture_request(&mut self, _kind: &str, _json: &str) -> bool {
+        false
+    }
+
+    /// Whether the platform keeps secrets protected for this app (Android
+    /// Keystore, Windows DPAPI, the Secret Service on Linux).
+    fn has_secret_store(&self) -> bool {
+        false
+    }
+
+    /// Keeps `value` under `key` in that store; empty deletes it.
+    fn secret_store(&mut self, _key: &str, _value: &[u8]) {}
+
+    /// Reads `key` from that store; the value arrives later as the
+    /// `vault.secret` command ({"key", "value": base64, empty if none}).
+    fn secret_load(&mut self, _key: &str) -> bool {
+        false
+    }
 }

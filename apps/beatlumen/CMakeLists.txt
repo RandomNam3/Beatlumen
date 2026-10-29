@@ -122,6 +122,31 @@ if(TARGET Qt6::Multimedia AND NOT EMSCRIPTEN AND NOT ANDROID)
     target_compile_definitions(beatlumen PRIVATE BL_HAVE_MULTIMEDIA)
 endif()
 
+# "Stay unlocked on this device": the platform's protected store.
+target_sources(beatlumen PRIVATE src/secrets.cpp src/secrets.h)
+# The desktop's media controls and media keys (media_desktop.cpp).
+if(WIN32)
+    target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_SMTC)
+    target_link_libraries(beatlumen PRIVATE runtimeobject shcore crypt32)
+    # "Visualize other apps": WASAPI loopback and the system's media sessions.
+    target_sources(beatlumen PRIVATE src/desktop_capture_win.cpp src/desktop_capture.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DESKTOP_CAPTURE)
+    target_link_libraries(beatlumen PRIVATE ole32)
+elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
+    find_package(Qt6 QUIET COMPONENTS DBus)
+    if(TARGET Qt6::DBus)
+        target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS BEATLUMEN_PORTAL)
+        target_link_libraries(beatlumen PRIVATE Qt6::DBus)
+        # "Visualize other apps": the sound output's monitor (libpulse-simple,
+        # loaded at run time) and MPRIS players.
+        target_sources(beatlumen PRIVATE src/desktop_capture.cpp src/desktop_capture.h)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DESKTOP_CAPTURE)
+        target_link_libraries(beatlumen PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+endif()
+
 if(WIN32)
     # Icon and version information of beatlumen.exe.
     configure_file(windows/beatlumen.rc.in "${CMAKE_CURRENT_BINARY_DIR}/beatlumen.rc" @ONLY)
@@ -133,7 +158,7 @@ elseif(ANDROID)
     target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android aaudio)
     # Background playback (MediaSession, foreground service): the Java side
     # lives in android/src.
-    target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h)
+    target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h src/android_capture.cpp src/android_capture.h)
     # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
     # through AAudio), no QML debugging, TLS or network information.
     qt_import_plugins(beatlumen

@@ -4,6 +4,7 @@
 //! building, every regular file below `<dir>` is embedded into the binary
 //! (via a generated `include_bytes!` table) and served when no `--web-dir`
 //! is configured and no `web/` directory exists next to the executable.
+//! A file with a pre-compressed copy (`x.gz`) is embedded only compressed.
 //! Without the variable an empty table is generated, so the build never
 //! depends on the web client being built first.
 
@@ -50,6 +51,12 @@ fn main() {
         let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
         println!("cargo:rerun-if-changed={}", dir.display());
         collect(&dir, "", 0, &mut files);
+        // Files with a pre-compressed copy ("x.gz") are embedded only
+        // compressed; the server decompresses them for the rare client
+        // without gzip support.
+        let names: std::collections::HashSet<String> =
+            files.iter().map(|(r, _)| r.clone()).collect();
+        files.retain(|(r, _)| !names.contains(&format!("{r}.gz")));
         if files.is_empty() {
             println!(
                 "cargo:warning=BEATLUMEN_EMBED_WEB={} contains no files; nothing embedded",

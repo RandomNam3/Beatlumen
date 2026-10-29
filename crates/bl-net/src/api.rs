@@ -45,6 +45,14 @@ pub struct ServerInfo {
     pub revision: u64,
     /// Source code of the server's version (AGPL section 13).
     pub source_url: String,
+    /// Result of the server's check of its web client: "verified" (signed
+    /// manifest, all files match), "unsigned" (files match an unsigned
+    /// manifest), "modified", "unchecked" (no manifest), "none".
+    pub web_integrity: String,
+    /// Passkeys can be used (the server knows its public https address).
+    pub passkeys: bool,
+    /// Song texts can be timed by speech recognition.
+    pub speech: bool,
 }
 
 impl ServerInfo {
@@ -58,6 +66,9 @@ impl ServerInfo {
             .with("scanning", self.scanning)
             .with("revision", self.revision)
             .with("sourceUrl", self.source_url.as_str())
+            .with("webIntegrity", self.web_integrity.as_str())
+            .with("passkeys", self.passkeys)
+            .with("speech", self.speech)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -69,6 +80,9 @@ impl ServerInfo {
             scanning: v.bool_or("scanning", false),
             revision: u(v, "revision"),
             source_url: s(v, "sourceUrl"),
+            web_integrity: s(v, "webIntegrity"),
+            passkeys: v.bool_or("passkeys", false),
+            speech: v.bool_or("speech", false),
         }
     }
 }
@@ -337,6 +351,12 @@ pub mod paths {
     /// `{"integrated": LUFS or null, "peak": linear}`.
     pub fn track_loudness(id: &str) -> String {
         format!("/api/tracks/{id}/loudness")
+    }
+    pub fn track_lyrics(id: &str) -> String {
+        format!("/api/tracks/{id}/lyrics")
+    }
+    pub fn track_lyrics_sync(id: &str) -> String {
+        format!("/api/tracks/{id}/lyrics/sync")
     }
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")

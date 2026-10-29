@@ -30,19 +30,26 @@ class PinnedFactory : public QQmlNetworkAccessManagerFactory
 public:
     QNetworkAccessManager *create(QObject *parent) override
     {
-        auto *nam = new QNetworkAccessManager(parent);
-        QObject::connect(nam, &QNetworkAccessManager::sslErrors, nam, [](QNetworkReply *r, const QList<QSslError> &) {
-            const QUrl u = r->url();
-            const QByteArray want = tls::pinFor(u.host().toLower() + QLatin1Char(':') + QString::number(u.port(443)));
-            const QByteArray got = r->sslConfiguration().peerCertificate().digest(QCryptographicHash::Sha256).toHex();
-            if (!want.isEmpty() && want == got)
-                r->ignoreSslErrors();
-        });
-        return nam;
+        return tls::pinnedNetworkAccess(parent);
     }
 };
 #endif
 } // namespace
+
+#if !defined(Q_OS_WASM) && !defined(Q_OS_ANDROID)
+QNetworkAccessManager *tls::pinnedNetworkAccess(QObject *parent)
+{
+    auto *nam = new QNetworkAccessManager(parent);
+    QObject::connect(nam, &QNetworkAccessManager::sslErrors, nam, [](QNetworkReply *r, const QList<QSslError> &) {
+        const QUrl u = r->url();
+        const QByteArray want = tls::pinFor(u.host().toLower() + QLatin1Char(':') + QString::number(u.port(443)));
+        const QByteArray got = r->sslConfiguration().peerCertificate().digest(QCryptographicHash::Sha256).toHex();
+        if (!want.isEmpty() && want == got)
+            r->ignoreSslErrors();
+    });
+    return nam;
+}
+#endif
 
 void tls::setPin(const QString &hostPort, const QByteArray &fingerprint)
 {
@@ -236,7 +243,7 @@ int64_t tlsRead(int64_t h, uint8_t *buf, size_t len, uint32_t timeoutMs)
         if (s->state() != QAbstractSocket::ConnectedState)
             return 0;
         if (!s->waitForReadyRead(int(timeoutMs)))
-            return s->state() == QAbstractSocket::ConnectedState ? -1 : 0; // timeout vs. closed
+            return s->state() == QAbstractSocket::ConnectedState ? -2 : 0; // timeout vs. closed
     }
     const qint64 n = s->read(reinterpret_cast<char *>(buf), qint64(len));
     return n < 0 ? -1 : n;

@@ -134,7 +134,7 @@ public final class TlsBridge {
             int n = in.read(buf, 0, len);
             return n < 0 ? 0 : n;
         } catch (SocketTimeoutException e) {
-            return -1;
+            return -2; // nothing within the timeout; the socket stays usable
         } catch (IOException e) {
             return -1;
         }

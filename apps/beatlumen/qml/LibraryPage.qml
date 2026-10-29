@@ -11,6 +11,7 @@ Item {
     signal addFolder()
     signal openFiles()
     signal connectServer()
+    signal uploadVault()
 
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
@@ -21,6 +22,10 @@ Item {
     property var playlists: []
     property var results: []
     property bool loaded: false
+    // Server extensions that search (e.g. YouTube) and the search's source.
+    readonly property var extList: (Core.state.extensions || {}).list || []
+    property string searchSource: "library"
+    onExtListChanged: if (searchSource !== "library" && !extList.some(e => e.id === searchSource)) searchSource = "library"
 
     function reload() {
         tracks = Core.call("library.tracks") || []
@@ -30,6 +35,10 @@ Item {
     }
     function reloadPlaylists() {
         playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "track")
+    }
+    function openVault() {
+        if (!(stack.currentItem instanceof VaultPage))
+            stack.push(vaultView)
     }
     function back() {
         if (stack.depth > 1) {
@@ -67,6 +76,15 @@ Item {
         id: stack
         anchors.fill: parent
         initialItem: mainView
+    }
+
+    Component {
+        id: vaultView
+        VaultPage {
+            back: true
+            onBackClicked: stack.pop()
+            onUpload: page.uploadVault()
+        }
     }
 
     // ---- building blocks --------------------------------------------------
@@ -156,6 +174,21 @@ Item {
                 subtitle: Core.state.scanning ? Theme.tr("Scanning library…") + " " + (Core.state.scanProcessed || 0) + " / " + (Core.state.scanFound || 0)
                                               : page.count(page.trackCount, "song", "songs") + " · " + page.count(page.albums.length, "album", "albums")
                 IconButton {
+                    readonly property var cap: Core.state.capture || ({})
+                    readonly property bool on: cap.running === true || cap.requested === true
+                    visible: cap.available === true
+                    iconName: "graphic_eq"
+                    active: on
+                    tip: on ? Theme.tr("Stop visualizing other apps") : Theme.tr("Visualize other apps")
+                    onClicked: Core.call(on ? "capture.stop" : "capture.start")
+                }
+                IconButton {
+                    visible: Core.state.server === "connected" || Core.state.server === "login"
+                    iconName: "lock"
+                    tip: Theme.tr("Encrypted files")
+                    onClicked: page.openVault()
+                }
+                IconButton {
                     iconName: "add"
                     tip: Theme.tr("Add music folder")
                     onClicked: addMenu.popup()
@@ -176,7 +209,7 @@ Item {
                 Layout.leftMargin: 12
                 Layout.rightMargin: 12
                 Layout.topMargin: 4
-                visible: page.trackCount > 0
+                visible: page.trackCount > 0 || page.extList.length > 0
                 implicitHeight: 46
                 leftPadding: 46
                 rightPadding: clearButton.visible ? 46 : 16
@@ -289,32 +322,80 @@ Item {
                 EmptyState {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - 48, 420)
-                    visible: page.loaded && page.trackCount === 0
+                    visible: page.loaded && page.trackCount === 0 && !main.searching
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
                     AccentButton { text: Theme.tr("Add music folder"); highlighted: true; icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
                     Button { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onClicked: page.openFiles() }
                     Button { text: Theme.tr("Connect server"); flat: true; icon.source: Theme.icon("cloud"); onClicked: page.connectServer() }
+                    Button {
+                        visible: (Core.state.capture || {}).available === true
+                        text: Theme.tr("Visualize other apps")
+                        flat: true
+                        icon.source: Theme.icon("graphic_eq")
+                        onClicked: Core.call("capture.start")
+                    }
                 }
 
-                // Search results
+                // Search results: the library or a server extension.
                 Item {
                     anchors.fill: parent
                     visible: main.searching
-                    TrackListView {
-                        anchors.fill: parent
-                        anchors.topMargin: 8
-                        tracks: page.results
-                        onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                    Row {
+                        id: sourceChips
+                        x: 12
+                        y: 8
+                        spacing: 6
+                        visible: page.extList.length > 0
+                        Chip {
+                            text: Theme.tr("Library")
+                            checked: page.searchSource === "library"
+                            onClicked: page.searchSource = "library"
+                        }
+                        Repeater {
+                            model: page.extList
+                            Chip {
+                                required property var modelData
+                                text: modelData.name
+                                checked: page.searchSource === modelData.id
+                                onClicked: page.searchSource = modelData.id
+                            }
+                        }
                     }
-                    EmptyState {
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - 48, 420)
-                        visible: page.results.length === 0 && !searchTimer.running
-                        iconName: "search"
-                        title: Theme.tr("No results")
-                        text: Theme.tr("Try a different title, artist or album.")
+                    Item {
+                        anchors.fill: parent
+                        anchors.topMargin: sourceChips.visible ? sourceChips.height + 12 : 0
+                        TrackListView {
+                            anchors.fill: parent
+                            anchors.topMargin: 8
+                            visible: page.searchSource === "library"
+                            tracks: page.results
+                            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                        }
+                        EmptyState {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 420)
+                            visible: page.searchSource === "library" && page.results.length === 0 && !searchTimer.running
+                            iconName: "search"
+                            title: Theme.tr("No results")
+                            text: Theme.tr("Try a different title, artist or album.")
+                            Repeater {
+                                model: page.extList
+                                AccentButton {
+                                    required property var modelData
+                                    text: Theme.tr("Search on") + " " + modelData.name
+                                    highlighted: true
+                                    icon.source: Theme.icon("search")
+                                    onClicked: page.searchSource = modelData.id
+                                }
+                            }
+                        }
+                        Loader {
+                            anchors.fill: parent
+                            active: main.searching && page.searchSource !== "library"
+                            sourceComponent: ExtensionSearch { query: search.text }
+                        }
                     }
                 }
 

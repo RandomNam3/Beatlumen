@@ -70,6 +70,9 @@ pub(crate) enum Req {
     PresetSaved(String),
     Analysis(String),
     Loudness(String),
+    Lyrics(String),
+    LyricsSync(String),
+    LyricsSaved,
     TrackDownload {
         track_id: String,
         autoplay: bool,
@@ -78,6 +81,10 @@ pub(crate) enum Req {
     BgImage(String),
     Upload(String),
     Rescan,
+    /// A vault request and the session it was sent with.
+    Vault(crate::vault::VaultReq, String),
+    WebCheck(crate::webcheck::WebReq),
+    Ext(crate::extensions::ExtReq),
 }
 
 pub(crate) struct Gfx {
@@ -155,6 +162,7 @@ pub(crate) struct Revisions {
     pub images: u64,
     pub analysis: u64,
     pub settings: u64,
+    pub lyrics: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -178,6 +186,9 @@ fn parse_loudness(s: &str) -> Option<Loudness> {
 pub struct Core {
     pub settings: Settings,
     pub(crate) settings_dirty_at: Option<f64>,
+    /// Position in the restored current track, used by the first play.
+    resume_at: Option<f64>,
+    position_saved_at: f64,
     pub(crate) rng: Rng,
     pub(crate) gfx: Option<Gfx>,
     pub(crate) engine: Engine,
@@ -196,6 +207,11 @@ pub struct Core {
     /// Measured loudness per track id (None while measuring).
     loudness: HashMap<String, Option<Loudness>>,
     loudness_box: Mailbox<(String, Result<Loudness, String>)>,
+    /// The current track's song text.
+    pub(crate) lyrics: crate::lyrics::LyricsState,
+    pub(crate) lyrics_box: Mailbox<(String, Option<(String, String)>)>,
+    /// Offline copies of server songs.
+    pub(crate) offline: crate::offline::OfflineState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -241,6 +257,14 @@ pub struct Core {
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
+    pub(crate) airplay: crate::airplay::AirplayState,
+    pub(crate) outputs: crate::outputs::Outputs,
+    pub(crate) dlna: crate::dlna_receiver::DlnaState,
+    pub(crate) capture: crate::capture::CaptureState,
+    pub(crate) ext: crate::extensions::ExtState,
+    pub(crate) vault: crate::vault::Vault,
+    pub(crate) webcheck: crate::webcheck::WebCheckState,
+    pub(crate) push: crate::push::PushState,
     started: bool,
 }
 
@@ -349,9 +373,13 @@ impl Core {
             .clone()
             .unwrap_or_else(|| settings.server_url.clone());
         let server = ServerClient::new(&server_url, &settings.server_token);
+        let resume_at =
+            Some(settings.audio_position).filter(|p| *p > 1.0 && settings.audio_index.is_some());
         let mut core = Core {
             settings,
             settings_dirty_at: None,
+            resume_at,
+            position_saved_at: 0.0,
             engine: Engine::new(rng.next_u64()),
             rng,
             gfx: None,
@@ -368,6 +396,9 @@ impl Core {
             preloaded: (0, None),
             loudness: HashMap::new(),
             loudness_box: Mailbox::default(),
+            lyrics: Default::default(),
+            lyrics_box: Mailbox::default(),
+            offline: Default::default(),
             queue,
             bg_queue,
             library,
@@ -407,6 +438,14 @@ impl Core {
             last_dt: 0.0,
             time: 0.0,
             download_progress: None,
+            airplay: Default::default(),
+            outputs: Default::default(),
+            dlna: Default::default(),
+            capture: Default::default(),
+            ext: Default::default(),
+            vault: Default::default(),
+            webcheck: Default::default(),
+            push: Default::default(),
             started: false,
         };
         core.engine.set_intensity(core.settings.intensity);
@@ -471,6 +510,13 @@ impl Core {
 
     pub fn save_settings(&mut self, host: &mut dyn Host) {
         self.sync_settings_state();
+        if self.resume_at.is_none() {
+            self.settings.audio_position = if self.current.is_some() {
+                self.player.position(host)
+            } else {
+                0.0
+            };
+        }
         host.storage_write(
             Settings::STORAGE_KEY,
             self.settings.to_json().to_json_pretty().as_bytes(),
@@ -485,14 +531,21 @@ impl Core {
             for k in [
                 "audioQueue",
                 "audioIndex",
+                "audioPosition",
                 "backgrounds",
                 "backgroundIndex",
                 "serverToken",
                 "version",
+                "airplayPassword",
+                "airplayId",
             ] {
                 m.remove(k);
             }
         }
+        v.set(
+            "airplayPasswordSet",
+            !self.settings.airplay_password.is_empty(),
+        );
         v
     }
 
@@ -523,7 +576,7 @@ impl Core {
             }
             _ => bl_net::api::SOURCE_URL.to_string(),
         };
-        let play = match self.player.state() {
+        let play = match self.capture_play_state().unwrap_or(self.player.state()) {
             PlayState::Stopped => "stopped",
             PlayState::Loading => "loading",
             PlayState::Playing => "playing",
@@ -545,8 +598,8 @@ impl Core {
             .with("play", play)
             .with(
                 "duration",
-                self.player
-                    .duration()
+                self.capture_duration()
+                    .or_else(|| self.player.duration())
                     .or_else(|| self.current.as_ref().map(|t| t.duration_ms as f64 / 1000.0))
                     .unwrap_or(0.0),
             )
@@ -588,6 +641,24 @@ impl Core {
             .with("imagesRev", self.revs.images)
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
+            .with("lyricsRev", self.revs.lyrics)
+            .with("offline", self.offline_json(host))
+            .with("airplay", self.airplay_json())
+            .with("outputs", self.outputs_json())
+            .with("dlnaReceiver", self.dlna_json())
+            .with("capture", self.capture_json(host))
+            .with("extensions", self.extensions_json())
+            .with("vault", self.vault_json(host))
+            .with("webCheck", self.webcheck_json())
+            .with(
+                "serverWebIntegrity",
+                match &self.server.state {
+                    ServerState::Connected(i) | ServerState::NeedsLogin(i) => {
+                        i.web_integrity.clone()
+                    }
+                    _ => String::new(),
+                },
+            )
             .with("settings", self.settings_json())
     }
 
@@ -603,6 +674,7 @@ impl Core {
             .with("track", t.track)
             .with("year", t.year)
             .with("local", library::is_local(&t.id))
+            .with("offline", self.is_offline(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
 
@@ -643,6 +715,7 @@ impl Core {
             let id = self.server.get(host, p);
             self.requests.insert(id, r);
         }
+        self.extensions_refresh(host);
     }
 
     pub(crate) fn server_rescan(&mut self, host: &mut dyn Host) {
@@ -668,6 +741,15 @@ impl Core {
                 _ => None,
             }
         };
+        if let Req::Vault(v, token) = req {
+            return self.vault_http(host, v, &token, res);
+        }
+        if let Req::WebCheck(w) = req {
+            return self.webcheck_http(host, w, res);
+        }
+        if let Req::Ext(e) = req {
+            return self.ext_http(host, e, res);
+        }
         let status = res.as_ref().map(|r| r.status).unwrap_or(0);
         if status == 401 && !matches!(req, Req::Login | Req::Info) {
             if let ServerState::Connected(info) = &self.server.state {
@@ -786,6 +868,13 @@ impl Core {
                 };
                 self.loudness_box.post((id, l));
             }
+            Req::Lyrics(id) => self.lyrics_response(host, id, &res),
+            Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
+            Req::LyricsSaved => {
+                if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
+                    self.toast(self.tr("Saving the song text failed"), true);
+                }
+            }
             Req::Analysis(key) => {
                 if key != self.analysis_key {
                     return;
@@ -846,6 +935,7 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
+            Req::Vault(..) | Req::WebCheck(_) | Req::Ext(_) => {}
         }
     }
 
@@ -1069,6 +1159,12 @@ impl Core {
         if let Some(t) = self.extra_tracks.get(id) {
             return t.clone();
         }
+        if let Some(t) = self.vault_track(id) {
+            return t;
+        }
+        if let Some(t) = self.offline_track(id) {
+            return t;
+        }
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
@@ -1096,6 +1192,15 @@ impl Core {
     }
 
     /// Starts playing the queue's current item.
+    /// True while an AirPlay sender's stream is the current track.
+    pub(crate) fn playing_airplay(&self) -> bool {
+        self.airplay.active
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|t| t.id.starts_with(crate::airplay::ID_PREFIX))
+    }
+
     pub(crate) fn play_current(&mut self, host: &mut dyn Host, autoplay: bool) {
         self.start_current(host, autoplay, true);
     }
@@ -1103,6 +1208,9 @@ impl Core {
     /// Makes the queue's current item the current track; `load` starts its
     /// playback (false when the player already advanced to it gaplessly).
     fn start_current(&mut self, host: &mut dyn Host, autoplay: bool, load: bool) {
+        self.resume_at = None;
+        self.release_airplay(host);
+        self.release_capture(host);
         self.revs.queue += 1;
         let Some(id) = self.queue.current().cloned() else {
             self.player.stop(host);
@@ -1154,6 +1262,10 @@ impl Core {
                 }
                 Err(e) => self.toast(e, true),
             }
+        } else if id.starts_with(crate::vault::ID_PREFIX) {
+            // Encrypted file without streaming: downloaded first.
+            self.player.stop(host);
+            self.vault_download(host, &id, autoplay);
         } else if !id.starts_with("mem:") {
             // Server track without threads: downloaded first.
             self.player.stop(host);
@@ -1207,6 +1319,23 @@ impl Core {
                     Box::new(std::io::Cursor::new(data)) as Box<dyn bl_media::Source>,
                     ext,
                 ))
+            }));
+        }
+        if id.starts_with(crate::vault::ID_PREFIX) {
+            return self.vault_opener(host, id);
+        }
+        if id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            return self.dlna_opener();
+        }
+        if let Some(o) = self.offline_opener(id) {
+            return Some(o);
+        }
+        if id.starts_with(crate::extensions::ID_PREFIX) {
+            // Still being imported: the server streams what it has so far.
+            let url = self.ext_stream_url(id)?;
+            let headers = self.server.headers();
+            return Some(Box::new(move || {
+                Ok((http_stream(&url, &headers)?, Some("opus".to_string())))
             }));
         }
         if !host.has_threads() || host.audio_is_push() {
@@ -1265,7 +1394,7 @@ impl Core {
     /// Normalization gain of a track: 1 when normalization is off, None
     /// while its loudness is being measured (the measurement is started).
     fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
-        if !self.settings.normalize {
+        if !self.settings.normalize || id.starts_with(crate::extensions::ID_PREFIX) {
             return Some(1.0);
         }
         match self.loudness.get(id) {
@@ -1336,6 +1465,17 @@ impl Core {
                 }));
             } else {
                 mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)));
+            }
+        } else if id.starts_with(crate::vault::ID_PREFIX) {
+            let Some(opener) = self.vault_opener(host, id) else {
+                return;
+            };
+            let job =
+                move || mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))));
+            if host.has_threads() {
+                host.spawn(Box::new(job));
+            } else {
+                job();
             }
         } else if self.server.is_connected() {
             let rid = self
@@ -1496,13 +1636,23 @@ impl Core {
     }
 
     pub(crate) fn toggle_play(&mut self, host: &mut dyn Host) {
+        if self.playing_airplay() {
+            // A speaker cannot pause its sender: stop receiving.
+            self.release_airplay(host);
+            return;
+        }
         match self.player.state() {
             PlayState::Stopped => {
                 if self.queue.current().is_none() && !self.queue.is_empty() {
                     self.queue.set_position(0);
                 }
                 if self.queue.current().is_some() {
+                    let resume = self.resume_at.take();
                     self.play_current(host, true);
+                    // Continue the track that played when the app closed.
+                    if let Some(p) = resume {
+                        self.player.seek(host, p);
+                    }
                 }
             }
             _ => self.player.toggle(host),
@@ -1547,7 +1697,16 @@ impl Core {
 
     /// Playback position in seconds.
     pub fn position(&self, host: &dyn Host) -> f64 {
+        if let Some(p) = self.airplay_position().or_else(|| self.capture_position()) {
+            return p;
+        }
         self.player.position(host)
+    }
+
+    /// The most recently played samples (interleaved stereo), as the
+    /// visuals get them.
+    pub fn recent_samples(&self, out: &mut [f32]) {
+        self.player.recent_samples(out);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -1572,6 +1731,14 @@ impl Core {
         let Some(track) = self.current.clone() else {
             return;
         };
+        if track.id.starts_with(crate::airplay::ID_PREFIX)
+            || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
+            || track.id.starts_with(crate::capture::ID_PREFIX)
+            || track.id.starts_with(crate::extensions::ID_PREFIX)
+        {
+            // Live or foreign stream: the visuals follow the audio as it plays.
+            return;
+        }
         let cfg = self.preset.analysis_config();
         let key = format!(
             "{}|{}|{}|{:016x}",
@@ -1626,6 +1793,32 @@ impl Core {
                 let res = analyze(Box::new(std::io::Cursor::new(data)), extension(name), cfg);
                 self.analysis_box.post((key, res));
             }
+        } else if track.id.starts_with(crate::vault::ID_PREFIX) {
+            // Encrypted: only this device can analyse it. Without streaming
+            // the file is analysed once it has been downloaded.
+            if let Some(opener) = self.vault_opener(host, &track.id) {
+                let mailbox = self.analysis_box.clone();
+                let job = move || {
+                    let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                };
+                if host.has_threads() {
+                    host.spawn(Box::new(job));
+                } else {
+                    job();
+                }
+            }
+        } else if let Some(blob) = self.offline_analysis(&track.id, &key) {
+            self.analysis_box.post((key, Ok(blob)));
+        } else if let (false, Some(opener)) =
+            (self.server.is_connected(), self.offline_opener(&track.id))
+        {
+            // Offline copy without a matching analysis: analysed here.
+            let mailbox = self.analysis_box.clone();
+            host.spawn(Box::new(move || {
+                let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                mailbox.post((key, res));
+            }));
         } else if self.server.is_connected() {
             let cfg_json = Value::object()
                 .with("analysisConfig", self.preset.analysis.clone())
@@ -1667,13 +1860,23 @@ impl Core {
     /// URL of a track's cover for the UI, if known without blocking:
     /// server URL, extracted local file, or "" (none / not yet extracted).
     pub(crate) fn cover_url_cached(&self, t: &Track) -> String {
-        if library::is_local(&t.id) {
+        if t.id.starts_with(crate::airplay::ID_PREFIX) {
+            self.airplay.cover_url().to_string()
+        } else if t.id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            self.dlna.cover_url().to_string()
+        } else if t.id.starts_with(crate::capture::ID_PREFIX) {
+            self.capture.cover_url().to_string()
+        } else if t.id.starts_with(crate::extensions::ID_PREFIX) {
+            self.ext_cover_url(&t.id)
+        } else if library::is_local(&t.id) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
                 _ => String::new(),
             }
         } else if t.id.starts_with("mem:") {
             String::new()
+        } else if let (false, Some(f)) = (self.server.is_connected(), self.offline_cover(&t.id)) {
+            file_url(f)
         } else if t.has_cover && self.server.is_connected() {
             self.server
                 .image_url(&bl_net::api::paths::track_cover(&t.id, 512))
@@ -1754,7 +1957,7 @@ impl Core {
 
     // ---- backgrounds -----------------------------------------------------------
 
-    fn decode_background_async(
+    pub(crate) fn decode_background_async(
         &mut self,
         host: &mut dyn Host,
         key: String,
@@ -1825,6 +2028,12 @@ impl Core {
         } else if let Some(id) = source.strip_prefix("srv:") {
             let rid = self.server.get(host, &bl_net::api::paths::image(id, 2560));
             self.requests.insert(rid, Req::BgImage(source.to_string()));
+        } else if let Some(id) = source.strip_prefix(crate::vault::BG_PREFIX) {
+            // Locked or not listed yet: shown once the vault opens.
+            if !self.vault_load_background(host, id) {
+                self.bg_pending = None;
+                self.load_background(host, DEFAULT_BG);
+            }
         } else if let Some(name) = source.strip_prefix("mem:") {
             if let Some(data) = self.memory_files.get(name).cloned() {
                 self.decode_background_async(host, source.to_string(), data, animate);
@@ -2033,6 +2242,23 @@ impl Core {
     /// command line): audio is queued and played, images become
     /// backgrounds, presets are imported.
     pub(crate) fn open_paths(&mut self, host: &mut dyn Host, paths: Vec<String>, play: bool) {
+        // Files picked for the encrypted storage (Android's picker hands
+        // them over as copied local files).
+        if std::mem::take(&mut self.vault.expect_upload) {
+            self.vault_upload_paths(host, paths);
+            return;
+        }
+        // A song text for the current track: picked for that, or an .lrc file.
+        let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
+        if let Some(p) = paths.iter().find(|p| {
+            let ext = extension(p).unwrap_or_default();
+            ext == "lrc" || (expect_lyrics && ext == "txt")
+        }) {
+            if let Ok(d) = host.fs_read(p) {
+                self.lyrics_import_bytes(host, &d);
+            }
+            return;
+        }
         let mut audio = Vec::new();
         let mut images = Vec::new();
         for p in paths {
@@ -2067,6 +2293,16 @@ impl Core {
 
     /// Like [`Core::open_paths`] for files given as bytes (browser).
     pub fn open_data(&mut self, host: &mut dyn Host, name: String, data: Vec<u8>) {
+        if std::mem::take(&mut self.vault.expect_upload) {
+            self.vault_upload_data(host, name, data);
+            return;
+        }
+        let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
+        let ext = extension(&name).unwrap_or_default();
+        if ext == "lrc" || (expect_lyrics && ext == "txt") {
+            self.lyrics_import_bytes(host, &data);
+            return;
+        }
         let ext = extension(&name).unwrap_or_default();
         if ext == "hfx" {
             let stem = name.trim_end_matches(".hfx").to_string();
@@ -2123,6 +2359,7 @@ impl Core {
         for (id, res) in host.http_poll() {
             self.handle_http(host, id, res);
         }
+        self.poll_vault(host);
         if let Some((name, items)) = self.pending_playlist_items.clone() {
             if let Some(mut pl) = self
                 .server_playlists
@@ -2137,14 +2374,26 @@ impl Core {
         }
         self.poll_analysis(host);
         self.poll_loudness(host);
+        self.poll_lyrics();
+        self.poll_lyrics_sync(host);
+        self.poll_offline(host);
         self.poll_scan(host);
         self.poll_covers();
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);
         }
+        self.update_airplay(host);
+        self.update_dlna(host);
+        self.update_extensions(host);
+        self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
             match ev {
+                // A live AirPlay stream ends through the receiver.
+                PlayerEvent::Ended if self.playing_airplay() => {}
+                // A control point's stream: its next one, or stop.
+                PlayerEvent::Ended if self.playing_dlna() => self.dlna_track_ended(host),
+                PlayerEvent::Ended if self.playing_capture() => self.capture_stream_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
                 PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
                 PlayerEvent::Reload(at) => {
@@ -2167,6 +2416,11 @@ impl Core {
             }
         }
         self.sync_preload(host);
+        // The position survives the app being closed while playing.
+        if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
+            self.position_saved_at = self.time;
+            self.settings_dirty_at.get_or_insert(self.time);
+        }
         if let Some(t) = self.settings_dirty_at {
             if self.time - t > 2.0 {
                 self.save_settings(host);
@@ -2381,7 +2635,7 @@ pub(crate) fn local_cover_bytes(path: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn http_stream(
+pub(crate) fn http_stream(
     url: &str,
     headers: &[(String, String)],
 ) -> Result<Box<dyn bl_media::Source>, String> {
@@ -2390,7 +2644,7 @@ fn http_stream(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn http_stream(
+pub(crate) fn http_stream(
     _url: &str,
     _headers: &[(String, String)],
 ) -> Result<Box<dyn bl_media::Source>, String> {

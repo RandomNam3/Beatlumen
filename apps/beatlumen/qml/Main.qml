@@ -27,6 +27,7 @@ ApplicationWindow {
     // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings
     property int page: -1
     property bool idle: false
+    readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
     readonly property bool chromeVisible: page >= 0 || !idle || !playing
 
     Component.onCompleted: {
@@ -37,6 +38,9 @@ ApplicationWindow {
             Core.requestMediaPermission()
         }
     }
+    // Android's status and navigation bars go with the controls (a swipe
+    // from the edge shows them briefly).
+    onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
     onPageChanged: {
         Core.call("ui.blur", { value: page >= 0 ? 2.0 : 0.0 })
         poke()
@@ -126,7 +130,8 @@ ApplicationWindow {
         anchors.bottom: playerBar.top
         width: 88
         current: win.page
-        onSelected: (i) => win.page = i
+        // The page floats over the visual: its entry closes it again.
+        onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
         enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
@@ -154,6 +159,12 @@ ApplicationWindow {
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
         IconButton {
+            iconName: "lyrics"; iconColor: "white"
+            active: win.showLyrics
+            tip: win.showLyrics ? Theme.tr("Hide song text") : Theme.tr("Show song text")
+            onClicked: Core.call("settings.set", { key: "ui.lyrics", value: !win.showLyrics })
+        }
+        IconButton {
             iconName: "wallpaper"; iconColor: "white"; tip: Theme.tr("Change background")
             onClicked: Core.call("backgrounds.next")
         }
@@ -179,6 +190,9 @@ ApplicationWindow {
         Behavior on anchors.bottomMargin { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
         visible: win.page < 0
         showSpectrum: true
+        showLyrics: win.showLyrics
+        controlsVisible: win.chromeVisible
+        onAddLyrics: dialogs.openLyrics()
     }
 
     // While the controls are hidden, a short tap anywhere brings them back
@@ -230,6 +244,7 @@ ApplicationWindow {
                     onAddFolder: win.addFolder()
                     onOpenFiles: dialogs.openAudio()
                     onConnectServer: win.page = 3
+                    onUploadVault: dialogs.openUpload()
                 }
             }
             Loader {
@@ -249,6 +264,7 @@ ApplicationWindow {
                 sourceComponent: SettingsPage {
                     onAddFolder: win.addFolder()
                     onLogin: loginPrompt.open()
+                    onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
                 }
             }
         }
@@ -335,6 +351,51 @@ ApplicationWindow {
         acceptText: Theme.tr("Log in")
         onSubmitted: (t) => Core.call("server.login", { password: t })
     }
+    // Visualising other apps without access to their media sessions: the
+    // title, cover and full control need it; offered once per start.
+    AppDialog {
+        id: captureAccess
+        property bool asked: false
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, win.width - 32)
+        title: Theme.tr("Control other apps?")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("For the title, the cover and the play buttons here, Android needs notification access for Beatlumen. Notifications are not read.")
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                Button { text: Theme.tr("Later"); flat: true; onClicked: captureAccess.close() }
+                AccentButton {
+                    text: Theme.tr("Allow")
+                    highlighted: true
+                    onClicked: {
+                        captureAccess.close()
+                        Core.call("capture.sessionAccess")
+                    }
+                }
+            }
+        }
+    }
+    Timer {
+        id: captureAccessCheck
+        interval: 1500
+        onTriggered: {
+            const cap = Core.state.capture || {}
+            if (cap.running === true && cap.access !== true && !captureAccess.asked) {
+                captureAccess.asked = true
+                captureAccess.open()
+            }
+        }
+    }
     Connections {
         target: Core
         function onStateChanged() {
@@ -342,6 +403,9 @@ ApplicationWindow {
             // password right away.
             if (Core.platform === "web" && Core.state.server === "login" && !loginPrompt.opened)
                 loginPrompt.open()
+            const cap = Core.state.capture || {}
+            if (cap.running === true && cap.access !== true && !captureAccess.asked && !captureAccessCheck.running)
+                captureAccessCheck.start()
         }
     }
 }

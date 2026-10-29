@@ -78,6 +78,10 @@ impl NativeServices {
         crate::host::write_private(&path, data)
     }
 
+    pub fn storage_path(&self, key: &str) -> Option<String> {
+        key_path(&self.data_dir, key).map(|p| p.to_string_lossy().into_owned())
+    }
+
     pub fn storage_delete(&self, key: &str) {
         if let Some(p) = key_path(&self.data_dir, key) {
             let _ = std::fs::remove_file(p);
@@ -250,6 +254,7 @@ pub fn desktop_roots() -> Vec<(String, String)> {
         for (label, sub) in [
             ("Music", "Music"),
             ("Pictures", "Pictures"),
+            ("Documents", "Documents"),
             ("Downloads", "Downloads"),
         ] {
             let p = Path::new(h).join(sub);

@@ -1,0 +1,29 @@
+:root { --bg: #0b0a10; --fg: #ececf1; --dim: #a5a3b3; --card: #18161f; --line: #2e2b38; --accent: #e91e63; --danger: #ff6b6b; }
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f6f5f9; --fg: #17151c; --dim: #5d5a69; --card: #ffffff; --line: #d9d6e2; --danger: #c62828; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, sans-serif; display: flex; justify-content: center; }
+main { width: 100%; max-width: 26rem; padding: 2rem 1rem; }
+header { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.5rem; }
+h1 { font-size: 1.6rem; margin: 0; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 .25rem; }
+section { margin-bottom: 1rem; }
+label { display: block; margin: .75rem 0; }
+label span { display: block; font-size: .85rem; color: var(--dim); margin-bottom: .25rem; }
+input { width: 100%; padding: .7rem .8rem; border-radius: .6rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; }
+input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+button { width: 100%; padding: .75rem 1rem; margin: .5rem 0; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
+a.button { display: block; text-align: center; text-decoration: none; padding: .75rem 1rem; margin: .5rem 0; border-radius: 999px; font-weight: 600; }
+a.button.primary, button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+button.small { width: auto; padding: .35rem .8rem; margin: 0; font-weight: 500; }
+.or { text-align: center; color: var(--dim); margin: 1rem 0 0; font-size: .9rem; }
+.note { background: var(--card); border: 1px solid var(--line); border-radius: .8rem; padding: .75rem 1rem; }
+.code { font: 600 1.8rem/1.2 ui-monospace, monospace; letter-spacing: .1em; text-align: center; margin: .25rem 0; }
+.hint { color: var(--dim); font-size: .9rem; margin: .25rem 0; }
+#status { min-height: 1.5em; color: var(--dim); }
+#status.error { color: var(--danger); }
+ul { list-style: none; padding: 0; margin: .5rem 0; }
+li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+li small { color: var(--dim); display: block; }

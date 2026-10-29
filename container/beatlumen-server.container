@@ -1,0 +1,50 @@
+# Podman Quadlet unit: runs the server as a systemd service.
+#
+#   Rootless: ~/.config/containers/systemd/beatlumen-server.container
+#   Root:     /etc/containers/systemd/beatlumen-server.container
+#   then: systemctl [--user] daemon-reload
+#         systemctl [--user] start beatlumen-server
+#
+# Build the image first: podman build -f container/Containerfile -t beatlumen-server .
+# Create the secrets: printf '%s' 'a-long-password' | podman secret create beatlumen_password -
+#                     head -c 32 /dev/urandom | podman secret create beatlumen_pepper -
+# Adjust the music and image folders below.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=Beatlumen Server
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=localhost/beatlumen-server:latest
+ContainerName=beatlumen-server
+PublishPort=7878:7878/tcp
+Volume=%h/Music:/music:ro,z
+Volume=%h/Pictures/Backgrounds:/images:ro,z
+Volume=beatlumen-data:/data:Z
+Secret=beatlumen_password,mode=0400,uid=10001
+Environment=BEATLUMEN_PASSWORD_FILE=/run/secrets/beatlumen_password
+Secret=beatlumen_pepper,mode=0400,uid=10001
+Environment=BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/beatlumen_pepper
+Environment=BEATLUMEN_NAME=Beatlumen Server
+RunInit=true
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+PidsLimit=256
+HealthCmd=/beatlumen-server --health-check
+HealthInterval=30s
+HealthStartPeriod=30s
+# With the SELinux profile from container/selinux installed:
+#SecurityLabelType=beatlumen_server.process
+# With the AppArmor profile from container/apparmor installed:
+#PodmanArgs=--security-opt apparmor=beatlumen-server
+
+[Service]
+Restart=on-failure
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

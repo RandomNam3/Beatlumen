@@ -26,6 +26,7 @@ import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -62,9 +63,13 @@ public final class MediaBridge
     private static AudioManager sAudio;
     private static AudioFocusRequest sFocusRequest;
     private static boolean sHasFocus;
+    private static boolean sWasActive;
     private static boolean sResumeOnFocusGain;
     private static boolean sNoisyRegistered;
     private static boolean sServiceRunning;
+    // The app has exited: commands go to resumeInApp().
+    private static boolean sNativeGone;
+    private static boolean sAppSeen;
 
     static String sTitle = "";
     static String sArtist = "";
@@ -92,18 +97,28 @@ public final class MediaBridge
         });
     }
 
-    /** Tears everything down (app exit). */
+    /** App exit: playback ends; the session stays for resumption (ResumeService). */
     public static void release()
     {
         sMain.post(() -> {
             setService(false);
             abandonFocus();
             setNoisyReceiver(false);
+            sNativeGone = true;
             if (sSession != null) {
                 sSession.setActive(false);
-                sSession.release();
-                sSession = null;
+                setResumeState();
             }
+            // Qt cannot start a second time in the same process: once the
+            // app has ended, the process ends too. The system's media
+            // controls keep the last track and start a fresh process
+            // (ResumeService) when it is played again.
+            sMain.postDelayed(() -> {
+                if (sNativeGone) {
+                    Log.i(TAG, "app closed: ending the process");
+                    Process.killProcess(Process.myPid());
+                }
+            }, 1500);
         });
     }
 
@@ -111,16 +126,97 @@ public final class MediaBridge
 
     static void command(String cmd)
     {
-        try {
-            nativeCommand(cmd);
-        } catch (UnsatisfiedLinkError e) {
-            Log.w(TAG, "native media command unavailable", e);
+        if (!sNativeGone) {
+            try {
+                nativeCommand(cmd);
+                return;
+            } catch (UnsatisfiedLinkError e) {
+                // The app is not running (resumption from the system's
+                // media controls): continue there.
+            }
         }
+        if ("play".equals(cmd) || "toggle".equals(cmd))
+            resumeInApp();
     }
 
     static MediaSession session()
     {
         return sSession;
+    }
+
+    /** The media session for ResumeService (main thread), also without the app. */
+    static MediaSession sessionFor(Context context)
+    {
+        if (sContext == null)
+            sContext = context.getApplicationContext();
+        final boolean fresh = sSession == null;
+        ensureSession();
+        if (fresh)
+            setResumeState();
+        return sSession;
+    }
+
+    // Shows the last track as paused, ready to play.
+    private static void setResumeState()
+    {
+        if (sContext == null || sSession == null || !ResumeService.hasLast(sContext))
+            return;
+        sTitle = ResumeService.lastTitle(sContext);
+        sArtist = ResumeService.lastArtist(sContext);
+        sAlbum = ResumeService.lastAlbum(sContext);
+        sCover = ResumeService.lastCover(sContext);
+        sCoverSource = "";
+        sDuration = 0;
+        sState = STATE_PAUSED;
+        publishMetadata();
+        sSession.setPlaybackState(new PlaybackState.Builder()
+                .setActions(ACTIONS)
+                .setState(PlaybackState.STATE_PAUSED, 0, 0.0f, SystemClock.elapsedRealtime())
+                .build());
+    }
+
+    static final String EXTRA_RESUME = "io.github.randomnam3.beatlumen.RESUME";
+    private static final int RESUME_NOTIFICATION_ID = 2;
+
+    // Opens the app, which then plays on. Android may refuse to start an
+    // activity from the background; a notification to tap is the fallback
+    // (removed as soon as the app runs).
+    private static void resumeInApp()
+    {
+        if (sContext == null)
+            return;
+        Intent i = sContext.getPackageManager().getLaunchIntentForPackage(sContext.getPackageName());
+        if (i == null)
+            return;
+        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        i.putExtra(EXTRA_RESUME, true);
+        try {
+            sContext.startActivity(i);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "resume: app not started", e);
+        }
+        android.app.NotificationManager nm = sContext.getSystemService(android.app.NotificationManager.class);
+        if (nm.getNotificationChannel("resume") == null) {
+            android.app.NotificationChannel ch = new android.app.NotificationChannel("resume", "Continue playing",
+                    android.app.NotificationManager.IMPORTANCE_HIGH);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+        android.app.PendingIntent pi = android.app.PendingIntent.getActivity(sContext, 1, i,
+                android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
+        android.app.Notification n = new android.app.Notification.Builder(sContext, "resume")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle(sTitle.isEmpty() ? "Beatlumen" : sTitle)
+                .setContentText("Tap to continue playing")
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setTimeoutAfter(60_000)
+                .build();
+        try {
+            nm.notify(RESUME_NOTIFICATION_ID, n);
+        } catch (RuntimeException e) {
+            // No notification permission.
+        }
     }
 
     static void onServiceStopped()
@@ -135,6 +231,12 @@ public final class MediaBridge
     {
         if (sContext == null)
             sContext = context.getApplicationContext();
+        if (sNativeGone || !sAppSeen) {
+            // The app runs (again): the fallback is not needed.
+            sNativeGone = false;
+            sAppSeen = true;
+            sContext.getSystemService(android.app.NotificationManager.class).cancel(RESUME_NOTIFICATION_ID);
+        }
         final boolean hasTrack = title != null && !title.isEmpty();
         ensureSession();
 
@@ -152,6 +254,8 @@ public final class MediaBridge
         }
         if (metaChanged || coverChanged)
             publishMetadata();
+        if (metaChanged && hasTrack)
+            ResumeService.rememberTrack(sContext, sTitle, sArtist, sAlbum);
         sState = hasTrack ? state : STATE_STOPPED;
 
         int ps;
@@ -169,6 +273,10 @@ public final class MediaBridge
 
         final boolean active = sState == STATE_PLAYING || sState == STATE_BUFFERING;
         if (active) {
+            // Asked again whenever playback starts: a focus held earlier may
+            // have gone without a callback (another app, a call).
+            if (!sWasActive)
+                sHasFocus = false;
             requestFocus();
             setNoisyReceiver(true);
         } else {
@@ -176,6 +284,7 @@ public final class MediaBridge
             if (sState == STATE_STOPPED)
                 abandonFocus();
         }
+        sWasActive = active;
         // The service starts with playback and keeps running while paused; it
         // is in the foreground only while playing (see MediaPlaybackService).
         if (active)
@@ -241,6 +350,7 @@ public final class MediaBridge
                     return; // the track changed meanwhile
                 sCover = bmp;
                 publishMetadata();
+                ResumeService.rememberCover(sContext, bmp);
                 if (sServiceRunning)
                     MediaPlaybackService.refresh(sContext);
             });

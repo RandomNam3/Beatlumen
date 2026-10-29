@@ -1,0 +1,59 @@
+# Beatlumen Server container image (Docker and Podman).
+#
+#   docker build -f container/Containerfile -t beatlumen-server .
+#   podman build -f container/Containerfile -t beatlumen-server .
+#
+# Build context: the repository root. The web client is embedded when
+# dist/web exists (./build-web.sh, or the "beatlumen-web" CI artifact
+# unpacked to dist/web); otherwise the server shows a placeholder page.
+#
+# The result holds only what the server needs: the static binary (with the
+# web client, compressed), its data folder owned by the server's user, and
+# the license texts the AGPL requires to accompany it. No shell, no package
+# manager, no libraries, no base image. See container/README.md.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+ARG RUST_IMAGE=docker.io/library/rust:1.99-alpine3.22
+
+FROM ${RUST_IMAGE} AS build
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+COPY . .
+# musl targets link statically; symbols are stripped to keep the image small.
+ENV CARGO_PROFILE_RELEASE_STRIP=true
+# Public release key (hex) of official builds: the server then accepts only
+# a web client whose integrity manifest carries the release signature.
+ARG BEATLUMEN_RELEASE_KEY=
+RUN set -eu; \
+    if [ -f dist/web/index.html ]; then export BEATLUMEN_EMBED_WEB=/src/dist/web; fi; \
+    cargo build --release --locked -p beatlumen-server; \
+    mkdir -p /out/data /out/doc; \
+    cp target/release/beatlumen-server /out/; \
+    cp LICENSE THIRD_PARTY_NOTICES.md /out/doc/; \
+    cp crates/bl-vault/NOTICE /out/doc/NOTICE-cryptography; \
+    cp apps/beatlumen-server/NOTICE /out/doc/NOTICE-tls
+
+FROM scratch
+COPY --from=build /out/beatlumen-server /beatlumen-server
+COPY --from=build /out/doc/ /usr/share/doc/beatlumen/
+# Owned by the server's user, so a new named volume on /data is writable.
+# (Docker and Podman create the mount points /music and /images.)
+COPY --from=build --chown=10001:10001 /out/data /data
+
+LABEL org.opencontainers.image.title="Beatlumen Server" \
+      org.opencontainers.image.description="Serves music folders to Beatlumen apps and the web client" \
+      org.opencontainers.image.source="https://github.com/RandomNam3/Beatlumen" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+ENV BEATLUMEN_BIND=0.0.0.0:7878 \
+    BEATLUMEN_DATA=/data \
+    BEATLUMEN_MUSIC=/music \
+    BEATLUMEN_IMAGES=/images
+
+USER 10001:10001
+EXPOSE 7878/tcp
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["/beatlumen-server", "--health-check"]
+ENTRYPOINT ["/beatlumen-server"]

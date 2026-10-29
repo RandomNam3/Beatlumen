@@ -21,3 +21,19 @@ bl-media = { path = "../../crates/bl-media" }
 bl-image = { path = "../../crates/bl-image" }
 bl-analysis = { path = "../../crates/bl-analysis" }
 bl-fx = { path = "../../crates/bl-fx" }
+bl-vault = { path = "../../crates/bl-vault" }
+bl-asr = { path = "../../crates/bl-asr" }
+# TLS for outgoing connections (push services); pinned exactly.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "=1.0.11"
+# Passkey signatures (ES256, EdDSA, RS256); already used by rustls.
+ring = "=0.17.14"
+
+[dev-dependencies]
+bl-core = { path = "../../crates/bl-core" }
+bl-airplay = { path = "../../crates/bl-airplay" }
+bl-cast = { path = "../../crates/bl-cast" }
+bl-offline = { path = "../../crates/bl-offline" }
+bl-upnp = { path = "../../crates/bl-upnp" }
+# A software authenticator for the passkey tests.
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"] }
