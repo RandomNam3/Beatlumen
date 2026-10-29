@@ -87,7 +87,13 @@ fn decode_matches_ffmpeg() {
         };
         let secs = t0.elapsed().as_secs_f64();
         let ch = spec.channels as usize;
-        reference.drain(..(fx.ref_skip * ch).min(reference.len()));
+        let (m_spec, _, m_samples, _) = decode_all(&master(fx.master)).unwrap();
+        let same_layout = m_spec.sample_rate == spec.sample_rate && m_spec.channels == spec.channels;
+        // Older ffmpeg versions keep the encoder delay of AAC and MP3 in
+        // Matroska (newer ones write CodecDelay and trim it).
+        if fx.ref_skip > 0 && (!same_layout || best_offset(&reference, &m_samples, ch, 2500) != 0) {
+            reference.drain(..(fx.ref_skip * ch).min(reference.len()));
+        }
         let frames = ours.len() / ch.max(1);
         let ref_frames = if fx.master_len {
             master_frames(&fx)
@@ -102,9 +108,8 @@ fn decode_matches_ffmpeg() {
             best_offset(&ours, &reference, ch, 3000)
         };
         // Gapless alignment against the original signal (same rate only).
-        let (m_spec, _, m_samples, _) = decode_all(&master(fx.master)).unwrap();
         let master_offset =
-            if m_spec.sample_rate == spec.sample_rate && m_spec.channels == spec.channels {
+            if same_layout {
                 Some(best_offset(&ours, &m_samples, ch, 2500))
             } else {
                 None

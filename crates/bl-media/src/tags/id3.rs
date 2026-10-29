@@ -315,6 +315,8 @@ fn canonical_id(id: &str) -> &str {
         "TPA" => "TPOS",
         "COM" => "COMM",
         "TXX" => "TXXX",
+        "ULT" => "USLT",
+        "SLT" => "SYLT",
         "TOR" => "TORY",
         "PIC" => "PIC",
         other => other,
@@ -339,6 +341,8 @@ fn wanted(id: &str) -> bool {
             | "TPOS"
             | "COMM"
             | "TXXX"
+            | "USLT"
+            | "SYLT"
             | "APIC"
             | "PIC"
     )
@@ -474,7 +478,10 @@ fn handle_frame(
             let (desc, value) = split_text(enc, rest);
             let (value, _) = split_text(enc, value);
             let key = desc.trim().to_ascii_uppercase();
-            if key.starts_with("REPLAYGAIN_")
+            // ffmpeg writes its "lyrics" key as TXXX:USLT.
+            if matches!(key.as_str(), "LYRICS" | "UNSYNCEDLYRICS" | "USLT") {
+                super::set_lyrics(tags, &value);
+            } else if key.starts_with("REPLAYGAIN_")
                 || matches!(
                     key.as_str(),
                     "ALBUM ARTIST"
@@ -501,6 +508,22 @@ fn handle_frame(
             }
             let (text, _) = split_text(enc, text);
             set_str(&mut tags.comment, &text);
+        }
+        "USLT" => {
+            let Some((&enc, rest)) = data.split_first() else {
+                return;
+            };
+            if rest.len() < 3 {
+                return;
+            }
+            let (_desc, text) = split_text(enc, &rest[3..]);
+            let (text, _) = split_text(enc, text);
+            super::set_lyrics(tags, &text);
+        }
+        "SYLT" => {
+            if let Some(lrc) = sylt_to_lrc(data) {
+                super::set_lyrics(tags, &lrc);
+            }
         }
         "APIC" | "PIC" => {
             let Some(pics) = pictures else { return };
@@ -655,6 +678,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn lyrics_frames() {
+        let mut uslt = vec![3u8];
+        uslt.extend_from_slice(b"eng\0Line one\nLine two");
+        let tags_of = |frames: &[(&str, Vec<u8>)]| {
+            let mut tags = Tags::default();
+            parse_id3v2_bytes(&build_tag(4, frames), &mut tags, None);
+            tags.lyrics
+        };
+        assert_eq!(
+            tags_of(&[("USLT", uslt.clone())]).as_deref(),
+            Some("Line one\nLine two")
+        );
+        // SYLT in UTF-16 with millisecond time stamps.
+        let mut sylt = vec![1u8];
+        sylt.extend_from_slice(b"eng\x02\x01");
+        sylt.extend_from_slice(&[0xff, 0xfe, 0, 0]); // empty description
+        for (t, ms) in [("Hello", 1_500u32), ("\nWorld", 61_230)] {
+            sylt.extend_from_slice(&[0xff, 0xfe]);
+            for u in t.encode_utf16() {
+                sylt.extend_from_slice(&u.to_le_bytes());
+            }
+            sylt.extend_from_slice(&[0, 0]);
+            sylt.extend_from_slice(&ms.to_be_bytes());
+        }
+        let synced = "[00:01.50]Hello\n[01:01.23]World";
+        assert_eq!(tags_of(&[("SYLT", sylt.clone())]).as_deref(), Some(synced));
+        // Synced text wins over unsynced text in either order.
+        assert_eq!(
+            tags_of(&[("USLT", uslt.clone()), ("SYLT", sylt.clone())]).as_deref(),
+            Some(synced)
+        );
+        assert_eq!(
+            tags_of(&[("SYLT", sylt), ("USLT", uslt)]).as_deref(),
+            Some(synced)
+        );
+    }
+
+    #[test]
     fn unsynchronised_v23() {
         let tag = build_tag(3, &[("TIT2", vec![0, b'a', 0xff, 0xe0, b'b'])]);
         // Apply unsynchronisation to the body.
@@ -757,4 +818,36 @@ pub(crate) mod tests {
             parse_id3v2_bytes(&d[..cut], &mut tags, Some(&mut pics));
         }
     }
+}
+
+/// Synced lyrics (`SYLT`) with millisecond time stamps as LRC text.
+fn sylt_to_lrc(data: &[u8]) -> Option<String> {
+    let (&enc, rest) = data.split_first()?;
+    // Language (3), time stamp format (1: 2 = milliseconds), content type (1).
+    if rest.len() < 5 || rest[3] != 2 {
+        return None;
+    }
+    let (_desc, mut rest) = split_text(enc, &rest[5..]);
+    let mut out = String::new();
+    while !rest.is_empty() {
+        let (text, r) = split_text(enc, rest);
+        if r.len() < 4 {
+            break;
+        }
+        let ms = u32::from_be_bytes([r[0], r[1], r[2], r[3]]);
+        rest = &r[4..];
+        // Lines often start with "\n"; one LRC line per entry.
+        let text = text.trim_matches(|c: char| c == '\n' || c == '\r');
+        out.push_str(&format!(
+            "[{:02}:{:02}.{:02}]{}\n",
+            ms / 60_000,
+            ms / 1000 % 60,
+            ms % 1000 / 10,
+            text
+        ));
+        if out.len() > super::MAX_LYRICS {
+            return None;
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }

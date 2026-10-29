@@ -1615,3 +1615,41 @@ fn foreign_hosts_and_cross_site_writes_are_refused() {
         403
     );
 }
+
+#[test]
+fn lyrics_from_files_and_imports() {
+    let music = temp_dir("lyrics-music");
+    let data = temp_dir("lyrics-data");
+    for (name, title) in [("a", "With LRC"), ("b", "With TXT"), ("c", "Nothing")] {
+        std::fs::write(music.join(format!("{name}.wav")), tiny_wav(title, "Artist", "Album", 1)).unwrap();
+    }
+    std::fs::write(music.join("a.lrc"), "[00:01.00]Synced line\n").unwrap();
+    std::fs::write(music.join("b.txt"), b"Plain \xfcmlaut").unwrap();
+    let s = start(config(vec![music.to_path_buf()], vec![], &data, None, None));
+    let lib = s.library();
+    let id = |title: &str| lib.tracks.iter().find(|t| t.title == title).unwrap().id.clone();
+    let path = |title: &str| format!("/api/tracks/{}/lyrics", id(title));
+    let lyrics = |title: &str| {
+        let v = s.json(&path(title));
+        (
+            v.get("text").as_str().unwrap_or("").to_string(),
+            v.get("source").as_str().unwrap_or("").to_string(),
+        )
+    };
+    assert_eq!(lyrics("With LRC"), ("[00:01.00]Synced line".into(), "lrc".into()));
+    assert_eq!(lyrics("With TXT"), ("Plain ümlaut".into(), "txt".into()));
+    assert_eq!(s.get(&path("Nothing")).status, 404);
+    assert_eq!(s.get("/api/tracks/0123456789abcdef/lyrics").status, 404);
+
+    // Imports override and can be removed again.
+    assert_eq!(s.req("PUT", &path("Nothing"), &[], b"[00:02.00]Imported\r\n").status, 204);
+    assert_eq!(lyrics("Nothing"), ("[00:02.00]Imported".into(), "imported".into()));
+    assert_eq!(s.req("PUT", &path("With LRC"), &[], "Mine".as_bytes()).status, 204);
+    assert_eq!(lyrics("With LRC"), ("Mine".into(), "imported".into()));
+    assert_eq!(s.req("DELETE", &path("With LRC"), &[], &[]).status, 204);
+    assert_eq!(lyrics("With LRC").1, "lrc");
+    assert_eq!(s.req("PUT", &path("Nothing"), &[], b"  \n").status, 400);
+    let big = vec![b'x'; beatlumen_server::lyrics::MAX_IMPORT + 1];
+    assert_eq!(s.req("PUT", &path("Nothing"), &[], &big).status, 413);
+    assert_eq!(s.req("POST", &path("Nothing"), &[], b"x").status, 405);
+}

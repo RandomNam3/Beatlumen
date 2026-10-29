@@ -27,6 +27,7 @@ ApplicationWindow {
     // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings
     property int page: -1
     property bool idle: false
+    readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
     readonly property bool chromeVisible: page >= 0 || !idle || !playing
 
     Component.onCompleted: {
@@ -158,6 +159,12 @@ ApplicationWindow {
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
         IconButton {
+            iconName: "lyrics"; iconColor: "white"
+            active: win.showLyrics
+            tip: win.showLyrics ? Theme.tr("Hide song text") : Theme.tr("Show song text")
+            onClicked: Core.call("settings.set", { key: "ui.lyrics", value: !win.showLyrics })
+        }
+        IconButton {
             iconName: "wallpaper"; iconColor: "white"; tip: Theme.tr("Change background")
             onClicked: Core.call("backgrounds.next")
         }
@@ -183,6 +190,9 @@ ApplicationWindow {
         Behavior on anchors.bottomMargin { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
         visible: win.page < 0
         showSpectrum: true
+        showLyrics: win.showLyrics
+        controlsVisible: win.chromeVisible
+        onAddLyrics: dialogs.openLyrics()
     }
 
     // While the controls are hidden, a short tap anywhere brings them back

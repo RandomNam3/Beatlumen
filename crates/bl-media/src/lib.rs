@@ -28,6 +28,7 @@ mod aiff;
 mod alac;
 mod downmix;
 mod flac;
+pub mod lyrics;
 mod mkv;
 mod mp3;
 mod mp4;
@@ -146,6 +147,9 @@ pub struct Tags {
     pub disc: Option<u32>,
     pub disc_total: Option<u32>,
     pub comment: Option<String>,
+    /// Song text. Synced lyrics are LRC text ("[mm:ss.xx]line"), also when
+    /// they come from an ID3 `SYLT` frame.
+    pub lyrics: Option<String>,
     /// ReplayGain values in dB / linear peak.
     pub replaygain_track_gain: Option<f32>,
     pub replaygain_track_peak: Option<f32>,

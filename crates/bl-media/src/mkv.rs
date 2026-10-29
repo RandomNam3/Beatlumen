@@ -1029,6 +1029,13 @@ pub(crate) fn open(src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
                 .filter(|h| h.len() == 3)
                 .ok_or_else(|| Error::InvalidData("bad Vorbis CodecPrivate".into()))?;
             preroll_ns = preroll_ns.max(250_000_000);
+            // ffmpeg (8 and newer) writes the half short block a decoder
+            // outputs for the first packet as CodecDelay; this decoder
+            // never outputs it (as the Vorbis spec says).
+            if h[0].len() > 28 {
+                let half_short = (1i64 << (h[0][28] & 0x0f)) / 2;
+                delay = (delay - half_short).max(0);
+            }
             PacketDecoder::Vorbis(Box::new(bl_vorbis::VorbisDecoder::new(h[0], h[1], h[2])?))
         }
         "A_FLAC" => PacketDecoder::Flac(bl_flac::FlacFrameDecoder::new(&t.private)?),
@@ -1178,10 +1185,11 @@ impl MkvDecoder {
         let mut n = self.dec.decode(&f.data, ch, &mut self.tmp)?;
         self.tmp.truncate(n * ch);
         if f.discard_ns > 0 {
+            // Rounded: the nanoseconds are rounded from a sample count.
             let cut = mul_div(
-                f.discard_ns as u64,
-                self.spec.sample_rate as u64,
-                1_000_000_000,
+                f.discard_ns as u64 * 2 * self.spec.sample_rate as u64 + 1_000_000_000,
+                1,
+                2_000_000_000,
             ) as usize;
             n = n.saturating_sub(cut);
             self.tmp.truncate(n * ch);

@@ -348,6 +348,9 @@ pub mod paths {
     pub fn track_loudness(id: &str) -> String {
         format!("/api/tracks/{id}/loudness")
     }
+    pub fn track_lyrics(id: &str) -> String {
+        format!("/api/tracks/{id}/lyrics")
+    }
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")
     }

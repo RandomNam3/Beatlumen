@@ -23,6 +23,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - Library with songs, albums, artists, folders, playlists and a play queue;
   artist and title are guessed from file names when tags are missing.
 - Background images from your folders, the server or the album cover.
+- **Song texts** over the visuals: from the file's tags, an `.lrc` or
+  `.txt` file next to it, or added in the app. Synced texts (LRC, also with
+  word timing) follow the song; tapping a line jumps there.
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
   and cover (Linux, Windows, Android; AirPlay 1 protocol).
@@ -34,10 +37,11 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
   devices; the last two fetch a live stream from the app. The visuals stay
   in sync with the speaker.
-- **Visualize other apps** (Android 10+): music from Spotify, YouTube,
-  radio apps and others drives the visuals; their title and cover are
-  shown and they can be controlled from the app (apps that block recording
-  stay silent, their controls still work).
+- **Visualize other apps** (Android 10+, Linux, Windows): music from
+  Spotify, YouTube, radio apps, the browser and others drives the visuals;
+  their title and cover are shown and they can be controlled from the app
+  (on Android, apps that block recording stay silent, their controls still
+  work).
 - **Server extensions** (`docs/EXTENSIONS.md`): separate programs can add
   music sources to the server, e.g. search a video platform; the song plays
   right away while the server stores it, with intros and outros left out,

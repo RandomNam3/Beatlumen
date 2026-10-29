@@ -7,9 +7,13 @@ whenever one is connected, and directly from the app only when the user
 explicitly sets them up for app-only use.
 
 ## Lyrics
-- Show lyrics for the current track (embedded tags, `.lrc`/`.txt` next to the file).
-- Time-stamped lyrics (LRC, enhanced LRC with word timing), synced scrolling.
-- Lyrics import from files.
+- Done: song texts over the visuals from embedded tags (ID3 USLT/SYLT,
+  Vorbis comments, MP4, APE, Matroska) or an `.lrc`/`.txt` file next to the
+  song; time-stamped texts (LRC with several time tags per line,
+  `[offset:]`, enhanced LRC word timing) scroll with the song, highlight
+  the current line and word, and seek when a line is tapped. Texts can be
+  added from a file per song (stored on the server for its songs:
+  `GET/PUT/DELETE /api/tracks/<id>/lyrics`).
 - Speech recognition library (own implementation, no external services) that
   produces second-accurate synced lyrics with pause detection.
   - Server: optional automatic indexing of the whole library, or manual start

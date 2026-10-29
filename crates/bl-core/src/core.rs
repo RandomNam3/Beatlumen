@@ -70,6 +70,8 @@ pub(crate) enum Req {
     PresetSaved(String),
     Analysis(String),
     Loudness(String),
+    Lyrics(String),
+    LyricsSaved,
     TrackDownload {
         track_id: String,
         autoplay: bool,
@@ -159,6 +161,7 @@ pub(crate) struct Revisions {
     pub images: u64,
     pub analysis: u64,
     pub settings: u64,
+    pub lyrics: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -203,6 +206,9 @@ pub struct Core {
     /// Measured loudness per track id (None while measuring).
     loudness: HashMap<String, Option<Loudness>>,
     loudness_box: Mailbox<(String, Result<Loudness, String>)>,
+    /// The current track's song text.
+    pub(crate) lyrics: crate::lyrics::LyricsState,
+    pub(crate) lyrics_box: Mailbox<(String, Option<(String, String)>)>,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -387,6 +393,8 @@ impl Core {
             preloaded: (0, None),
             loudness: HashMap::new(),
             loudness_box: Mailbox::default(),
+            lyrics: Default::default(),
+            lyrics_box: Mailbox::default(),
             queue,
             bg_queue,
             library,
@@ -629,6 +637,7 @@ impl Core {
             .with("imagesRev", self.revs.images)
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
+            .with("lyricsRev", self.revs.lyrics)
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
@@ -852,6 +861,12 @@ impl Core {
                     Err(e) => Err(e),
                 };
                 self.loudness_box.post((id, l));
+            }
+            Req::Lyrics(id) => self.lyrics_response(id, &res),
+            Req::LyricsSaved => {
+                if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
+                    self.toast(self.tr("Saving the song text failed"), true);
+                }
             }
             Req::Analysis(key) => {
                 if key != self.analysis_key {
@@ -2207,6 +2222,17 @@ impl Core {
             self.vault_upload_paths(host, paths);
             return;
         }
+        // A song text for the current track: picked for that, or an .lrc file.
+        let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
+        if let Some(p) = paths.iter().find(|p| {
+            let ext = extension(p).unwrap_or_default();
+            ext == "lrc" || (expect_lyrics && ext == "txt")
+        }) {
+            if let Ok(d) = host.fs_read(p) {
+                self.lyrics_import_bytes(host, &d);
+            }
+            return;
+        }
         let mut audio = Vec::new();
         let mut images = Vec::new();
         for p in paths {
@@ -2243,6 +2269,12 @@ impl Core {
     pub fn open_data(&mut self, host: &mut dyn Host, name: String, data: Vec<u8>) {
         if std::mem::take(&mut self.vault.expect_upload) {
             self.vault_upload_data(host, name, data);
+            return;
+        }
+        let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
+        let ext = extension(&name).unwrap_or_default();
+        if ext == "lrc" || (expect_lyrics && ext == "txt") {
+            self.lyrics_import_bytes(host, &data);
             return;
         }
         let ext = extension(&name).unwrap_or_default();
@@ -2316,6 +2348,7 @@ impl Core {
         }
         self.poll_analysis(host);
         self.poll_loudness(host);
+        self.poll_lyrics();
         self.poll_scan(host);
         self.poll_covers();
         if self.analysis_requested {

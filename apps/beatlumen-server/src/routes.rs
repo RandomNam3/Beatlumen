@@ -189,6 +189,27 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             json(202, &Value::object().with("scanning", true))
         }
         ["rescan"] => not_allowed("POST"),
+        ["tracks", id, "lyrics"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            match m {
+                "GET" | "HEAD" => match state.lyrics.get(e) {
+                    Some(v) => json(200, &v).with_header("Cache-Control", "private, no-cache"),
+                    None => Response::error(404, "no song text"),
+                },
+                "PUT" => match state.lyrics.put(e, &req.body) {
+                    Ok(()) => Response::new(204),
+                    Err(err) => fail(err),
+                },
+                "DELETE" => {
+                    state.lyrics.delete(e);
+                    Response::new(204)
+                }
+                _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
         ["tracks", id, what] => {
             if !get {
                 return not_allowed("GET, HEAD");

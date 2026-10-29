@@ -391,6 +391,20 @@ impl Core {
                     .collect(),
             ),
             "library.folder" => self.folder_view(&s("path")),
+            "lyrics.get" => self.lyrics_get(host),
+            "lyrics.import" => self.lyrics_import(host, &s("text")),
+            "lyrics.importFile" => match host.fs_read(&s("path")) {
+                Ok(d) => {
+                    self.lyrics_import_bytes(host, &d);
+                    ok()
+                }
+                Err(e) => err(e),
+            },
+            "lyrics.expectImport" => {
+                self.lyrics.expect_import = true;
+                ok()
+            }
+            "lyrics.remove" => self.lyrics_remove(host),
             "library.rescan" => {
                 if !self.settings.library_folders.is_empty() {
                     self.rescan_local();

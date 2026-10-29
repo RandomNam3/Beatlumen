@@ -234,6 +234,7 @@ pub(crate) fn parse_ilst(
                         }
                     }
                     b"\xa9cmt" => set_str(&mut tags.comment, &s),
+                    b"\xa9lyr" => super::set_lyrics(tags, &s),
                     _ => {}
                 }
             }

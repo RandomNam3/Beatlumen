@@ -41,24 +41,6 @@ jobs:
         run: choco install ffmpeg -y --no-progress
       - name: Test
         run: cargo test --workspace --release --no-fail-fast --exclude bl-ffi
-      # Matroska files from this (newer) ffmpeg, to compare how it marks
-      # encoder delay with what the demuxer expects.
-      - name: Matroska samples
-        if: always()
-        shell: bash
-        run: |
-          mkdir mkv-samples && cd mkv-samples
-          ffmpeg -version | head -1 > version.txt
-          ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=2" -ac 2 -ar 44100 src.wav
-          for c in "vorbis.mka libvorbis" "aac.mka aac" "mp3.mka libmp3lame" "opus.mka libopus"; do
-            set -- $c; ffmpeg -hide_banner -loglevel error -i src.wav -c:a $2 "$1"
-          done
-          for f in *.mka; do ffmpeg -hide_banner -loglevel error -i "$f" -f s16le "$f.s16"; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mkv-samples-windows
-          path: mkv-samples
 
   linux:
     name: Linux app (AppImage)

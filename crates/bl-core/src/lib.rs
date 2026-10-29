@@ -20,6 +20,7 @@ pub mod host;
 pub mod icon;
 pub mod jobs;
 pub mod library;
+pub mod lyrics;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod outputs;

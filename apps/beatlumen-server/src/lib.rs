@@ -27,6 +27,7 @@ pub mod covers;
 pub mod extensions;
 pub mod images;
 pub mod library;
+pub mod lyrics;
 pub mod playlists;
 pub mod presets;
 pub mod push;
@@ -64,6 +65,8 @@ pub struct DataPaths {
     pub covers: PathBuf,
     pub analysis: PathBuf,
     pub image_cache: PathBuf,
+    /// Imported song texts.
+    pub lyrics: PathBuf,
 }
 
 impl DataPaths {
@@ -78,6 +81,7 @@ impl DataPaths {
             covers: cache.join("covers"),
             analysis: cache.join("analysis"),
             image_cache: cache.join("images"),
+            lyrics: root.join("lyrics"),
             root,
         }
     }
@@ -118,6 +122,7 @@ pub struct State {
     pub playlists: playlists::Playlists,
     pub presets: presets::Presets,
     pub images: images::Images,
+    pub lyrics: lyrics::Lyrics,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
     pub web: web::WebClient,
@@ -476,6 +481,7 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.uploads.clone(),
             data.image_cache.clone(),
         ),
+        lyrics: lyrics::Lyrics::new(data.lyrics.clone()),
         analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),

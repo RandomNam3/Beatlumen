@@ -10,6 +10,8 @@ Item {
     function openImages() { Core.pickFiles("image/*", true) }
     // Files for the encrypted storage: the core encrypts what is picked next.
     function openUpload() { Core.call("vault.expectUpload"); Core.pickFiles("*/*", true) }
+    // The next picked file is the current song's text.
+    function openLyrics() { Core.call("lyrics.expectImport"); Core.pickFiles("*/*", false) }
     function addMusicFolder() { folderPicker.showFor(false) }
     function addImageFolder() { folderPicker.showFor(true) }
 
