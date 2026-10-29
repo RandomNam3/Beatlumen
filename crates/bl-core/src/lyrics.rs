@@ -327,6 +327,8 @@ impl Core {
                 }
                 None => mailbox.post(done(None)),
             }
+        } else if let (false, Some(l)) = (self.server.is_connected(), self.offline_lyrics(id)) {
+            mailbox.post(done(Some(l)));
         } else if self.server.is_connected() && library::is_server_id(id) {
             let rid = self.server.get(host, &bl_net::api::paths::track_lyrics(id));
             self.requests.insert(rid, Req::Lyrics(id.to_string()));
@@ -338,6 +340,7 @@ impl Core {
     /// A server answer to `GET /api/tracks/<id>/lyrics`.
     pub(crate) fn lyrics_response(
         &mut self,
+        host: &mut dyn Host,
         id: String,
         res: &Result<crate::host::HttpResponse, String>,
     ) {
@@ -351,6 +354,13 @@ impl Core {
             }),
             _ => None,
         };
+        // Offline copies follow the server's text.
+        match res {
+            Ok(r) if r.status == 200 || r.status == 404 => {
+                self.offline_set_lyrics(host, &id, found.clone())
+            }
+            _ => {}
+        }
         self.lyrics_box.post((id, found));
     }
 

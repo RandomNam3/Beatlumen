@@ -209,6 +209,8 @@ pub struct Core {
     /// The current track's song text.
     pub(crate) lyrics: crate::lyrics::LyricsState,
     pub(crate) lyrics_box: Mailbox<(String, Option<(String, String)>)>,
+    /// Offline copies of server songs.
+    pub(crate) offline: crate::offline::OfflineState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -395,6 +397,7 @@ impl Core {
             loudness_box: Mailbox::default(),
             lyrics: Default::default(),
             lyrics_box: Mailbox::default(),
+            offline: Default::default(),
             queue,
             bg_queue,
             library,
@@ -638,6 +641,7 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
+            .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
@@ -669,6 +673,7 @@ impl Core {
             .with("track", t.track)
             .with("year", t.year)
             .with("local", library::is_local(&t.id))
+            .with("offline", self.is_offline(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
 
@@ -862,7 +867,7 @@ impl Core {
                 };
                 self.loudness_box.post((id, l));
             }
-            Req::Lyrics(id) => self.lyrics_response(id, &res),
+            Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSaved => {
                 if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
                     self.toast(self.tr("Saving the song text failed"), true);
@@ -1155,6 +1160,9 @@ impl Core {
         if let Some(t) = self.vault_track(id) {
             return t;
         }
+        if let Some(t) = self.offline_track(id) {
+            return t;
+        }
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
@@ -1316,6 +1324,9 @@ impl Core {
         }
         if id.starts_with(crate::dlna_receiver::ID_PREFIX) {
             return self.dlna_opener();
+        }
+        if let Some(o) = self.offline_opener(id) {
+            return Some(o);
         }
         if id.starts_with(crate::extensions::ID_PREFIX) {
             // Still being imported: the server streams what it has so far.
@@ -1795,6 +1806,17 @@ impl Core {
                     job();
                 }
             }
+        } else if let Some(blob) = self.offline_analysis(&track.id, &key) {
+            self.analysis_box.post((key, Ok(blob)));
+        } else if let (false, Some(opener)) =
+            (self.server.is_connected(), self.offline_opener(&track.id))
+        {
+            // Offline copy without a matching analysis: analysed here.
+            let mailbox = self.analysis_box.clone();
+            host.spawn(Box::new(move || {
+                let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                mailbox.post((key, res));
+            }));
         } else if self.server.is_connected() {
             let cfg_json = Value::object()
                 .with("analysisConfig", self.preset.analysis.clone())
@@ -1851,6 +1873,8 @@ impl Core {
             }
         } else if t.id.starts_with("mem:") {
             String::new()
+        } else if let (false, Some(f)) = (self.server.is_connected(), self.offline_cover(&t.id)) {
+            file_url(f)
         } else if t.has_cover && self.server.is_connected() {
             self.server
                 .image_url(&bl_net::api::paths::track_cover(&t.id, 512))
@@ -2349,6 +2373,7 @@ impl Core {
         self.poll_analysis(host);
         self.poll_loudness(host);
         self.poll_lyrics();
+        self.poll_offline(host);
         self.poll_scan(host);
         self.poll_covers();
         if self.analysis_requested {

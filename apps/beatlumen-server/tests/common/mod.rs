@@ -57,6 +57,9 @@ impl Host for TestHost {
     fn storage_delete(&self, key: &str) {
         self.svc.storage_delete(key)
     }
+    fn storage_path(&self, key: &str) -> Option<String> {
+        self.svc.storage_path(key)
+    }
     fn storage_list(&self, prefix: &str) -> Vec<String> {
         self.svc.storage_list(prefix)
     }
@@ -160,6 +163,18 @@ impl App {
     pub fn new(name: &str) -> App {
         let dir = std::env::temp_dir().join(format!("bl-app-vault-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        App::with_dir(dir)
+    }
+
+    /// Quits the app but keeps its data folder (for [`App::with_dir`]).
+    #[allow(dead_code)]
+    pub fn close(mut self) -> std::path::PathBuf {
+        self.core.shutdown(&mut self.host);
+        std::mem::take(&mut self.dir)
+    }
+
+    /// An app on an existing data folder (as after a restart).
+    pub fn with_dir(dir: std::path::PathBuf) -> App {
         let mut host = TestHost {
             svc: NativeServices::new(dir.clone()),
             audio: Default::default(),

@@ -405,6 +405,16 @@ impl Core {
                 ok()
             }
             "lyrics.remove" => self.lyrics_remove(host),
+            "offline.save" => self.offline_save(host, strs(c.get("ids"))),
+            "offline.remove" => {
+                let ids = if c.bool_or("all", false) {
+                    self.offline.entries.keys().cloned().collect()
+                } else {
+                    strs(c.get("ids"))
+                };
+                self.offline_remove(ids);
+                ok()
+            }
             "library.rescan" => {
                 if !self.settings.library_folders.is_empty() {
                     self.rescan_local();

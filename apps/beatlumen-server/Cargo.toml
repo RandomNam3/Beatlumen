@@ -32,6 +32,7 @@ ring = "=0.17.14"
 bl-core = { path = "../../crates/bl-core" }
 bl-airplay = { path = "../../crates/bl-airplay" }
 bl-cast = { path = "../../crates/bl-cast" }
+bl-offline = { path = "../../crates/bl-offline" }
 bl-upnp = { path = "../../crates/bl-upnp" }
 # A software authenticator for the passkey tests.
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"] }

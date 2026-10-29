@@ -23,6 +23,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - Library with songs, albums, artists, folders, playlists and a play queue;
   artist and title are guessed from file names when tags are missing.
 - Background images from your folders, the server or the album cover.
+- **Offline copies**: songs from the server (with their song text, cover
+  and analysis) can be kept on the device in one file each and play
+  without a connection; the library shows them while the server is away.
 - **Song texts** over the visuals: from the file's tags, an `.lrc` or
   `.txt` file next to it, or added in the app. Synced texts (LRC, also with
   word timing) follow the song; tapping a line jumps there.

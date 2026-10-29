@@ -454,6 +454,47 @@ Item {
                 }
             }
 
+            // ---- offline copies of server songs -------------------------------
+            SectionLabel { text: Theme.tr("Offline"); visible: offlineBox.visible }
+            ColumnLayout {
+                id: offlineBox
+                readonly property var off: Core.state.offline || ({})
+                visible: off.available === true && (off.count > 0 || (off.saving || []).length > 0)
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    text: Theme.tr("Songs kept on this device play without a connection to the server, with their song text and visuals.")
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: (offlineBox.off.count || 0) + " " + Theme.tr("songs") + " · " + ((offlineBox.off.bytes || 0) / 1e6).toFixed(1) + " MB"
+                }
+                Repeater {
+                    model: offlineBox.off.saving || []
+                    ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.textDim; text: Theme.tr("Saving") + ": " + modelData.title }
+                        ProgressBar { Layout.fillWidth: true; value: Math.min(1, modelData.progress || 0) }
+                    }
+                }
+                Button {
+                    visible: (offlineBox.off.count || 0) > 0
+                    flat: true
+                    text: Theme.tr("Remove all offline copies")
+                    icon.source: Theme.icon("delete")
+                    onClicked: Core.call("offline.remove", { all: true })
+                }
+            }
+
             // ---- other apps (Android) ---------------------------------------
             SectionLabel { text: Theme.tr("Other apps"); visible: (Core.state.capture || {}).available === true }
             ColumnLayout {

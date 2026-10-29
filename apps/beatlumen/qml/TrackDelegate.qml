@@ -81,6 +81,13 @@ ItemDelegate {
                 elide: Text.ElideRight
             }
         }
+        // Kept on this device for offline use.
+        Icon {
+            visible: d.track.offline === true
+            name: "download_done"
+            size: 18
+            color: Theme.textFaint
+        }
         Label {
             textFormat: Text.PlainText
             text: d.track.duration > 0 ? Theme.fmtTime(d.track.duration) : ""

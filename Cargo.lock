@@ -74,6 +74,7 @@ dependencies = [
  "bl-json",
  "bl-media",
  "bl-net",
+ "bl-offline",
  "bl-upnp",
  "bl-vault",
  "p256",
@@ -118,6 +119,7 @@ dependencies = [
  "bl-json",
  "bl-media",
  "bl-net",
+ "bl-offline",
  "bl-render",
  "bl-upnp",
  "bl-vault",
@@ -177,6 +179,13 @@ version = "0.1.0"
 
 [[package]]
 name = "bl-net"
+version = "0.1.0"
+dependencies = [
+ "bl-json",
+]
+
+[[package]]
+name = "bl-offline"
 version = "0.1.0"
 dependencies = [
  "bl-json",

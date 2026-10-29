@@ -20,6 +20,15 @@ explicitly sets them up for app-only use.
     per selected track.
   - App without server: manual start per track, computed locally.
 
+## Offline
+- Done: server songs kept on the device ("Keep offline" in the song menu),
+  one container file each (`crates/bl-offline`: header with the track,
+  song text and section table, then cover, analysis and the original
+  audio, read in place for playback and seeking). They play with their
+  song text and visuals without a connection, and the library shows them
+  while the server cannot be reached; their song texts follow the server's.
+- Next: keep whole albums and playlists offline, a storage limit.
+
 ## Server
 - Done: user accounts with end-to-end encrypted files, sharing between
   users, passkeys (`docs/ENCRYPTION.md`); source extensions
