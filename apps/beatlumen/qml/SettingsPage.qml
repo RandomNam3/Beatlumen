@@ -474,7 +474,9 @@ Item {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true
                     visible: parent.cap.running === true || !!parent.cap.error
-                    text: parent.cap.running ? (parent.cap.app ? Theme.tr("Visualizing") + " " + parent.cap.app : Theme.tr("Visualizing other apps"))
+                    text: parent.cap.running ? (parent.cap.app ? Theme.tr("Visualizing and controlling") + " " + parent.cap.app
+                                                               : parent.cap.access ? Theme.tr("Visualizing other apps; no playing app found to control")
+                                                                                   : Theme.tr("Visualizing other apps; controlling them needs notification access"))
                                              : Theme.tr("not available") + ": " + parent.cap.error
                     color: parent.cap.running ? Theme.textDim : Theme.danger
                     wrapMode: Text.WordWrap

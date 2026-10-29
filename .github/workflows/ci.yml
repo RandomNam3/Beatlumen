@@ -31,6 +31,16 @@ jobs:
           name: beatlumen-server-linux-x86_64
           path: target/release/beatlumen-server
 
+  rust-windows:
+    name: Rust core and server (Windows tests)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg (test fixtures)
+        run: choco install ffmpeg -y --no-progress
+      - name: Test
+        run: cargo test --workspace --release
+
   linux:
     name: Linux app (AppImage)
     # Oldest supported Ubuntu: the AppImage runs on systems with this glibc
@@ -83,6 +93,32 @@ jobs:
           $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
           Copy-Item "$($crt.FullName)\*.dll" dist/windows/
           Remove-Item -Force -ErrorAction SilentlyContinue dist/windows/vc_redist*.exe
+      - name: Start test
+        shell: pwsh
+        run: |
+          # The runner has no GPU: Mesa's software OpenGL, for this test
+          # only (not part of the package).
+          Invoke-WebRequest https://github.com/pal1000/mesa-dist-win/releases/download/26.2.3/mesa3d-26.2.3-release-msvc.7z -OutFile mesa.7z
+          7z x mesa.7z -omesa | Out-Null
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          Copy-Item -Recurse dist/windows/* smoke/
+          foreach ($dll in "opengl32.dll", "libgallium_wgl.dll", "libglapi.dll") {
+            if (Test-Path "mesa/x64/$dll") { Copy-Item "mesa/x64/$dll" smoke/ }
+          }
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          $env:GALLIUM_DRIVER = "llvmpipe"
+          $env:BEATLUMEN_TEST_DUMP = "$PWD\smoke\dump.json"
+          $p = Start-Process smoke\beatlumen.exe -PassThru -RedirectStandardError smoke\log.txt
+          Start-Sleep -Seconds 30
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process $p -Force }
+          Get-Content smoke\log.txt
+          if (-not $alive) { throw "the app ended by itself (exit code $($p.ExitCode))" }
+          if (-not (Test-Path smoke\dump.json)) { throw "no window content" }
+          $dump = Get-Content smoke\dump.json -Raw
+          if ($dump -notmatch '"(Library|Bibliothek)"') { throw "navigation missing: $dump" }
+          if (Select-String -Path smoke\log.txt -Pattern '\.qml:\d+|TypeError|ReferenceError' -Quiet) { throw "QML errors" }
+          if (-not (Select-String -Path smoke\log.txt -Pattern 'frames:' -Quiet)) { throw "no frames rendered" }
       - name: Installer
         shell: pwsh
         run: |

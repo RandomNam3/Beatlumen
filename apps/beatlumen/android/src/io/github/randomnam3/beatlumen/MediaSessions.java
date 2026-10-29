@@ -131,6 +131,7 @@ public final class MediaSessions
         if (sNativeReady)
             nativeAccess(access);
         final boolean listen = sWatching && access;
+        Log.i(TAG, "sessions: watching " + sWatching + ", access " + access + ", listening " + sListening);
         if (listen == sListening)
             return;
         if (listen) {
@@ -209,6 +210,8 @@ public final class MediaSessions
                     best = c;
             }
         }
+        Log.i(TAG, "sessions: " + (controllers == null ? 0 : controllers.size()) + " active, following "
+                + (best == null ? "none" : best.getPackageName() + (isPlaying(best) ? " (playing)" : "")));
         setController(best);
     }
 
@@ -385,6 +388,10 @@ public final class MediaSessions
     static void control(final String action, final double position)
     {
         sMain.post(() -> {
+            // The app that plays now (another may have started meanwhile).
+            refresh();
+            Log.i(TAG, "sessions: " + action + " -> "
+                    + (sController == null ? "media key" : sController.getPackageName()));
             if (sController == null) {
                 mediaKey(action);
                 return;
