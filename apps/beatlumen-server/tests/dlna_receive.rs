@@ -164,7 +164,11 @@ fn control_point_plays_on_the_app() {
     let mut buf = vec![0u8; 8192];
     while !String::from_utf8_lossy(&first).contains("propertyset>") {
         let n = ev.read(&mut buf).unwrap();
-        assert!(n > 0, "event ended early: {}", String::from_utf8_lossy(&first));
+        assert!(
+            n > 0,
+            "event ended early: {}",
+            String::from_utf8_lossy(&first)
+        );
         first.extend_from_slice(&buf[..n]);
     }
     let first = String::from_utf8_lossy(&first).into_owned();

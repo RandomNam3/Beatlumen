@@ -172,6 +172,20 @@ In short:
   media sessions, which need notification access. The listener reads no
   notifications; it only exists to make the sessions available.
 
+## Source extensions (server)
+
+* Separate programs the admin configures (`docs/EXTENSIONS.md`); the
+  server sends them a shared token and connects to nothing else on their
+  behalf: no URLs from an extension are fetched, pictures and audio come
+  from the extension itself.
+* What an extension sends is bounded and checked: JSON (1 MiB) and text
+  lengths, item ids (a safe character set, used in URLs and file names),
+  pictures (4 MiB, decoded and re-encoded as JPEG before they reach apps
+  or files), at most three imports at once. File names come from
+  sanitised titles inside the extension's own folder.
+* Only logged-in users can search and import. Imports go into a library
+  folder of their own; temporary ones are deleted after two hours.
+
 ## Known limitations
 
 * Tokens appear in media URLs (`?token=`) because `<audio>`/`<img>` cannot

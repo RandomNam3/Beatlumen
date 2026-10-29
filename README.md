@@ -38,6 +38,10 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   radio apps and others drives the visuals; their title and cover are
   shown and they can be controlled from the app (apps that block recording
   stay silent, their controls still work).
+- **Server extensions** (`docs/EXTENSIONS.md`): separate programs can add
+  music sources to the server, e.g. search a video platform; the song plays
+  right away while the server stores it, with intros and outros left out,
+  in the shared library or the user's encrypted files.
 - System media controls and media keys: MPRIS on Linux, the media
   overlay on Windows, the media notification and lock screen on Android.
   After the app was closed, Android's media controls continue the last

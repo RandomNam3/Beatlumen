@@ -357,12 +357,37 @@ pub fn request(
     Err("too many redirects".into())
 }
 
+/// Sends a request and returns the status, headers and the body as a
+/// reader (read while it arrives). Redirects are not followed.
+pub fn request_stream(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    opts: &Options,
+) -> Result<(u16, Headers, Box<dyn Read + Send>), String> {
+    let u = Url::parse(url)?;
+    let mut stream =
+        connect(&u, opts).map_err(|e| format!("connect {}:{}: {e}", u.host, u.port))?;
+    write_request(&mut stream, method, &u, headers, body).map_err(|e| format!("send: {e}"))?;
+    let mut r = BufReader::with_capacity(64 * 1024, stream);
+    let (status, h) = read_head(&mut r).map_err(|e| format!("receive: {e}"))?;
+    let reader = body_reader(r, method, status, &h);
+    Ok((status, h, Box::new(reader)))
+}
+
 /// A seekable byte stream over HTTP using range requests. Sequential reads
 /// reuse one long-running response; seeks reopen the connection.
+///
+/// A resource of unknown length (a file still growing on the server: a
+/// response without a length, or `Content-Range: bytes a-b/*`) reads until
+/// the server ends it; seeking from its end is not possible until a later
+/// response tells the length.
 pub struct HttpStream {
     url: Url,
     headers: Vec<(String, String)>,
     opts: Options,
+    /// `u64::MAX` while unknown.
     len: u64,
     pos: u64,
     conn: Option<(Body<BufReader<Box<dyn Conn>>>, u64)>,
@@ -384,12 +409,17 @@ impl HttpStream {
         Ok(s)
     }
 
+    /// The length; `u64::MAX` while unknown.
     pub fn len(&self) -> u64 {
         self.len
     }
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    fn known(&self) -> bool {
+        self.len != u64::MAX
     }
 
     fn reconnect(&mut self, at: u64) -> io::Result<()> {
@@ -402,20 +432,26 @@ impl HttpStream {
         let (status, h) = read_head(&mut r)?;
         match status {
             206 => {
-                // Content-Range: bytes a-b/total
+                // Content-Range: bytes a-b/total ("*": still unknown)
                 let total = h
                     .get("content-range")
                     .and_then(|v| v.rsplit('/').next())
-                    .and_then(|t| t.trim().parse::<u64>().ok())
+                    .map(|t| t.trim().to_string())
                     .ok_or_else(|| {
                         io::Error::new(io::ErrorKind::InvalidData, "missing content-range")
                     })?;
-                self.len = total;
+                self.len = if total == "*" {
+                    u64::MAX
+                } else {
+                    total.parse::<u64>().map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidData, "bad content-range")
+                    })?
+                };
                 self.conn = Some((body_reader(r, "GET", status, &h), at));
             }
             200 => {
                 // Server ignored the range: skip to the wanted position.
-                self.len = h.content_length().unwrap_or(0);
+                self.len = h.content_length().unwrap_or(u64::MAX);
                 let mut body = body_reader(r, "GET", status, &h);
                 io::copy(&mut (&mut body).take(at), &mut io::sink())?;
                 self.conn = Some((body, at));
@@ -434,6 +470,7 @@ impl Read for HttpStream {
         if self.pos >= self.len || buf.is_empty() {
             return Ok(0);
         }
+        let known = self.known();
         for attempt in 0..3 {
             let reuse = matches!(&self.conn, Some((_, p)) if *p == self.pos);
             if !reuse {
@@ -443,6 +480,9 @@ impl Read for HttpStream {
                 return Ok(0);
             };
             match body.read(buf) {
+                // The end of a resource of unknown length (asked once more:
+                // the response may have ended early).
+                Ok(0) if !known && attempt >= 1 => return Ok(0),
                 Ok(0) if attempt < 2 => {
                     self.conn = None;
                     continue;
@@ -468,6 +508,12 @@ impl Seek for HttpStream {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new = match pos {
             SeekFrom::Start(p) => p as i64,
+            SeekFrom::End(_) if !self.known() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "length not known yet",
+                ))
+            }
             SeekFrom::End(d) => self.len as i64 + d,
             SeekFrom::Current(d) => self.pos as i64 + d,
         };

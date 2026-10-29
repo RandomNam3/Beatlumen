@@ -24,6 +24,9 @@ use crate::util::{
 };
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Picture, Source, Tags};
 
+#[path = "mkv_remux.rs"]
+pub(crate) mod remux;
+
 const ID_EBML: u32 = 0x1A45_DFA3;
 const ID_SEGMENT: u32 = 0x1853_8067;
 const ID_SEEKHEAD: u32 = 0x114D_9B74;

@@ -53,6 +53,10 @@ pub struct Config {
     /// SHA-256 fingerprints (hex) of Android app signing certificates whose
     /// apps may use passkeys for this server (besides the official one).
     pub android_certs: Vec<String>,
+    /// Source extensions: (id, base URL), see `docs/EXTENSIONS.md`.
+    pub extensions: Vec<(String, String)>,
+    /// File holding the secret the server sends to its extensions.
+    pub extension_token_file: Option<PathBuf>,
 }
 
 impl Config {
@@ -98,8 +102,39 @@ impl Default for Config {
             push_allow_private: false,
             public_url: None,
             android_certs: Vec::new(),
+            extensions: Vec::new(),
+            extension_token_file: None,
         }
     }
+}
+
+/// Parses an extension given as `id=http://host:port`.
+pub fn parse_extension(v: &str) -> Result<(String, String), String> {
+    let (id, url) = v
+        .split_once('=')
+        .ok_or_else(|| format!("extension \"{v}\": expected ID=URL"))?;
+    let id = id.trim().to_ascii_lowercase();
+    let url = url.trim().trim_end_matches('/').to_string();
+    if id.is_empty()
+        || id.len() > 32
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(format!(
+            "extension id \"{id}\": use 1-32 letters, digits or '-'"
+        ));
+    }
+    if id == "jobs" {
+        return Err("extension id \"jobs\" is reserved".into());
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!(
+            "extension {id}: the URL must start with http:// or https://"
+        ));
+    }
+    bl_net::client::Url::parse(&url).map_err(|e| format!("extension {id}: {e}"))?;
+    Ok((id, url))
 }
 
 /// What the command line asks for.
@@ -190,6 +225,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "BEATLUMEN_ANDROID_CERTS",
         "extra Android app certificate fingerprints for passkeys, comma separated",
     ),
+    (
+        "BEATLUMEN_EXTENSIONS",
+        "source extensions as ID=URL, comma separated (docs/EXTENSIONS.md)",
+    ),
+    (
+        "BEATLUMEN_EXTENSION_TOKEN_FILE",
+        "file with the secret sent to the extensions",
+    ),
 ];
 
 fn registration(v: &str) -> Result<bool, String> {
@@ -272,6 +315,16 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             .filter(|c| !c.is_empty())
             .collect();
     }
+    if let Some(v) = get("BEATLUMEN_EXTENSIONS") {
+        cfg.extensions = v
+            .split(',')
+            .filter(|e| !e.trim().is_empty())
+            .map(parse_extension)
+            .collect::<Result<_, _>>()?;
+    }
+    if let Some(v) = get("BEATLUMEN_EXTENSION_TOKEN_FILE") {
+        cfg.extension_token_file = Some(PathBuf::from(v.trim()));
+    }
     if let Some(v) = get("BEATLUMEN_PUSH_ALLOW_PRIVATE") {
         cfg.push_allow_private = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -331,7 +384,7 @@ OPTIONS:
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
-                            androidCerts, verbose)
+                            androidCerts, extensions, extensionTokenFile, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -340,6 +393,11 @@ OPTIONS:
     --vault-quota-mb MB     Encrypted storage per user; 0 = unlimited [default: 10240]
     --registration MODE     invite: new accounts with an invitation code from
                             `beatlumen-server invite`; off: no new accounts [default: invite]
+    --extension ID=URL      Source extension reached at URL, e.g.
+                            youtube=http://127.0.0.1:7790 (repeatable; see
+                            docs/EXTENSIONS.md)
+    --extension-token-file FILE
+                            Secret sent to the extensions (they check it)
     --public-url URL        The server's https:// address as users reach it (e.g. the
                             reverse proxy's). Enables passkeys, whose relying party
                             is this host
@@ -453,6 +511,23 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                             .ok_or_else(|| err("expected an array of strings"))
                     })
                     .collect::<Result<_, _>>()?
+            }
+            "extensions" => {
+                cfg.extensions = val
+                    .as_object()
+                    .ok_or_else(|| err("expected an object of id: URL"))?
+                    .iter()
+                    .map(|(id, url)| {
+                        let url = url.as_str().ok_or_else(|| err("expected URLs"))?;
+                        parse_extension(&format!("{id}={url}"))
+                    })
+                    .collect::<Result<_, _>>()?
+            }
+            "extensionTokenFile" => {
+                cfg.extension_token_file = Some(resolve(
+                    base,
+                    val.as_str().ok_or_else(|| err("expected a path"))?,
+                ))
             }
             "sourceUrl" => {
                 cfg.source_url = val
@@ -584,6 +659,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--registration"
                 | "--public-url"
                 | "--android-cert"
+                | "--extension"
+                | "--extension-token-file"
                 | "--days"
         );
         match flag.as_str() {
@@ -647,6 +724,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             "--android-cert" => cfg
                 .android_certs
                 .push(v.replace(':', "").to_ascii_lowercase()),
+            "--extension" => cfg.extensions.push(parse_extension(&v)?),
+            "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
             "--days" if command.as_deref() == Some("invite") => {
                 days = num(&flag, &v)?.clamp(1, 365)
             }

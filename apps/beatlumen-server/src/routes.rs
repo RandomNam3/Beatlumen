@@ -182,6 +182,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             _ => not_allowed("POST"),
         },
         ["library"] if get => library(state, req),
+        ["extensions", rest @ ..] => state.extensions.handle(state, req, rest),
         ["library"] => not_allowed("GET, HEAD"),
         ["rescan"] if m == "POST" => {
             state.request_scan();

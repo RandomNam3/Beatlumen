@@ -24,6 +24,7 @@ pub mod analysis;
 pub mod auth;
 pub mod config;
 pub mod covers;
+pub mod extensions;
 pub mod images;
 pub mod library;
 pub mod playlists;
@@ -121,6 +122,7 @@ pub struct State {
     pub thumbs: util::Semaphore,
     pub web: web::WebClient,
     pub vault: vault::Vault,
+    pub extensions: extensions::Extensions,
 }
 
 impl State {
@@ -237,6 +239,7 @@ impl State {
     /// Removes cached covers/analyses of tracks that no longer exist or
     /// changed, and scaled images of removed images.
     fn prune_caches(&self, idx: &Index) {
+        self.extensions.prune_temp();
         let mut removed = 0usize;
         let list = |dir: &PathBuf| -> Vec<(String, PathBuf)> {
             std::fs::read_dir(dir)
@@ -414,7 +417,12 @@ pub fn start(config: Config) -> Result<Server, String> {
     let data = DataPaths::new(absolute(&config.data_dir));
     data.create()
         .map_err(|e| format!("cannot create data folder {}: {e}", data.root.display()))?;
-    let roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
+    let mut roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
+    let extensions = extensions::Extensions::new(&config, &data.root)?;
+    if extensions.enabled() {
+        // Songs imported through extensions form one more music folder.
+        roots.push(extensions.imports.clone());
+    }
     let image_dirs: Vec<PathBuf> = config.image_dirs.iter().map(|p| absolute(p)).collect();
 
     let index = match library::load_cache(&data.library, &roots) {
@@ -481,8 +489,10 @@ pub fn start(config: Config) -> Result<Server, String> {
         data,
         web,
         vault,
+        extensions,
         config,
     });
+    state.extensions.attach(&state);
 
     info!(
         "Beatlumen server {} listening on http://{addr}",

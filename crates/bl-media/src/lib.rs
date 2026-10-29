@@ -41,6 +41,7 @@ mod wav;
 mod window;
 
 pub use alac::{AlacConfig, AlacDecoder};
+pub use mkv::remux::{webm_opus_to_ogg, RemuxResult, RemuxTags};
 
 /// A seekable byte source (file, in-memory buffer, HTTP range reader, ...).
 pub trait Source: Read + Seek + Send {}
