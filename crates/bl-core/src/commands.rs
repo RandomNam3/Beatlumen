@@ -456,13 +456,25 @@ impl Core {
             "fs.list" => match host.fs_list(&s("path")) {
                 Ok(entries) => {
                     let images_too = b("images");
+                    // Files with these extensions only ("*": all files).
+                    let exts: Option<Vec<String>> = c.get("exts").as_array().map(|_| {
+                        strs(c.get("exts"))
+                            .iter()
+                            .map(|e| e.to_lowercase())
+                            .collect()
+                    });
                     Value::Array(
                         entries
                             .into_iter()
                             .filter(|e| {
                                 let ext = crate::jobs::extension(&e.name).unwrap_or_default();
-                                e.is_dir
-                                    || bl_media::is_supported_extension(&ext)
+                                if e.is_dir {
+                                    return true;
+                                }
+                                if let Some(exts) = &exts {
+                                    return exts.iter().any(|x| x == "*" || *x == ext);
+                                }
+                                bl_media::is_supported_extension(&ext)
                                     || (images_too && library::is_image_extension(&ext))
                                     || ext == "hfx"
                             })

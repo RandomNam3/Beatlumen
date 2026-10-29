@@ -254,6 +254,7 @@ pub fn desktop_roots() -> Vec<(String, String)> {
         for (label, sub) in [
             ("Music", "Music"),
             ("Pictures", "Pictures"),
+            ("Documents", "Documents"),
             ("Downloads", "Downloads"),
         ] {
             let p = Path::new(h).join(sub);

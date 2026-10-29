@@ -52,6 +52,16 @@ int main(int argc, char *argv[])
     // Same for the PCRE2 JIT behind QRegularExpression.
     qputenv("QT_ENABLE_REGEXP_JIT", "0");
 #endif
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    // Native file dialogs through the XDG desktop portal (KDE, GNOME, …).
+    // The theme keeps the desktop's own theme underneath. The AppImage ships
+    // no other theme plugin; its start hook asks for gtk2 on GNOME.
+    {
+        const QByteArray theme = qgetenv("QT_QPA_PLATFORMTHEME");
+        if (theme.isEmpty() || (qEnvironmentVariableIsSet("APPIMAGE") && theme == "gtk2"))
+            qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
+    }
+#endif
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
 #if defined(Q_OS_ANDROID) || defined(Q_OS_WASM) || defined(Q_OS_IOS)

@@ -2,18 +2,56 @@ import QtQuick
 import QtQuick.Dialogs
 import Beatlumen.Core
 
-// File and folder pickers on desktop platforms (Qt Quick Dialogs, which
-// use the native dialogs of the system).
+// File and folder pickers on desktop platforms: the system's dialogs
+// (Qt Quick Dialogs; on Linux through the XDG desktop portal) or, where
+// there are none, the app's own picker (Qt's generic replacement dialog
+// would not follow the app's design and language).
 Item {
+    id: dialogs
     signal musicFolderChosen(string path)
     signal imageFolderChosen(string path)
 
-    function openAudio() { audioDialog.open() }
-    function openImages() { imageDialog.open() }
-    function openUpload() { uploadDialog.open() }
-    function openLyrics() { lyricsDialog.open() }
-    function addMusicFolder() { folderDialog.open() }
-    function addImageFolder() { imageFolderDialog.open() }
+    readonly property var audioExts: ["mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "aif", "aiff", "mka", "webm", "mp2", "hfx"]
+    readonly property var imageExts: ["jpg", "jpeg", "png", "webp", "gif", "bmp"]
+
+    function openAudio() {
+        if (Core.nativeDialogs) audioDialog.open()
+        else pick("files", audioExts, "music_note", Theme.tr("Open files"), (p) => Core.call("open", { paths: p, play: true }))
+    }
+    function openImages() {
+        if (Core.nativeDialogs) imageDialog.open()
+        else pick("files", imageExts, "image", Theme.tr("Add images"), (p) => Core.call("backgrounds.add", { sources: p, show: true }))
+    }
+    function openUpload() {
+        if (Core.nativeDialogs) uploadDialog.open()
+        else pick("files", ["*"], "upload", Theme.tr("Upload files"), (p) => Core.call("vault.upload", { paths: p }))
+    }
+    function openLyrics() {
+        if (Core.nativeDialogs) lyricsDialog.open()
+        else pick("file", ["lrc", "txt"], "lyrics", Theme.tr("Add song text…"), (p) => Core.call("lyrics.importFile", { path: p[0] }))
+    }
+    function addMusicFolder() {
+        if (Core.nativeDialogs) folderDialog.open()
+        else pick("folder", [], "folder", Theme.tr("Add music folder"), (p) => Core.call("library.addFolder", { path: p[0] }))
+    }
+    function addImageFolder() {
+        if (Core.nativeDialogs) imageFolderDialog.open()
+        else pick("folder", [], "folder", Theme.tr("Add folder"), (p) => Core.call("backgrounds.addFolder", { path: p[0] }))
+    }
+
+    property var onPicked: null
+    function pick(mode, exts, icon, title, done) {
+        picker.mode = mode
+        picker.extensions = exts
+        picker.fileIcon = icon
+        picker.title = title
+        onPicked = done
+        picker.show()
+    }
+    FilePicker {
+        id: picker
+        onPicked: (paths) => { if (dialogs.onPicked) dialogs.onPicked(paths) }
+    }
 
     FolderDialog {
         id: folderDialog

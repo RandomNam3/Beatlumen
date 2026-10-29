@@ -27,6 +27,13 @@
 #include <QStandardPaths>
 #include <QStyleHints>
 
+#if defined(BEATLUMEN_PORTAL)
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QDBusVariant>
+#endif
 #if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
 #include "media_desktop.h"
 #endif
@@ -305,6 +312,7 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     if (!cb.audio_push)
         cb.audio_start = audioStartCallback;
     cb.open_url = openUrlCallback;
+    probeNativeDialogs();
     secrets::configure(cb, this);
 #if defined(BEATLUMEN_DESKTOP_CAPTURE)
     desktopcapture::configure(cb, this);
@@ -391,6 +399,40 @@ QString Bridge::platform() const
     return QStringLiteral("macos");
 #else
     return QStringLiteral("linux");
+#endif
+}
+
+// Linux: Qt's file dialogs are native only through the XDG desktop portal
+// (main.cpp selects that platform theme); without a portal they fall back to
+// a generic Qt Quick dialog, so the app's own picker is used instead.
+// BEATLUMEN_NATIVE_DIALOGS=0/1 overrides the check.
+void Bridge::probeNativeDialogs()
+{
+    const QByteArray force = qgetenv("BEATLUMEN_NATIVE_DIALOGS");
+    if (!force.isEmpty()) {
+        m_nativeDialogs = force != "0";
+        return;
+    }
+#if defined(BEATLUMEN_PORTAL)
+    if (qgetenv("QT_QPA_PLATFORMTHEME") != "xdgdesktopportal")
+        return;
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.freedesktop.portal.Desktop"),
+        QStringLiteral("/org/freedesktop/portal/desktop"),
+        QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"));
+    msg << QStringLiteral("org.freedesktop.portal.FileChooser") << QStringLiteral("version");
+    auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg, 10000), this);
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
+        QDBusPendingReply<QDBusVariant> r = *w;
+        w->deleteLater();
+        // Version 3 picks folders too.
+        if (!r.isError() && r.value().variant().toUInt() >= 3) {
+            m_nativeDialogs = true;
+            emit nativeDialogsChanged();
+        } else {
+            log(QStringLiteral("no file chooser portal: using the app's file picker"));
+        }
+    });
 #endif
 }
 

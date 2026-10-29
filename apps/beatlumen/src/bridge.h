@@ -26,6 +26,9 @@ class Bridge : public QObject
     Q_PROPERTY(QString platform READ platform CONSTANT)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
+    // File dialogs of the system can be used (Linux: the XDG desktop portal
+    // answers); otherwise the app shows its own file picker.
+    Q_PROPERTY(bool nativeDialogs READ nativeDialogs NOTIFY nativeDialogsChanged)
 
 public:
     Bridge(const QStringList &args, QObject *parent = nullptr);
@@ -38,6 +41,7 @@ public:
     QString platform() const;
     bool mobile() const;
     QString version() const;
+    bool nativeDialogs() const { return m_nativeDialogs; }
 
     // Executes a core command ({"cmd": name, ...args}) and returns the result.
     Q_INVOKABLE QJSValue call(const QString &cmd, const QVariantMap &args = {});
@@ -66,6 +70,7 @@ signals:
     void stateChanged();
     void positionChanged();
     void systemThemeChanged();
+    void nativeDialogsChanged();
     void toast(const QString &text, bool error);
     void coverReady(const QString &id, const QString &url);
     void mediaPermissionGranted();
@@ -75,7 +80,14 @@ private:
     void handleEvents(const QByteArray &json);
     void renderUnderlay();
 
+    void probeNativeDialogs();
+
     BlCore *m_core = nullptr;
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    bool m_nativeDialogs = false;
+#else
+    bool m_nativeDialogs = true;
+#endif
     QVariantMap m_state;
     double m_position = 0;
     QTimer m_timer;

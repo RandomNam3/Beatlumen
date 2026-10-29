@@ -137,7 +137,7 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
     find_package(Qt6 QUIET COMPONENTS DBus)
     if(TARGET Qt6::DBus)
         target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
-        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS BEATLUMEN_PORTAL)
         target_link_libraries(beatlumen PRIVATE Qt6::DBus)
         # "Visualize other apps": the sound output's monitor (libpulse-simple,
         # loaded at run time) and MPRIS players.
