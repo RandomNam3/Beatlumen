@@ -48,6 +48,9 @@ profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
   /music/** r,
   /images/ r,
   /images/** r,
+  # Speech recognition model (optional).
+  /models/ r,
+  /models/** r,
   /run/secrets/ r,
   /run/secrets/* r,
   /usr/share/doc/beatlumen/** r,

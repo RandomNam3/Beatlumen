@@ -8,30 +8,6 @@ use bl_json::Value;
 use common::App;
 use std::time::{Duration, Instant};
 
-fn wav(seconds: u32) -> Vec<u8> {
-    let rate = 44100u32;
-    let n = rate * seconds;
-    let mut d = Vec::new();
-    d.extend_from_slice(b"RIFF");
-    d.extend_from_slice(&(36 + n * 4).to_le_bytes());
-    d.extend_from_slice(b"WAVEfmt ");
-    d.extend_from_slice(&16u32.to_le_bytes());
-    d.extend_from_slice(&1u16.to_le_bytes());
-    d.extend_from_slice(&2u16.to_le_bytes());
-    d.extend_from_slice(&rate.to_le_bytes());
-    d.extend_from_slice(&(rate * 4).to_le_bytes());
-    d.extend_from_slice(&4u16.to_le_bytes());
-    d.extend_from_slice(&16u16.to_le_bytes());
-    d.extend_from_slice(b"data");
-    d.extend_from_slice(&(n * 4).to_le_bytes());
-    for i in 0..n {
-        let s = ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 12000.0) as i16;
-        d.extend_from_slice(&s.to_le_bytes());
-        d.extend_from_slice(&s.to_le_bytes());
-    }
-    d
-}
-
 fn tracks(app: &mut App) -> Vec<Value> {
     app.cmd(Value::object().with("cmd", "library.tracks"))
         .as_array()
@@ -45,9 +21,9 @@ fn songs_play_offline_with_their_text() {
     let _ = std::fs::remove_dir_all(&root);
     let music = root.join("music");
     std::fs::create_dir_all(&music).unwrap();
-    std::fs::write(music.join("Sine Song.wav"), wav(4)).unwrap();
+    std::fs::write(music.join("Sine Song.wav"), common::wav(4)).unwrap();
     std::fs::write(music.join("Sine Song.lrc"), "[00:00.50]Offline line\n").unwrap();
-    std::fs::write(music.join("Other.wav"), wav(1)).unwrap();
+    std::fs::write(music.join("Other.wav"), common::wav(1)).unwrap();
     let server = beatlumen_server::start(beatlumen_server::Config {
         music_dirs: vec![music.clone()],
         data_dir: root.join("data"),

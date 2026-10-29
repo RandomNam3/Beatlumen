@@ -28,7 +28,10 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   without a connection; the library shows them while the server is away.
 - **Song texts** over the visuals: from the file's tags, an `.lrc` or
   `.txt` file next to it, or added in the app. Synced texts (LRC, also with
-  word timing) follow the song; tapping a line jumps there.
+  word timing) follow the song; tapping a line jumps there. With a
+  speech model, the server times plain texts by recognising the sung
+  words, or writes down what is sung (own implementation, runs on the
+  server; see `container/README.md`).
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
   and cover (Linux, Windows, Android; AirPlay 1 protocol).

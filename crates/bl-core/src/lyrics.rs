@@ -5,6 +5,7 @@
 use crate::core::{Core, Req};
 use crate::host::Host;
 use crate::library;
+use crate::server::ServerState;
 use bl_json::Value;
 
 /// At most this many lines are kept.
@@ -231,7 +232,24 @@ pub(crate) struct LyricsState {
     pub found: Option<(Lyrics, String)>,
     /// The next picked text file is a song text for the current track.
     pub expect_import: bool,
+    /// The server is timing the text by speech recognition.
+    pub sync: Option<SyncState>,
 }
+
+/// A running `lyrics.sync` on the server.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SyncState {
+    /// `queued` or `running`.
+    pub state: String,
+    pub progress: f64,
+    /// When to ask for the status next (host time).
+    pub next_poll: f64,
+    /// A status request is under way.
+    pub asking: bool,
+}
+
+/// Seconds between status requests of a running `lyrics.sync`.
+const SYNC_POLL_SECS: f64 = 2.0;
 
 /// Storage key of an imported song text for a track of this device.
 fn import_key(id: &str) -> String {
@@ -248,7 +266,7 @@ impl Core {
             self.lyrics_load(host, &id);
         }
         let l = &self.lyrics;
-        match (&l.found, l.loading) {
+        let v = match (&l.found, l.loading) {
             (_, true) => Value::object()
                 .with("status", "loading")
                 .with("id", id.as_str()),
@@ -261,13 +279,32 @@ impl Core {
                 .with("id", id.as_str())
                 .with("source", source.as_str())
                 .with("canRemove", source == "imported"),
+        };
+        let can_sync = l.sync.is_none()
+            && !l.loading
+            && library::is_server_id(&id)
+            && matches!(&self.server.state, ServerState::Connected(i) if i.speech)
+            && !l.found.as_ref().is_some_and(|(lyrics, _)| lyrics.synced);
+        let v = v.with("canSync", can_sync);
+        match &l.sync {
+            Some(s) => v.with(
+                "sync",
+                Value::object()
+                    .with("state", s.state.as_str())
+                    .with("progress", s.progress),
+            ),
+            None => v,
         }
     }
 
     fn lyrics_load(&mut self, host: &mut dyn Host, id: &str) {
+        let sync = (self.lyrics.id == id)
+            .then(|| self.lyrics.sync.take())
+            .flatten();
         self.lyrics = LyricsState {
             id: id.to_string(),
             loading: true,
+            sync,
             ..Default::default()
         };
         let mailbox = self.lyrics_box.clone();
@@ -425,6 +462,97 @@ impl Core {
             Some(e) => self.toast(e.to_string(), true),
             None => self.toast(self.tr("Song text added"), false),
         }
+    }
+
+    /// `lyrics.sync`: lets the server time the current track's song text by
+    /// speech recognition (or recognize it when there is none).
+    pub(crate) fn lyrics_sync(&mut self, host: &mut dyn Host) -> Value {
+        let Some(id) = self.queue.current().cloned() else {
+            return Value::object().with("error", "nothing playing");
+        };
+        if !library::is_server_id(&id)
+            || !matches!(&self.server.state, ServerState::Connected(i) if i.speech)
+        {
+            return Value::object().with("error", self.tr("The server cannot time song texts"));
+        }
+        if self.lyrics.id != id {
+            self.lyrics_load(host, &id);
+        }
+        let rid = self.server.send(
+            host,
+            "POST",
+            &bl_net::api::paths::track_lyrics_sync(&id),
+            Vec::new(),
+            "text/plain",
+        );
+        self.requests.insert(rid, Req::LyricsSync(id));
+        self.lyrics.sync = Some(SyncState {
+            state: "queued".into(),
+            asking: true,
+            ..Default::default()
+        });
+        self.revs.lyrics += 1;
+        Value::object().with("ok", true)
+    }
+
+    /// A server answer about a `lyrics.sync`.
+    pub(crate) fn lyrics_sync_response(
+        &mut self,
+        host: &mut dyn Host,
+        id: String,
+        res: &Result<crate::host::HttpResponse, String>,
+    ) {
+        if id != self.lyrics.id || self.lyrics.sync.is_none() {
+            return;
+        }
+        let status = match res {
+            Ok(r) if (200..300).contains(&r.status) => bl_json::parse_bytes(&r.body).ok(),
+            _ => None,
+        };
+        let state = status
+            .as_ref()
+            .map(|v| v.str_or("state", "idle").to_string())
+            .unwrap_or_else(|| "failed".into());
+        match state.as_str() {
+            "queued" | "running" => {
+                let s = self.lyrics.sync.as_mut().expect("checked above");
+                s.state = state;
+                s.progress = status.as_ref().map_or(0.0, |v| v.f64_or("progress", 0.0));
+                s.asking = false;
+                s.next_poll = host.now() + SYNC_POLL_SECS;
+            }
+            _ => {
+                self.lyrics.sync = None;
+                if state == "done" {
+                    self.toast(self.tr("Song text timed"), false);
+                } else {
+                    self.toast(self.tr("Timing the song text failed"), true);
+                }
+                self.lyrics_load(host, &id);
+            }
+        }
+        self.revs.lyrics += 1;
+    }
+
+    /// Asks the server how a running `lyrics.sync` is doing (from `tick`).
+    pub(crate) fn poll_lyrics_sync(&mut self, host: &mut dyn Host) {
+        let Some(s) = &mut self.lyrics.sync else {
+            return;
+        };
+        if s.asking || host.now() < s.next_poll {
+            return;
+        }
+        if !self.server.is_connected() {
+            self.lyrics.sync = None;
+            self.revs.lyrics += 1;
+            return;
+        }
+        s.asking = true;
+        let id = self.lyrics.id.clone();
+        let rid = self
+            .server
+            .get(host, &bl_net::api::paths::track_lyrics_sync(&id));
+        self.requests.insert(rid, Req::LyricsSync(id));
     }
 
     /// `lyrics.remove`: drops the imported song text of the current track.

@@ -156,6 +156,8 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_VAULT_PEPPER_FILE` | `/data/vault/pepper` | Secret (at least 32 bytes) mixed into the account verifiers. As a secret outside `/data`, a copy of the volume alone does not even allow testing password guesses. Losing it locks every account out (the files stay encrypted and are lost with it) |
 | `BEATLUMEN_VAULT_QUOTA_MB` | `10240` | Encrypted storage per account in MiB, `0` = unlimited |
 | `BEATLUMEN_REGISTRATION` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
+| `BEATLUMEN_SPEECH_MODEL` | – | Whisper model file for timing song texts (see [Song texts](#song-texts-speech-recognition)) |
+| `BEATLUMEN_AUTO_SYNC_LYRICS` | `false` | `true`: time the song texts of the whole library in the background (needs the model) |
 | `BEATLUMEN_PUSH_ALLOW_PRIVATE` | `false` | `true`: allow push services (UnifiedPush, e.g. ntfy) in private networks and over plain http |
 | `BEATLUMEN_CA_FILE` | – | Extra root certificates (PEM) for outgoing TLS, e.g. a private CA of a push service at home |
 | `BEATLUMEN_VERBOSE` | `false` | `true`: log every request and per-file tag problems |
@@ -191,12 +193,43 @@ environment variables:
 | `--vault-pepper-file FILE` | Pepper of the account verifiers |
 | `--vault-quota-mb MB` | Encrypted storage per account |
 | `--registration MODE` | `invite` or `off` |
+| `--speech-model FILE` | Whisper model file for timing song texts |
+| `--auto-sync-lyrics` | Time the song texts of the whole library in the background |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |
 | `--help`, `--version` | |
 
 Precedence: built-in defaults < `--config` file < environment variables <
 command line parameters.
+
+## Song texts (speech recognition)
+
+With a Whisper model the server times plain song texts (`.txt`, tags
+without times, texts added in the apps) by recognising the sung words, and
+writes down what is sung when a song has no text at all. The recognition
+runs on the server itself (own implementation, no external service, no
+network access). In the apps, the song text view then offers *Sync
+automatically* (or *Recognize song text*); with
+`BEATLUMEN_AUTO_SYNC_LYRICS=true` the server works through the whole
+library in the background on half of the processor cores. The results are
+stored in `/data/lyrics`; texts added later replace them.
+
+Model files in the ggml format of whisper.cpp (f16 or f32, not quantised)
+work, e.g. `ggml-base.bin` (about 150 MB on disk, 0.4 GB of memory) or
+`ggml-small.bin` (about 470 MB, 1.2 GB of memory; better for sung text).
+Download one from the whisper.cpp model page
+(`https://huggingface.co/ggerganov/whisper.cpp`), put it into a folder and
+mount it read-only:
+
+```yaml
+    environment:
+      BEATLUMEN_SPEECH_MODEL: /models/ggml-small.bin
+      BEATLUMEN_AUTO_SYNC_LYRICS: "true"
+    volumes:
+      - ./models:/models:ro,z
+```
+
+Songs longer than 15 minutes are timed only for their first 15 minutes.
 
 ## User accounts
 

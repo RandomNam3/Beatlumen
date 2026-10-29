@@ -287,3 +287,46 @@ pub fn fake_push_service() -> (String, std::sync::mpsc::Receiver<(String, Vec<u8
     });
     (url, rx)
 }
+
+/// A stereo 44.1 kHz WAV file with a 440 Hz tone.
+pub fn wav(seconds: u32) -> Vec<u8> {
+    let rate = 44100u32;
+    let n = rate * seconds;
+    let mut d = Vec::new();
+    d.extend_from_slice(b"RIFF");
+    d.extend_from_slice(&(36 + n * 4).to_le_bytes());
+    d.extend_from_slice(b"WAVEfmt ");
+    d.extend_from_slice(&16u32.to_le_bytes());
+    d.extend_from_slice(&1u16.to_le_bytes());
+    d.extend_from_slice(&2u16.to_le_bytes());
+    d.extend_from_slice(&rate.to_le_bytes());
+    d.extend_from_slice(&(rate * 4).to_le_bytes());
+    d.extend_from_slice(&4u16.to_le_bytes());
+    d.extend_from_slice(&16u16.to_le_bytes());
+    d.extend_from_slice(b"data");
+    d.extend_from_slice(&(n * 4).to_le_bytes());
+    for i in 0..n {
+        let s = ((i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 12000.0) as i16;
+        d.extend_from_slice(&s.to_le_bytes());
+        d.extend_from_slice(&s.to_le_bytes());
+    }
+    d
+}
+
+/// The app's library once it has `n` songs (fails after 20 s).
+pub fn wait_tracks(app: &mut App, n: usize) -> Vec<Value> {
+    let t0 = Instant::now();
+    loop {
+        app.state();
+        let l = app
+            .cmd(Value::object().with("cmd", "library.tracks"))
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if l.len() >= n {
+            return l;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(20), "library: {l:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

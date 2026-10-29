@@ -18,6 +18,9 @@ Item {
     readonly property bool synced: ready && info.synced === true
     readonly property var lines: ready ? info.lines : []
     readonly property bool compact: width < 600
+    // The server can time the text by speech recognition.
+    readonly property bool canSync: info.canSync === true
+    readonly property var sync: info.sync || null
     // Small lead: a line lights up as it starts being sung.
     readonly property real lead: 0.15
     property int currentLine: -1
@@ -135,7 +138,7 @@ Item {
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(parent.width, 420)
-        visible: lv.info.status === "none" && lv.curId !== "" && lv.controlsVisible
+        visible: lv.info.status === "none" && lv.curId !== "" && lv.controlsVisible && !lv.sync
         spacing: 12
         Label {
             Layout.fillWidth: true
@@ -153,6 +156,52 @@ Item {
             text: Theme.tr("Add song text…")
             icon.source: Theme.icon("add")
             onClicked: lv.addLyrics()
+        }
+        Button {
+            Layout.alignment: Qt.AlignHCenter
+            visible: lv.canSync
+            text: Theme.tr("Recognize song text")
+            icon.source: Theme.icon("auto_awesome")
+            onClicked: Core.call("lyrics.sync")
+        }
+    }
+
+    // Plain text: offer timing it; while the server works, its progress.
+    Pane {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 8
+        visible: (lv.sync !== null || (lv.ready && lv.canSync)) && (lv.controlsVisible || lv.sync !== null)
+        padding: lv.sync ? 12 : 0
+        Material.elevation: 2
+        background: Rectangle {
+            radius: height / 2
+            color: lv.sync ? Qt.rgba(0, 0, 0, 0.55) : "transparent"
+        }
+        RowLayout {
+            spacing: 10
+            Button {
+                visible: !lv.sync
+                text: Theme.tr("Sync automatically")
+                icon.source: Theme.icon("auto_awesome")
+                onClicked: Core.call("lyrics.sync")
+            }
+            BusyIndicator {
+                visible: lv.sync !== null
+                running: visible
+                Layout.preferredWidth: 28
+                Layout.preferredHeight: 28
+                Material.accent: "white"
+            }
+            Label {
+                visible: lv.sync !== null
+                textFormat: Text.PlainText
+                color: "white"
+                text: !lv.sync ? ""
+                    : lv.sync.state === "running"
+                        ? Theme.tr("Timing the song text…") + " " + Math.round(lv.sync.progress * 100) + " %"
+                        : Theme.tr("Waiting for the server…")
+            }
         }
     }
 

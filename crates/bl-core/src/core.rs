@@ -71,6 +71,7 @@ pub(crate) enum Req {
     Analysis(String),
     Loudness(String),
     Lyrics(String),
+    LyricsSync(String),
     LyricsSaved,
     TrackDownload {
         track_id: String,
@@ -868,6 +869,7 @@ impl Core {
                 self.loudness_box.post((id, l));
             }
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
+            Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
             Req::LyricsSaved => {
                 if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
                     self.toast(self.tr("Saving the song text failed"), true);
@@ -2373,6 +2375,7 @@ impl Core {
         self.poll_analysis(host);
         self.poll_loudness(host);
         self.poll_lyrics();
+        self.poll_lyrics_sync(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_covers();

@@ -14,11 +14,14 @@ explicitly sets them up for app-only use.
   the current line and word, and seek when a line is tapped. Texts can be
   added from a file per song (stored on the server for its songs:
   `GET/PUT/DELETE /api/tracks/<id>/lyrics`).
-- Speech recognition library (own implementation, no external services) that
-  produces second-accurate synced lyrics with pause detection.
-  - Server: optional automatic indexing of the whole library, or manual start
-    per selected track.
-  - App without server: manual start per track, computed locally.
+- Done: speech recognition (`crates/bl-asr`, own Whisper implementation for
+  ggml model files, no external services). The server times plain texts
+  (fuzzy word alignment, pause lines) or writes down what is sung, per song
+  from the app (*Sync automatically*) or for the whole library in the
+  background (`--speech-model`, `--auto-sync-lyrics`).
+- Next: in the app without a server, manual start per track with a model
+  file picked by the user, computed locally; word timing from the
+  recognition.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),
@@ -169,7 +172,7 @@ are cached locally.
 ## Offloading
 - Everything works in the apps without a server.
 - With a connected and logged-in server, heavy processes can run on the server
-  instead (analysis is already supported; later: lyrics recognition,
+  instead (analysis and lyrics recognition are already supported; later:
   transcoding, library indexing, remote sources).
 
 ## Not planned: streaming services and download portals
