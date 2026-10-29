@@ -168,11 +168,18 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         _ => {}
     }
-    // Users with an account may use the library as well.
-    if !state.auth.authorized(req) && state.vault.session_user(req).is_none() {
+    // Users with an account may use the library as well; their playlists
+    // and presets are their own.
+    let user = state.vault.session_user(req);
+    if !state.auth.authorized(req) && user.is_none() {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
+    let store = user
+        .as_deref()
+        .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
+    let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
+    let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
     match segs {
         ["logout"] => match m {
             "POST" => {
@@ -244,8 +251,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             }
         }
         ["playlists"] => match m {
-            "GET" | "HEAD" => json(200, &state.playlists.list_json()),
-            "POST" => match state.playlists.create(&req.body) {
+            "GET" | "HEAD" => json(200, &playlists.list_json()),
+            "POST" => match playlists.create(&req.body) {
                 Ok(p) => json(201, &p.to_json()),
                 Err(e) => fail(e),
             },
@@ -256,15 +263,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 return Response::error(404, "playlist not found");
             }
             match m {
-                "GET" | "HEAD" => match state.playlists.get(id) {
+                "GET" | "HEAD" => match playlists.get(id) {
                     Some(p) => json(200, &p.to_json()),
                     None => Response::error(404, "playlist not found"),
                 },
-                "PUT" => match state.playlists.update(id, &req.body) {
+                "PUT" => match playlists.update(id, &req.body) {
                     Ok(p) => json(200, &p.to_json()),
                     Err(e) => fail(e),
                 },
-                "DELETE" => match state.playlists.delete(id) {
+                "DELETE" => match playlists.delete(id) {
                     Ok(()) => Response::new(204),
                     Err(e) => fail(e),
                 },
@@ -292,7 +299,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, DELETE"),
             }
         }
-        ["presets"] if get => json(200, &state.presets.list()),
+        ["presets"] if get => json(200, &presets.list()),
         ["presets"] => not_allowed("GET, HEAD"),
         ["presets", ..] => {
             // The name is everything after the prefix (already decoded); a
@@ -303,18 +310,18 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 .strip_prefix("/api/presets/")
                 .unwrap_or("");
             match m {
-                "GET" | "HEAD" => match state.presets.get(name) {
+                "GET" | "HEAD" => match presets.get(name) {
                     Ok(data) => Response::bytes(200, "application/json", data),
                     Err(e) => fail(e),
                 },
-                "PUT" => match state.presets.put(name, &req.body) {
+                "PUT" => match presets.put(name, &req.body) {
                     Ok(created) => json(
                         if created { 201 } else { 200 },
                         &Value::object().with("name", name),
                     ),
                     Err(e) => fail(e),
                 },
-                "DELETE" => match state.presets.delete(name) {
+                "DELETE" => match presets.delete(name) {
                     Ok(()) => Response::new(204),
                     Err(e) => fail(e),
                 },

@@ -36,6 +36,7 @@ pub mod release;
 pub mod routes;
 pub mod sha256;
 pub mod tls;
+pub mod userdata;
 pub mod util;
 pub mod vault;
 pub mod web;
@@ -123,6 +124,7 @@ pub struct State {
     pub presets: presets::Presets,
     pub images: images::Images,
     pub lyrics: lyrics::Lyrics,
+    pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
     pub web: web::WebClient,
@@ -482,6 +484,7 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.image_cache.clone(),
         ),
         lyrics: lyrics::Lyrics::new(data.lyrics.clone()),
+        user_data: userdata::UserData::default(),
         analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),

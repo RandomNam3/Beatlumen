@@ -24,8 +24,10 @@ explicitly sets them up for app-only use.
 - Done: user accounts with end-to-end encrypted files, sharing between
   users, passkeys (`docs/ENCRYPTION.md`); source extensions
   (`docs/EXTENSIONS.md`).
-- Per-user playlists, presets, backgrounds and settings (today they are
-  shared by everyone on the server).
+- Done: playlists and presets per user account (signing in with the
+  server password keeps the shared ones); personal backgrounds through the
+  encrypted images.
+- Settings that follow a user account across devices.
 - Public share links (with optional expiry and password).
 
 ## Devices: remote control and individual playback

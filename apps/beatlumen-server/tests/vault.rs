@@ -831,3 +831,44 @@ fn push_on_share() {
         204
     );
 }
+
+#[test]
+fn accounts_have_their_own_playlists_and_presets() {
+    let s = start("userdata", |c| c.password = Some("server password".into()));
+    let (ta, _, _) = register(&s, "alice", "pw one");
+    let (tb, _, _) = register(&s, "bob", "pw two");
+    let (st, v) = s.call("POST", "/api/login", None, &Value::object().with("password", "server password"));
+    assert_eq!(st, 200);
+    let shared = v.str_or("token", "").to_string();
+    let names = |t: &str| -> Vec<String> {
+        let (st, v) = s.call("GET", "/api/playlists", Some(t), &Value::Null);
+        assert_eq!(st, 200);
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.str_or("name", "").to_string())
+            .collect()
+    };
+    let create = |t: &str, name: &str| {
+        let body = Value::object().with("name", name).with("kind", "track");
+        assert_eq!(s.call("POST", "/api/playlists", Some(t), &body).0, 201);
+    };
+    create(&ta, "Alice mix");
+    create(&tb, "Bob mix");
+    create(&shared, "Household");
+    assert_eq!(names(&ta), vec!["Alice mix"]);
+    assert_eq!(names(&tb), vec!["Bob mix"]);
+    assert_eq!(names(&shared), vec!["Household"]);
+
+    // Presets as well.
+    let hfx = br#"{"name":"Mine","effects":[]}"#;
+    assert!(matches!(s.req("PUT", "/api/presets/Mine", Some(&ta), hfx).status, 200 | 201 | 204));
+    let has = |t: &str| s.call("GET", "/api/presets", Some(t), &Value::Null).1.to_json().contains("Mine");
+    assert!(has(&ta));
+    assert!(!has(&tb));
+    assert!(!has(&shared));
+    assert_eq!(s.req("GET", "/api/presets/Mine", Some(&tb), &[]).status, 404);
+
+    // Stored per user, not readable as another user's id.
+    assert!(s.data.join("vault").join("userdata").read_dir().unwrap().count() == 2);
+}

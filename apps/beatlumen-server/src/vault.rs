@@ -350,6 +350,8 @@ const MAX_PASSKEYS: usize = 20;
 
 pub struct Vault {
     users_dir: PathBuf,
+    /// Per-user playlists and presets (`userdata/<hash of the name>/`).
+    userdata_dir: PathBuf,
     files_dir: PathBuf,
     invites_dir: PathBuf,
     sessions_path: PathBuf,
@@ -566,6 +568,7 @@ impl Vault {
             );
         }
         Ok(Vault {
+            userdata_dir: dir.join("userdata"),
             users_dir,
             files_dir,
             invites_dir: invites_dir(data),
@@ -635,6 +638,12 @@ impl Vault {
 
     /// The user a request is logged in as. Sessions in use are renewed
     /// (daily), so they end after `SESSION_LIFETIME` without use.
+    /// Where a user's own playlists and presets are stored.
+    pub fn user_data_dir(&self, user: &str) -> PathBuf {
+        let h = util::hex(&crate::sha256::sha256(user.as_bytes()));
+        self.userdata_dir.join(&h[..32])
+    }
+
     pub fn session_user(&self, req: &Request) -> Option<String> {
         let t = crate::auth::Auth::request_token(req)?;
         let d = crate::sha256::sha256(t.as_bytes());
@@ -1434,6 +1443,7 @@ impl Vault {
         let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
         std::fs::remove_file(self.users_dir.join(format!("{me}.json")))
             .map_err(|_| (500, "cannot delete".to_string()))?;
+        let _ = std::fs::remove_dir_all(self.user_data_dir(me));
         users.remove(me);
         drop(users);
         let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
