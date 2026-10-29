@@ -31,6 +31,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+#[path = "vault_links.rs"]
+mod links;
+
 /// Failed logins per user and per address in [`FAILURE_WINDOW`].
 const MAX_USER_FAILURES: u32 = 10;
 const MAX_IP_FAILURES: u32 = 20;
@@ -368,6 +371,12 @@ pub struct Vault {
     /// Passkeys: the relying party (None without `--public-url`).
     pub rp: Option<crate::webauthn::RelyingParty>,
     challenges: Mutex<HashMap<String, Challenge>>,
+    /// Public links (`links/<id>.json`).
+    links_dir: PathBuf,
+    links: RwLock<HashMap<String, links::Link>>,
+    /// Download permissions from link password proofs: token -> (link, issued).
+    link_tokens: Mutex<HashMap<String, (String, Instant)>>,
+    link_failures: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
 fn invites_dir(data: &Path) -> PathBuf {
@@ -568,6 +577,10 @@ impl Vault {
             );
         }
         Ok(Vault {
+            links: RwLock::new(links::load(&dir.join("links"))),
+            links_dir: dir.join("links"),
+            link_tokens: Mutex::new(HashMap::new()),
+            link_failures: Mutex::new(HashMap::new()),
             userdata_dir: dir.join("userdata"),
             users_dir,
             files_dir,
@@ -865,6 +878,8 @@ impl Vault {
                     fail(404, "no such subscription")
                 }
             }
+            ["links"] if get => Ok(self.list_links(req, &me)),
+            ["links", id] if m == "DELETE" => self.delete_link(&me, id),
             ["files", id, rest @ ..] => {
                 if !(id.len() == 32
                     && id
@@ -1446,6 +1461,7 @@ impl Vault {
         let _ = std::fs::remove_dir_all(self.user_data_dir(me));
         users.remove(me);
         drop(users);
+        self.drop_links(|_, owner| owner == me);
         let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
         s.retain(|_, s| s.user != me);
         self.save_sessions(&s);
@@ -1661,8 +1677,11 @@ impl Vault {
             ("DELETE", []) if owner => {
                 self.remove_file(id);
                 files.remove(id);
+                drop(files);
+                self.drop_links(|file, _| file == id);
                 Ok(Response::new(204))
             }
+            ("POST", ["links"]) if owner => self.create_link(req, me, f),
             _ if !owner => fail(403, "only the owner can do this"),
             _ => fail(405, "method not allowed"),
         }

@@ -74,6 +74,26 @@ impl KdfParams {
     }
 }
 
+/// Argon2id of a password (checks the parameters first).
+pub(crate) fn argon2id(
+    password: &str,
+    salt: &[u8; SALT_LEN],
+    params: KdfParams,
+) -> Result<[u8; 32], Error> {
+    params.check()?;
+    let argon = argon2::Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(params.m_kib, params.t, params.p, Some(32))
+            .map_err(|_| Error::Format("key derivation parameters"))?,
+    );
+    let mut root = [0u8; 32];
+    argon
+        .hash_password_into(password.as_bytes(), salt, &mut root)
+        .map_err(|_| Error::Format("key derivation"))?;
+    Ok(root)
+}
+
 /// What the password derives.
 pub struct PasswordKeys {
     /// Sent to the server at login (the server stores only a hash of it).
@@ -88,17 +108,7 @@ impl PasswordKeys {
         salt: &[u8; SALT_LEN],
         params: KdfParams,
     ) -> Result<PasswordKeys, Error> {
-        params.check()?;
-        let argon = argon2::Argon2::new(
-            argon2::Algorithm::Argon2id,
-            argon2::Version::V0x13,
-            argon2::Params::new(params.m_kib, params.t, params.p, Some(32))
-                .map_err(|_| Error::Format("key derivation parameters"))?,
-        );
-        let mut root = [0u8; 32];
-        argon
-            .hash_password_into(password.as_bytes(), salt, &mut root)
-            .map_err(|_| Error::Format("key derivation"))?;
+        let mut root = argon2id(password, salt, params)?;
         let keys = PasswordKeys {
             auth: derive(&root, "beatlumen auth v1"),
             kek: derive(&root, "beatlumen kek v1"),

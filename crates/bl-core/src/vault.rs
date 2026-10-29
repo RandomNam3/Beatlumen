@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod images;
+mod links;
 mod native;
 mod remember;
 pub(crate) use images::BG_PREFIX;
@@ -66,6 +67,13 @@ pub(crate) enum VaultReq {
         id: String,
         thumb: bool,
     },
+    /// A new public link and its secret (for the URL).
+    LinkCreated {
+        file: String,
+        secret: String,
+    },
+    /// The links of a file (also after revoking one).
+    Links(String),
     /// Answer not needed.
     Quiet,
 }
@@ -107,6 +115,12 @@ enum Done {
     Thumb {
         id: String,
         url: String,
+    },
+    /// A public link, ready to send to the server.
+    Link {
+        file: String,
+        link: bl_vault::link::NewLink,
+        expires_in: u64,
     },
     /// The password proved for adding a passkey.
     Proof {
@@ -212,6 +226,12 @@ pub(crate) struct Vault {
     /// Thumbnails of images (data: URLs), in memory only.
     thumbs: HashMap<String, String>,
     thumbs_pending: std::collections::HashSet<String>,
+    /// Public links of the file `links_file` (as the server lists them).
+    links: Vec<Value>,
+    links_file: String,
+    /// The link just created (with its secret), until another file is shown.
+    link_url: Option<String>,
+    link_busy: bool,
 }
 
 fn b64(b: &[u8]) -> Value {
@@ -1258,6 +1278,11 @@ impl Core {
                 }
                 Done::UploadFailed { serial, msg } => self.vault_upload_failed(serial, msg),
                 Done::Proof { name, proof } => self.native_create_options(host, name, proof),
+                Done::Link {
+                    file,
+                    link,
+                    expires_in,
+                } => self.vault_link_upload(host, file, link, expires_in),
                 Done::Thumb { id, url } => {
                     self.vault.thumbs_pending.remove(&id);
                     if !url.is_empty() && self.vault.file(&id).is_some() {
@@ -1267,6 +1292,7 @@ impl Core {
                     self.revs.backgrounds += 1;
                 }
                 Done::Failed { account, msg } => {
+                    self.vault.link_busy = false;
                     if let Some(a) = account {
                         self.vault.account = Some(a);
                     }
@@ -1332,6 +1358,10 @@ impl Core {
             return;
         }
         match req {
+            VaultReq::LinkCreated { file, secret } => {
+                self.vault_link_created(host, status, &json, file, secret)
+            }
+            VaultReq::Links(file) => self.vault_links_loaded(&json, file),
             VaultReq::Image { id, thumb } => {
                 let body = res.ok().filter(|r| r.status == 200).map(|r| r.body);
                 self.vault_image_data(host, id, thumb, body)
@@ -1690,6 +1720,7 @@ impl Core {
             .with("remember", self.settings.vault_remember)
             .with("canRemember", self.vault_can_remember(host))
             .with("restoring", self.vault.restoring.is_some())
+            .with("links", self.vault_links_json())
             .with("passkeys", matches!(&self.server.state, crate::server::ServerState::Connected(i) | crate::server::ServerState::NeedsLogin(i) if i.passkeys))
     }
 
@@ -1817,6 +1848,14 @@ impl Core {
                 self.vault_remove(host, &s("id"), Some(&me));
             }
             "vault.delete" => self.vault_remove(host, &s("id"), None),
+            "vault.link.create" => self.vault_link_create(
+                host,
+                &s("id"),
+                &s("password"),
+                c.get("days").as_u64().unwrap_or(0),
+            ),
+            "vault.links" => self.vault_links_fetch(host, &s("id")),
+            "vault.link.delete" => self.vault_link_delete(host, &s("id")),
             "vault.verify" => self.vault_trust(host, &s("user"), true),
             "vault.acceptKey" => self.vault_trust(host, &s("user"), false),
             _ => return Value::object().with("error", format!("unknown command {name}")),

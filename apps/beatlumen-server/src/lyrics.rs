@@ -46,7 +46,12 @@ impl Lyrics {
             return Err((400, "empty song text".into()));
         }
         std::fs::create_dir_all(&self.dir)
-            .and_then(|_| util::write_atomic(&self.imported(&e.track.id), text.replace("\r\n", "\n").as_bytes()))
+            .and_then(|_| {
+                util::write_atomic(
+                    &self.imported(&e.track.id),
+                    text.replace("\r\n", "\n").as_bytes(),
+                )
+            })
             .map_err(|err| (500, format!("cannot store the song text: {err}")))
     }
 

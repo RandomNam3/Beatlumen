@@ -513,6 +513,7 @@ Item {
         MenuItem { text: Theme.tr("Add to queue"); icon.source: Theme.icon("queue_music"); enabled: fileMenu.file.audio === true; onTriggered: Core.call("enqueue", { ids: [fileMenu.file.id] }) }
         MenuItem { text: Theme.tr("Use as background"); icon.source: Theme.icon("wallpaper"); visible: fileMenu.file.image === true; height: visible ? implicitHeight : 0; onTriggered: page.useAsBackground(fileMenu.file) }
         MenuItem { text: Theme.tr("Share…"); icon.source: Theme.icon("share"); visible: fileMenu.file.mine === true && fileMenu.file.complete === true && !fileMenu.file.problem; height: visible ? implicitHeight : 0; onTriggered: shareDialog.show(fileMenu.file) }
+        MenuItem { text: Theme.tr("Public link…"); icon.source: Theme.icon("content_copy"); visible: fileMenu.file.mine === true && fileMenu.file.complete === true && !fileMenu.file.problem; height: visible ? implicitHeight : 0; onTriggered: linkDialog.show(fileMenu.file) }
         Repeater {
             model: fileMenu.file.mine ? fileMenu.file.recipients : []
             MenuItem {
@@ -543,6 +544,102 @@ Item {
             text: fileMenu.file.mine ? Theme.tr("The file is deleted on the server for you and everyone you shared it with.") : Theme.tr("You lose access; the owner keeps the file.")
         }
         onAccepted: Core.call(fileMenu.file.mine ? "vault.delete" : "vault.leave", { id: fileMenu.file.id.replace("vault:", "") })
+    }
+
+    // Public links: anyone with the link opens the file in the browser.
+    AppDialog {
+        id: linkDialog
+        property var file: ({})
+        readonly property var links: page.vault.links || ({})
+        readonly property bool forThis: file.id !== undefined && links.file === String(file.id).replace("vault:", "")
+        readonly property var list: forThis ? (links.list || []) : []
+        function show(f) {
+            file = f
+            linkPassword.text = ""
+            Core.call("vault.links", { id: String(f.id) })
+            open()
+        }
+        function date(secs) { return new Date(secs * 1000).toLocaleDateString(Qt.locale(), Locale.ShortFormat) }
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, page.width - 32)
+        title: Theme.tr("Public link")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("Anyone with the link can open this file in a browser, without an account. The key is part of the link; the server cannot read the file.")
+            }
+            // The link just created.
+            RowLayout {
+                visible: linkDialog.forThis && !!linkDialog.links.url
+                Layout.fillWidth: true
+                TextField {
+                    Layout.fillWidth: true
+                    readOnly: true
+                    text: linkDialog.links.url || ""
+                    onActiveFocusChanged: if (activeFocus) selectAll()
+                }
+                IconButton { iconName: "content_copy"; tip: Theme.tr("Copy link"); onClicked: Core.copyText(linkDialog.links.url || "") }
+            }
+            Label {
+                visible: linkDialog.forThis && !!linkDialog.links.url
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                font.pixelSize: 12
+                text: Theme.tr("Copy it now: the link cannot be shown again later.")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { textFormat: Text.PlainText; text: Theme.tr("Valid for"); color: Theme.textDim }
+                ComboBox {
+                    id: linkDays
+                    Layout.fillWidth: true
+                    textRole: "l"
+                    valueRole: "d"
+                    model: [{ d: 1, l: Theme.tr("1 day") }, { d: 7, l: Theme.tr("7 days") }, { d: 30, l: Theme.tr("30 days") }, { d: 0, l: Theme.tr("No expiry") }]
+                    currentIndex: 1
+                }
+            }
+            TextField {
+                id: linkPassword
+                Layout.fillWidth: true
+                echoMode: TextInput.Password
+                placeholderText: Theme.tr("Password (optional)")
+            }
+            AccentButton {
+                Layout.alignment: Qt.AlignRight
+                highlighted: true
+                text: linkDialog.links.busy ? Theme.tr("Creating…") : Theme.tr("Create link")
+                enabled: !linkDialog.links.busy
+                onClicked: Core.call("vault.link.create", { id: String(linkDialog.file.id), password: linkPassword.text, days: linkDays.currentValue })
+            }
+            SectionLabel { text: Theme.tr("Active links"); visible: linkDialog.list.length > 0 }
+            Repeater {
+                model: linkDialog.list
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Icon { name: modelData.password ? "lock" : "share"; color: Theme.textDim; size: 20 }
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        text: Theme.tr("Created") + " " + linkDialog.date(modelData.created) + " · "
+                              + (modelData.expires ? Theme.tr("until") + " " + linkDialog.date(modelData.expires) : Theme.tr("No expiry"))
+                    }
+                    IconButton { iconName: "delete"; tip: Theme.tr("Revoke link"); onClicked: Core.call("vault.link.delete", { id: modelData.id }) }
+                }
+            }
+            Button { Layout.alignment: Qt.AlignRight; flat: true; text: Theme.tr("Close"); onClicked: linkDialog.close() }
+        }
     }
 
     AppDialog {

@@ -236,6 +236,36 @@ signature: Ed25519(owner, SHA-256(header ‖ SHA-256(meta) ‖ SHA-256("key comm
 * **Groups** (e.g. a family) are a list of recipients; there is no group
   key the server could hand out.
 
+## Public links
+
+People without an account can get a single file through a link
+(`https://<server>/share/<id>#<secret>`), made by the file's owner in the
+app (`crates/bl-vault/src/link.rs`):
+
+* The **secret** (32 random bytes) only exists in the URL fragment, which
+  browsers never send to a server. The server stores the file key
+  **wrapped** (XChaCha20-Poly1305, the file id as associated data) under a
+  key derived with HKDF from the secret, and, for links with a password,
+  from Argon2id of the password (64 MiB, 3 passes; salt per link).
+* For **password links** the server also stores the SHA-256 of a proof
+  derived from both the secret and the password. It hands out the wrapped
+  key, the encrypted metadata and the file only for the right proof
+  (10 wrong attempts per link and per address in 15 minutes lock it for a
+  while), and then only through a download permission valid for 30
+  minutes. Someone with the link but not the password gets nothing; the
+  server, which has neither the secret nor the password, cannot guess the
+  password from the proof's hash.
+* Links **expire** (1 day to a year, or never) and can be **revoked**;
+  deleting the file or the account removes its links. The server keeps
+  the encrypted file as it is: anyone who once had the link and the
+  password and kept the file key could still decrypt that version, as
+  with revoking a person's access.
+* The **link page** (`apps/beatlumen/web/share`) decrypts in the browser
+  with the same `vault.wasm` as the sign-in page, pinned by its SHA-256 and
+  by Subresource Integrity, chunk by chunk; it then plays audio and images
+  or offers the file for download. Like the web client, the page is only as
+  trustworthy as the server that delivers it.
+
 ## Playing on network speakers
 
 Decrypted audio leaves the app when it plays on a speaker in the network:

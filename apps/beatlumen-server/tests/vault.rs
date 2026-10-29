@@ -837,7 +837,12 @@ fn accounts_have_their_own_playlists_and_presets() {
     let s = start("userdata", |c| c.password = Some("server password".into()));
     let (ta, _, _) = register(&s, "alice", "pw one");
     let (tb, _, _) = register(&s, "bob", "pw two");
-    let (st, v) = s.call("POST", "/api/login", None, &Value::object().with("password", "server password"));
+    let (st, v) = s.call(
+        "POST",
+        "/api/login",
+        None,
+        &Value::object().with("password", "server password"),
+    );
     assert_eq!(st, 200);
     let shared = v.str_or("token", "").to_string();
     let names = |t: &str| -> Vec<String> {
@@ -862,13 +867,196 @@ fn accounts_have_their_own_playlists_and_presets() {
 
     // Presets as well.
     let hfx = br#"{"name":"Mine","effects":[]}"#;
-    assert!(matches!(s.req("PUT", "/api/presets/Mine", Some(&ta), hfx).status, 200 | 201 | 204));
-    let has = |t: &str| s.call("GET", "/api/presets", Some(t), &Value::Null).1.to_json().contains("Mine");
+    assert!(matches!(
+        s.req("PUT", "/api/presets/Mine", Some(&ta), hfx).status,
+        200 | 201 | 204
+    ));
+    let has = |t: &str| {
+        s.call("GET", "/api/presets", Some(t), &Value::Null)
+            .1
+            .to_json()
+            .contains("Mine")
+    };
     assert!(has(&ta));
     assert!(!has(&tb));
     assert!(!has(&shared));
-    assert_eq!(s.req("GET", "/api/presets/Mine", Some(&tb), &[]).status, 404);
+    assert_eq!(
+        s.req("GET", "/api/presets/Mine", Some(&tb), &[]).status,
+        404
+    );
 
     // Stored per user, not readable as another user's id.
-    assert!(s.data.join("vault").join("userdata").read_dir().unwrap().count() == 2);
+    assert!(
+        s.data
+            .join("vault")
+            .join("userdata")
+            .read_dir()
+            .unwrap()
+            .count()
+            == 2
+    );
+}
+
+#[test]
+fn public_links() {
+    use bl_vault::link;
+    let s = start("links", |_| {});
+    let (ta, alice, _) = register(&s, "alice", "pw one");
+    let (tb, _, _) = register(&s, "bob", "pw two");
+    let plain = vec![42u8; 200_000];
+    let (id, key) = upload(&s, &ta, &alice, &plain, "song.flac");
+    let create = |pw: Option<&str>, expires_in: u64| -> (String, link::NewLink) {
+        let l = link::create(&id, &key, pw).unwrap();
+        let mut body = Value::object()
+            .with("wrapped", b64(&l.wrapped))
+            .with("expiresIn", expires_in);
+        if let Some((salt, params)) = l.password {
+            body = body.with(
+                "password",
+                Value::object()
+                    .with("salt", b64(&salt))
+                    .with("params", params_json(params))
+                    .with("authHash", b64(&l.auth_hash.unwrap())),
+            );
+        }
+        let (st, v) = s.call(
+            "POST",
+            &format!("/api/vault/files/{id}/links"),
+            Some(&ta),
+            &body,
+        );
+        assert_eq!(st, 201, "{}", v.to_json());
+        (v.str_or("id", "").to_string(), l)
+    };
+    let open_meta = |k: &Secret, info: &Value, meta: &Value| -> String {
+        let h = Header::parse(&unb64(info.get("header"))).unwrap();
+        let m = file::open_meta(k, &h, &unb64(meta)).unwrap();
+        String::from_utf8(m).unwrap()
+    };
+
+    // Without a password: the link's secret opens everything.
+    let (lid, l) = create(None, 0);
+    let (st, info) = s.call("GET", &format!("/api/share/{lid}"), None, &Value::Null);
+    assert_eq!(st, 200);
+    let keys = link::LinkKeys::derive(&l.secret, None).unwrap();
+    let k = keys.unwrap(&id, &unb64(info.get("wrapped"))).unwrap();
+    assert!(open_meta(&k, &info, info.get("meta")).contains("song.flac"));
+    let data = s.req("GET", &format!("/api/share/{lid}/data"), None, &[]);
+    assert_eq!(data.status, 200);
+    assert_eq!(file::decrypt(&k, &data.body).unwrap(), plain);
+    // Only the owner can create links; others cannot list or delete them.
+    let (st, _) = s.call(
+        "POST",
+        &format!("/api/vault/files/{id}/links"),
+        Some(&tb),
+        &Value::object(),
+    );
+    assert!(st == 403 || st == 404);
+    assert_eq!(
+        s.req("DELETE", &format!("/api/vault/links/{lid}"), Some(&tb), &[])
+            .status,
+        404
+    );
+    let (_, list) = s.call("GET", "/api/vault/links", Some(&ta), &Value::Null);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(
+        s.call("GET", "/api/vault/links", Some(&tb), &Value::Null)
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // With a password: nothing but the KDF parameters before the proof.
+    let (pid, pl) = create(Some("geheim"), 0);
+    let (st, info) = s.call("GET", &format!("/api/share/{pid}"), None, &Value::Null);
+    assert_eq!(st, 200);
+    assert!(info.get("wrapped").is_null() && info.get("meta").is_null());
+    assert_eq!(
+        s.req("GET", &format!("/api/share/{pid}/data"), None, &[])
+            .status,
+        403
+    );
+    let p = info.get("password");
+    let salt: [u8; 16] = unb64(p.get("salt")).try_into().unwrap();
+    let params = KdfParams {
+        m_kib: p.get("params").get("m").as_u64().unwrap() as u32,
+        t: p.get("params").get("t").as_u64().unwrap() as u32,
+        p: p.get("params").get("p").as_u64().unwrap() as u32,
+    };
+    let wrong = link::LinkKeys::derive(&pl.secret, Some(("falsch", &salt, params))).unwrap();
+    let unlock = |k: &link::LinkKeys| {
+        s.call(
+            "POST",
+            &format!("/api/share/{pid}/unlock"),
+            None,
+            &Value::object().with("auth", b64(k.auth.as_ref().unwrap().as_bytes())),
+        )
+    };
+    assert_eq!(unlock(&wrong).0, 403);
+    let right = link::LinkKeys::derive(&pl.secret, Some(("geheim", &salt, params))).unwrap();
+    let (st, u) = unlock(&right);
+    assert_eq!(st, 200);
+    let k = right.unwrap(&id, &unb64(u.get("wrapped"))).unwrap();
+    assert!(open_meta(&k, &info, u.get("meta")).contains("song.flac"));
+    let token = u.str_or("token", "");
+    let data = s.req(
+        "GET",
+        &format!("/api/share/{pid}/data?token={token}"),
+        None,
+        &[],
+    );
+    assert_eq!(data.status, 200);
+    assert_eq!(file::decrypt(&k, &data.body).unwrap(), plain);
+    // A token of one link does not open another.
+    let (lid2, _) = create(Some("x"), 0);
+    assert_eq!(
+        s.req(
+            "GET",
+            &format!("/api/share/{lid2}/data?token={token}"),
+            None,
+            &[]
+        )
+        .status,
+        403
+    );
+    // Too many wrong passwords block the link for a while.
+    for _ in 0..10 {
+        unlock(&wrong);
+    }
+    assert_eq!(unlock(&right).0, 429);
+
+    // Expiry, revoking, deleting the file.
+    let (eid, _) = create(None, 1);
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    assert_eq!(
+        s.req("GET", &format!("/api/share/{eid}"), None, &[]).status,
+        404
+    );
+    assert_eq!(
+        s.req("DELETE", &format!("/api/vault/links/{lid}"), Some(&ta), &[])
+            .status,
+        204
+    );
+    assert_eq!(
+        s.req("GET", &format!("/api/share/{lid}"), None, &[]).status,
+        404
+    );
+    assert_eq!(
+        s.req("GET", &format!("/api/share/{lid2}"), None, &[])
+            .status,
+        200
+    );
+    assert_eq!(
+        s.req("DELETE", &format!("/api/vault/files/{id}"), Some(&ta), &[])
+            .status,
+        204
+    );
+    assert_eq!(
+        s.req("GET", &format!("/api/share/{lid2}"), None, &[])
+            .status,
+        404
+    );
+    assert_eq!(s.req("GET", "/api/share/not-a-link", None, &[]).status, 404);
 }

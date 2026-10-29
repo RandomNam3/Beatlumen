@@ -6,6 +6,7 @@
 //! * [`sealed`]: file keys sealed to a recipient's public key (sharing).
 //! * [`file`]: the encrypted file format (chunked, random access,
 //!   encrypted metadata, owner signature).
+//! * [`link`]: public links to a file (key in the URL fragment).
 //!
 //! Everything here runs on the user's device; the server only ever stores
 //! the outputs.
@@ -15,6 +16,7 @@ pub mod file;
 pub mod handoff;
 pub mod identity;
 pub mod keys;
+pub mod link;
 pub mod manifest;
 pub mod recovery;
 pub mod sealed;

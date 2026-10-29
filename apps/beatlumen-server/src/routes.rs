@@ -121,8 +121,10 @@ fn route(state: &State, req: &Request) -> Response {
     if segs == [".well-known", "assetlinks.json"] && matches!(req.method.as_str(), "GET" | "HEAD") {
         return assetlinks(state);
     }
-    match segs.first() {
-        Some(&"api") => api(state, req, &segs[1..]),
+    match segs.as_slice() {
+        ["api", rest @ ..] => api(state, req, rest),
+        // Public links (/share/<id>#<secret>) open the share page.
+        ["share", id] if !id.contains('.') => state.web.serve(req, &["share", "index.html"]),
         _ => state.web.serve(req, &segs),
     }
 }
@@ -166,6 +168,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             }
         }
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
+        // Public links to encrypted files: no account needed.
+        ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),
         _ => {}
     }
     // Users with an account may use the library as well; their playlists

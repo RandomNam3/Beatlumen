@@ -50,6 +50,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   overlay on Windows, the media notification and lock screen on Android.
   After the app was closed, Android's media controls continue the last
   track where it stopped.
+- **Public links** to encrypted files, with expiry and an optional
+  password: the receiver opens the file in a browser without an account;
+  the key is part of the link and never reaches the server.
 - **Encrypted files on the server** (end-to-end): only you and the people
   you share with can open them; sign in with a password, passkeys or your
   password manager (`docs/ENCRYPTION.md`).

@@ -280,3 +280,120 @@ pub unsafe extern "C" fn bl_pairing_code(app_key: *const u8) -> i32 {
 pub extern "C" fn bl_prf_input() -> i32 {
     finish(Ok(keys::passkey_prf_input().to_vec()))
 }
+
+// ---- public links (`apps/beatlumen/web/share`) ---------------------------
+
+/// Link keys between deriving them and unwrapping the file key.
+static LINK: Mutex<Option<bl_vault::link::LinkKeys>> = Mutex::new(None);
+/// The shared file's key and header while the page decrypts it.
+static SHARED: Mutex<Option<(Secret, bl_vault::file::Header)>> = Mutex::new(None);
+
+/// Keys of a link from its secret (text from the URL fragment) and, when
+/// `salt` is given, the password (Argon2id). Result: the password proof
+/// (32 bytes) for password links, else nothing.
+///
+/// # Safety
+/// Pointers from `bl_alloc` (`salt` may be null without a password).
+#[no_mangle]
+pub unsafe extern "C" fn bl_link_derive(
+    secret: *const u8,
+    secret_len: usize,
+    pw: *const u8,
+    pw_len: usize,
+    salt: *const u8,
+    m: u32,
+    t: u32,
+    p: u32,
+) -> i32 {
+    finish((|| {
+        let s = bl_vault::link::secret_from_text(text(secret, secret_len)?)
+            .map_err(|e| e.to_string())?;
+        let keys = if salt.is_null() {
+            bl_vault::link::LinkKeys::derive(&s, None)
+        } else {
+            let salt: [u8; 16] = input(salt, 16).try_into().map_err(|_| "salt")?;
+            let pw = text(pw, pw_len)?;
+            bl_vault::link::LinkKeys::derive(&s, Some((pw, &salt, KdfParams { m_kib: m, t, p })))
+        }
+        .map_err(|e| e.to_string())?;
+        let auth = keys
+            .auth
+            .as_ref()
+            .map(|a| a.as_bytes().to_vec())
+            .unwrap_or_default();
+        *LINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(keys);
+        Ok(auth)
+    })())
+}
+
+/// Unwraps the file key and opens the file's metadata; result: the
+/// metadata (JSON). The key stays inside for `bl_link_chunk`.
+///
+/// # Safety
+/// Pointers from `bl_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn bl_link_open(
+    file_id: *const u8,
+    file_id_len: usize,
+    wrapped: *const u8,
+    wrapped_len: usize,
+    header: *const u8,
+    header_len: usize,
+    meta: *const u8,
+    meta_len: usize,
+) -> i32 {
+    finish((|| {
+        let link = LINK.lock().unwrap_or_else(|e| e.into_inner());
+        let keys = link.as_ref().ok_or("no link keys")?;
+        let key = keys
+            .unwrap(text(file_id, file_id_len)?, input(wrapped, wrapped_len))
+            .map_err(|_| "wrong link or password".to_string())?;
+        let h =
+            bl_vault::file::Header::parse(input(header, header_len)).map_err(|e| e.to_string())?;
+        let m = bl_vault::file::open_meta(&key, &h, input(meta, meta_len))
+            .map_err(|e| e.to_string())?;
+        *SHARED.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, h));
+        Ok(m)
+    })())
+}
+
+/// Layout of the shared file: number of chunks (each `bl_link_chunk_size`
+/// bytes, after a header of `bl_link_header_size` bytes); -1 before
+/// `bl_link_open`.
+#[no_mangle]
+pub extern "C" fn bl_link_chunks() -> i64 {
+    let shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    shared.as_ref().map_or(-1, |(_, h)| h.chunks as i64)
+}
+
+#[no_mangle]
+pub extern "C" fn bl_link_chunk_size() -> i64 {
+    let shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    shared.as_ref().map_or(-1, |(_, h)| h.chunk_len() as i64)
+}
+
+#[no_mangle]
+pub extern "C" fn bl_link_header_size() -> i64 {
+    bl_vault::file::HEADER_LEN as i64
+}
+
+/// Decrypts chunk `index`; result: its plaintext.
+///
+/// # Safety
+/// Pointers from `bl_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn bl_link_chunk(index: u32, data: *const u8, len: usize) -> i32 {
+    finish((|| {
+        let shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        let (key, h) = shared.as_ref().ok_or("no file key")?;
+        bl_vault::file::decrypt_chunk(key, h, index as u64, input(data, len))
+            .map_err(|e| e.to_string())
+    })())
+}
+
+/// Forgets the link and file keys.
+#[no_mangle]
+pub extern "C" fn bl_link_clear() {
+    *LINK.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *SHARED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}

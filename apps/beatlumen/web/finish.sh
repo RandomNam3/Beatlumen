@@ -31,6 +31,16 @@ if [ -d "$OUT/auth" ]; then
         "$OUT/auth/index.html"
     grep -q 'integrity="sha384-' "$OUT/auth/index.html" || { echo "SRI injection (auth) failed" >&2; exit 1; }
 fi
+# The page of public links to encrypted files (same vault.wasm).
+if [ -d "$OUT/share" ]; then
+    sed -i \
+        -e "s|<script src=\"share.js\"></script>|<script src=\"share.js\" integrity=\"$(sri share/share.js)\"></script>|" \
+        -e "s|<link rel=\"stylesheet\" href=\"share.css\">|<link rel=\"stylesheet\" href=\"share.css\" integrity=\"$(sri share/share.css)\">|" \
+        -e "s|<link rel=\"stylesheet\" href=\"../auth/auth.css\">|<link rel=\"stylesheet\" href=\"../auth/auth.css\" integrity=\"$(sri auth/auth.css)\">|" \
+        -e "s|<meta name=\"beatlumen-vault-wasm\" content=\"\">|<meta name=\"beatlumen-vault-wasm\" content=\"sha256-$VAULT_SHA256\">|" \
+        "$OUT/share/index.html"
+    grep -q 'integrity="sha384-' "$OUT/share/index.html" || { echo "SRI injection (share) failed" >&2; exit 1; }
+fi
 # Pre-compressed copies for servers that support them.
 gzip -9 -k -f "$OUT/beatlumen.wasm"
 # Integrity manifest (hashes of all files), signed when

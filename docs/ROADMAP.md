@@ -28,7 +28,8 @@ explicitly sets them up for app-only use.
   server password keeps the shared ones); personal backgrounds through the
   encrypted images.
 - Settings that follow a user account across devices.
-- Public share links (with optional expiry and password).
+- Done: public links to encrypted files (expiry, optional password, the key
+  stays in the link; see `docs/ENCRYPTION.md`).
 
 ## Devices: remote control and individual playback
 With an active server connection, all apps and devices logged in to the

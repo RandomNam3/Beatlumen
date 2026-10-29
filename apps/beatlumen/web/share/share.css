@@ -1,0 +1,5 @@
+.name { font-weight: 600; font-size: 1.1rem; margin: 0; word-break: break-word; }
+#file .hint { margin: .25rem 0 0; }
+audio, #image { width: 100%; margin: .5rem 0; border-radius: .6rem; }
+progress { width: 100%; height: .5rem; accent-color: var(--accent); }
+.small { font-size: .8rem; margin-top: 2rem; }
