@@ -94,6 +94,8 @@ QtObject {
         "Speaker for other devices": "Lautsprecher für andere Geräte",
         "Receive DLNA / UPnP": "DLNA / UPnP empfangen",
         "Other apps": "Andere Apps",
+        "Control other apps?": "Andere Apps steuern?",
+        "For the title, the cover and the play buttons here, Android needs notification access for Beatlumen. Notifications are not read.": "Für Titel, Cover und die Wiedergabe-Tasten hier braucht Beatlumen unter Android Zugriff auf Benachrichtigungen. Benachrichtigungen werden nicht gelesen.",
         "Search on": "Suchen auf",
         "Search failed": "Suche fehlgeschlagen",
         "In library": "In der Bibliothek",

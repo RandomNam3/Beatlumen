@@ -26,6 +26,7 @@ import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -62,6 +63,7 @@ public final class MediaBridge
     private static AudioManager sAudio;
     private static AudioFocusRequest sFocusRequest;
     private static boolean sHasFocus;
+    private static boolean sWasActive;
     private static boolean sResumeOnFocusGain;
     private static boolean sNoisyRegistered;
     private static boolean sServiceRunning;
@@ -107,6 +109,16 @@ public final class MediaBridge
                 sSession.setActive(false);
                 setResumeState();
             }
+            // Qt cannot start a second time in the same process: once the
+            // app has ended, the process ends too. The system's media
+            // controls keep the last track and start a fresh process
+            // (ResumeService) when it is played again.
+            sMain.postDelayed(() -> {
+                if (sNativeGone) {
+                    Log.i(TAG, "app closed: ending the process");
+                    Process.killProcess(Process.myPid());
+                }
+            }, 1500);
         });
     }
 
@@ -261,6 +273,10 @@ public final class MediaBridge
 
         final boolean active = sState == STATE_PLAYING || sState == STATE_BUFFERING;
         if (active) {
+            // Asked again whenever playback starts: a focus held earlier may
+            // have gone without a callback (another app, a call).
+            if (!sWasActive)
+                sHasFocus = false;
             requestFocus();
             setNoisyReceiver(true);
         } else {
@@ -268,6 +284,7 @@ public final class MediaBridge
             if (sState == STATE_STOPPED)
                 abandonFocus();
         }
+        sWasActive = active;
         // The service starts with playback and keeps running while paused; it
         // is in the foreground only while playing (see MediaPlaybackService).
         if (active)

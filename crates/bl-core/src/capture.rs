@@ -290,7 +290,7 @@ impl Core {
         if !self.playing_capture() {
             return None;
         }
-        let playing = self.capture.session.as_ref().is_none_or(|s| s.playing);
+        let session = self.capture.session.as_ref().map(|s| s.playing);
         let control = |host: &mut dyn Host, action: &str, position: f64| {
             let j = Value::object()
                 .with("action", action)
@@ -301,7 +301,17 @@ impl Core {
             "play" if c.get("ids").as_array().is_some_and(|a| !a.is_empty()) => return None,
             "play" => control(host, "play", 0.0),
             "pause" => control(host, "pause", 0.0),
-            "toggle" => control(host, if playing { "pause" } else { "play" }, 0.0),
+            // Without the other app's session its state is unknown: the
+            // platform toggles.
+            "toggle" => control(
+                host,
+                match session {
+                    Some(true) => "pause",
+                    Some(false) => "play",
+                    None => "toggle",
+                },
+                0.0,
+            ),
             "next" => control(host, "next", 0.0),
             "prev" => control(host, "prev", 0.0),
             "seek" => control(host, "seek", c.get("position").as_f64().unwrap_or(0.0)),

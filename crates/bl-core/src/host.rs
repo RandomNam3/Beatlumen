@@ -206,8 +206,8 @@ pub trait Host {
     /// state as the `capture.state` command, the other app's media session
     /// as `capture.session`, whether sessions can be read as
     /// `capture.access`), "stop" ends it, "access" asks for access to
-    /// media sessions, "control" ({"action": "play", "pause", "next",
-    /// "prev" or "seek", "position": seconds}) controls the other app.
+    /// media sessions, "control" ({"action": "play", "pause", "toggle",
+    /// "next", "prev" or "seek", "position": seconds}) controls the other app.
     fn capture_request(&mut self, _kind: &str, _json: &str) -> bool {
         false
     }

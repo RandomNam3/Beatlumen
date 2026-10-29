@@ -341,6 +341,51 @@ ApplicationWindow {
         acceptText: Theme.tr("Log in")
         onSubmitted: (t) => Core.call("server.login", { password: t })
     }
+    // Visualising other apps without access to their media sessions: the
+    // title, cover and full control need it; offered once per start.
+    Dialog {
+        id: captureAccess
+        property bool asked: false
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, win.width - 32)
+        title: Theme.tr("Control other apps?")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("For the title, the cover and the play buttons here, Android needs notification access for Beatlumen. Notifications are not read.")
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                Button { text: Theme.tr("Later"); flat: true; onClicked: captureAccess.close() }
+                AccentButton {
+                    text: Theme.tr("Allow")
+                    highlighted: true
+                    onClicked: {
+                        captureAccess.close()
+                        Core.call("capture.sessionAccess")
+                    }
+                }
+            }
+        }
+    }
+    Timer {
+        id: captureAccessCheck
+        interval: 1500
+        onTriggered: {
+            const cap = Core.state.capture || {}
+            if (cap.running === true && cap.access !== true && !captureAccess.asked) {
+                captureAccess.asked = true
+                captureAccess.open()
+            }
+        }
+    }
     Connections {
         target: Core
         function onStateChanged() {
@@ -348,6 +393,9 @@ ApplicationWindow {
             // password right away.
             if (Core.platform === "web" && Core.state.server === "login" && !loginPrompt.opened)
                 loginPrompt.open()
+            const cap = Core.state.capture || {}
+            if (cap.running === true && cap.access !== true && !captureAccess.asked && !captureAccessCheck.running)
+                captureAccessCheck.start()
         }
     }
 }

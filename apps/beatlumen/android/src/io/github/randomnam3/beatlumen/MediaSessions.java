@@ -20,6 +20,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -30,6 +31,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.KeyEvent;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -360,13 +362,41 @@ public final class MediaSessions
 
     // ---- control ---------------------------------------------------------------------
 
+    /** Without access to the sessions: a media key, which Android hands to
+     *  the app that played last (no seeking this way). */
+    private static void mediaKey(final String action)
+    {
+        if (sContext == null)
+            return;
+        final int code;
+        switch (action) {
+        case "toggle": code = KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE; break;
+        case "play": code = KeyEvent.KEYCODE_MEDIA_PLAY; break;
+        case "pause": code = KeyEvent.KEYCODE_MEDIA_PAUSE; break;
+        case "next": code = KeyEvent.KEYCODE_MEDIA_NEXT; break;
+        case "prev": code = KeyEvent.KEYCODE_MEDIA_PREVIOUS; break;
+        default: return;
+        }
+        AudioManager am = sContext.getSystemService(AudioManager.class);
+        am.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
+        am.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
+    }
+
     static void control(final String action, final double position)
     {
         sMain.post(() -> {
-            if (sController == null)
+            if (sController == null) {
+                mediaKey(action);
                 return;
+            }
             MediaController.TransportControls t = sController.getTransportControls();
             switch (action) {
+            case "toggle":
+                if (isPlaying(sController))
+                    t.pause();
+                else
+                    t.play();
+                break;
             case "play": t.play(); break;
             case "pause": t.pause(); break;
             case "next": t.skipToNext(); break;
