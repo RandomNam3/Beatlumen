@@ -251,6 +251,7 @@ impl Core {
     /// Plays the control point's stream as the current track.
     fn start_dlna(&mut self, host: &mut dyn Host, autoplay: bool) {
         self.release_airplay(host);
+        self.release_capture(host);
         self.dlna.serial += 1;
         self.dlna.active = true;
         let meta = self.dlna.meta.clone();
@@ -303,6 +304,13 @@ impl Core {
                 self.start_dlna(host, true);
             }
             None => self.player.stop(host),
+        }
+    }
+
+    /// Ends a control point's stream (the user plays something else).
+    pub(crate) fn end_dlna_playback(&mut self, host: &mut dyn Host) {
+        if self.playing_dlna() {
+            self.end_dlna(host);
         }
     }
 

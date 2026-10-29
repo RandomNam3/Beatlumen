@@ -26,6 +26,8 @@ pub struct TestHost {
     pub secrets: Option<Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>>,
     /// Reads waiting to be answered (`App::state` answers them).
     pub secret_reads: Arc<Mutex<Vec<String>>>,
+    /// Requests for other apps' playback (Android): (kind, JSON).
+    pub capture: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 impl Host for TestHost {
@@ -109,6 +111,16 @@ impl Host for TestHost {
         }
         self.android
     }
+    fn has_capture(&self) -> bool {
+        self.android
+    }
+    fn capture_request(&mut self, kind: &str, json: &str) -> bool {
+        if self.android {
+            let r = (kind.to_string(), json.to_string());
+            self.capture.lock().unwrap().push(r);
+        }
+        self.android
+    }
     fn has_secret_store(&self) -> bool {
         self.secrets.is_some()
     }
@@ -156,6 +168,7 @@ impl App {
             credentials: Default::default(),
             secrets: None,
             secret_reads: Default::default(),
+            capture: Default::default(),
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }

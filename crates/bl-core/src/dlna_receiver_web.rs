@@ -24,6 +24,7 @@ impl Core {
     }
     pub(crate) fn update_dlna(&mut self, _host: &mut dyn Host) {}
     pub(crate) fn dlna_track_ended(&mut self, _host: &mut dyn Host) {}
+    pub(crate) fn end_dlna_playback(&mut self, _host: &mut dyn Host) {}
     pub(crate) fn dlna_opener(&self) -> Option<SourceOpener> {
         None
     }

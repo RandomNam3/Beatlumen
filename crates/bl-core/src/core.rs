@@ -250,6 +250,7 @@ pub struct Core {
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) outputs: crate::outputs::Outputs,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
+    pub(crate) capture: crate::capture::CaptureState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -426,6 +427,7 @@ impl Core {
             airplay: Default::default(),
             outputs: Default::default(),
             dlna: Default::default(),
+            capture: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -559,7 +561,7 @@ impl Core {
             }
             _ => bl_net::api::SOURCE_URL.to_string(),
         };
-        let play = match self.player.state() {
+        let play = match self.capture_play_state().unwrap_or(self.player.state()) {
             PlayState::Stopped => "stopped",
             PlayState::Loading => "loading",
             PlayState::Playing => "playing",
@@ -581,8 +583,8 @@ impl Core {
             .with("play", play)
             .with(
                 "duration",
-                self.player
-                    .duration()
+                self.capture_duration()
+                    .or_else(|| self.player.duration())
                     .or_else(|| self.current.as_ref().map(|t| t.duration_ms as f64 / 1000.0))
                     .unwrap_or(0.0),
             )
@@ -627,6 +629,7 @@ impl Core {
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
+            .with("capture", self.capture_json(host))
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -1174,6 +1177,7 @@ impl Core {
     fn start_current(&mut self, host: &mut dyn Host, autoplay: bool, load: bool) {
         self.resume_at = None;
         self.release_airplay(host);
+        self.release_capture(host);
         self.revs.queue += 1;
         let Some(id) = self.queue.current().cloned() else {
             self.player.stop(host);
@@ -1649,10 +1653,16 @@ impl Core {
 
     /// Playback position in seconds.
     pub fn position(&self, host: &dyn Host) -> f64 {
-        if let Some(p) = self.airplay_position() {
+        if let Some(p) = self.airplay_position().or_else(|| self.capture_position()) {
             return p;
         }
         self.player.position(host)
+    }
+
+    /// The most recently played samples (interleaved stereo), as the
+    /// visuals get them.
+    pub fn recent_samples(&self, out: &mut [f32]) {
+        self.player.recent_samples(out);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -1679,6 +1689,7 @@ impl Core {
         };
         if track.id.starts_with(crate::airplay::ID_PREFIX)
             || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
+            || track.id.starts_with(crate::capture::ID_PREFIX)
         {
             // Live or foreign stream: the visuals follow the audio as it plays.
             return;
@@ -1797,6 +1808,8 @@ impl Core {
             self.airplay.cover_url().to_string()
         } else if t.id.starts_with(crate::dlna_receiver::ID_PREFIX) {
             self.dlna.cover_url().to_string()
+        } else if t.id.starts_with(crate::capture::ID_PREFIX) {
+            self.capture.cover_url().to_string()
         } else if library::is_local(&t.id) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
@@ -2299,6 +2312,7 @@ impl Core {
                 PlayerEvent::Ended if self.playing_airplay() => {}
                 // A control point's stream: its next one, or stop.
                 PlayerEvent::Ended if self.playing_dlna() => self.dlna_track_ended(host),
+                PlayerEvent::Ended if self.playing_capture() => self.capture_stream_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
                 PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
                 PlayerEvent::Reload(at) => {

@@ -149,7 +149,7 @@ elseif(ANDROID)
     target_link_libraries(beatlumen PRIVATE Qt6::CorePrivate log android aaudio)
     # Background playback (MediaSession, foreground service): the Java side
     # lives in android/src.
-    target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h)
+    target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h src/android_capture.cpp src/android_capture.h)
     # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
     # through AAudio), no QML debugging, TLS or network information.
     qt_import_plugins(beatlumen

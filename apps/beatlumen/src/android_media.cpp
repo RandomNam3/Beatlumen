@@ -118,7 +118,10 @@ void AndroidMedia::postSeek(double seconds)
 void AndroidMedia::sync(bool force)
 {
     const QVariantMap st = m_bridge->state();
-    const QVariantMap cur = st.value(QStringLiteral("current")).toMap();
+    QVariantMap cur = st.value(QStringLiteral("current")).toMap();
+    // Other apps' playback has their own media session and notification.
+    if (cur.value(QStringLiteral("id")).toString().startsWith(QLatin1String("capture:")))
+        cur.clear();
     const QString id = cur.value(QStringLiteral("id")).toString();
 
     Snapshot s;
@@ -184,7 +187,7 @@ void AndroidMedia::sync(bool force)
 // jumps (seeks, track restarts, stalls) need a new one.
 void AndroidMedia::checkPosition()
 {
-    if (m_last.state < 0)
+    if (m_last.state < 0 || m_last.state == Stopped)
         return;
     const double pos = m_bridge->position();
     const double expected = m_lastPos + (m_last.state == Playing ? m_posClock.elapsed() / 1000.0 : 0.0);

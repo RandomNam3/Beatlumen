@@ -139,6 +139,10 @@ impl Core {
         let n = |k: &str| c.get(k).as_f64().unwrap_or(0.0);
         let b = |k: &str| c.get(k).as_bool().unwrap_or(false);
         let idx = |k: &str| c.get(k).as_u64().unwrap_or(0) as usize;
+        // Other apps' playback is shown: the transport controls are theirs.
+        if let Some(r) = self.capture_transport(host, &name, c) {
+            return r;
+        }
         match name.as_str() {
             // ---- state ----------------------------------------------------
             "state" => self.state(host),
@@ -955,6 +959,9 @@ impl Core {
             }
             n if n.starts_with("vault.") => self.vault_command(host, n, c),
             n if n.starts_with("outputs.") => self.outputs_command(host, n, c),
+            n if n.starts_with("capture.") => self
+                .capture_command(host, n, c)
+                .unwrap_or_else(|| err(format!("unknown command {name}"))),
             n if n.starts_with("push.") => self.push_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }

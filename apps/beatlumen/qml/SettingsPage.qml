@@ -434,6 +434,59 @@ Item {
                 }
             }
 
+            // ---- other apps (Android) ---------------------------------------
+            SectionLabel { text: Theme.tr("Other apps"); visible: (Core.state.capture || {}).available === true }
+            ColumnLayout {
+                readonly property var cap: Core.state.capture || ({})
+                visible: cap.available === true
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    text: Theme.tr("Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.")
+                    color: Theme.textDim
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    visible: parent.cap.running === true || !!parent.cap.error
+                    text: parent.cap.running ? (parent.cap.app ? Theme.tr("Visualizing") + " " + parent.cap.app : Theme.tr("Visualizing other apps"))
+                                             : Theme.tr("not available") + ": " + parent.cap.error
+                    color: parent.cap.running ? Theme.textDim : Theme.danger
+                    wrapMode: Text.WordWrap
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    AccentButton {
+                        text: parent.parent.cap.running || parent.parent.cap.requested ? Theme.tr("Stop") : Theme.tr("Visualize other apps")
+                        highlighted: !(parent.parent.cap.running || parent.parent.cap.requested)
+                        icon.source: Theme.icon("graphic_eq")
+                        onClicked: Core.call(parent.parent.cap.running || parent.parent.cap.requested ? "capture.stop" : "capture.start")
+                    }
+                    Button {
+                        visible: parent.parent.cap.access !== true
+                        text: Theme.tr("Allow control of other apps")
+                        flat: true
+                        icon.source: Theme.icon("tune")
+                        onClicked: Core.call("capture.sessionAccess")
+                    }
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    visible: parent.cap.access !== true
+                    text: Theme.tr("For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.")
+                    color: Theme.textFaint
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                }
+            }
+
             SectionLabel { text: Theme.tr("Performance") }
             RowLayout {
                 Layout.fillWidth: true

@@ -19,6 +19,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Visualising other apps' playback (only after the user starts it):
+         recording what they play (playback capture, no microphone) in a
+         foreground service of type mediaProjection. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
 
@@ -111,5 +116,32 @@
             android:name="io.github.randomnam3.beatlumen.MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Other apps' playback: recording (CaptureService.java), their
+             media sessions (SessionListener.java; needs notification access,
+             notifications are not read) and a quick settings tile. -->
+        <service
+            android:name="io.github.randomnam3.beatlumen.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+        <service
+            android:name="io.github.randomnam3.beatlumen.SessionListener"
+            android:label="-- %%INSERT_APP_NAME%% --"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="io.github.randomnam3.beatlumen.CaptureTile"
+            android:label="@string/capture_tile"
+            android:icon="@drawable/ic_stat_beatlumen"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

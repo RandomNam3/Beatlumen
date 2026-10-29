@@ -148,6 +148,30 @@ In short:
 * Received audio is played and analysed live, never stored. Cover art is
   kept as a single file in the app's storage while a stream plays.
 
+## DLNA receiver
+
+* Off by default; when switched on, the app answers SSDP searches and
+  announces itself in the local network, and serves its UPnP descriptions
+  and control endpoints over HTTP.
+* UPnP has no authentication: while it is on, any device in the network
+  can make the app fetch and play a stream URL and control its playback.
+  It reads, lists and sends none of the user's files.
+* Requests, SOAP bodies and DIDL metadata are size limited; event
+  subscriptions are bounded in number and only call back to the address
+  that subscribed (no requests to third hosts on someone's behalf).
+
+## Other apps' playback (Android)
+
+* Only after the user starts it, each time: Android asks for consent to
+  record the screen (MediaProjection); the app uses only the playback
+  capture of other apps' audio (no microphone, no screen content). A
+  notification shows while it runs and stops it.
+* The audio is analysed live for the visuals and never stored or sent.
+  Apps that opt out of being recorded are not recorded.
+* Titles, covers and controls of the playing app come from Android's
+  media sessions, which need notification access. The listener reads no
+  notifications; it only exists to make the sessions available.
+
 ## Known limitations
 
 * Tokens appear in media URLs (`?token=`) because `<audio>`/`<img>` cannot

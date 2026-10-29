@@ -34,6 +34,10 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
   devices; the last two fetch a live stream from the app. The visuals stay
   in sync with the speaker.
+- **Visualize other apps** (Android 10+): music from Spotify, YouTube,
+  radio apps and others drives the visuals; their title and cover are
+  shown and they can be controlled from the app (apps that block recording
+  stay silent, their controls still work).
 - System media controls and media keys: MPRIS on Linux, the media
   overlay on Windows, the media notification and lock screen on Android.
   After the app was closed, Android's media controls continue the last

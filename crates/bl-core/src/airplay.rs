@@ -197,6 +197,7 @@ impl Core {
                 else {
                     return;
                 };
+                self.release_capture(host);
                 self.airplay.active = true;
                 self.airplay.client = client.clone();
                 self.airplay.serial += 1;

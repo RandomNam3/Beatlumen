@@ -170,6 +170,15 @@ Item {
                 subtitle: Core.state.scanning ? Theme.tr("Scanning library…") + " " + (Core.state.scanProcessed || 0) + " / " + (Core.state.scanFound || 0)
                                               : page.count(page.trackCount, "song", "songs") + " · " + page.count(page.albums.length, "album", "albums")
                 IconButton {
+                    readonly property var cap: Core.state.capture || ({})
+                    readonly property bool on: cap.running === true || cap.requested === true
+                    visible: cap.available === true
+                    iconName: "graphic_eq"
+                    active: on
+                    tip: on ? Theme.tr("Stop visualizing other apps") : Theme.tr("Visualize other apps")
+                    onClicked: Core.call(on ? "capture.stop" : "capture.start")
+                }
+                IconButton {
                     visible: Core.state.server === "connected" || Core.state.server === "login"
                     iconName: "lock"
                     tip: Theme.tr("Encrypted files")
@@ -316,6 +325,13 @@ Item {
                     AccentButton { text: Theme.tr("Add music folder"); highlighted: true; icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
                     Button { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onClicked: page.openFiles() }
                     Button { text: Theme.tr("Connect server"); flat: true; icon.source: Theme.icon("cloud"); onClicked: page.connectServer() }
+                    Button {
+                        visible: (Core.state.capture || {}).available === true
+                        text: Theme.tr("Visualize other apps")
+                        flat: true
+                        icon.source: Theme.icon("graphic_eq")
+                        onClicked: Core.call("capture.start")
+                    }
                 }
 
                 // Search results

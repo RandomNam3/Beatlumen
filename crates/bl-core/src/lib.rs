@@ -7,6 +7,7 @@
 //! [`host::Host`].
 
 mod airplay;
+pub mod capture;
 mod commands;
 pub mod core;
 #[cfg(not(target_arch = "wasm32"))]

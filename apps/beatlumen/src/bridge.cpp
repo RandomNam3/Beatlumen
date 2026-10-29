@@ -32,6 +32,7 @@
 #endif
 
 #ifdef Q_OS_ANDROID
+#include "android_capture.h"
 #include "android_media.h"
 #include <QCoreApplication>
 #include <QJniEnvironment>
@@ -220,6 +221,11 @@ struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
     bool handleNewIntent(JNIEnv *, jobject intent) override
     {
         QJniObject i(intent);
+        if (capture::takeTileRequest(i)) {
+            QPointer<Bridge> b = bridge;
+            QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("capture.start")); }, Qt::QueuedConnection);
+            return true;
+        }
         if (takeResume(i)) {
             QPointer<Bridge> b = bridge;
             QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("play")); }, Qt::QueuedConnection);
@@ -244,7 +250,10 @@ void setupAuthLinks(Bridge *bridge)
     QtAndroidPrivate::registerNewIntentListener(&listener);
     QJniObject activity = QtAndroidPrivate::activity();
     QJniObject intent = activity.isValid() ? activity.callObjectMethod("getIntent", "()Landroid/content/Intent;") : QJniObject();
-    if (takeResume(intent)) {
+    if (capture::takeTileRequest(intent)) {
+        QPointer<Bridge> b = bridge;
+        QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("capture.start")); });
+    } else if (takeResume(intent)) {
         QPointer<Bridge> b = bridge;
         // After the core restored the queue.
         QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("play")); });
@@ -300,6 +309,7 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     cb.push_register = pushRegister;
     cb.push_unregister = pushUnregister;
     cb.credential_request = credentialRequest;
+    capture::configure(cb, this);
     setupPush(this);
     setupCredentials();
     setupAuthLinks(this);

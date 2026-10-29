@@ -195,6 +195,23 @@ pub trait Host {
         false
     }
 
+    /// Whether the platform can record other apps' playback and read their
+    /// media sessions (Android 10+).
+    fn has_capture(&self) -> bool {
+        false
+    }
+
+    /// Other apps' playback: "start" asks the user to allow recording and
+    /// records (the audio arrives through [`crate::capture::push_pcm`], the
+    /// state as the `capture.state` command, the other app's media session
+    /// as `capture.session`, whether sessions can be read as
+    /// `capture.access`), "stop" ends it, "access" asks for access to
+    /// media sessions, "control" ({"action": "play", "pause", "next",
+    /// "prev" or "seek", "position": seconds}) controls the other app.
+    fn capture_request(&mut self, _kind: &str, _json: &str) -> bool {
+        false
+    }
+
     /// Whether the platform keeps secrets protected for this app (Android
     /// Keystore, Windows DPAPI, the Secret Service on Linux).
     fn has_secret_store(&self) -> bool {

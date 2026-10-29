@@ -45,6 +45,11 @@ typedef struct BlCallbacks {
     // answers with the "vault.secret" command, non-zero when started.
     void (*secret_store)(void *user, const char *key, const uint8_t *data, size_t len);
     int32_t (*secret_load)(void *user, const char *key);
+    // Other apps' playback (Android): kind "start", "stop", "access" or
+    // "control" with JSON; the state comes back as "capture.state", the
+    // other app's media session as "capture.session". Null where the
+    // platform cannot record other apps.
+    int32_t (*capture_request)(void *user, const char *kind, const char *json);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);
@@ -60,6 +65,8 @@ void bl_core_http_complete(BlCore *c, uint64_t id, int32_t status, const char *h
 void bl_core_open_data(BlCore *c, const char *name, const uint8_t *data, size_t len);
 void bl_core_save(BlCore *c);
 void bl_audio_render(float *out, size_t frames, uint32_t latency_frames);
+// Recorded audio of other apps (interleaved 16-bit PCM); from any thread.
+void bl_capture_push(const int16_t *pcm, size_t frames, uint32_t channels, uint32_t rate);
 void bl_string_free(char *s);
 // Fetches a URL with the core's HTTP client (TLS included), from any
 // thread; returns the body or null. Free with bl_bytes_free.

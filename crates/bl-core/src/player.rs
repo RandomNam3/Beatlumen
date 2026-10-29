@@ -310,6 +310,10 @@ pub struct Output {
     /// Counts resets (seeks, new tracks): a network output drops what the
     /// speaker has buffered.
     resets: AtomicU64,
+    /// The audio is already heard (other apps' playback being visualised):
+    /// the device gets silence but takes the samples at its own pace, so
+    /// the position and the visuals follow it.
+    monitor: AtomicBool,
 }
 
 impl Output {
@@ -333,6 +337,7 @@ impl Output {
             sample_rate: AtomicU32::new(48000),
             external: AtomicBool::new(false),
             resets: AtomicU64::new(0),
+            monitor: AtomicBool::new(false),
         }
     }
 
@@ -408,6 +413,9 @@ impl AudioSource for Output {
             return;
         }
         self.render_frames(out, latency_frames);
+        if self.monitor.load(Ordering::Relaxed) {
+            out.fill(0.0);
+        }
     }
 }
 
@@ -672,6 +680,11 @@ impl Player {
                 }
             }
         }
+    }
+
+    /// See [`Output::monitor`].
+    pub fn set_monitor(&mut self, on: bool) {
+        self.output.monitor.store(on, Ordering::Relaxed);
     }
 
     /// Crossfade length between tracks (0 = gapless) and whether silence at

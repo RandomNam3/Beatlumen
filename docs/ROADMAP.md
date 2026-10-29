@@ -136,6 +136,13 @@ are cached locally.
   Linux, WASAPI loopback on Windows, Android's playback capture with user
   consent where the playing app allows it. Any player can drive the visuals
   this way.
+  - Done on Android 10+ ("Visualize other apps" in the library, in the
+    settings and as a quick settings tile): the captured audio drives the
+    visuals without being played again; with notification access the
+    playing app's title, artist, cover and position are shown and play,
+    pause, next, previous and seek control it.
+  - Next: Linux (monitor source + MPRIS players) and Windows (WASAPI
+    loopback + system media sessions).
 - Live input only: effects react instead of anticipating beats. Beat
   prediction (tempo and phase tracking) and the output latency (e.g. of
   Bluetooth) make up for part of that.

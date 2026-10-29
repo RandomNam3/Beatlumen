@@ -105,6 +105,11 @@ pub struct BlCallbacks {
     /// Reads `key`; the value comes back as the `vault.secret` command.
     /// Non-zero when the read was started.
     pub secret_load: Option<unsafe extern "C" fn(user: *mut c_void, key: *const c_char) -> i32>,
+    /// Other apps' playback (see `Host::capture_request`); non-zero when
+    /// the request was taken. Null where the platform cannot record it.
+    pub capture_request: Option<
+        unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
+    >,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -648,6 +653,20 @@ impl Host for UiHost {
         unsafe { f(self.cb.user, k.as_ptr()) != 0 }
     }
 
+    fn has_capture(&self) -> bool {
+        self.cb.capture_request.is_some()
+    }
+
+    fn capture_request(&mut self, kind: &str, json: &str) -> bool {
+        let Some(f) = self.cb.capture_request else {
+            return false;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (k, j) = (c(kind), c(json));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
+    }
+
     fn credential_request(&mut self, kind: &str, json: &str) -> bool {
         let Some(f) = self.cb.credential_request else {
             return false;
@@ -784,6 +803,18 @@ pub unsafe extern "C" fn bl_core_position(c: *mut BlCore) -> f64 {
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_is_playing(c: *mut BlCore) -> i32 {
     c.as_ref().map(|c| c.core.is_playing() as i32).unwrap_or(0)
+}
+
+/// Recorded audio of other apps (interleaved 16-bit PCM, `frames` frames
+/// of `channels` channels at `rate` Hz); from any thread.
+#[no_mangle]
+pub unsafe extern "C" fn bl_capture_push(pcm: *const i16, frames: usize, channels: u32, rate: u32) {
+    if pcm.is_null() || frames == 0 || channels == 0 || frames > 1 << 20 {
+        return;
+    }
+    // SAFETY: the caller passes `frames * channels` samples.
+    let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
+    bl_core::capture::push_pcm(s, channels, rate);
 }
 
 /// Loads GL with `get_proc` (a context must be current). `flavor`: 0 =
