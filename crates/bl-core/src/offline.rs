@@ -362,6 +362,7 @@ impl Core {
 
 /// Downloads a song with its cover, song text and analysis into a container
 /// (worker thread).
+#[cfg(not(target_arch = "wasm32"))]
 fn save_job(
     track: &Track,
     urls: &(String, Option<String>, String, String),
@@ -435,4 +436,18 @@ fn save_job(
         return Err("cancelled".into());
     }
     Ok((path.to_path_buf(), header))
+}
+
+/// The web app keeps no offline copies (no file system).
+#[cfg(target_arch = "wasm32")]
+fn save_job(
+    _track: &Track,
+    _urls: &(String, Option<String>, String, String),
+    _headers: &[(String, String)],
+    _path: &std::path::Path,
+    _analysis_key: String,
+    _done: &AtomicU64,
+    _cancel: &AtomicBool,
+) -> Result<(PathBuf, Header), String> {
+    Err("offline copies are not available here".into())
 }
