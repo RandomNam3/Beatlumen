@@ -18,7 +18,6 @@ pub mod rtsp;
 pub mod sender;
 mod session;
 pub mod stream;
-mod sys;
 
 pub use receiver::{Config, Event, Receiver};
 pub use stream::{LiveDecoder, LiveStream};

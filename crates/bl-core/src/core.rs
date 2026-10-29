@@ -249,6 +249,7 @@ pub struct Core {
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) outputs: crate::outputs::Outputs,
+    pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -424,6 +425,7 @@ impl Core {
             download_progress: None,
             airplay: Default::default(),
             outputs: Default::default(),
+            dlna: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -624,6 +626,7 @@ impl Core {
             .with("settingsRev", self.revs.settings)
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
+            .with("dlnaReceiver", self.dlna_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -1284,6 +1287,9 @@ impl Core {
         if id.starts_with(crate::vault::ID_PREFIX) {
             return self.vault_opener(host, id);
         }
+        if id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            return self.dlna_opener();
+        }
         if !host.has_threads() || host.audio_is_push() {
             return None;
         }
@@ -1671,8 +1677,10 @@ impl Core {
         let Some(track) = self.current.clone() else {
             return;
         };
-        if track.id.starts_with(crate::airplay::ID_PREFIX) {
-            // Live stream: the visuals follow the audio as it plays.
+        if track.id.starts_with(crate::airplay::ID_PREFIX)
+            || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
+        {
+            // Live or foreign stream: the visuals follow the audio as it plays.
             return;
         }
         let cfg = self.preset.analysis_config();
@@ -1787,6 +1795,8 @@ impl Core {
     pub(crate) fn cover_url_cached(&self, t: &Track) -> String {
         if t.id.starts_with(crate::airplay::ID_PREFIX) {
             self.airplay.cover_url().to_string()
+        } else if t.id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            self.dlna.cover_url().to_string()
         } else if library::is_local(&t.id) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
@@ -2280,12 +2290,15 @@ impl Core {
             self.request_analysis_for_current_with(host);
         }
         self.update_airplay(host);
+        self.update_dlna(host);
         self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
             match ev {
                 // A live AirPlay stream ends through the receiver.
                 PlayerEvent::Ended if self.playing_airplay() => {}
+                // A control point's stream: its next one, or stop.
+                PlayerEvent::Ended if self.playing_dlna() => self.dlna_track_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
                 PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
                 PlayerEvent::Reload(at) => {
@@ -2527,7 +2540,7 @@ pub(crate) fn local_cover_bytes(path: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn http_stream(
+pub(crate) fn http_stream(
     url: &str,
     headers: &[(String, String)],
 ) -> Result<Box<dyn bl_media::Source>, String> {
@@ -2536,7 +2549,7 @@ fn http_stream(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn http_stream(
+pub(crate) fn http_stream(
     _url: &str,
     _headers: &[(String, String)],
 ) -> Result<Box<dyn bl_media::Source>, String> {

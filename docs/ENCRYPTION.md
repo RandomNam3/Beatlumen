@@ -252,6 +252,11 @@ Decrypted audio leaves the app when it plays on a speaker in the network:
 The files on the server stay end-to-end encrypted either way; only what is
 being played crosses the home network.
 
+The **DLNA receiver** (off by default) has no password: UPnP has no
+authentication, so any device in the local network can send it a stream
+and control its playback while it is on. It only fetches and plays the
+stream URL it is sent; it never reads, lists or sends the user's files.
+
 ## Web client integrity
 
 The browser version comes from the server, so it can only be as

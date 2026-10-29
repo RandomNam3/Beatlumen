@@ -46,8 +46,13 @@ plays and visualises what it receives. Every receiver is off by default,
 only works in the local network, and new senders can be required to confirm
 with a PIN.
 
-- **DLNA/UPnP renderer:** see Music sources; covers many Android apps
-  (BubbleUPnP, Fritz!App …), Windows "Play to" and TVs/receivers.
+- **DLNA/UPnP renderer:** covers many Android apps (BubbleUPnP, Fritz!App
+  …), Windows "Play to" and TVs/receivers.
+  - Done: media renderer built into the app on Linux, Windows and Android
+    (`crates/bl-upnp`), with title, artist, cover, seeking, volume and the
+    next track (gapless queueing by the control point).
+  - Next: look-ahead analysis of the stream (it is a file the app could
+    read ahead), PIN confirmation for new control points.
 - **AirPlay (audio)** from iPhone, iPad and Mac.
   - Done: AirPlay 1 (RAOP) receiver built into the app on Linux, Windows
     and Android (`crates/bl-airplay`), with title, artist, cover, progress
@@ -99,7 +104,7 @@ are cached locally.
   receivers):
   - Client: browse and play from DLNA media servers in the local network.
   - Renderer (optional, off by default): other devices and apps can send
-    music to Beatlumen, which plays and visualises it with full analysis.
+    music to Beatlumen, which plays and visualises it (done, see above).
   - Discovery (SSDP) only in the local network and only while the user
     searches; servers can also be entered by address.
 - **Internet radio:** Icecast/Shoutcast streams (MP3, AAC, Ogg, Opus) and

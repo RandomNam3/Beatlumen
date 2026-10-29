@@ -38,7 +38,7 @@ pub struct Responder {
 impl Responder {
     /// Starts announcing `service` with the host name `<host>.local`.
     pub fn start(service: Service, host: String) -> std::io::Result<Responder> {
-        let socket = crate::sys::bind_shared_v4(PORT)?;
+        let socket = bl_net::udp::bind_shared_v4(PORT)?;
         socket.join_multicast_v4(&GROUP, &Ipv4Addr::UNSPECIFIED)?;
         socket.set_multicast_loop_v4(true)?;
         socket.set_multicast_ttl_v4(255)?;

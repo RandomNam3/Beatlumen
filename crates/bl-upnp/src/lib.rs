@@ -6,6 +6,7 @@
 //! * [`Renderer`]'s methods call the AVTransport and RenderingControl
 //!   services (SOAP).
 
+pub mod renderer;
 pub mod ssdp;
 pub mod xml;
 
@@ -147,6 +148,23 @@ impl Renderer {
 
     pub fn stop(&self) -> Result<(), String> {
         self.transport("Stop", &[]).map(|_| ())
+    }
+
+    /// Jumps to `secs` into the current track.
+    pub fn seek(&self, secs: f64) -> Result<(), String> {
+        let s = secs.max(0.0) as u64;
+        let target = format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60);
+        self.transport("Seek", &[("Unit", "REL_TIME"), ("Target", &target)])
+            .map(|_| ())
+    }
+
+    /// The stream to play after the current one.
+    pub fn set_next_uri(&self, uri: &str, metadata: &str) -> Result<(), String> {
+        self.transport(
+            "SetNextAVTransportURI",
+            &[("NextURI", uri), ("NextURIMetaData", metadata)],
+        )
+        .map(|_| ())
     }
 
     /// "PLAYING", "PAUSED_PLAYBACK", "STOPPED", "TRANSITIONING", …

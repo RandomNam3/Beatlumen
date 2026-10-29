@@ -16,6 +16,7 @@ pub mod client;
 pub mod http;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod server;
+pub mod udp;
 
 /// Encodes bytes as standard base64 (with padding).
 pub fn base64_encode(data: &[u8]) -> String {

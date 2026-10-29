@@ -9,6 +9,11 @@
 mod airplay;
 mod commands;
 pub mod core;
+#[cfg(not(target_arch = "wasm32"))]
+mod dlna_receiver;
+#[cfg(target_arch = "wasm32")]
+#[path = "dlna_receiver_web.rs"]
+mod dlna_receiver;
 pub mod host;
 pub mod icon;
 pub mod jobs;

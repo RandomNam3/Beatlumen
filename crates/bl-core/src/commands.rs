@@ -970,9 +970,10 @@ impl Core {
         v.set(key, value);
         let new = Settings::from_json(&v);
         let old = std::mem::replace(&mut self.settings, new);
-        if key.starts_with("airplay") {
-            // Retry starting the receiver with the new settings.
+        if key.starts_with("airplay") || key.starts_with("dlna") {
+            // Retry starting the receivers with the new settings.
             self.airplay.error = None;
+            self.dlna.error = None;
         }
         if old.notifications != self.settings.notifications {
             if self.settings.notifications {

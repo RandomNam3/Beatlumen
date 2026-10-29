@@ -144,6 +144,10 @@ pub struct Settings {
     pub skip_silence: bool,
     /// Offer this device as an AirPlay speaker in the local network.
     pub airplay: bool,
+    /// Reachable as a DLNA/UPnP speaker (media renderer).
+    pub dlna_receiver: bool,
+    /// The renderer's stable UPnP device id.
+    pub dlna_uuid: String,
     /// Name shown on AirPlay senders (empty = "Beatlumen").
     /// Account name last used on the server (prefilled when unlocking).
     /// Push notifications (UnifiedPush) when files are shared.
@@ -199,6 +203,8 @@ impl Default for Settings {
             crossfade: 0.0,
             skip_silence: true,
             airplay: false,
+            dlna_receiver: false,
+            dlna_uuid: String::new(),
             airplay_name: String::new(),
             vault_user: String::new(),
             vault_remember: true,
@@ -268,6 +274,8 @@ impl Settings {
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             airplay: v.bool_or("airplay", false),
+            dlna_receiver: v.bool_or("dlnaReceiver", false),
+            dlna_uuid: v.str_or("dlnaUuid", "").chars().take(48).collect(),
             airplay_name: v.str_or("airplayName", "").chars().take(48).collect(),
             vault_user: v.str_or("vaultUser", "").chars().take(32).collect(),
             vault_remember: v.bool_or("vaultRemember", true),
@@ -320,6 +328,8 @@ impl Settings {
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
             .with("airplay", self.airplay)
+            .with("dlnaReceiver", self.dlna_receiver)
+            .with("dlnaUuid", self.dlna_uuid.as_str())
             .with("airplayName", self.airplay_name.as_str())
             .with("vaultUser", self.vault_user.as_str())
             .with("vaultRemember", self.vault_remember)

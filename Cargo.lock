@@ -74,6 +74,7 @@ dependencies = [
  "bl-json",
  "bl-media",
  "bl-net",
+ "bl-upnp",
  "bl-vault",
  "p256",
  "ring",
@@ -90,6 +91,7 @@ name = "bl-airplay"
 version = "0.1.0"
 dependencies = [
  "bl-media",
+ "bl-net",
 ]
 
 [[package]]

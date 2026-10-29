@@ -340,7 +340,7 @@ Item {
 
             // ---- performance ----------------------------------------------
             // ---- AirPlay ----------------------------------------------------
-            SectionLabel { text: "AirPlay"; visible: Core.platform !== "web" }
+            SectionLabel { text: Theme.tr("Speaker for other devices"); visible: Core.platform !== "web" }
             SwitchRow {
                 visible: Core.platform !== "web"
                 Layout.fillWidth: true
@@ -349,9 +349,20 @@ Item {
                 on: page.settings.airplay === true
                 onSwitched: (on) => Core.call("settings.set", { key: "airplay", value: on })
             }
+            SwitchRow {
+                visible: Core.platform !== "web"
+                Layout.fillWidth: true
+                title: Theme.tr("Receive DLNA / UPnP")
+                detail: Theme.tr("Windows (\"Play to\"), TVs and apps like BubbleUPnP can send music to this device.")
+                on: page.settings.dlnaReceiver === true
+                onSwitched: (on) => Core.call("settings.set", { key: "dlnaReceiver", value: on })
+            }
             ColumnLayout {
                 readonly property var ap: Core.state.airplay || ({})
-                visible: Core.platform !== "web" && page.settings.airplay === true
+                readonly property var dl: Core.state.dlnaReceiver || ({})
+                readonly property bool airplayOn: page.settings.airplay === true
+                readonly property bool dlnaOn: page.settings.dlnaReceiver === true
+                visible: Core.platform !== "web" && (airplayOn || dlnaOn)
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
@@ -359,6 +370,18 @@ Item {
                 Label {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true
+                    visible: parent.dlnaOn
+                    text: "DLNA: " + (parent.dl.error ? Theme.tr("not available") + ": " + parent.dl.error
+                        : parent.dl.active ? Theme.tr("playing what a device sent")
+                        : parent.dl.running ? Theme.tr("Ready, visible as") + " „" + parent.dl.name + "“"
+                        : Theme.tr("Starting…"))
+                    color: parent.dl.error ? Theme.danger : Theme.textDim
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    visible: parent.airplayOn
                     text: parent.ap.error ? Theme.tr("AirPlay is not available") + ": " + parent.ap.error
                         : parent.ap.active ? Theme.tr("Receiving from") + " " + parent.ap.client
                         : parent.ap.running ? Theme.tr("Ready, visible as") + " „" + parent.ap.name + "“"
@@ -376,6 +399,7 @@ Item {
                 }
                 TextField {
                     id: airplayPassword
+                    visible: parent.airplayOn
                     Layout.fillWidth: true
                     placeholderText: page.settings.airplayPasswordSet ? Theme.tr("Password set (enter a new one to change it)") : Theme.tr("Password (optional)")
                     echoMode: TextInput.Password
@@ -384,6 +408,7 @@ Item {
                     onAccepted: if (text.length > 0) { Core.call("settings.set", { key: "airplayPassword", value: text }); text = "" }
                 }
                 Flow {
+                    visible: parent.airplayOn
                     Layout.fillWidth: true
                     spacing: 4
                     Button {
@@ -402,6 +427,7 @@ Item {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true
                     text: Theme.tr("Only reachable in the local network. Without a password anyone in this network can play music on this device.")
+                          + (parent.dlnaOn ? " " + Theme.tr("DLNA has no password.") : "")
                     color: Theme.textFaint
                     font.pixelSize: 13
                     wrapMode: Text.WordWrap

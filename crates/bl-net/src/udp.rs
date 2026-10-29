@@ -1,6 +1,7 @@
-//! A UDP socket on the mDNS port that coexists with the system's own
-//! responder (Avahi, mDNSResponder, Windows): the reuse options must be set
-//! before binding, which the standard library does not offer.
+//! A UDP socket on a well-known multicast port (mDNS 5353, SSDP 1900) that
+//! coexists with the system's own responders (Avahi, mDNSResponder, Windows):
+//! the reuse options must be set before binding, which the standard library
+//! does not offer.
 
 use std::net::UdpSocket;
 

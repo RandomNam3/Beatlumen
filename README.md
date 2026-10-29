@@ -26,6 +26,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
   and cover (Linux, Windows, Android; AirPlay 1 protocol).
+- **DLNA/UPnP receiver** (optional): apps such as BubbleUPnP, Windows
+  "Play to" and other control points can send music to the app and control
+  it (play, pause, seek, volume, next track).
 - **Play on speakers in the network**: AirPlay 1 receivers (AirPort
   Express, AV receivers, shairport-sync, …; encrypted when the speaker
   supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
@@ -99,7 +102,9 @@ crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
                         bl-opus, bl-vorbis, bl-flac, bl-ogg
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
-crates/bl-airplay       AirPlay (RAOP) receiver: RTSP, audio stream, mDNS
+crates/bl-airplay       AirPlay (RAOP) receiver and sender: RTSP, audio, mDNS
+crates/bl-upnp          DLNA/UPnP: control point and media renderer
+crates/bl-cast          Google Cast sender (Cast v2)
 ```
 
 The Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned
