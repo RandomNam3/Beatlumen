@@ -134,7 +134,7 @@ pub fn master(name: &str) -> PathBuf {
         _ => false,
     };
     assert!(ok, "could not generate master {name}");
-    std::fs::rename(&tmp, &p).unwrap();
+    publish(&tmp, &p);
     p
 }
 
@@ -158,7 +158,7 @@ pub fn cover_png() -> PathBuf {
             "1",
             tmp.to_str().unwrap()
         ]));
-        std::fs::rename(&tmp, &p).unwrap();
+        publish(&tmp, &p);
     }
     p
 }
@@ -198,8 +198,18 @@ pub fn make(name: &str, src: &str, args: &[&str]) -> Option<PathBuf> {
     if !ffmpeg(&a) {
         return None;
     }
-    std::fs::rename(&tmp, &p).ok()?;
-    Some(p)
+    publish(&tmp, &p);
+    p.exists().then_some(p)
+}
+
+/// Moves a generated fixture into place. Tests run in parallel and may
+/// generate the same fixture; on Windows a file another test has open
+/// cannot be replaced, and the copy already there is just as good.
+fn publish(tmp: &Path, p: &Path) {
+    if std::fs::rename(tmp, p).is_err() {
+        let _ = std::fs::remove_file(tmp);
+        assert!(p.exists(), "could not store {}", p.display());
+    }
 }
 
 pub fn ext_of(p: &Path) -> String {
