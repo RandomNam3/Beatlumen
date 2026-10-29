@@ -109,14 +109,18 @@ crates/bl-render        OpenGL / OpenGL ES / WebGL 2 renderer
 crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
                         bl-opus, bl-vorbis, bl-flac, bl-ogg
+crates/bl-gl            OpenGL bindings (loaded at run time)
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
+crates/bl-vault         end-to-end encryption of the user's files (+ bl-vault-wasm)
 crates/bl-airplay       AirPlay (RAOP) receiver and sender: RTSP, audio, mDNS
 crates/bl-upnp          DLNA/UPnP: control point and media renderer
 crates/bl-cast          Google Cast sender (Cast v2)
 ```
 
-The Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned
-features (lyrics, user accounts, sharing, music sources, devices).
+Apart from the cryptography of the encrypted files (audited RustCrypto
+crates in `bl-vault`, pinned versions), the Rust crates use no third-party
+crates. See `docs/ROADMAP.md` for planned features (lyrics, devices, music
+sources).
 
 ## Security
 

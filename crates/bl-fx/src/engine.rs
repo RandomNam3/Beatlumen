@@ -1,7 +1,7 @@
 //! The effect runtime: turns a preset, the playback position and audio
 //! analysis into a renderable [`FrameView`] every frame.
 //!
-//! Behaviour mirrors Hyperchroma 0.9 (see `docs/effects.md`): novelty
+//! Behaviour mirrors Hyperchroma 0.9: novelty
 //! triggers animate filter parameters and camera shake, structural
 //! transition peaks schedule camera moves and visual transitions, and
 //! background image changes run a transition.

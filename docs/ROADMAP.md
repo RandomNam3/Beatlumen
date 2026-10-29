@@ -17,9 +17,11 @@ explicitly sets them up for app-only use.
   - App without server: manual start per track, computed locally.
 
 ## Server
-- User accounts (instead of the single shared password), with per-user
-  playlists, presets, backgrounds and settings.
-- Sharing music between users on the same server.
+- Done: user accounts with end-to-end encrypted files, sharing between
+  users, passkeys (`docs/ENCRYPTION.md`); source extensions
+  (`docs/EXTENSIONS.md`).
+- Per-user playlists, presets, backgrounds and settings (today they are
+  shared by everyone on the server).
 - Public share links (with optional expiry and password).
 
 ## Devices: remote control and individual playback
@@ -161,4 +163,6 @@ audio for analysis, caching and pre-loading, and visuals that are
 synchronised with the music. Some of them additionally restrict API access
 to partners. Downloaders that circumvent protection measures are not part of
 Beatlumen. Music from such services can still drive the visuals through the
-system audio mode.
+system audio mode. A server admin can connect separate source extensions
+(`docs/EXTENSIONS.md`) on their own responsibility; this repository
+contains none.
