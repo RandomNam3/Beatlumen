@@ -143,8 +143,9 @@ are cached locally.
     visuals without being played again; with notification access the
     playing app's title, artist, cover and position are shown and play,
     pause, next, previous and seek control it.
-  - Next: Linux (monitor source + MPRIS players) and Windows (WASAPI
-    loopback + system media sessions).
+  - Done on Linux (the default output's monitor through PulseAudio or
+    PipeWire, MPRIS players for title, cover and controls) and Windows
+    (WASAPI loopback, system media sessions).
 - Live input only: effects react instead of anticipating beats. Beat
   prediction (tempo and phase tracking) and the output latency (e.g. of
   Bluetooth) make up for part of that.

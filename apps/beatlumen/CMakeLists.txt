@@ -139,11 +139,11 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
         target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
         target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS)
         target_link_libraries(beatlumen PRIVATE Qt6::DBus)
-        # "Visualize other apps": the sound output's monitor and MPRIS players.
-        if(TARGET Qt6::Multimedia)
-            target_sources(beatlumen PRIVATE src/desktop_capture.cpp src/desktop_capture.h)
-            target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DESKTOP_CAPTURE)
-        endif()
+        # "Visualize other apps": the sound output's monitor (libpulse-simple,
+        # loaded at run time) and MPRIS players.
+        target_sources(beatlumen PRIVATE src/desktop_capture.cpp src/desktop_capture.h)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DESKTOP_CAPTURE)
+        target_link_libraries(beatlumen PRIVATE ${CMAKE_DL_LIBS})
     endif()
 endif()
 

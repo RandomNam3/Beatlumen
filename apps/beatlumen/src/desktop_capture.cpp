@@ -1,12 +1,9 @@
 #include "desktop_capture.h"
 #include "bridge.h"
 
-#include <QAudioDevice>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QSet>
-#include <QAudioFormat>
-#include <QAudioSource>
 #include <QCryptographicHash>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -19,16 +16,104 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMediaDevices>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 
+#include <atomic>
 #include <cmath>
+#include <dlfcn.h>
+#include <thread>
+#include <vector>
 
 namespace {
+
+// Records the monitor of the default output through libpulse-simple
+// (PulseAudio, or PipeWire's PulseAudio service). Qt Multimedia hides
+// monitor sources, so it cannot record them. Loaded at run time: the app
+// starts without it.
+class PulseRecorder
+{
+public:
+    ~PulseRecorder() { stop(); }
+
+    // Empty on success, else what went wrong.
+    QString start()
+    {
+        stop();
+        if (!load())
+            return QStringLiteral("PulseAudio or PipeWire is needed");
+        SampleSpec spec { 3 /* PA_SAMPLE_S16LE */, kRate, 2 };
+        // Short fragments: the visuals follow what is heard closely.
+        const uint32_t frag = kRate / 25 * 4; // 40 ms
+        BufferAttr attr { uint32_t(-1), uint32_t(-1), uint32_t(-1), uint32_t(-1), frag };
+        int err = 0;
+        m_pa = m_new(nullptr, "Beatlumen", 2 /* PA_STREAM_RECORD */, "@DEFAULT_MONITOR@",
+                     "Visualizer", &spec, nullptr, &attr, &err);
+        if (!m_pa)
+            return QStringLiteral("cannot record the sound output: ") + QString::fromUtf8(m_strerror ? m_strerror(err) : "");
+        m_run = true;
+        m_thread = std::thread([this, frag]() {
+            std::vector<int16_t> buf(frag / 2);
+            int e = 0;
+            while (m_run.load()) {
+                if (m_read(m_pa, buf.data(), frag, &e) < 0)
+                    break;
+                bl_capture_push(buf.data(), buf.size() / 2, 2, kRate);
+            }
+        });
+        return {};
+    }
+
+    void stop()
+    {
+        m_run = false;
+        if (m_thread.joinable())
+            m_thread.join();
+        if (m_pa) {
+            m_free(m_pa);
+            m_pa = nullptr;
+        }
+    }
+
+private:
+    struct SampleSpec { int format; uint32_t rate; uint8_t channels; };
+    struct BufferAttr { uint32_t maxlength, tlength, prebuf, minreq, fragsize; };
+    using NewFn = void *(*)(const char *, const char *, int, const char *, const char *, const SampleSpec *,
+                            const void *, const BufferAttr *, int *);
+    using ReadFn = int (*)(void *, void *, size_t, int *);
+    using FreeFn = void (*)(void *);
+    using StrerrorFn = const char *(*)(int);
+    static constexpr uint32_t kRate = 48000;
+
+    bool load()
+    {
+        if (m_new)
+            return true;
+        void *lib = dlopen("libpulse-simple.so.0", RTLD_NOW | RTLD_LOCAL);
+        if (!lib)
+            return false;
+        m_new = reinterpret_cast<NewFn>(dlsym(lib, "pa_simple_new"));
+        m_read = reinterpret_cast<ReadFn>(dlsym(lib, "pa_simple_read"));
+        m_free = reinterpret_cast<FreeFn>(dlsym(lib, "pa_simple_free"));
+        m_strerror = reinterpret_cast<StrerrorFn>(dlsym(lib, "pa_strerror"));
+        if (!m_new || !m_read || !m_free) {
+            m_new = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    NewFn m_new = nullptr;
+    ReadFn m_read = nullptr;
+    FreeFn m_free = nullptr;
+    StrerrorFn m_strerror = nullptr;
+    void *m_pa = nullptr;
+    std::atomic<bool> m_run { false };
+    std::thread m_thread;
+};
 
 constexpr const char *kPath = "/org/mpris/MediaPlayer2";
 constexpr const char *kPlayer = "org.mpris.MediaPlayer2.Player";
@@ -47,32 +132,13 @@ public:
     void start()
     {
         stop(false);
-        const QAudioDevice dev = monitorDevice();
-        if (dev.isNull()) {
-            postState(false, QStringLiteral("no monitor of the sound output (PulseAudio or PipeWire is needed)"));
+        const QString error = m_recorder.start();
+        if (!error.isEmpty()) {
+            qWarning("capture: %s", qPrintable(error));
+            postState(false, error);
             return;
         }
-        QAudioFormat fmt;
-        fmt.setSampleRate(48000);
-        fmt.setChannelCount(2);
-        fmt.setSampleFormat(QAudioFormat::Int16);
-        if (!dev.isFormatSupported(fmt)) {
-            const QAudioFormat pref = dev.preferredFormat();
-            fmt.setSampleRate(pref.sampleRate() > 0 ? pref.sampleRate() : 48000);
-        }
-        m_format = fmt;
-        m_source = new QAudioSource(dev, fmt, this);
-        // Short buffers: the visuals follow what is heard closely.
-        m_source->setBufferSize(fmt.bytesForDuration(40000));
-        m_io = m_source->start();
-        if (!m_io) {
-            delete m_source;
-            m_source = nullptr;
-            postState(false, QStringLiteral("cannot record the sound output"));
-            return;
-        }
-        connect(m_io, &QIODevice::readyRead, this, &Capture::read);
-        qInfo("capture: recording %s", qPrintable(dev.description()));
+        qInfo("capture: recording the sound output");
         post(QStringLiteral("capture.access"), { { QStringLiteral("granted"), true } });
         postState(true);
         m_lastJson.clear();
@@ -83,12 +149,7 @@ public:
     void stop(bool report = true)
     {
         m_poll.stop();
-        if (m_source) {
-            m_source->stop();
-            delete m_source;
-            m_source = nullptr;
-            m_io = nullptr;
-        }
+        m_recorder.stop();
         m_player.clear();
         if (report) {
             postState(false);
@@ -124,31 +185,6 @@ public:
     }
 
 private:
-    // The monitor of the default output; else any monitor source.
-    static QAudioDevice monitorDevice()
-    {
-        const QByteArray out = QMediaDevices::defaultAudioOutput().id();
-        QAudioDevice any;
-        for (const QAudioDevice &d : QMediaDevices::audioInputs()) {
-            if (!out.isEmpty() && d.id() == out + ".monitor")
-                return d;
-            if (any.isNull() && (d.id().endsWith(".monitor") || d.description().startsWith(QLatin1String("Monitor of"))))
-                any = d;
-        }
-        return any;
-    }
-
-    void read()
-    {
-        if (!m_io)
-            return;
-        const QByteArray d = m_io->readAll();
-        const int frameBytes = 2 * m_format.channelCount();
-        if (d.size() >= frameBytes)
-            bl_capture_push(reinterpret_cast<const int16_t *>(d.constData()), size_t(d.size() / frameBytes),
-                            uint32_t(m_format.channelCount()), uint32_t(m_format.sampleRate()));
-    }
-
     // Runs a core command on the Qt thread (not inside the current one).
     void post(const QString &cmd, const QVariantMap &args)
     {
@@ -278,9 +314,7 @@ private:
     }
 
     Bridge *m_bridge;
-    QAudioSource *m_source = nullptr;
-    QIODevice *m_io = nullptr;
-    QAudioFormat m_format;
+    PulseRecorder m_recorder;
     QTimer m_poll;
     QString m_player;
     QString m_trackId;
