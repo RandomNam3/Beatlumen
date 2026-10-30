@@ -35,7 +35,8 @@ jobs:
           [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run_id must be a number"; exit 1; }
           read -r name branch event conclusion sha < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
             --jq '"\(.name) \(.head_branch) \(.event) \(.conclusion) \(.head_sha)"')
-          [ "$name" = CI ] && [ "$branch" = main ] && [ "$event" = push ] && [ "$conclusion" = success ] || {
+          [ "$name" = CI ] && [ "$branch" = main ] && [ "$conclusion" = success ] \
+            && { [ "$event" = push ] || [ "$event" = workflow_dispatch ]; } || {
             echo "::error::run $RUN_ID is not a successful CI run on main ($name, $branch, $event, $conclusion)"
             exit 1
           }
@@ -48,6 +49,31 @@ jobs:
           fi
           echo "SHA=$sha" >> "$GITHUB_ENV"
           echo "VERSION=$version" >> "$GITHUB_ENV"
+      # The APK must be signed with the project's key (so it installs over
+      # earlier builds), not with a key made for one CI run.
+      - name: Check the APK's signature
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          [ -n "$ANDROID_KEYSTORE_BASE64" ] || {
+            echo "::error::the repository has no ANDROID_KEYSTORE_BASE64 secret (the project's signing key)"
+            exit 1
+          }
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name beatlumen-android --dir apk
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ks"
+          want=$(keytool -exportcert -rfc -keystore "$RUNNER_TEMP/ks" -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "${ANDROID_KEY_ALIAS:-androiddebugkey}" | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr A-F a-f)
+          rm -f "$RUNNER_TEMP/ks"
+          signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          got=$("$signer" verify --print-certs apk/beatlumen.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          [ "$got" = "$want" ] || {
+            echo "::error::the APK of run $RUN_ID is not signed with the project's key (run CI again after adding the secret)"
+            exit 1
+          }
+          rm -rf apk
       - name: Collect the builds
         run: |
           set -euo pipefail
