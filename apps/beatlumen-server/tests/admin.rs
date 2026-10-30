@@ -234,6 +234,7 @@ fn admin_interface() {
     assert_eq!(r.status, 403);
 
     // Settings: live, after a restart, fixed.
+    let musik = root.join("musik");
     let (s, v) = http.json(
         "PUT",
         "settings",
@@ -260,7 +261,10 @@ fn admin_interface() {
     let (s, v) = http.json(
         "PUT",
         "settings",
-        Some(Value::object().with("values", Value::object().with("music", vec!["/srv/musik"]))),
+        Some(Value::object().with(
+            "values",
+            Value::object().with("music", vec![musik.display().to_string()]),
+        )),
     );
     assert_eq!(s, 200);
     assert!(v.bool_or("restartPending", false));
@@ -307,7 +311,7 @@ fn admin_interface() {
         config::Action::Run(c) => {
             assert_eq!(c.name, "Cli");
             assert_eq!(c.rescan_interval, 300);
-            assert_eq!(c.music_dirs, vec![PathBuf::from("/srv/musik")]);
+            assert_eq!(c.music_dirs, vec![musik.clone()]);
             assert!(c
                 .origins
                 .iter()
