@@ -347,7 +347,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 8
-                visible: page.shows("texts", ["Delete", "Download", "In use", "Song texts on this device", "Turn off", "Use", "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway."])
+                visible: page.shows("texts", ["Delete", "Download", "In use", "Song texts on this device", "Turn off", "Use", "Time all songs on this device", "songs left", "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway."])
                 SectionLabel { text: Theme.tr("Song texts on this device"); visible: page.speechLocal.available === true }
                 Label {
                     visible: page.speechLocal.available === true
@@ -424,6 +424,52 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: 8
                     Button { text: Theme.tr("Turn off"); flat: true; onClicked: Core.call("speech.pick", { id: "" }) }
+                }
+                // All songs of this device, one after the other.
+                Label {
+                    visible: page.speechLocal.ready === true
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.Wrap
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: Theme.tr("Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.")
+                }
+                RowLayout {
+                    visible: page.speechLocal.ready === true
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 16
+                    readonly property var all: page.speechLocal.all || null
+                    Button {
+                        visible: !parent.all
+                        text: Theme.tr("Time all songs on this device")
+                        icon.source: Theme.icon("auto_awesome")
+                        onClicked: {
+                            const r = Core.call("speech.runAll")
+                            if (r && r.error)
+                                Core.call("toast", { text: r.error })
+                        }
+                    }
+                    ProgressBar {
+                        visible: !!parent.all
+                        Layout.fillWidth: true
+                        value: parent.all ? 1 - (parent.all.left + (page.speechLocal.running ? 1 - page.speechLocal.running.progress : 0)) / Math.max(1, parent.all.total) : 0
+                    }
+                    Label {
+                        visible: !!parent.all
+                        textFormat: Text.PlainText
+                        color: Theme.textDim
+                        text: parent.all ? (parent.all.left + (page.speechLocal.running ? 1 : 0)) + " " + Theme.tr("songs left") : ""
+                    }
+                    Button {
+                        visible: !!parent.all
+                        flat: true
+                        text: Theme.tr("Stop")
+                        onClicked: Core.call("speech.cancel")
+                    }
                 }
             }
             // ---- server ----

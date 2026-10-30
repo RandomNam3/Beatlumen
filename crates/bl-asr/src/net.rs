@@ -3,11 +3,17 @@
 //! to the audio, MLP), following the published architecture.
 
 use crate::model::{Model, Tensor};
-use crate::ops::{dot, gelu, layer_norm, linear, softmax, threads};
+use crate::ops::{axpy, dot, gelu, layer_norm, linear, softmax, threads};
 use std::io;
 
+/// Query rows handled together, so each key and value row is read once
+/// for all of them.
+const ROW_BLOCK: usize = 8;
+
 /// Attention of `q` (`nq` rows) to `k`/`v` (`nk` rows), `heads` heads over
-/// `dim` columns; with `causal`, row i sees keys up to `offset + i`.
+/// `dim` columns; with `causal`, row i sees keys up to `offset + i`. The
+/// work is split by head and block of query rows; small jobs (a decoder
+/// step) stay on this thread.
 #[allow(clippy::too_many_arguments)]
 fn attention(
     q: &[f32],
@@ -21,46 +27,94 @@ fn attention(
 ) -> Vec<f32> {
     let hd = dim / heads;
     let scale = 1.0 / (hd as f32).sqrt();
-    let mut out = vec![0f32; nq * dim];
     let tasks: Vec<(usize, usize)> = (0..heads)
-        .flat_map(|h| (0..nq).map(move |i| (h, i)))
+        .flat_map(|h| (0..nq).step_by(ROW_BLOCK).map(move |r| (h, r)))
         .collect();
-    let per = tasks.len().div_ceil(threads()).max(1);
-    let parts: Vec<Vec<(usize, usize, Vec<f32>)>> = std::thread::scope(|s| {
-        tasks
-            .chunks(per)
-            .map(|chunk| {
-                s.spawn(move || {
-                    let mut res = Vec::with_capacity(chunk.len());
-                    let mut scores = vec![0f32; nk];
-                    for &(h, i) in chunk {
-                        let qi = &q[i * dim + h * hd..i * dim + (h + 1) * hd];
-                        let limit = causal.map_or(nk, |off| (off + i + 1).min(nk));
-                        for j in 0..limit {
-                            scores[j] =
-                                dot(qi, &k[j * dim + h * hd..j * dim + (h + 1) * hd]) * scale;
-                        }
-                        let sc = &mut scores[..limit];
-                        softmax(sc);
-                        let mut o = vec![0f32; hd];
-                        for (j, &p) in sc.iter().enumerate() {
-                            let vj = &v[j * dim + h * hd..j * dim + (h + 1) * hd];
-                            for (a, b) in o.iter_mut().zip(vj) {
-                                *a += p * b;
-                            }
-                        }
-                        res.push((h, i, o));
-                    }
-                    res
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|h| h.join().expect("attention thread"))
-            .collect()
+    // Many query rows (the encoder): keys and values per head transposed
+    // (head dimension x keys), so scores and outputs become long vector
+    // operations over all keys.
+    let transposed = (nq >= 4 * ROW_BLOCK && causal.is_none()).then(|| {
+        let mut kt = vec![0f32; dim * nk];
+        let mut vt = vec![0f32; dim * nk];
+        for j in 0..nk {
+            for c in 0..dim {
+                kt[c * nk + j] = k[j * dim + c];
+                vt[c * nk + j] = v[j * dim + c];
+            }
+        }
+        (kt, vt)
     });
-    for (h, i, o) in parts.into_iter().flatten() {
-        out[i * dim + h * hd..i * dim + (h + 1) * hd].copy_from_slice(&o);
+    let run = |chunk: &[(usize, usize)]| -> Vec<(usize, usize, Vec<f32>)> {
+        let mut res = Vec::with_capacity(chunk.len());
+        let mut scores = vec![0f32; ROW_BLOCK * nk];
+        for &(h, r0) in chunk {
+            let rows = ROW_BLOCK.min(nq - r0);
+            let limit = |i: usize| causal.map_or(nk, |off| (off + i + 1).min(nk));
+            let mut out = vec![0f32; rows * hd];
+            if let Some((kt, vt)) = &transposed {
+                for r in 0..rows {
+                    let i = r0 + r;
+                    let qi = &q[i * dim + h * hd..i * dim + (h + 1) * hd];
+                    let sc = &mut scores[r * nk..(r + 1) * nk];
+                    sc.fill(0.0);
+                    for (d, &qd) in qi.iter().enumerate() {
+                        let c = h * hd + d;
+                        axpy(qd * scale, &kt[c * nk..(c + 1) * nk], sc);
+                    }
+                    softmax(sc);
+                    for d in 0..hd {
+                        let c = h * hd + d;
+                        out[r * hd + d] = dot(sc, &vt[c * nk..(c + 1) * nk]);
+                    }
+                }
+                res.push((h, r0, out));
+                continue;
+            }
+            for r in 0..rows {
+                let i = r0 + r;
+                let qi = &q[i * dim + h * hd..i * dim + (h + 1) * hd];
+                let sc = &mut scores[r * nk..r * nk + limit(i)];
+                for (j, s) in sc.iter_mut().enumerate() {
+                    *s = dot(qi, &k[j * dim + h * hd..j * dim + (h + 1) * hd]) * scale;
+                }
+                softmax(sc);
+            }
+            // Each value row once for all rows of the block.
+            let longest = (0..rows).map(|r| limit(r0 + r)).max().unwrap_or(0);
+            for j in 0..longest {
+                let vj = &v[j * dim + h * hd..j * dim + (h + 1) * hd];
+                for r in 0..rows {
+                    if j < limit(r0 + r) {
+                        axpy(scores[r * nk + j], vj, &mut out[r * hd..(r + 1) * hd]);
+                    }
+                }
+            }
+            res.push((h, r0, out));
+        }
+        res
+    };
+    let work = nq * nk * dim;
+    let threads = if work < 1 << 20 { 1 } else { threads().min(tasks.len()) };
+    let parts: Vec<Vec<(usize, usize, Vec<f32>)>> = if threads <= 1 {
+        vec![run(&tasks)]
+    } else {
+        let per = tasks.len().div_ceil(threads).max(1);
+        std::thread::scope(|s| {
+            tasks
+                .chunks(per)
+                .map(|chunk| s.spawn(move || run(chunk)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().expect("attention thread"))
+                .collect()
+        })
+    };
+    let mut out = vec![0f32; nq * dim];
+    for (h, r0, o) in parts.into_iter().flatten() {
+        for (r, row) in o.chunks_exact(hd).enumerate() {
+            let i = r0 + r;
+            out[i * dim + h * hd..i * dim + (h + 1) * hd].copy_from_slice(row);
+        }
     }
     out
 }
@@ -259,6 +313,32 @@ impl<'a> Decoder<'a> {
 
     /// Feeds `tokens`; returns the logits after the last one.
     pub fn step(&mut self, tokens: &[u32]) -> io::Result<Vec<f32>> {
+        self.step_with(tokens, &[]).map(|(logits, _)| logits)
+    }
+
+    /// Heads whose attention to the audio follows the words being said
+    /// (Whisper's "alignment heads" lie in the upper decoder layers): the
+    /// heads of the upper half of the layers, at most 32, from the top.
+    pub fn alignment_heads(&self) -> Vec<(usize, usize)> {
+        let p = self.m.params;
+        let mut heads = Vec::new();
+        for l in (p.n_text_layer / 2..p.n_text_layer).rev() {
+            if heads.len() + p.n_text_head > 32 && !heads.is_empty() {
+                break;
+            }
+            heads.extend((0..p.n_text_head).map(|h| (l, h)));
+        }
+        heads
+    }
+
+    /// Like [`step`](Self::step), also returning the attention to the
+    /// audio of the given (layer, head) pairs: for each, `tokens.len()`
+    /// rows of `n_audio` weights (each row sums to 1).
+    pub fn step_with(
+        &mut self,
+        tokens: &[u32],
+        heads: &[(usize, usize)],
+    ) -> io::Result<(Vec<f32>, Vec<Vec<f32>>)> {
         let p = self.m.params;
         let d = p.n_text_state;
         let n = tokens.len();
@@ -278,6 +358,7 @@ impl<'a> Decoder<'a> {
                 *a = e + q;
             }
         }
+        let mut weights = vec![Vec::new(); heads.len()];
         for (l, b) in self.blocks.iter().enumerate() {
             // Self attention with the cache.
             let mut h = x.clone();
@@ -308,6 +389,11 @@ impl<'a> Decoder<'a> {
             layer_norm(&mut h, d, c.ln.0, c.ln.1);
             let q = linear(&h, n, c.q.0, Some(c.q.1));
             let (ck, cv) = &self.cross_kv[l];
+            for (slot, &(hl, head)) in heads.iter().enumerate() {
+                if hl == l {
+                    weights[slot] = cross_weights(&q, ck, n, self.n_audio, d, p.n_text_head, head);
+                }
+            }
             let a = attention(&q, ck, cv, n, self.n_audio, d, p.n_text_head, None);
             let o = linear(&a, n, c.out.0, Some(c.out.1));
             for (xa, ob) in x.iter_mut().zip(&o) {
@@ -324,6 +410,30 @@ impl<'a> Decoder<'a> {
             self.m.get("decoder.ln.bias")?,
         );
         let last = last.to_vec();
-        Ok(linear(&last, 1, emb, None))
+        Ok((linear(&last, 1, emb, None), weights))
     }
+}
+
+/// The attention weights of one head of `q` (`nq` rows) to `k` (`nk`
+/// rows): `nq` rows of `nk` weights.
+fn cross_weights(
+    q: &[f32],
+    k: &[f32],
+    nq: usize,
+    nk: usize,
+    dim: usize,
+    heads: usize,
+    head: usize,
+) -> Vec<f32> {
+    let hd = dim / heads;
+    let scale = 1.0 / (hd as f32).sqrt();
+    let mut out = vec![0f32; nq * nk];
+    for (i, row) in out.chunks_exact_mut(nk).enumerate() {
+        let qi = &q[i * dim + head * hd..i * dim + (head + 1) * hd];
+        for (j, w) in row.iter_mut().enumerate() {
+            *w = dot(qi, &k[j * dim + head * hd..j * dim + (head + 1) * hd]) * scale;
+        }
+        softmax(row);
+    }
+    out
 }

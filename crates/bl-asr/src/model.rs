@@ -60,8 +60,9 @@ impl QType {
         }
     }
 
-    /// Expands one block into 32 values.
-    fn dequantize(self, b: &[u8], out: &mut [f32]) {
+    /// Expands one block into 32 values (the plain version; `ops` has
+    /// vectorised ones).
+    pub(crate) fn dequantize(self, b: &[u8], out: &mut [f32]) {
         let h = |i: usize| f16_to_f32(u16::from_le_bytes([b[i], b[i + 1]]));
         let d = h(0);
         match self {
@@ -104,6 +105,15 @@ pub enum Store {
     Quant(QType, Vec<u8>),
 }
 
+/// Rows of a tensor as they are stored, for the kernels in `ops`.
+#[derive(Clone, Copy)]
+pub(crate) enum Packed<'a> {
+    F32(&'a [f32]),
+    F16(&'a [u16]),
+    /// Whole blocks of the given type.
+    Quant(QType, &'a [u8]),
+}
+
 /// A weight tensor: `rows` rows of `cols` values (ggml's ne0 = cols).
 pub struct Tensor {
     pub cols: usize,
@@ -118,6 +128,24 @@ impl Tensor {
             rows,
             store: Store::F32(data),
         }
+    }
+
+    /// A tensor of `rows` rows of `cols` values kept as `store`; `None` if
+    /// the stored data does not have exactly that size (quantised rows
+    /// must be whole blocks).
+    pub fn new(cols: usize, rows: usize, store: Store) -> Option<Tensor> {
+        let count = cols.checked_mul(rows)?;
+        let fits = match &store {
+            Store::F32(v) => v.len() == count,
+            Store::F16(v) => v.len() == count,
+            Store::Quant(t, v) => {
+                // (`is_multiple_of` needs Rust 1.87.)
+                #[allow(clippy::manual_is_multiple_of)]
+                let whole_blocks = cols % QK == 0;
+                whole_blocks && Some(v.len()) == (count / QK).checked_mul(t.block_bytes())
+            }
+        };
+        fits.then_some(Tensor { cols, rows, store })
     }
 
     /// All values (tensors kept as f32: vectors, convolutions, position
@@ -151,20 +179,18 @@ impl Tensor {
 
     /// Writes row `r` as f32 values into `out` (`cols` long).
     pub fn row_into(&self, r: usize, out: &mut [f32]) {
+        crate::ops::expand(self.packed(r, r + 1), out);
+    }
+
+    /// Rows `r0..r1` as stored (panics if they are not all there).
+    pub(crate) fn packed(&self, r0: usize, r1: usize) -> Packed<'_> {
         let c = self.cols;
         match &self.store {
-            Store::F32(v) => out.copy_from_slice(&v[r * c..(r + 1) * c]),
-            Store::F16(v) => {
-                for (o, &h) in out.iter_mut().zip(&v[r * c..(r + 1) * c]) {
-                    *o = f16_to_f32(h);
-                }
-            }
+            Store::F32(v) => Packed::F32(&v[r0 * c..r1 * c]),
+            Store::F16(v) => Packed::F16(&v[r0 * c..r1 * c]),
             Store::Quant(t, v) => {
-                let bb = t.block_bytes();
-                let row = &v[r * (c / QK) * bb..(r + 1) * (c / QK) * bb];
-                for (blk, o) in row.chunks_exact(bb).zip(out.chunks_exact_mut(QK)) {
-                    t.dequantize(blk, o);
-                }
+                let row_bytes = c / QK * t.block_bytes();
+                Packed::Quant(*t, &v[r0 * row_bytes..r1 * row_bytes])
             }
         }
     }
@@ -183,9 +209,7 @@ impl Tensor {
             return self;
         }
         let mut data = vec![0f32; self.cols * self.rows];
-        for (r, out) in data.chunks_exact_mut(self.cols).enumerate() {
-            self.row_into(r, out);
-        }
+        crate::ops::expand(self.packed(0, self.rows), &mut data);
         Tensor::from_f32(self.cols, self.rows, data)
     }
 }
@@ -222,27 +246,30 @@ fn usize_field(r: &mut dyn Read, max: usize) -> io::Result<usize> {
     Ok(v as usize)
 }
 
-/// IEEE half to f32.
+/// IEEE half to f32 (exact for every input). Branch-free, so loops
+/// over it vectorise.
+#[inline]
 pub fn f16_to_f32(h: u16) -> f32 {
-    let sign = ((h >> 15) as u32) << 31;
-    let exp = ((h >> 10) & 0x1f) as u32;
-    let frac = (h & 0x3ff) as u32;
-    let bits = match exp {
-        0 if frac == 0 => sign,
-        0 => {
-            // Subnormal: normalise.
-            let mut e = 127 - 15 + 1;
-            let mut f = frac;
-            while f & 0x400 == 0 {
-                f <<= 1;
-                e -= 1;
-            }
-            sign | ((e as u32) << 23) | ((f & 0x3ff) << 13)
-        }
-        0x1f => sign | 0x7f80_0000 | (frac << 13),
-        _ => sign | ((exp + 127 - 15) << 23) | (frac << 13),
+    let h = h as u32;
+    let sign = (h & 0x8000) << 16;
+    let exp = h & 0x7c00;
+    // Exponent and fraction moved to their f32 places.
+    let shifted = (h & 0x7fff) << 13;
+    // Normal numbers: rebias the exponent from 15 to 127.
+    let normal = shifted + ((127 - 15) << 23);
+    // Infinity and NaN keep their fraction.
+    let special = shifted | 0x7f80_0000;
+    // Subnormals are fraction * 2^-24: an exact integer conversion and
+    // scaling (no subnormal f32 arithmetic involved).
+    let sub = ((h & 0x3ff) as f32 * (1.0 / 16_777_216.0)).to_bits();
+    let bits = if exp == 0 {
+        sub
+    } else if exp == 0x7c00 {
+        special
+    } else {
+        normal
     };
-    f32::from_bits(bits)
+    f32::from_bits(sign | bits)
 }
 
 impl Model {
@@ -417,6 +444,50 @@ mod tests {
         b.extend([0x10u8; 16]);
         QType::Q5_1.dequantize(&b, &mut out);
         assert_eq!((out[0], out[16]), (0.5, 17.5));
+    }
+
+    /// The straightforward conversion `f16_to_f32` replaced.
+    fn f16_reference(h: u16) -> f32 {
+        let sign = ((h >> 15) as u32) << 31;
+        let exp = ((h >> 10) & 0x1f) as u32;
+        let frac = (h & 0x3ff) as u32;
+        let bits = match exp {
+            0 if frac == 0 => sign,
+            0 => {
+                let mut e = 127 - 15 + 1;
+                let mut f = frac;
+                while f & 0x400 == 0 {
+                    f <<= 1;
+                    e -= 1;
+                }
+                sign | ((e as u32) << 23) | ((f & 0x3ff) << 13)
+            }
+            0x1f => sign | 0x7f80_0000 | (frac << 13),
+            _ => sign | ((exp + 127 - 15) << 23) | (frac << 13),
+        };
+        f32::from_bits(bits)
+    }
+
+    #[test]
+    fn half_floats_all() {
+        for h in 0..=u16::MAX {
+            assert_eq!(
+                f16_to_f32(h).to_bits(),
+                f16_reference(h).to_bits(),
+                "{h:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn tensor_sizes() {
+        let q8 = |len| Store::Quant(QType::Q8_0, vec![0; len]);
+        assert!(Tensor::new(32, 2, q8(68)).is_some());
+        assert!(Tensor::new(32, 2, q8(67)).is_none());
+        assert!(Tensor::new(16, 2, q8(34)).is_none());
+        assert!(Tensor::new(3, 2, Store::F16(vec![0; 6])).is_some());
+        assert!(Tensor::new(3, 2, Store::F32(vec![0.0; 5])).is_none());
+        assert!(Tensor::new(usize::MAX, 2, Store::F32(Vec::new())).is_none());
     }
 
     #[test]

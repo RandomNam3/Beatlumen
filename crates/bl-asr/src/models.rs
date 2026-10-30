@@ -101,6 +101,21 @@ pub fn find(id: &str) -> Option<&'static ModelInfo> {
     CATALOG.iter().find(|m| m.id == id)
 }
 
+/// How good a model is compared to the others (the catalog is ordered
+/// from the smallest to the best); models not in it rank lowest.
+pub fn rank(id: &str) -> usize {
+    CATALOG.iter().position(|m| m.id == id).map_or(0, |i| i + 1)
+}
+
+/// The catalog id of a model file (by its file name), or the file's name.
+pub fn id_of(path: &std::path::Path) -> String {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    CATALOG
+        .iter()
+        .find(|m| m.file == name)
+        .map_or_else(|| name.trim_end_matches(".bin").to_string(), |m| m.id.to_string())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Download {
     Running { done: u64, total: u64 },

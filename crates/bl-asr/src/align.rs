@@ -4,7 +4,7 @@
 //! lines take the time of their first matched word (or are interpolated),
 //! and long gaps between sung parts become pause lines.
 
-use crate::transcribe::Segment;
+use crate::transcribe::{Segment, Word};
 
 /// A gap without singing of at least this length becomes a pause line.
 pub const PAUSE_SECS: f64 = 8.0;
@@ -40,10 +40,20 @@ fn similarity(a: &str, b: &str) -> f32 {
     1.0 - prev[b.len()] as f32 / n as f32
 }
 
-/// Recognised words with estimated start times.
+/// Recognised words with their start times (estimated by position in
+/// the segment when the recognition gave none).
 fn timed_words(segments: &[Segment]) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for s in segments {
+        if !s.words.is_empty() {
+            out.extend(
+                s.words
+                    .iter()
+                    .map(|w| (norm(&w.text), w.start))
+                    .filter(|(n, _)| !n.is_empty()),
+            );
+            continue;
+        }
         let words: Vec<&str> = s.text.split_whitespace().collect();
         let total: usize = words
             .iter()
@@ -164,6 +174,8 @@ fn pauses(segments: &[Segment]) -> Vec<f64> {
 /// A recognised line gets broken at punctuation after this many characters
 /// (and anywhere after twice as many).
 const LINE_CHARS: usize = 32;
+/// A pause between words of at least this long (seconds) ends a line.
+const LINE_PAUSE: f64 = 0.45;
 
 /// Text without what the model writes for sounds (`[applause]`,
 /// `(music)`, `♪`, `[BLANK_AUDIO]`).
@@ -198,46 +210,85 @@ fn speech_segments(segments: &[Segment]) -> Vec<Segment> {
             words.len() <= 3 && prev.len() > words.len() && prev.ends_with(&words)
         });
         if !echo {
-            out.push(Segment { text, ..s.clone() });
+            let words = s
+                .words
+                .iter()
+                .filter(|w| !strip_annotations(&w.text).is_empty())
+                .cloned()
+                .collect();
+            out.push(Segment {
+                text,
+                words,
+                ..s.clone()
+            });
         }
     }
     out
 }
 
-/// A segment's text as lines of readable length, each with its estimated
-/// start time and the estimated time of each word.
-fn split_lines(s: &Segment) -> Vec<(f64, String, Vec<f64>)> {
+/// A segment's words with times (estimated by character position when
+/// the recognition gave none).
+fn segment_words(s: &Segment) -> Vec<Word> {
+    if !s.words.is_empty() {
+        return s.words.clone();
+    }
     let words: Vec<&str> = s.text.split_whitespace().collect();
     let total: usize = words
         .iter()
         .map(|w| w.chars().count() + 1)
         .sum::<usize>()
         .max(1);
+    let at = |pos: usize| s.start + (s.end - s.start) * pos as f64 / total as f64;
+    let mut pos = 0usize;
+    words
+        .iter()
+        .map(|w| {
+            let start = at(pos);
+            pos += w.chars().count() + 1;
+            Word {
+                text: w.to_string(),
+                start,
+                end: at(pos - 1),
+                pieces: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// A segment's words as lines of readable length.
+fn split_lines(s: &Segment) -> Vec<Vec<Word>> {
+    let words = segment_words(s);
     let mut lines = Vec::new();
-    let (mut line, mut start, mut pos) = (String::new(), s.start, 0usize);
-    let mut times = Vec::new();
+    let mut line: Vec<Word> = Vec::new();
+    let mut len = 0usize;
     for (i, w) in words.iter().enumerate() {
-        let t = s.start + (s.end - s.start) * pos as f64 / total as f64;
-        if line.is_empty() {
-            start = t;
-        } else {
-            line.push(' ');
-        }
-        line.push_str(w);
-        times.push(t);
-        pos += w.chars().count() + 1;
-        let len = line.chars().count();
-        let rest: usize = words[i + 1..].iter().map(|w| w.chars().count() + 1).sum();
-        let breaks = w.ends_with(['.', ',', '!', '?', ';', ':']);
+        len += w.text.chars().count() + usize::from(!line.is_empty());
+        line.push(w.clone());
+        let rest: usize = words[i + 1..].iter().map(|w| w.text.chars().count() + 1).sum();
+        let breaks = w.text.ends_with(['.', ',', '!', '?', ';', ':']);
+        // Sung lines often come without punctuation: a pause after the word,
+        // or a capital starting the next one, ends a line too.
+        let (gap, capital) = words.get(i + 1).map_or((0.0, false), |n| {
+            let first = n.text.split('\'').next().unwrap_or_default();
+            let capital = n.text.chars().next().is_some_and(char::is_uppercase) && first != "I";
+            (n.start - w.end, capital)
+        });
+        let pause = gap >= LINE_PAUSE && len >= LINE_CHARS / 4;
+        // (Over music, words follow each other without gaps.)
+        let new_line = capital && len >= LINE_CHARS * 3 / 4;
         if i + 1 < words.len()
-            && rest >= LINE_CHARS / 2
-            && ((breaks && len >= LINE_CHARS) || len >= 2 * LINE_CHARS)
+            && rest >= LINE_CHARS / 4
+            && (pause
+                || new_line
+                || (breaks && len >= LINE_CHARS)
+                || len >= 2 * LINE_CHARS)
         {
-            lines.push((start, std::mem::take(&mut line), std::mem::take(&mut times)));
+            lines.push(std::mem::take(&mut line));
+            len = 0;
         }
     }
     if !line.is_empty() {
-        lines.push((start, line, times));
+        lines.push(line);
     }
     lines
 }
@@ -245,6 +296,39 @@ fn split_lines(s: &Segment) -> Vec<(f64, String, Vec<f64>)> {
 fn word_tag(t: f64) -> String {
     let cs = (t.max(0.0) * 100.0).round() as u64;
     format!("<{:02}:{:02}.{:02}>", cs / 6000, cs / 100 % 60, cs % 100)
+}
+
+/// Words held at least this long are written with the times of their
+/// pieces (syllable-like), so a display can follow a long note.
+const PIECES_FROM: f64 = 0.5;
+/// A pause after a word of at least this long gets the word's end time.
+const END_GAP: f64 = 0.25;
+
+/// A line of timed words (enhanced LRC): the start time before each word
+/// (and before each piece of a long word), the end time right after a
+/// word that is followed by a pause and after the last one. `line_end`:
+/// when the next line starts.
+pub fn words_line(words: &[Word], line_end: f64) -> String {
+    let mut out = String::new();
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        if w.pieces.len() > 1 && w.end - w.start >= PIECES_FROM {
+            for (t, p) in &w.pieces {
+                out.push_str(&word_tag(*t));
+                out.push_str(p);
+            }
+        } else {
+            out.push_str(&word_tag(w.start));
+            out.push_str(&w.text);
+        }
+        let next = words.get(i + 1).map_or(line_end, |n| n.start);
+        if i + 1 == words.len() || next - w.end >= END_GAP {
+            out.push_str(&word_tag(w.end.max(w.start)));
+        }
+    }
+    out
 }
 
 /// A line with a time before each word (enhanced LRC).
@@ -270,15 +354,18 @@ pub fn segments_to_lrc_words(segments: &[Segment]) -> String {
 
 fn segments_lrc(segments: &[Segment], word_times: bool) -> String {
     let speech = speech_segments(segments);
-    let mut lines: Vec<(f64, String)> = speech
+    let split: Vec<Vec<Word>> = speech.iter().flat_map(split_lines).collect();
+    let mut lines: Vec<(f64, String)> = split
         .iter()
-        .flat_map(split_lines)
-        .map(|(t, l, times)| {
+        .enumerate()
+        .map(|(i, words)| {
+            let t = words.first().map_or(0.0, |w| w.start);
             if word_times {
-                let words: Vec<&str> = l.split_whitespace().collect();
-                (t, timed_line(&words, &times))
+                let end = split.get(i + 1).and_then(|l| l.first()).map_or(t + 10.0, |w| w.start);
+                (t, words_line(words, end))
             } else {
-                (t, l)
+                let text: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+                (t, text.join(" "))
             }
         })
         .collect();
@@ -427,6 +514,7 @@ mod tests {
             end,
             text: text.into(),
             avg_logprob: -0.3,
+            words: Vec::new(),
         }
     }
 

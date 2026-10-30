@@ -16,14 +16,28 @@ pub struct Line {
     /// Start in milliseconds (synced text only).
     pub time_ms: Option<i64>,
     pub text: String,
-    /// Word start times and words (enhanced LRC), joined they give `text`.
-    pub words: Vec<(i64, String)>,
+    /// Timed words, or pieces of words (enhanced LRC); joined they give
+    /// `text`.
+    pub words: Vec<Piece>,
+}
+
+/// A timed word, or a piece of one (a syllable of a long note), in
+/// milliseconds. A word's text keeps the space after it; a piece within
+/// a word has none.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Piece {
+    pub t: i64,
+    /// When it is over: its own end time, else when the next one starts.
+    pub end: i64,
+    pub w: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Lyrics {
     pub synced: bool,
     pub lines: Vec<Line>,
+    /// What made it (`[re:]`), e.g. the speech timing and its model.
+    pub creator: Option<String>,
 }
 
 /// Parses a time like "01:23.45", "1:23", "01:23:45" (hundredths) or
@@ -82,25 +96,48 @@ fn leading_tags(line: &str) -> (Vec<&str>, &str) {
     (tags, rest)
 }
 
-/// Text and word times of an enhanced LRC line ("<00:01.00>word ...").
-fn words(text: &str, line_start: i64, offset: i64) -> (String, Vec<(i64, String)>) {
+/// Text and timed pieces of an enhanced LRC line ("<00:01.00>word ..."):
+/// a time before a word or piece starts it; a time right after a word that
+/// is followed by a space (or the end) ends it. Ends not given are filled
+/// in by [`fill_ends`].
+fn words(text: &str, line_start: i64, offset: i64) -> (String, Vec<Piece>) {
     if !text.contains('<') {
         return (text.trim().to_string(), Vec::new());
     }
-    let mut out = Vec::new();
+    let mut out: Vec<(i64, Option<i64>, String)> = Vec::new();
     let mut plain = String::new();
     let mut time = line_start;
     let mut rest = text;
     let mut word = String::new();
+    let flush = |out: &mut Vec<(i64, Option<i64>, String)>, time: i64, word: &mut String, end: Option<i64>| {
+        if word.is_empty() {
+            return;
+        }
+        // Spaces only: they belong to the word before.
+        if word.trim().is_empty() {
+            if let Some(last) = out.last_mut() {
+                last.2.push_str(word);
+            }
+            word.clear();
+            return;
+        }
+        out.push((time, end, std::mem::take(word)));
+    };
     while !rest.is_empty() {
         if let Some(r) = rest.strip_prefix('<') {
-            if let Some(end) = r.find('>') {
-                if let Some(t) = parse_time(&r[..end]) {
-                    if !word.is_empty() {
-                        out.push((time, std::mem::take(&mut word)));
+            if let Some(close) = r.find('>') {
+                if let Some(t) = parse_time(&r[..close]) {
+                    let after = &r[close + 1..];
+                    let ends_word = !word.is_empty()
+                        && !word.ends_with(char::is_whitespace)
+                        && !after.chars().next().is_some_and(|c| !c.is_whitespace());
+                    if ends_word {
+                        flush(&mut out, time, &mut word, Some(t - offset));
+                    } else {
+                        flush(&mut out, time, &mut word, None);
                     }
                     time = t - offset;
-                    rest = &r[end + 1..];
+                    rest = after;
                     continue;
                 }
             }
@@ -110,23 +147,52 @@ fn words(text: &str, line_start: i64, offset: i64) -> (String, Vec<(i64, String)
         plain.push(c);
         rest = &rest[c.len_utf8()..];
     }
-    if !word.is_empty() {
-        out.push((time, word));
-    }
+    flush(&mut out, time, &mut word, None);
     // Leading spaces stay with their words; trim the line's ends.
     let trimmed = plain.trim().to_string();
     if let Some(first) = out.first_mut() {
-        first.1 = first.1.trim_start().to_string();
+        first.2 = first.2.trim_start().to_string();
     }
     if let Some(last) = out.last_mut() {
-        last.1 = last.1.trim_end().to_string();
+        last.2 = last.2.trim_end().to_string();
     }
-    out.retain(|(_, w)| !w.is_empty());
-    (trimmed, out)
+    out.retain(|(_, _, w)| !w.is_empty());
+    let pieces = out
+        .into_iter()
+        .map(|(t, end, w)| Piece {
+            t,
+            end: end.unwrap_or(i64::MIN),
+            w,
+        })
+        .collect();
+    (trimmed, pieces)
+}
+
+/// Fills in the ends of pieces that have none: when the next piece starts,
+/// for a line's last one when the next line starts (at most 3 s on).
+fn fill_ends(lines: &mut [Line]) {
+    let starts: Vec<Option<i64>> = lines.iter().map(|l| l.time_ms).collect();
+    for (i, line) in lines.iter_mut().enumerate() {
+        let next_line = starts[i + 1..].iter().flatten().copied().next();
+        let n = line.words.len();
+        for k in 0..n {
+            if line.words[k].end != i64::MIN {
+                continue;
+            }
+            let t = line.words[k].t;
+            let next = if k + 1 < n {
+                line.words[k + 1].t
+            } else {
+                next_line.unwrap_or(t + 3000).min(t + 3000)
+            };
+            line.words[k].end = next.max(t);
+        }
+    }
 }
 
 pub fn parse(text: &str) -> Lyrics {
     let mut offset = 0i64;
+    let mut creator = None;
     let mut synced: Vec<Line> = Vec::new();
     let mut plain: Vec<Line> = Vec::new();
     for raw in text.lines() {
@@ -143,6 +209,9 @@ pub fn parse(text: &str) -> Lyrics {
         }
         if times.is_empty() {
             if meta_only && rest.trim().is_empty() {
+                if let Some(c) = tags.iter().find_map(|t| t.strip_prefix("re:")) {
+                    creator = Some(c.trim().to_string());
+                }
                 continue; // [ar:...], [ti:...], ...
             }
             plain.push(Line {
@@ -168,9 +237,11 @@ pub fn parse(text: &str) -> Lyrics {
     if !synced.is_empty() {
         synced.sort_by_key(|l| l.time_ms);
         synced.truncate(MAX_LINES);
+        fill_ends(&mut synced);
         return Lyrics {
             synced: true,
             lines: synced,
+            creator,
         };
     }
     // Plain text: without leading and trailing empty lines.
@@ -184,10 +255,31 @@ pub fn parse(text: &str) -> Lyrics {
     Lyrics {
         synced: false,
         lines: plain,
+        creator,
     }
 }
 
 impl Lyrics {
+    /// Whether it has word times.
+    pub fn word_timed(&self) -> bool {
+        self.lines.iter().any(|l| !l.words.is_empty())
+    }
+
+    /// The text again: LRC lines (without word times) when it has times,
+    /// else its lines.
+    pub fn to_lrc(&self) -> String {
+        self.lines
+            .iter()
+            .map(|l| match l.time_ms {
+                Some(t) if self.synced => {
+                    let cs = t.max(0) / 10;
+                    format!("[{:02}:{:02}.{:02}]{}\n", cs / 6000, cs / 100 % 60, cs % 100, l.text)
+                }
+                _ => format!("{}\n", l.text),
+            })
+            .collect()
+    }
+
     pub fn to_json(&self) -> Value {
         Value::object().with("synced", self.synced).with(
             "lines",
@@ -205,10 +297,11 @@ impl Lyrics {
                                 Value::Array(
                                     l.words
                                         .iter()
-                                        .map(|(t, w)| {
+                                        .map(|p| {
                                             Value::object()
-                                                .with("t", *t as f64 / 1000.0)
-                                                .with("w", w.as_str())
+                                                .with("t", p.t as f64 / 1000.0)
+                                                .with("e", p.end as f64 / 1000.0)
+                                                .with("w", p.w.as_str())
                                         })
                                         .collect(),
                                 ),
@@ -278,13 +371,16 @@ impl Core {
                 .with("status", "ready")
                 .with("id", id.as_str())
                 .with("source", source.as_str())
+                .with("wordTimed", lyrics.word_timed())
+                .with("origin", self.lyrics_origin(&id, lyrics, source))
                 .with("canRemove", source == "imported"),
         };
+        // Timing is offered while the text has no word times.
         let can_sync = l.sync.is_none()
             && !l.loading
             && library::is_server_id(&id)
             && matches!(&self.server.state, ServerState::Connected(i) if i.speech)
-            && !l.found.as_ref().is_some_and(|(lyrics, _)| lyrics.synced);
+            && !l.found.as_ref().is_some_and(|(lyrics, _)| lyrics.word_timed());
         let v = v.with("canSync", can_sync);
         match &l.sync {
             Some(s) => v.with(
@@ -294,6 +390,30 @@ impl Core {
                     .with("progress", s.progress),
             ),
             None => v,
+        }
+    }
+
+    /// Where a song text comes from and where it is kept, for the user.
+    fn lyrics_origin(&self, id: &str, lyrics: &Lyrics, source: &str) -> String {
+        let on_server = library::is_server_id(id);
+        let speech = lyrics
+            .creator
+            .as_deref()
+            .and_then(|c| bl_asr::sync::made_with(&format!("[re:{c}]")));
+        let what = match (source, &speech) {
+            ("lrc", _) => self.tr("From the song's LRC file"),
+            ("embedded", _) => self.tr("From the music file"),
+            ("txt", _) => self.tr("From the song's text file"),
+            ("recognized", _) => self.tr("Written down by speech recognition, saved on the server"),
+            ("synced", _) => self.tr("Timed by speech recognition, saved on the server"),
+            (_, Some(_)) if on_server => self.tr("Timed by speech recognition, saved on the server"),
+            (_, Some(_)) => self.tr("Timed by speech recognition, saved on this device"),
+            (_, None) if on_server => self.tr("Added by you, saved on the server"),
+            (_, None) => self.tr("Added by you, saved on this device"),
+        };
+        match speech {
+            Some((_, model)) => format!("{what} · {} {model}", self.tr("speech model")),
+            None => what.to_string(),
         }
     }
 
@@ -627,16 +747,32 @@ mod tests {
 
     #[test]
     fn enhanced_word_timing() {
-        let l = parse("[00:01.00]<00:01.00>Hello <00:01.50>big <00:02.00>world");
+        let l = parse("[00:01.00]<00:01.00>Hello <00:01.50>big <00:02.00>world\n[00:04.00]x");
         let line = &l.lines[0];
         assert_eq!(line.text, "Hello big world");
+        let p = |t, end, w: &str| Piece {
+            t,
+            end,
+            w: w.into(),
+        };
         assert_eq!(
             line.words,
             vec![
-                (1000, "Hello ".into()),
-                (1500, "big ".into()),
-                (2000, "world".into())
+                p(1000, 1500, "Hello "),
+                p(1500, 2000, "big "),
+                p(2000, 4000, "world")
             ]
+        );
+        // Word ends before pauses, pieces of a long word, the creator tag.
+        let l = parse(
+            "[re:Beatlumen speech timing 2, model base]\n\
+             [00:01.00]<00:01.00>Ooh<00:01.40> <00:02.00>frie<00:02.50>nds<00:03.10>",
+        );
+        assert_eq!(l.creator.as_deref(), Some("Beatlumen speech timing 2, model base"));
+        assert_eq!(l.lines[0].text, "Ooh frie" .to_string() + "nds");
+        assert_eq!(
+            l.lines[0].words,
+            vec![p(1000, 1400, "Ooh "), p(2000, 2500, "frie"), p(2500, 3100, "nds")]
         );
     }
 

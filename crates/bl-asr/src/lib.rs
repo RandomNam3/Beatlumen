@@ -11,4 +11,6 @@ pub mod models;
 pub mod net;
 pub mod ops;
 pub mod sha256;
+pub mod sync;
+pub mod timing;
 pub mod transcribe;

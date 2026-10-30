@@ -23,7 +23,8 @@ Item {
     // Or this device, with its own speech model (Settings).
     readonly property var local: Core.state.speechLocal || ({})
     readonly property var localRun: local.running && local.running.id === curId ? local.running : null
-    readonly property bool canLocal: !canSync && local.ready === true && !synced && !local.running
+    readonly property bool wordTimed: ready && info.wordTimed === true
+    readonly property bool canLocal: !canSync && local.ready === true && !wordTimed && !local.running
     readonly property var sync: info.sync || (localRun ? { state: "running", progress: localRun.progress, local: true } : null)
     function startSync() { Core.call(canSync ? "lyrics.sync" : "speech.run") }
     // Small lead: a line lights up as it starts being sung.
@@ -109,7 +110,9 @@ Item {
                 style: Text.Raised
                 styleColor: Qt.rgba(0, 0, 0, 0.4)
             }
-            // Word timing: sung words light up in the accent colour.
+            // Word timing: each word (or piece of a long note) fills with the
+            // accent colour from left to right while it is sung, so how long
+            // a sound is held shows.
             Flow {
                 id: words
                 readonly property bool active: row.isCurrent && (row.modelData.words || []).length > 0
@@ -117,14 +120,39 @@ Item {
                 width: parent.width
                 Repeater {
                     model: words.active ? row.modelData.words : []
-                    Label {
+                    Item {
+                        id: piece
                         required property var modelData
-                        textFormat: Text.PlainText
-                        text: modelData.w
-                        color: Core.position + lv.lead >= modelData.t ? Theme.accent : "white"
-                        font: lineText.font
-                        style: Text.Raised
-                        styleColor: Qt.rgba(0, 0, 0, 0.4)
+                        readonly property real fill: {
+                            const p = Core.position + lv.lead - modelData.t
+                            const d = Math.max(0.05, (modelData.e || modelData.t) - modelData.t)
+                            return Math.max(0, Math.min(1, p / d))
+                        }
+                        implicitWidth: base.implicitWidth
+                        implicitHeight: base.implicitHeight
+                        Label {
+                            id: base
+                            textFormat: Text.PlainText
+                            text: piece.modelData.w
+                            color: "white"
+                            font: lineText.font
+                            style: Text.Raised
+                            styleColor: Qt.rgba(0, 0, 0, 0.4)
+                        }
+                        Item {
+                            clip: true
+                            width: base.implicitWidth * piece.fill
+                            height: base.implicitHeight
+                            visible: piece.fill > 0
+                            Label {
+                                textFormat: Text.PlainText
+                                text: piece.modelData.w
+                                color: Theme.accent
+                                font: lineText.font
+                                style: Text.Raised
+                                styleColor: Qt.rgba(0, 0, 0, 0.4)
+                            }
+                        }
                     }
                 }
             }
@@ -187,7 +215,8 @@ Item {
             spacing: 10
             Button {
                 visible: !lv.sync
-                text: Theme.tr("Sync automatically")
+                // Line times already: words get theirs.
+                text: lv.synced ? Theme.tr("Time word by word") : Theme.tr("Sync automatically")
                 icon.source: Theme.icon("auto_awesome")
                 onClicked: lv.startSync()
             }
@@ -212,7 +241,24 @@ Item {
         }
     }
 
+    // Where the text comes from and where it is kept.
+    Label {
+        anchors.left: parent.left
+        anchors.right: removeButton.visible ? removeButton.left : parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 8
+        visible: lv.ready && lv.controlsVisible && (lv.info.origin || "") !== "" && !lv.sync
+        textFormat: Text.PlainText
+        text: lv.info.origin || ""
+        elide: Text.ElideRight
+        color: Qt.rgba(1, 1, 1, 0.7)
+        font.pixelSize: 12
+        style: Text.Raised
+        styleColor: Qt.rgba(0, 0, 0, 0.4)
+    }
+
     IconButton {
+        id: removeButton
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         visible: lv.ready && lv.info.canRemove === true && lv.controlsVisible
