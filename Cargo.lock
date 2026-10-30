@@ -93,6 +93,7 @@ version = "0.1.0"
 name = "bl-airplay"
 version = "0.1.0"
 dependencies = [
+ "bl-aac",
  "bl-media",
  "bl-net",
 ]
@@ -104,6 +105,10 @@ version = "0.1.0"
 [[package]]
 name = "bl-asr"
 version = "0.1.0"
+dependencies = [
+ "bl-json",
+ "bl-net",
+]
 
 [[package]]
 name = "bl-cast"
@@ -118,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "bl-airplay",
  "bl-analysis",
+ "bl-asr",
  "bl-cast",
  "bl-fx",
  "bl-gl",

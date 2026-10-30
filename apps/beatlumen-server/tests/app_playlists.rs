@@ -49,7 +49,7 @@ fn playlist_files() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|t| t.str_or("id", "").to_string())
+        .map(|t| t.str_or("id", "").replace('\\', "/"))
         .collect();
     assert_eq!(ids.len(), 2, "{ids:?}");
     assert!(

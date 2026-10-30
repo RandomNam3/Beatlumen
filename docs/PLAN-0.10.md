@@ -131,8 +131,11 @@ them and the apps play through it).
 - [x] Share target: "Share" on Android and "Open with" (songs, playlist
   files, links) ask to play now, queue, or keep the files in the
   encrypted storage (and so on every device of the account).
-- [ ] AirPlay 2 receiver (basic): pairing (SRP, Ed25519, X25519,
-  ChaCha20-Poly1305), buffered audio; senders keep AirPlay 1 as fallback.
+- [x] AirPlay 2 receiver (basic): transient and full pairing (SRP-6a,
+  Ed25519, X25519, ChaCha20-Poly1305, own implementations), encrypted
+  control channel, buffered AAC and realtime ALAC audio; announced only
+  when turned on (experimental: not yet tried with Apple devices, no
+  FairPlay, no PTP), AirPlay 1 stays the fallback.
 
 ## Phase 6: live audio
 
@@ -155,11 +158,11 @@ them and the apps play through it).
 
 - [ ] Smaller streams for mobile data: an own Opus encoder (CELT mode) on
   the server, used when the app asks for it (setting per network type).
-- [ ] Remote sources indexed and analysed on the server (from phase 4).
+- [x] Remote sources indexed and analysed on the server (from phase 4).
 
 ## Phase 9: user interface rework
 
-- [ ] Navigation for the new areas (sources, devices, radio): rail on wide
+- [x] Navigation for the new areas (sources, devices, radio): rail on wide
   screens, bottom bar with "More" on phones.
 - [ ] Settings in categories with search; consistent dialogs and empty
   states; first start guide (server, folders, receivers).

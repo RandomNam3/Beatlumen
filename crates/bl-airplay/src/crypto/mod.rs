@@ -1,11 +1,20 @@
 //! The cryptography RAOP needs: RSA with the protocol's key (challenge
 //! response, unwrapping the stream key), AES-128-CBC for the audio, SHA-1
 //! and MD5 for padding and password digests, Base64 for the RTSP headers.
+//!
+//! AirPlay 2 adds pairing and encrypted transport: SRP-6a with SHA-512
+//! ([`srp`], [`sha512`]), X25519 and Ed25519 ([`curve25519`], [`ed25519`])
+//! and ChaCha20-Poly1305 ([`chacha`]).
 
 pub mod aes;
 pub mod bigint;
+pub mod chacha;
+pub mod curve25519;
+pub mod ed25519;
 pub mod hash;
 mod key;
+pub mod sha512;
+pub mod srp;
 
 /// Signs the Apple-Challenge response (PKCS#1 v1.5 type 1 padding of the
 /// raw message, no digest), as AirPort Express receivers do.
@@ -138,8 +147,9 @@ pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Random bytes from the operating system's generator, through the hash
-/// keys the standard library seeds from it.
+/// Random bytes: the operating system's generator (`/dev/urandom` where
+/// it exists) combined with the hash keys the standard library seeds from
+/// it, so either source alone keeps the output unpredictable.
 pub fn random_bytes(n: usize) -> Vec<u8> {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
@@ -152,7 +162,42 @@ pub fn random_bytes(n: usize) -> Vec<u8> {
         i += 1;
     }
     out.truncate(n);
+    if let Some(os) = os_random(n) {
+        for (o, r) in out.iter_mut().zip(os) {
+            *o ^= r;
+        }
+    }
     out
+}
+
+#[cfg(unix)]
+fn os_random(n: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = vec![0u8; n];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .ok()?;
+    Some(buf)
+}
+
+#[cfg(not(unix))]
+fn os_random(_n: usize) -> Option<Vec<u8>> {
+    None
+}
+
+/// Hex decoding for the tests' vectors.
+#[cfg(test)]
+pub(crate) mod test_util {
+    pub fn unhex(s: &str) -> Vec<u8> {
+        let s: Vec<u8> = s.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+        s.chunks(2)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    pub fn unhex32(s: &str) -> [u8; 32] {
+        unhex(s).try_into().unwrap()
+    }
 }
 
 #[cfg(test)]

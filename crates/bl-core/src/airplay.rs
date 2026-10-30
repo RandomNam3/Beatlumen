@@ -18,7 +18,7 @@ pub(crate) struct AirplayState {
     mdns: Option<bl_airplay::mdns::Responder>,
     registered: bool,
     /// Settings the running receiver was started with.
-    started_with: Option<(String, String, String)>,
+    started_with: Option<(String, String, String, bool)>,
     /// A sender is streaming to us.
     pub(crate) active: bool,
     client: String,
@@ -62,6 +62,7 @@ impl Core {
             self.airplay_name(),
             self.settings.airplay_password.clone(),
             self.settings.airplay_id.clone(),
+            self.settings.airplay2,
         );
         if self.airplay.receiver.is_some()
             && (!wanted || self.airplay.started_with.as_ref() != Some(&config))
@@ -121,15 +122,15 @@ impl Core {
             host.service_register(&instance, "_raop._tcp", receiver.port(), &txt);
         if !self.airplay.registered {
             let host_label = format!("beatlumen-{}", self.settings.airplay_id.to_lowercase());
-            match bl_airplay::mdns::Responder::start(
-                bl_airplay::mdns::Service {
-                    instance,
-                    service_type: "_raop._tcp".into(),
-                    port: receiver.port(),
-                    txt,
-                },
-                host_label,
-            ) {
+            // AirPlay 1 (_raop._tcp), and AirPlay 2 (_airplay._tcp) when
+            // turned on: it is new and senders may insist on FairPlay.
+            let airplay2 = self.settings.airplay2;
+            let services = receiver
+                .services()
+                .into_iter()
+                .filter(|s| airplay2 || s.service_type == "_raop._tcp")
+                .collect();
+            match bl_airplay::mdns::Responder::start_all(services, host_label) {
                 Ok(m) => self.airplay.mdns = Some(m),
                 Err(e) => {
                     host.log(&format!("airplay: mDNS: {e}"));
@@ -146,6 +147,7 @@ impl Core {
             name,
             self.settings.airplay_password.clone(),
             self.settings.airplay_id.clone(),
+            self.settings.airplay2,
         ));
         self.airplay.receiver = Some(receiver);
     }

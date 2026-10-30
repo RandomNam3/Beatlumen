@@ -1,12 +1,19 @@
 //! The RTSP control connection of AirPlay senders and the receiver's
-//! public interface.
+//! public interface. AirPlay 2 requests on the same connection are
+//! handled in [`ap2`].
 
+mod ap2;
+
+use crate::ap2::cipher::{self, Channel};
+use crate::ap2::pairing::{Identity, Pairings};
+use crate::ap2::Description;
 use crate::crypto;
+use crate::mdns::Service;
 use crate::meta::{self, StreamFormat};
 use crate::rtsp::{self, Request, Response};
 use crate::session::Session;
 use crate::stream::LiveStream;
-use std::io::{BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver as Rx, Sender};
@@ -58,12 +65,24 @@ struct Shared {
     /// Open control connections, to close the active one on disconnect.
     sockets: Mutex<Vec<(u64, TcpStream)>>,
     stop: AtomicBool,
+    /// AirPlay 2 identity (a new key per start) and paired controllers.
+    identity: Identity,
+    pairings: Pairings,
 }
 
 impl Shared {
     fn emit(&self, e: Event) {
         if let Ok(tx) = self.events.lock() {
             let _ = tx.send(e);
+        }
+    }
+
+    fn description(&self) -> Description<'_> {
+        Description {
+            name: &self.config.name,
+            id: &self.config.id,
+            public_key: self.identity.public_key_ref(),
+            password: self.config.password.is_some(),
         }
     }
 }
@@ -82,7 +101,11 @@ impl Receiver {
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let (tx, rx) = channel();
+        let seed: [u8; 32] = crypto::random_bytes(32).try_into().expect("32 bytes");
+        let identity = Identity::new(crate::ap2::device_id(&config.id), &seed);
         let shared = Arc::new(Shared {
+            identity,
+            pairings: Pairings::default(),
             config,
             stream: LiveStream::new(),
             events: Mutex::new(tx),
@@ -112,6 +135,35 @@ impl Receiver {
     pub fn instance_name(&self) -> String {
         let c = &self.shared.config;
         format!("{}@{}", crypto::hash::hex(&c.id).to_uppercase(), c.name)
+    }
+
+    /// The `_airplay._tcp` (AirPlay 2) service instance name.
+    pub fn airplay_instance_name(&self) -> String {
+        self.shared.config.name.clone()
+    }
+
+    /// TXT record of the `_airplay._tcp` service.
+    pub fn airplay_txt(&self) -> Vec<String> {
+        self.shared.description().txt()
+    }
+
+    /// Both services to announce: `_raop._tcp` (AirPlay 1) and
+    /// `_airplay._tcp` (AirPlay 2) on the receiver's port.
+    pub fn services(&self) -> Vec<Service> {
+        vec![
+            Service {
+                instance: self.instance_name(),
+                service_type: "_raop._tcp".into(),
+                port: self.port,
+                txt: self.txt(),
+            },
+            Service {
+                instance: self.airplay_instance_name(),
+                service_type: "_airplay._tcp".into(),
+                port: self.port,
+                txt: self.airplay_txt(),
+            },
+        ]
     }
 
     /// TXT record of the `_raop._tcp` service.
@@ -211,6 +263,9 @@ struct Connection<'a> {
     volume_db: f32,
     client: String,
     recording: bool,
+    /// Close the connection after the current response.
+    close: bool,
+    ap2: ap2::State,
 }
 
 impl<'a> Connection<'a> {
@@ -226,6 +281,8 @@ impl<'a> Connection<'a> {
             volume_db: -15.0,
             client: String::new(),
             recording: false,
+            close: false,
+            ap2: ap2::State::default(),
         }
     }
 
@@ -244,7 +301,7 @@ impl<'a> Connection<'a> {
         if let (Ok(mut socks), Ok(c)) = (self.shared.sockets.lock(), stream.try_clone()) {
             socks.push((self.id, c));
         }
-        let mut reader = BufReader::new(stream);
+        let mut reader = BufReader::new(Channel::new(stream));
         while !self.shared.stop.load(Ordering::SeqCst) {
             let req = match rtsp::read_request(&mut reader) {
                 Ok(r) => r,
@@ -255,11 +312,26 @@ impl<'a> Connection<'a> {
                 break;
             }
             let resp = self.handle(&req, local);
-            let bytes = resp.to_bytes(req.header("CSeq"));
+            let mut bytes = resp.to_bytes(req.header("CSeq"));
+            if let Some(s) = &mut self.ap2.sealer {
+                bytes = s.seal(&bytes);
+            }
             if writer.write_all(&bytes).is_err() {
                 break;
             }
-            if req.method == "TEARDOWN" {
+            // Pairing completed: everything after this response is
+            // encrypted (data read ahead already is, too).
+            if let Some(secret) = self.ap2.pending_secret.take() {
+                let (opener, sealer) = cipher::control_keys(&secret);
+                let ahead = reader.buffer().to_vec();
+                reader.consume(ahead.len());
+                if reader.get_mut().encrypt(opener, &ahead).is_err() {
+                    break;
+                }
+                self.ap2.sealer = Some(sealer);
+                self.authorized = true;
+            }
+            if self.close {
                 break;
             }
         }
@@ -271,6 +343,8 @@ impl<'a> Connection<'a> {
 
     fn end(&mut self) {
         self.session = None;
+        self.ap2.end_stream();
+        self.ap2.events = None;
         if self.recording && self.owns_stream() {
             self.shared.stream.end();
             self.shared.emit(Event::Ended);
@@ -285,6 +359,9 @@ impl<'a> Connection<'a> {
                 resp = resp.header("Apple-Response", r);
             }
         }
+        if let Some(r) = self.handle_ap2(req, local) {
+            return r;
+        }
         if req.method != "OPTIONS" && !self.check_auth(req) {
             return Response::new(401).header(
                 "WWW-Authenticate",
@@ -297,7 +374,7 @@ impl<'a> Connection<'a> {
         match req.method.as_str() {
             "OPTIONS" => resp.header(
                 "Public",
-                "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER",
+                "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, FLUSHBUFFERED, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER, POST, GET",
             ),
             "ANNOUNCE" => {
                 let sdp = String::from_utf8_lossy(&req.body);
@@ -337,6 +414,7 @@ impl<'a> Connection<'a> {
             }
             "TEARDOWN" => {
                 self.end();
+                self.close = true;
                 resp
             }
             "SET_PARAMETER" => {
@@ -372,6 +450,7 @@ impl<'a> Connection<'a> {
             self.shared.stream.clone(),
             self.peer.ip(),
             control_port,
+            None,
         ) {
             Ok(s) => {
                 let t = format!(
@@ -398,7 +477,7 @@ impl<'a> Connection<'a> {
                         self.shared.stream.set_volume(gain);
                         self.shared.emit(Event::Volume(gain));
                     }
-                } else if let Some(rate) = self.format.as_ref().map(|f| f.sample_rate) {
+                } else if let Some(rate) = self.sample_rate() {
                     if let Some((elapsed, duration)) = meta::parse_progress(line, rate) {
                         self.shared.emit(Event::Progress { elapsed, duration });
                     }

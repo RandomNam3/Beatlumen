@@ -47,6 +47,8 @@ struct State {
     /// Whether output of the current run started (the first frame waits
     /// for its time; later ones are handed over `CUSHION` ahead).
     started: bool,
+    /// Paused by the sender: nothing is played until the next sync.
+    held: bool,
     gain: f32,
     current_gain: f32,
     ended: bool,
@@ -123,6 +125,7 @@ impl LiveStream {
                     last_packet: None,
                     out_latency: Duration::ZERO,
                     started: false,
+                    held: false,
                     gain: 1.0,
                     current_gain: 1.0,
                     ended: true,
@@ -149,6 +152,7 @@ impl LiveStream {
         st.first_packet = None;
         st.last_packet = None;
         st.started = false;
+        st.held = false;
         st.ended = false;
         st.gain = 1.0;
         st.current_gain = 1.0;
@@ -213,6 +217,50 @@ impl LiveStream {
         }
         let ext = st.peek(frame);
         st.anchor = Some((at, ext));
+        st.held = false;
+        self.shared.cv.notify_all();
+    }
+
+    /// Pauses output until the next [`sync`](Self::sync) (buffered audio
+    /// stays; AirPlay 2 senders set the rate to 0).
+    pub fn hold(&self) {
+        let mut st = self.lock();
+        st.held = true;
+        st.anchor = None;
+        st.next = None;
+        st.started = false;
+        self.shared.cv.notify_all();
+    }
+
+    /// Seconds of audio buffered ahead of what was handed to the player;
+    /// `None` once `generation` is no longer the current stream.
+    pub fn buffered_secs(&self, generation: u64) -> Option<f64> {
+        let st = self.lock();
+        if st.ended || st.generation != generation {
+            return None;
+        }
+        let ch = st.format.channels.max(1) as i64;
+        let (Some((&first, _)), Some((&last, pcm))) =
+            (st.packets.iter().next(), st.packets.iter().next_back())
+        else {
+            return Some(0.0);
+        };
+        let start = st.next.map_or(first, |n| n.min(first));
+        let end = last + pcm.len() as i64 / ch;
+        Some((end - start) as f64 / st.format.sample_rate.max(1) as f64)
+    }
+
+    /// Drops buffered packets with timestamps in `[from, until)` (a skip
+    /// the sender announced ahead of time); playback continues.
+    pub fn remove_range(&self, from: u32, until: u32) {
+        let mut st = self.lock();
+        let (a, b) = (st.peek(from), st.peek(until));
+        if b > a {
+            let mut tail = st.packets.split_off(&a);
+            let mut keep = tail.split_off(&b);
+            st.packets.append(&mut keep);
+            drop(tail);
+        }
     }
 
     /// Drops buffered audio before `until` (all of it when `None`), e.g.
@@ -314,6 +362,10 @@ impl bl_media::Decoder for LiveDecoder {
         }
         let now = Instant::now();
         let rate = st.format.sample_rate.max(1) as f64;
+        if st.held {
+            drop(self.wait(st, WAIT));
+            return Ok(true);
+        }
         if st.anchor.is_none() {
             // No sync packet yet: play with the usual delay after the first
             // packet.
