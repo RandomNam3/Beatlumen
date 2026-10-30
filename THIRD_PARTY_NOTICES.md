@@ -19,10 +19,13 @@ contain the ported code and carries the full license text where required.
 | [Apple ALAC](https://github.com/macosforge/alac) | ALAC decoder (`bl-media`) | Apache-2.0 |
 | RFC 6386 code components | VP8 tables (`bl-image`) | BSD (IETF Trust) |
 | [Inter](https://github.com/rsms/inter) typeface | embedded UI font (`apps/beatlumen/assets`) | SIL OFL 1.1 |
+| [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) | vocal separation network and Wiener filter (`bl-sep`); UMX-HQ weights downloaded on use | MIT |
+| [TeX hyphenation patterns](https://github.com/hyphenation/tex-hyphen) (hyph-utf8) | embedded patterns for English, German, French, Spanish, Italian, Dutch, Portuguese (`bl-hyph`) | MIT, BSD-3-Clause, permissive (per language) |
 
 Full texts: `crates/bl-opus/NOTICE`, `crates/bl-vorbis/NOTICE`,
 `crates/bl-media/NOTICE`, `crates/bl-mp3/NOTICE`,
-`crates/bl-image/NOTICE`, `apps/beatlumen/assets/Inter-OFL.txt`, and the MIT texts
+`crates/bl-image/NOTICE`, `crates/bl-sep/NOTICE`, `crates/bl-hyph/patterns/LICENSE-*.txt`,
+`apps/beatlumen/assets/Inter-OFL.txt`, and the MIT texts
 below.
 
 The end-to-end encryption (`bl-vault`) uses audited cryptography crates
