@@ -22,9 +22,15 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   (fuzzy word alignment, pause lines) or writes down what is sung, per song
   from the app (*Sync automatically*) or for the whole library in the
   background (`--speech-model`, `--auto-sync-lyrics`).
-- Next: in the app without a server, manual start per track with a model
-  file picked by the user, computed locally; word timing from the
-  recognition.
+- Done: the same in the apps without a server (models downloaded in the
+  app, per song or the whole library); word and piece times from the
+  audio (karaoke fill), existing LRC files timed word by word, voices and
+  backing vocals, the speech model named in the file.
+- Done: translation of song texts on the device (`crates/bl-mt`, own
+  reader and decoder for the OPUS-MT models).
+- Next: speech recognition on the GPU (Vulkan compute); voices told apart
+  by the sound when the text does not name them; translation for the web
+  app through the server.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),

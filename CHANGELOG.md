@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.11.0 (beta)
+
+Song texts to sing along with: every word (and long note) fills while it
+is sung, who sings is shown, and the text can be translated.
+
+### Song texts
+
+- **Word timing from the audio**: words get their start and end from the
+  singing (attention alignment refined by the audio's loudness), long
+  notes are split into pieces, pauses stay pauses. The song text view
+  fills each word or piece from left to right while it is sung.
+- **Existing LRC files** with line times can now be timed word by word
+  ("Time word by word"); the line times are kept as anchors.
+- **More reliable recognition**: no-speech detection, the previous text
+  as context, and passages that come out unreliable (repetition loops,
+  unlikely words) are decoded again with more randomness.
+- **Voices**: names before lines ("Anne-Marie:", "M:", "F:", "D:") and
+  backing vocals in parentheses are shown in their own colours.
+- **Where a text comes from** is shown above it (LRC file, music file,
+  timed or written down by speech recognition, on the server or on this
+  device, and with which model).
+- **The whole library** at once: "Time all songs on this device" in the
+  app; the server can do it for its library on its own (admin
+  interface). Timed files name
+  the speech model (`[re:Beatlumen speech timing 2, model …]`), so songs
+  are done again only with a better model.
+- **Translation** (apps on Linux, Windows and Android): each line in the
+  app's language under the original (German or English, from English,
+  German, Spanish, French, Italian, Dutch, Turkish and Russian). Own
+  reader for the OPUS-MT models (about 300 MB each, downloaded on first
+  use and checked against their SHA-256); translations stay on the device.
+
+### Speed
+
+- Speech recognition uses AVX2/FMA (x86) and NEON (ARM) when the processor
+  has them; the attention works in blocks.
+
 ## 0.10.0 (beta)
 
 The first beta: Beatlumen plays music from many places, on many devices,
