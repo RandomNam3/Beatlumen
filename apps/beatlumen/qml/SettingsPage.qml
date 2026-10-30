@@ -347,8 +347,8 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 8
-                visible: page.shows("texts", ["Delete", "Download", "In use", "Song texts on this device", "Turn off", "Use", "Time all songs on this device", "songs left", "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway."])
-                SectionLabel { text: Theme.tr("Song texts on this device"); visible: page.speechLocal.available === true }
+                visible: page.shows("texts", ["Delete", "Download", "In use", "Recognise and time song texts", "Turn off", "Use", "Time all songs on this device", "songs left", "A speech model times song texts word by word and writes down the singing of songs without a text. A server with a model does this for its songs itself."])
+                SectionLabel { text: Theme.tr("Recognise and time song texts"); visible: page.speechLocal.available === true }
                 Label {
                     visible: page.speechLocal.available === true
                     textFormat: Text.PlainText
@@ -358,7 +358,7 @@ Item {
                     wrapMode: Text.Wrap
                     color: Theme.textDim
                     font.pixelSize: 13
-                    text: Theme.tr("With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway.")
+                    text: Theme.tr("A speech model times song texts word by word and writes down the singing of songs without a text. A server with a model does this for its songs itself.")
                 }
                 Repeater {
                     id: speechModels
@@ -489,8 +489,8 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 8
-                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.", "Translation models", "Delete"])
-                SectionLabel { text: Theme.tr("Translation models") }
+                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.", "Translation", "Delete"])
+                SectionLabel { text: Theme.tr("Translation") }
                 SwitchRow {
                     Layout.fillWidth: true
                     title: Theme.tr("Translate song texts")

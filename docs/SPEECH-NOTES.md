@@ -81,10 +81,13 @@ timing a known text.
   without punctuation and without timestamps, even though the standard rule
   (take a timestamp when timestamps together are more likely than any text
   token) is applied.
-  - **Fix:** after 12 text tokens without a timestamp, a timestamp is
-    favoured where the most likely next token starts a new word. The bias is
-    1 + 0.25 per further token, at most 4 in log probability. Segments went
-    from 15–30 s to 4–8 s.
+  - **Tried and dropped:** favouring a timestamp after 12 text tokens without
+    one, where the most likely next token starts a word. Segments went from
+    15–30 s to 4–8 s and some songs got better, but on dense chants (Who Let
+    The Dogs Out) it threw the decoding off for the rest of the song: large
+    v3 turbo's median line error went from 0.31 s to 7.5 s, base's from
+    1.5 s to 9.2 s. With 24 tokens it no longer helped turbo. Any change to
+    the decoding has to be checked on such songs.
 - **Lines without punctuation or capitals:**
   - Lines over 48 characters are split at the longest pause, then at
     punctuation, then near the middle.
@@ -144,6 +147,34 @@ timing a known text.
   - Clustering the Whisper encoder's features or MFCCs found song sections,
     not voices.
   - Telling voices apart needs a speaker-embedding model.
+
+## The LRCGen pipeline, measured
+
+LRCGen's steps were built natively and measured on the test songs:
+
+- **Vocal separation (Open-Unmix UMX-HQ, `bl-sep`):** separates a song in
+  about 6 s and matches the original to 133 dB. Whisper on the separated
+  singing wrote down **worse** (FRIENDS: 55 % instead of 45 % wrong words
+  with base-q5_1, 37 % instead of 22 % with small); its line timing was
+  about the same. The separation leaves artefacts that Whisper, trained on
+  recordings with music and noise, handles worse than the music itself. Not
+  used for recognition. A stronger separation model (Demucs-class) might
+  change this; its weights' licence is unclear.
+- **CTC word alignment (wav2vec2, `bl-align`):** frame-exact output and
+  character times, matching transformers and torchaudio. On the songs:
+  - word starts came 0.2–0.35 s later than both reference LRCs;
+  - given a 30-second window, it placed repeated chorus words in the wrong
+    repetition. Fixed by giving it only the stretch of its lines;
+  - its line timing stayed worse than Whisper's attention with the energy
+    refinement (FRIENDS with base-q5_1: 83 % of lines within 1 s instead of
+    96 %; on the separated singing 83 %).
+  It is wired in (`WordAligner`) but not used by default. Worth trying again
+  with an onset correction and with a model trained on singing.
+- **Syllables (`bl-hyph`):** used. Long words are filled syllable by
+  syllable ("re-ally", "with-out", "po-lite"), timed by where their letters
+  fall in the model's pieces.
+- **Tap sync and line editor:** in the app. Tapping lags the singing by
+  about 0.1 s, which is taken off each tapped time.
 
 ## Ideas from other projects
 
