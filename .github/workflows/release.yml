@@ -1,0 +1,79 @@
+name: Release
+
+# Publishes the builds of a successful CI run on main as a GitHub release:
+# the tag is made at the commit that run built, the notes come from
+# CHANGELOG.md. Started by hand (Actions > Release > Run workflow).
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "CI run whose builds are published (successful, on main)"
+        required: true
+      prerelease:
+        description: "Pre-release (beta)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the CI run
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run_id must be a number"; exit 1; }
+          read -r name branch event conclusion sha < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '"\(.name) \(.head_branch) \(.event) \(.conclusion) \(.head_sha)"')
+          [ "$name" = CI ] && [ "$branch" = main ] && [ "$event" = push ] && [ "$conclusion" = success ] || {
+            echo "::error::run $RUN_ID is not a successful CI run on main ($name, $branch, $event, $conclusion)"
+            exit 1
+          }
+          git checkout -q "$sha"
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          [ -n "$version" ] || { echo "::error::no version in Cargo.toml"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version already exists"
+            exit 1
+          fi
+          echo "SHA=$sha" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Collect the builds
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir artifacts
+          mkdir out
+          a=artifacts
+          cp "$a/beatlumen-android/beatlumen.apk" "out/Beatlumen-$VERSION-android.apk"
+          cp "$a/beatlumen-linux-x86_64-appimage/Beatlumen-x86_64.AppImage" "out/Beatlumen-$VERSION-x86_64.AppImage"
+          cp "$a/beatlumen-windows-x64-setup/Beatlumen-Setup-x64.exe" "out/Beatlumen-$VERSION-Setup-x64.exe"
+          cp "$a/beatlumen-windows-x64-portable/Beatlumen-portable-x64.zip" "out/Beatlumen-$VERSION-portable-x64.zip"
+          srv="beatlumen-server-$VERSION"
+          mkdir "$srv"
+          cp "$a/beatlumen-server-linux-x86_64/beatlumen-server" LICENSE "$srv/"
+          chmod +x "$srv/beatlumen-server"
+          tar -czf "out/$srv-linux-x86_64.tar.gz" "$srv"
+          (cd "$a/beatlumen-web" && zip -qr "$GITHUB_WORKSPACE/out/beatlumen-web-$VERSION.zip" .)
+          (cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      - name: Publish
+        run: |
+          set -euo pipefail
+          python3 .github/release-notes.py "$VERSION" > notes.md
+          title="Beatlumen $VERSION"
+          flags=()
+          if [ "${{ inputs.prerelease }}" = true ]; then
+            title="$title (Beta)"
+            flags+=(--prerelease)
+          fi
+          gh release create "v$VERSION" out/* --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "$title" --notes-file notes.md "${flags[@]}"

@@ -247,10 +247,25 @@ jobs:
         with:
           path: build/qt-patched/*/libQt6Qml_*
           key: qt-qml-patched-${{ env.QT_VERSION }}-${{ hashFiles('apps/beatlumen/android/qt-patches/**') }}
+      # Signed with the project's key when the repository has it (secrets
+      # ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and optionally
+      # ANDROID_KEY_ALIAS), so new builds install over older ones; otherwise
+      # with a key made for this run.
       - name: Build
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           sudo apt-get install -y ninja-build
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export KEYSTORE="$RUNNER_TEMP/release.keystore"
+            export KEY_ALIAS="${ANDROID_KEY_ALIAS:-androiddebugkey}"
+            export KEYSTORE_PASS="$ANDROID_KEYSTORE_PASSWORD"
+          fi
           QT_ROOT="$RUNNER_TEMP/Qt/$QT_VERSION" ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/27.2.12479018" ./build-android.sh
+          rm -f "$RUNNER_TEMP/release.keystore"
       - uses: actions/upload-artifact@v4
         with:
           name: beatlumen-android
