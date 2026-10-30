@@ -23,14 +23,39 @@ Item {
     // Or this device, with its own speech model (Settings).
     readonly property var local: Core.state.speechLocal || ({})
     readonly property var localRun: local.running && local.running.id === curId ? local.running : null
-    readonly property bool canLocal: !canSync && local.ready === true && !synced && !local.running
+    readonly property bool wordTimed: ready && info.wordTimed === true
+    readonly property bool canLocal: !canSync && local.ready === true && !wordTimed && !local.running
     readonly property var sync: info.sync || (localRun ? { state: "running", progress: localRun.progress, local: true } : null)
     function startSync() { Core.call(canSync ? "lyrics.sync" : "speech.run") }
+    // Translation into the app's language, under each line (on the device).
+    readonly property var translation: info.translation || ({})
+    readonly property bool canTranslate: ready && translation.available !== false && translation.on !== undefined
     // Small lead: a line lights up as it starts being sung.
     readonly property real lead: 0.15
     property int currentLine: -1
     // Following the song pauses while the user scrolls.
     property bool follow: true
+
+    // Voices: their own tint (the first stays white); backing voices (in
+    // parentheses) dimmer and slanted.
+    function voiceColor(v) {
+        return v === 2 ? "#a8e8ff" : v === 3 ? "#ffd59a" : v >= 4 ? "#d6b8ff" : "white"
+    }
+    // A singer's name before the line: the voice's tint, dimmed.
+    function nameColor(v) {
+        return v === 2 ? "#99a8e8ff" : v === 3 ? "#99ffd59a" : v >= 4 ? "#99d6b8ff" : "#99ffffff"
+    }
+    function esc(s) {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    }
+    // A line as styled text (everything from the file is escaped).
+    function styled(line) {
+        const parts = line.parts || [{ s: line.text, b: false }]
+        let out = parts.map(p => p.b ? "<i><font color=\"#b3ffffff\">" + esc(p.s) + "</font></i>" : esc(p.s)).join("")
+        if (line.who)
+            out = "<font color=\"" + nameColor(line.v || 1) + "\" size=\"2\">" + esc(line.who) + " · </font>" + out
+        return out
+    }
 
     function load() {
         if (visible)
@@ -93,6 +118,7 @@ Item {
             readonly property bool past: lv.synced && index < lv.currentLine
             width: ListView.view.width
             height: Math.max(lineText.implicitHeight, words.implicitHeight)
+                + (trText.visible ? trText.implicitHeight + 2 : 0)
             opacity: !lv.synced ? 0.95 : isCurrent ? 1 : past ? 0.4 : 0.6
             Behavior on opacity { NumberAnimation { duration: 250 } }
 
@@ -100,33 +126,89 @@ Item {
                 id: lineText
                 visible: !(row.isCurrent && words.active)
                 width: parent.width
-                textFormat: Text.PlainText
-                text: row.modelData.text === "" && lv.synced ? "♪" : row.modelData.text
+                textFormat: Text.StyledText
+                text: row.modelData.text === "" && lv.synced ? "♪" : lv.styled(row.modelData)
                 wrapMode: Text.WordWrap
-                color: "white"
+                color: lv.voiceColor(row.modelData.v || 0)
                 font.pixelSize: lv.synced ? (lv.compact ? 22 : 30) : (lv.compact ? 17 : 21)
                 font.weight: row.isCurrent ? Font.Bold : Font.DemiBold
                 style: Text.Raised
                 styleColor: Qt.rgba(0, 0, 0, 0.4)
             }
-            // Word timing: sung words light up in the accent colour.
+            // Word timing: each word (or piece of a long note) fills with the
+            // accent colour from left to right while it is sung, so how long
+            // a sound is held shows.
             Flow {
                 id: words
                 readonly property bool active: row.isCurrent && (row.modelData.words || []).length > 0
                 visible: active
                 width: parent.width
+                Label {
+                    visible: !!row.modelData.who
+                    textFormat: Text.PlainText
+                    text: (row.modelData.who || "") + " · "
+                    color: lv.nameColor(row.modelData.v || 1)
+                    font.pixelSize: lineText.font.pixelSize * 0.6
+                    style: Text.Raised
+                    styleColor: Qt.rgba(0, 0, 0, 0.4)
+                }
                 Repeater {
                     model: words.active ? row.modelData.words : []
-                    Label {
+                    Item {
+                        id: piece
                         required property var modelData
-                        textFormat: Text.PlainText
-                        text: modelData.w
-                        color: Core.position + lv.lead >= modelData.t ? Theme.accent : "white"
-                        font: lineText.font
-                        style: Text.Raised
-                        styleColor: Qt.rgba(0, 0, 0, 0.4)
+                        readonly property real fill: {
+                            const p = Core.position + lv.lead - modelData.t
+                            const d = Math.max(0.05, (modelData.e || modelData.t) - modelData.t)
+                            return Math.max(0, Math.min(1, p / d))
+                        }
+                        implicitWidth: base.implicitWidth
+                        implicitHeight: base.implicitHeight
+                        Label {
+                            id: base
+                            textFormat: Text.PlainText
+                            text: piece.modelData.w
+                            color: lv.voiceColor(row.modelData.v || 0)
+                            opacity: piece.modelData.b ? 0.75 : 1
+                            font.italic: piece.modelData.b === true
+                            font.pixelSize: lineText.font.pixelSize
+                            font.weight: lineText.font.weight
+                            style: Text.Raised
+                            styleColor: Qt.rgba(0, 0, 0, 0.4)
+                        }
+                        Item {
+                            clip: true
+                            width: base.implicitWidth * piece.fill
+                            height: base.implicitHeight
+                            visible: piece.fill > 0
+                            Label {
+                                textFormat: Text.PlainText
+                                text: piece.modelData.w
+                                color: Theme.accent
+                                font.italic: piece.modelData.b === true
+                                font.pixelSize: lineText.font.pixelSize
+                                font.weight: lineText.font.weight
+                                style: Text.Raised
+                                styleColor: Qt.rgba(0, 0, 0, 0.4)
+                            }
+                        }
                     }
                 }
+            }
+            // The translation, smaller and dimmer under the line.
+            Label {
+                id: trText
+                visible: !!row.modelData.tr
+                y: Math.max(lineText.implicitHeight, words.implicitHeight) + 2
+                width: parent.width
+                textFormat: Text.PlainText
+                text: row.modelData.tr || ""
+                wrapMode: Text.WordWrap
+                color: Qt.rgba(1, 1, 1, 0.7)
+                font.pixelSize: lineText.font.pixelSize * 0.62
+                font.italic: true
+                style: Text.Raised
+                styleColor: Qt.rgba(0, 0, 0, 0.4)
             }
             // Takes the tap, so it does not also toggle the controls.
             MouseArea {
@@ -187,7 +269,8 @@ Item {
             spacing: 10
             Button {
                 visible: !lv.sync
-                text: Theme.tr("Sync automatically")
+                // Line times already: words get theirs.
+                text: lv.synced ? Theme.tr("Time word by word") : Theme.tr("Sync automatically")
                 icon.source: Theme.icon("auto_awesome")
                 onClicked: lv.startSync()
             }
@@ -212,7 +295,74 @@ Item {
         }
     }
 
+    // Where the text comes from and where it is kept.
+    Rectangle {
+        id: originPill
+        x: 8
+        y: 8
+        width: Math.min(originLabel.implicitWidth + 20, parent.width - 176)
+        height: originLabel.implicitHeight + 8
+        radius: height / 2
+        color: Qt.rgba(0, 0, 0, 0.5)
+        visible: lv.ready && lv.controlsVisible && (lv.info.origin || "") !== "" && !lv.sync
+        Label {
+            id: originLabel
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            text: lv.info.origin || ""
+            elide: Text.ElideRight
+            color: Qt.rgba(1, 1, 1, 0.8)
+            font.pixelSize: 12
+        }
+    }
+
+    // Translating: the model download, the progress or why not.
+    Rectangle {
+        x: 8
+        y: 8 + (originPill.visible ? originPill.height + 6 : 0)
+        width: Math.min(trState.implicitWidth + 20, parent.width - 176)
+        height: trState.implicitHeight + 8
+        radius: height / 2
+        color: Qt.rgba(0, 0, 0, 0.5)
+        visible: lv.ready && lv.translation.on === true && !!lv.translation.state
+            && (lv.controlsVisible || lv.translation.state !== "failed")
+        Label {
+            id: trState
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: Qt.rgba(1, 1, 1, 0.8)
+            font.pixelSize: 12
+            readonly property int pct: Math.round((lv.translation.progress || 0) * 100)
+            text: lv.translation.state === "downloading"
+                ? Theme.tr("Loading the translation model…") + " " + pct + " %"
+                : lv.translation.state === "running"
+                    ? Theme.tr("Translating…") + " " + pct + " %"
+                    : lv.translation.state === "failed"
+                        ? Theme.tr("No translation:") + " " + (lv.translation.error || "")
+                        : ""
+        }
+    }
+
     IconButton {
+        id: translateButton
+        anchors.right: removeButton.visible ? removeButton.left : parent.right
+        anchors.bottom: parent.bottom
+        visible: lv.canTranslate && lv.controlsVisible
+        iconName: "translate"
+        iconColor: lv.translation.on === true ? Theme.accent : "white"
+        tip: lv.translation.on === true ? Theme.tr("Hide translation") : Theme.tr("Translate song text")
+        onClicked: Core.call("translate.set", { on: lv.translation.on !== true })
+    }
+
+    IconButton {
+        id: removeButton
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         visible: lv.ready && lv.info.canRemove === true && lv.controlsVisible

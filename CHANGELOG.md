@@ -1,6 +1,61 @@
 # Changelog
 
-## 0.10.0 (beta)
+## 0.11.0 (beta)
+
+The first published beta. Song texts to sing along with: every word (and
+long note) fills while it is sung, who sings is shown, and the text can be
+translated. It also contains everything listed under 0.10.0 in
+[CHANGELOG.md](https://github.com/RandomNam3/Beatlumen/blob/main/CHANGELOG.md), which
+was not published on its own.
+
+### Song texts
+
+- **Word timing from the audio**: words get their start and end from the
+  singing (attention alignment refined by the audio's loudness), long
+  notes are split into pieces, pauses stay pauses. The song text view
+  fills each word or piece from left to right while it is sung.
+- **Existing LRC files** with line times can now be timed word by word
+  ("Time word by word"); the line times are kept as anchors.
+- **Plain texts are timed more exactly**: lines are found by whole
+  phrases, lines that were not heard are searched for between the found
+  ones, and backing vocals do not mislead the matching (test song:
+  77 % of the lines within 0.5 s, before 45 %).
+- **More reliable recognition**: no-speech detection, the previous text
+  as context, and passages that come out unreliable (repetition loops,
+  unlikely words) are decoded again with more randomness.
+- **Voices**: names before lines ("Anne-Marie:", "M:", "F:", "D:") and
+  backing vocals in parentheses are shown in their own colours.
+- **Where a text comes from** is shown above it (LRC file, music file,
+  timed or written down by speech recognition, on the server or on this
+  device, and with which model).
+- **The whole library** at once: "Time all songs on this device" in the
+  app; the server can do it for its library on its own (admin
+  interface). Timed files name
+  the speech model (`[re:Beatlumen speech timing 2, model …]`), so songs
+  are done again only with a better model.
+- **Fewer, better speech models**: all models were compared on real songs
+  (writing the singing down without a text, timing a known text). tiny,
+  small-q5_1 and medium-q5_0 did worse than others of their size or
+  speed and are no longer offered (a downloaded one keeps working).
+  Recommended: small; large v3 turbo is best (and slow without a graphics
+  card), base-q5_1 is the small and fast one.
+- **Translation** (apps on Linux, Windows and Android): each line in the
+  app's language under the original (German or English, from English,
+  German, Spanish, French, Italian, Dutch, Turkish and Russian). Own
+  reader for the OPUS-MT models (about 300 MB each, downloaded on first
+  use and checked against their SHA-256); translations stay on the device.
+
+### Speed
+
+- Speech recognition uses AVX2/FMA (x86) and NEON (ARM) when the processor
+  has them; the attention works in blocks.
+- **GPU**: the audio encoder of the speech model runs on the graphics card
+  (Vulkan; Linux, Windows, Android) when there is one. The first window
+  is also computed on the processor: the graphics card is only used when
+  it gives the same result and is faster. Settings and the admin
+  interface show where it runs. `BL_ASR_GPU=0` turns it off.
+
+## 0.10.0 (beta, not published on its own)
 
 The first beta: Beatlumen plays music from many places, on many devices,
 and the server is managed in the browser.

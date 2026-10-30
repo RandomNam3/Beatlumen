@@ -548,13 +548,13 @@ fn login_limit_per_forwarded_client() {
 }
 
 /// A real model through the download: checked and switched to. Needs the
-/// tiny model file: `BL_SPEECH_MODEL_TINY=ggml-tiny.bin cargo test
-/// --release --test admin -- --ignored`.
+/// base-q5_1 model file: `BL_SPEECH_MODEL_BASE_Q5_1=ggml-base-q5_1.bin
+/// cargo test --release --test admin -- --ignored`.
 #[test]
 #[ignore]
 fn model_download_switches_the_model() {
-    let Ok(file) = std::env::var("BL_SPEECH_MODEL_TINY") else {
-        eprintln!("BL_SPEECH_MODEL_TINY not set");
+    let Ok(file) = std::env::var("BL_SPEECH_MODEL_BASE_Q5_1") else {
+        eprintln!("BL_SPEECH_MODEL_BASE_Q5_1 not set");
         return;
     };
     let mut body = Vec::new();
@@ -591,11 +591,21 @@ fn model_download_switches_the_model() {
         &[],
     );
     http.take_cookie(&r);
+    // Retired models are not offered.
+    let (_, list) = http.json("GET", "speech", None);
+    let ids: Vec<&str> = list
+        .get("models")
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m.str_or("id", ""))
+        .collect();
+    assert!(ids.contains(&"base-q5_1") && !ids.contains(&"tiny"), "{ids:?}");
     assert_eq!(
         http.json(
             "POST",
             "speech/model",
-            Some(Value::object().with("id", "tiny"))
+            Some(Value::object().with("id", "base-q5_1"))
         )
         .0,
         202
@@ -605,7 +615,7 @@ fn model_download_switches_the_model() {
     });
     assert_eq!(
         server.state.lyrics_sync.model().unwrap(),
-        data.join("models").join("ggml-tiny.bin")
+        data.join("models").join("ggml-base-q5_1.bin")
     );
     let info = client::request(
         "GET",
@@ -620,6 +630,6 @@ fn model_download_switches_the_model() {
         .bool_or("speech", false));
     // Settings remember it.
     let saved = std::fs::read_to_string(config::settings_path(&data)).unwrap();
-    assert!(saved.contains("ggml-tiny.bin"));
+    assert!(saved.contains("ggml-base-q5_1.bin"));
     let _ = std::fs::remove_dir_all(&root);
 }

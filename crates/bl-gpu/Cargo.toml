@@ -1,0 +1,9 @@
+[package]
+name = "bl-gpu"
+description = "Minimal Vulkan compute layer (Vulkan loaded at run time), with the kernels of the speech recognition encoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

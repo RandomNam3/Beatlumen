@@ -22,7 +22,8 @@ bl-image = { path = "../../crates/bl-image" }
 bl-analysis = { path = "../../crates/bl-analysis" }
 bl-fx = { path = "../../crates/bl-fx" }
 bl-vault = { path = "../../crates/bl-vault" }
-bl-asr = { path = "../../crates/bl-asr" }
+# (With the audio encoder on the GPU when there is one.)
+bl-asr = { path = "../../crates/bl-asr", features = ["gpu"] }
 bl-sources = { path = "../../crates/bl-sources" }
 bl-opus-enc = { path = "../../crates/bl-opus-enc" }
 # TLS for outgoing connections (push services); pinned exactly.

@@ -63,7 +63,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "beatlumen-server"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-airplay",
  "bl-analysis",
@@ -88,11 +88,11 @@ dependencies = [
 
 [[package]]
 name = "bl-aac"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-airplay"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-aac",
  "bl-media",
@@ -101,26 +101,27 @@ dependencies = [
 
 [[package]]
 name = "bl-analysis"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-asr"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
+ "bl-gpu",
  "bl-json",
  "bl-net",
 ]
 
 [[package]]
 name = "bl-cast"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-json",
 ]
 
 [[package]]
 name = "bl-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-airplay",
  "bl-analysis",
@@ -131,6 +132,7 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-mt",
  "bl-net",
  "bl-offline",
  "bl-render",
@@ -141,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "bl-ffi"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-core",
  "bl-gl",
@@ -153,11 +155,11 @@ dependencies = [
 
 [[package]]
 name = "bl-flac"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-fx"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-analysis",
  "bl-json",
@@ -165,19 +167,23 @@ dependencies = [
 
 [[package]]
 name = "bl-gl"
-version = "0.10.0"
+version = "0.11.0"
+
+[[package]]
+name = "bl-gpu"
+version = "0.11.0"
 
 [[package]]
 name = "bl-image"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-json"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-media"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-aac",
  "bl-flac",
@@ -189,36 +195,44 @@ dependencies = [
 
 [[package]]
 name = "bl-mp3"
-version = "0.10.0"
+version = "0.11.0"
+
+[[package]]
+name = "bl-mt"
+version = "0.11.0"
+dependencies = [
+ "bl-asr",
+ "bl-json",
+]
 
 [[package]]
 name = "bl-net"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-json",
 ]
 
 [[package]]
 name = "bl-offline"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-json",
 ]
 
 [[package]]
 name = "bl-ogg"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "bl-opus"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-ogg",
 ]
 
 [[package]]
 name = "bl-opus-enc"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-media",
  "bl-ogg",
@@ -227,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "bl-render"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-fx",
  "bl-gl",
@@ -235,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "bl-sources"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-aac",
  "bl-json",
@@ -248,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "bl-ssh"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aes-gcm",
  "chacha20",
@@ -263,14 +277,14 @@ dependencies = [
 
 [[package]]
 name = "bl-upnp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-net",
 ]
 
 [[package]]
 name = "bl-vault"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -287,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "bl-vault-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-json",
  "bl-vault",
@@ -296,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "bl-vorbis"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bl-ogg",
 ]

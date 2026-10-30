@@ -1,0 +1,41 @@
+#version 450
+// Patches for a 1-D convolution with kernel 3 and padding 1, so that it
+// becomes a matrix product: output row o holds, for each input channel c,
+// the three input values at times o * stride - 1, o * stride,
+// o * stride + 1 (zero outside), at columns 3 c .. 3 c + 2. The input is
+// time-major (t rows of cin) or, with channel_major, cin rows of t.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform Params {
+    uint tout;
+    uint t;
+    uint cin;
+    uint stride;
+    uint channel_major;
+} p;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { float dst[]; };
+
+void main() {
+    // Workgroups in two dimensions, as one may hold at most 65535.
+    uint idx = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 256u
+        + gl_LocalInvocationID.x;
+    uint width = p.cin * 3u;
+    if (idx >= p.tout * width) {
+        return;
+    }
+    uint o = idx / width;
+    uint rem = idx - o * width;
+    uint c = rem / 3u;
+    uint kk = rem - c * 3u;
+    uint at = o * p.stride + kk;
+    float val = 0.0;
+    // at - 1 is the input time; at == 0 is the padding before it.
+    if (at >= 1u && at - 1u < p.t) {
+        uint s = at - 1u;
+        val = p.channel_major != 0u ? src[c * p.t + s] : src[s * p.cin + c];
+    }
+    dst[idx] = val;
+}

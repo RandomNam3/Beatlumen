@@ -28,9 +28,15 @@ pub struct ModelInfo {
     /// Quality and speed in a few words (English; the admin page
     /// translates by id).
     pub note: &'static str,
+    /// No longer offered for download (it did worse than the others in the
+    /// comparison with real songs); a downloaded copy keeps working.
+    pub retired: bool,
 }
 
-/// The models offered (multilingual; quantised ones need less memory).
+/// The models (multilingual; quantised ones need less memory), from the
+/// smallest to the best. Compared on real songs (writing the singing down,
+/// timing a known text): tiny, small-q5_1 and medium-q5_0 did worse than
+/// the others of their size or speed and are retired.
 pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "tiny",
@@ -38,7 +44,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 77_691_713,
         sha256: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
         memory_mb: 150,
-        note: "fastest, rough",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "base-q5_1",
@@ -47,6 +54,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
         memory_mb: 200,
         note: "fast, small",
+        retired: false,
     },
     ModelInfo {
         id: "base",
@@ -55,6 +63,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         memory_mb: 300,
         note: "fast",
+        retired: false,
     },
     ModelInfo {
         id: "small-q5_1",
@@ -62,7 +71,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 190_085_487,
         sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
         memory_mb: 450,
-        note: "good for songs, recommended",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "small",
@@ -70,7 +80,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 487_601_967,
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         memory_mb: 800,
-        note: "good for songs",
+        note: "good for songs, recommended",
+        retired: false,
     },
     ModelInfo {
         id: "medium-q5_0",
@@ -78,7 +89,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 539_212_467,
         sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
         memory_mb: 1_000,
-        note: "better, slow",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "large-v3-turbo-q5_0",
@@ -87,6 +99,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
         memory_mb: 1_100,
         note: "best, slow",
+        retired: false,
     },
 ];
 
@@ -99,6 +112,34 @@ pub type Log = Box<dyn Fn(&str, bool) + Send + Sync>;
 
 pub fn find(id: &str) -> Option<&'static ModelInfo> {
     CATALOG.iter().find(|m| m.id == id)
+}
+
+/// How good a model is compared to the others (the catalog is ordered
+/// from the smallest to the best); models not in it rank lowest.
+pub fn rank(id: &str) -> usize {
+    CATALOG.iter().position(|m| m.id == id).map_or(0, |i| i + 1)
+}
+
+/// The catalog id of a model file (by its file name), or the file's name.
+pub fn id_of(path: &std::path::Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    CATALOG.iter().find(|m| m.file == name).map_or_else(
+        || name.trim_end_matches(".bin").to_string(),
+        |m| m.id.to_string(),
+    )
+}
+
+/// A file to download: its name in the folder, where it comes from, its
+/// size and SHA-256 (hex).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileSpec {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -152,6 +193,8 @@ impl Models {
         Value::Array(
             CATALOG
                 .iter()
+                // Retired models only while one is on the disk.
+                .filter(|m| !m.retired || self.path(m).is_file() || downloads.contains_key(m.id))
                 .map(|m| {
                     let path = self.path(m);
                     let mut v = Value::object()
@@ -216,6 +259,16 @@ impl Models {
             done(path);
             return;
         }
+        if m.retired {
+            self.downloads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    m.id.to_string(),
+                    Download::Failed("this model is not offered any more".into()),
+                );
+            return;
+        }
         {
             let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
             if matches!(
@@ -273,15 +326,34 @@ impl Models {
     }
 
     fn fetch(&self, m: &ModelInfo) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|e| format!("cannot create {}: {e}", self.dir.display()))?;
-        let part = self.dir.join(format!("{}.part", m.file));
+        let spec = FileSpec {
+            name: m.file.to_string(),
+            url: format!("{}{}", self.source, m.file),
+            size: m.size,
+            sha256: m.sha256.to_string(),
+        };
+        self.fetch_file(m.id, &self.dir, &spec, 0, m.size)
+    }
+
+    /// Downloads one checked file into `dir` (resuming a `.part`); progress
+    /// is reported under `id`, counting from `before` of `total` bytes.
+    fn fetch_file(
+        &self,
+        id: &str,
+        dir: &Path,
+        m: &FileSpec,
+        before: u64,
+        total: u64,
+    ) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let part = dir.join(format!("{}.part", m.name));
         let mut have = std::fs::metadata(&part).map(|md| md.len()).unwrap_or(0);
         if have > m.size {
             let _ = std::fs::remove_file(&part);
             have = 0;
         }
-        let (status, mut body) = self.open(&format!("{}{}", self.source, m.file), have)?;
+        let (status, mut body) = self.open(&m.url, have)?;
         let resumed = status == 206 && have > 0;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -308,10 +380,10 @@ impl Models {
             if last.elapsed().as_millis() > 250 {
                 last = std::time::Instant::now();
                 self.set(
-                    m.id,
+                    id,
                     Download::Running {
-                        done,
-                        total: m.size,
+                        done: before + done,
+                        total,
                     },
                 );
             }
@@ -321,7 +393,7 @@ impl Models {
         if done != m.size {
             return Err(format!("download ended after {done} of {} bytes", m.size));
         }
-        self.set(m.id, Download::Checking);
+        self.set(id, Download::Checking);
         let mut h = Sha256::default();
         let mut f = std::fs::File::open(&part).map_err(|e| e.to_string())?;
         loop {
@@ -335,10 +407,79 @@ impl Models {
             let _ = std::fs::remove_file(&part);
             return Err("the file does not match its checksum".into());
         }
-        let path = self.path(m);
+        let path = dir.join(&m.name);
         std::fs::rename(&part, &path)
             .map_err(|e| format!("cannot rename {}: {e}", part.display()))?;
         Ok(path)
+    }
+
+    /// The state of a download started with [`download_files`](Self::download_files).
+    pub fn state(&self, id: &str) -> Option<Download> {
+        self.downloads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned()
+    }
+
+    /// Starts downloading a model made of several `files` into the folder
+    /// `dir/id` unless they are there or on their way; `done` runs with the
+    /// folder once all are complete and checked.
+    pub fn download_files(
+        self: &Arc<Self>,
+        id: &str,
+        files: Vec<FileSpec>,
+        done: impl FnOnce(PathBuf) + Send + 'static,
+    ) {
+        let folder = self.dir.join(id);
+        if files.iter().all(|f| folder.join(&f.name).is_file()) {
+            done(folder);
+            return;
+        }
+        let total: u64 = files.iter().map(|f| f.size).sum();
+        {
+            let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(
+                d.get(id),
+                Some(Download::Running { .. } | Download::Checking)
+            ) {
+                return;
+            }
+            d.insert(id.to_string(), Download::Running { done: 0, total });
+        }
+        let me = self.clone();
+        let id = id.to_string();
+        let _ = std::thread::Builder::new()
+            .name(format!("download {id}"))
+            .spawn(move || {
+                (me.log)(&format!("downloading {id}"), false);
+                let mut before = 0;
+                for f in &files {
+                    if !folder.join(&f.name).is_file() {
+                        if let Err(e) = me.fetch_file(&id, &folder, f, before, total) {
+                            (me.log)(&format!("download of {id} failed: {e}"), true);
+                            me.set(&id, Download::Failed(e));
+                            return;
+                        }
+                    }
+                    before += f.size;
+                }
+                me.downloads
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+                (me.log)(&format!("{id} downloaded"), false);
+                done(folder);
+            });
+    }
+
+    /// Removes a model made of several files (and partial downloads).
+    pub fn delete_files(&self, id: &str) -> bool {
+        self.downloads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+        std::fs::remove_dir_all(self.dir.join(id)).is_ok()
     }
 
     /// GET with a range from `from`, following redirects (to the file

@@ -347,7 +347,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 8
-                visible: page.shows("texts", ["Delete", "Download", "In use", "Song texts on this device", "Turn off", "Use", "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway."])
+                visible: page.shows("texts", ["Delete", "Download", "In use", "Song texts on this device", "Turn off", "Use", "Time all songs on this device", "songs left", "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway."])
                 SectionLabel { text: Theme.tr("Song texts on this device"); visible: page.speechLocal.available === true }
                 Label {
                     visible: page.speechLocal.available === true
@@ -424,6 +424,131 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: 8
                     Button { text: Theme.tr("Turn off"); flat: true; onClicked: Core.call("speech.pick", { id: "" }) }
+                }
+                Label {
+                    // Once a song was done on the graphics card.
+                    visible: page.speechLocal.ready === true && !!page.speechLocal.gpu
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.Wrap
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: Theme.tr("Computed on the graphics card: %1").arg(page.speechLocal.gpu || "")
+                }
+                // All songs of this device, one after the other.
+                Label {
+                    visible: page.speechLocal.ready === true
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.Wrap
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: Theme.tr("Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.")
+                }
+                RowLayout {
+                    visible: page.speechLocal.ready === true
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 16
+                    readonly property var all: page.speechLocal.all || null
+                    Button {
+                        visible: !parent.all
+                        text: Theme.tr("Time all songs on this device")
+                        icon.source: Theme.icon("auto_awesome")
+                        onClicked: {
+                            const r = Core.call("speech.runAll")
+                            if (r && r.error)
+                                Core.call("toast", { text: r.error })
+                        }
+                    }
+                    ProgressBar {
+                        visible: !!parent.all
+                        Layout.fillWidth: true
+                        value: parent.all ? 1 - (parent.all.left + (page.speechLocal.running ? 1 - page.speechLocal.running.progress : 0)) / Math.max(1, parent.all.total) : 0
+                    }
+                    Label {
+                        visible: !!parent.all
+                        textFormat: Text.PlainText
+                        color: Theme.textDim
+                        text: parent.all ? (parent.all.left + (page.speechLocal.running ? 1 : 0)) + " " + Theme.tr("songs left") : ""
+                    }
+                    Button {
+                        visible: !!parent.all
+                        flat: true
+                        text: Theme.tr("Stop")
+                        onClicked: Core.call("speech.cancel")
+                    }
+                }
+            }
+            // ---- translating song texts on this device ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.", "Translation models", "Delete"])
+                SectionLabel { text: Theme.tr("Translation models") }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Translate song texts")
+                    detail: Theme.tr("Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.")
+                    on: page.settings.translate === true
+                    onSwitched: (on) => Core.call("translate.set", { on: on })
+                }
+                Repeater {
+                    id: trModels
+                    property int tick: 0
+                    // Only the ones on this device (or coming).
+                    model: {
+                        tick; page.settings.translate
+                        const all = page.visible && page.speechLocal.available === true ? (Core.call("translate.list") || []) : []
+                        return Array.isArray(all) ? all.filter(m => m.downloaded || m.state) : []
+                    }
+                    delegate: ItemDelegate {
+                        Layout.fillWidth: true
+                        height: Theme.row
+                        contentItem: RowLayout {
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: Theme.text
+                                    text: Theme.tr(Theme.languageName(modelData.from)) + " → " + Theme.tr(Theme.languageName(modelData.to))
+                                }
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    font.pixelSize: 12
+                                    color: Theme.textDim
+                                    text: Math.round(modelData.size / 1e6) + " MB"
+                                }
+                                ProgressBar {
+                                    visible: modelData.state === "downloading"
+                                    Layout.fillWidth: true
+                                    value: modelData.total ? modelData.done / modelData.total : 0
+                                }
+                            }
+                            IconButton {
+                                visible: modelData.downloaded === true
+                                iconName: "delete"
+                                tip: Theme.tr("Delete")
+                                onClicked: { Core.call("translate.delete", { id: modelData.id }); trModels.tick++ }
+                            }
+                        }
+                    }
+                }
+                Timer {
+                    // Download progress.
+                    interval: 1000
+                    repeat: true
+                    running: page.visible && page.settings.translate === true
+                    onTriggered: trModels.tick++
                 }
             }
             // ---- server ----

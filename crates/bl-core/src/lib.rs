@@ -47,6 +47,11 @@ pub mod strings;
 mod tempo;
 #[cfg(not(target_arch = "wasm32"))]
 mod transcoded;
+#[cfg(not(target_arch = "wasm32"))]
+mod translate;
+#[cfg(target_arch = "wasm32")]
+#[path = "translate_web.rs"]
+mod translate;
 mod vault;
 mod visual;
 mod webcheck;

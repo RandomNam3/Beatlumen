@@ -37,11 +37,20 @@ impl Lyrics {
     }
 
     /// `{"text", "source"}` of a track, `None` without a song text. Timings
-    /// computed by speech recognition stand in for a plain (or missing) text.
+    /// computed by speech recognition stand in for a plain (or missing) text
+    /// and for line times without word times.
     pub fn get(&self, e: &Entry) -> Option<Value> {
         let found = self.source_text(e);
         let (text, source) = match found {
-            Some((t, s)) if crate::lyrics_sync::is_synced(&t) => (t, s),
+            // A text with word times is used as it is; one with line times
+            // only gives way to its word timing.
+            Some((t, s))
+                if crate::lyrics_sync::is_synced(&t)
+                    && (bl_asr::sync::has_word_times(&t)
+                        || !self.dir.join(format!("{}.synced.lrc", e.track.id)).exists()) =>
+            {
+                (t, s)
+            }
             other => {
                 let id = &e.track.id;
                 let computed = [

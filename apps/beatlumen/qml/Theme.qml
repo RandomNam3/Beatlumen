@@ -51,6 +51,12 @@ QtObject {
     readonly property int radius: 16
     readonly property int smallRadius: 10
 
+    // A language's English name (translated with tr()).
+    function languageName(code) {
+        return ({ en: "English", de: "German", es: "Spanish", fr: "French", it: "Italian",
+                  nl: "Dutch", tr: "Turkish", ru: "Russian" })[code] || code
+    }
+
     function icon(name) {
         return "qrc:/qt/qml/Beatlumen/icons/" + name + ".svg"
     }
@@ -424,14 +430,34 @@ QtObject {
         "Use": "Verwenden",
         "Download": "Herunterladen",
         "Turn off": "Ausschalten",
-        "fastest, rough": "am schnellsten, grob",
+        "not recommended any more": "nicht mehr empfohlen",
         "fast, small": "schnell, klein",
         "fast": "schnell",
         "good for songs, recommended": "gut für Songs, empfohlen",
         "good for songs": "gut für Songs",
-        "better, slow": "besser, langsam",
         "best, slow": "am besten, langsam",
         "Timing the song text on this device…": "Songtext wird auf diesem Gerät abgestimmt …",
+        "Time word by word": "Wortgenau timen",
+        "Time all songs on this device": "Alle Songs auf diesem Gerät timen",
+        "Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.": "Songs mit Text bekommen Wortzeiten, bei den anderen wird der Gesang aufgeschrieben. Fertige Songs werden übersprungen, außer das Sprachmodell ist besser.",
+        "songs left": "Songs übrig",
+        "Computed on the graphics card: %1": "Berechnet auf der Grafikkarte: %1",
+        "Translate song texts": "Songtexte übersetzen",
+        "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.": "Zeigt jede Zeile eines Songtexts zusätzlich in der Sprache dieser App. Das Übersetzungsmodell für die Sprache des Songs (etwa 300 MB) wird beim ersten Bedarf geladen; Übersetzungen bleiben auf diesem Gerät.",
+        "Translation models": "Übersetzungsmodelle",
+        "Translate song text": "Songtext übersetzen",
+        "Hide translation": "Übersetzung ausblenden",
+        "Loading the translation model…": "Übersetzungsmodell wird geladen …",
+        "Translating…": "Wird übersetzt …",
+        "No translation:": "Keine Übersetzung:",
+        "English": "Englisch",
+        "German": "Deutsch",
+        "Spanish": "Spanisch",
+        "French": "Französisch",
+        "Italian": "Italienisch",
+        "Dutch": "Niederländisch",
+        "Turkish": "Türkisch",
+        "Russian": "Russisch",
         "Storage limit": "Speicherlimit",
         "Streaming quality": "Streaming-Qualität",
         "Original": "Original",

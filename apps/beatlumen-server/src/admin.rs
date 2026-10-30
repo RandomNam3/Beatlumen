@@ -972,6 +972,7 @@ fn speech(state: &State) -> Value {
         .with("modelLockedBy", lock("speechModel"))
         .with("autoLockedBy", lock("autoSyncLyrics"))
         .with("source", state.models.source())
+        .with("gpu", bl_asr::net::gpu_device())
 }
 
 /// `POST /api/admin/speech/model` `{"id": "small-q5_1"}`: downloads the

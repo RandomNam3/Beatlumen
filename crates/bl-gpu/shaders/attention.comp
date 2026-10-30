@@ -1,0 +1,89 @@
+#version 450
+// Attention without mask (the encoder's): for each head h and query row
+// i, softmax(q_i · k_j / sqrt(64)) over the key rows j, then the
+// weighted sum of the value rows. q, k, v and out have rows of dim
+// values, head h in columns 64 h .. 64 h + 64 (heads of 64 values).
+//
+// One invocation per query row, 64 rows per workgroup, one head per
+// workgroup row (gl_WorkGroupID.y). Keys and values pass through shared
+// memory 32 rows at a time; the softmax is computed on the way (running
+// maximum and sum), so the scores are never stored.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform Params {
+    uint nq;
+    uint nk;
+    uint dim;
+} p;
+
+layout(std430, set = 0, binding = 0) readonly buffer Q { float q[]; };
+layout(std430, set = 0, binding = 1) readonly buffer K { float k[]; };
+layout(std430, set = 0, binding = 2) readonly buffer V { float v[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer Out { float o[]; };
+
+const uint HD = 64u;
+const uint BQ = 64u;
+const uint BK = 32u;
+
+shared float ks[BK * HD];
+shared float vs[BK * HD];
+
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    uint i = gl_WorkGroupID.x * BQ + lid;
+    uint col = gl_WorkGroupID.y * HD;
+    bool valid = i < p.nq;
+    const float scale = 0.125; // 1 / sqrt(64)
+    float qv[HD];
+    float acc[HD];
+    for (uint c = 0u; c < HD; c++) {
+        qv[c] = valid ? q[i * p.dim + col + c] * scale : 0.0;
+        acc[c] = 0.0;
+    }
+    float mx = -1e30;
+    float sum = 0.0;
+    for (uint j0 = 0u; j0 < p.nk; j0 += BK) {
+        for (uint e = 0u; e < BK * HD / BQ; e++) {
+            uint idx = lid + BQ * e;
+            uint r = idx / HD;
+            uint c = idx % HD;
+            uint j = j0 + r;
+            bool inside = j < p.nk;
+            ks[idx] = inside ? k[j * p.dim + col + c] : 0.0;
+            vs[idx] = inside ? v[j * p.dim + col + c] : 0.0;
+        }
+        barrier();
+        uint count = min(BK, p.nk - j0);
+        float s[BK];
+        float bm = mx;
+        for (uint r = 0u; r < BK; r++) {
+            float dotv = 0.0;
+            for (uint c = 0u; c < HD; c++) {
+                dotv = fma(qv[c], ks[r * HD + c], dotv);
+            }
+            s[r] = r < count ? dotv : -1e30;
+            bm = max(bm, s[r]);
+        }
+        float corr = exp(mx - bm);
+        sum *= corr;
+        for (uint c = 0u; c < HD; c++) {
+            acc[c] *= corr;
+        }
+        for (uint r = 0u; r < BK; r++) {
+            float w = r < count ? exp(s[r] - bm) : 0.0;
+            sum += w;
+            for (uint c = 0u; c < HD; c++) {
+                acc[c] = fma(w, vs[r * HD + c], acc[c]);
+            }
+        }
+        mx = bm;
+        barrier();
+    }
+    if (valid) {
+        float inv = 1.0 / sum;
+        for (uint c = 0u; c < HD; c++) {
+            o[i * p.dim + col + c] = acc[c] * inv;
+        }
+    }
+}

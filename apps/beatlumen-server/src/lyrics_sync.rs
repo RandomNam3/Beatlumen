@@ -1,9 +1,11 @@
 //! Timing song texts with speech recognition (`bl_asr`, a Whisper model
-//! given with `--speech-model`): a plain song text is aligned with what is
-//! sung (`<id>.synced.lrc`); without a text the recognised words become
-//! one (`<id>.recognized.lrc`). One song at a time on a background thread;
-//! requests from the apps go first, the whole library follows with
-//! `--auto-sync-lyrics` (on half the cores, when nothing else waits).
+//! given with `--speech-model`): a song text (plain, or LRC with line
+//! times only) gets word times (`<id>.synced.lrc`); without a text the
+//! recognised words become one (`<id>.recognized.lrc`). One song at a time
+//! on a background thread; requests from the apps go first, the whole
+//! library follows with `--auto-sync-lyrics` (on half the cores, when
+//! nothing else waits) and skips songs already timed by this timing with
+//! the same or a better model (named in the files' `[re:]` tag).
 
 use crate::library::Entry;
 use crate::State;
@@ -15,8 +17,6 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 
 /// Longest song analysed (minutes).
 const MAX_MINUTES: u32 = 15;
-/// Share of the song text's words that must be recognised.
-const MIN_MATCH: f32 = 0.25;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
@@ -79,8 +79,14 @@ impl LyricsSync {
 
     /// Switches the model and the automatic run (admin interface).
     pub fn configure(&self, model: Option<PathBuf>, auto: bool) {
-        *self.model_path.write().unwrap_or_else(|e| e.into_inner()) = model;
-        if auto && !self.auto.swap(true, Ordering::Relaxed) {
+        let changed = {
+            let mut m = self.model_path.write().unwrap_or_else(|e| e.into_inner());
+            let changed = *m != model;
+            *m = model;
+            changed
+        };
+        // Turned on, or another model: every song is looked at again.
+        if auto && (!self.auto.swap(true, Ordering::Relaxed) || changed) {
             self.inner
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -295,7 +301,8 @@ impl LyricsSync {
             let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
             bl_asr::ops::set_max_threads(if background { (cores / 2).max(1) } else { 0 });
             self.set(&id, Status::Running(0.0));
-            let res = self.sync_one(&state, entry, &model.as_ref().expect("loaded").1);
+            let (path, m) = model.as_ref().expect("loaded");
+            let res = self.sync_one(&state, entry, m, &bl_asr::models::id_of(path));
             match res {
                 Ok(()) => self.set(&id, Status::Done),
                 Err(e) => {
@@ -319,18 +326,29 @@ impl LyricsSync {
                 continue;
             }
             inner.seen.insert(id.clone());
-            if [
-                self.synced_path(id),
-                self.recognized_path(id),
-                self.failed_path(id),
-            ]
-            .iter()
-            .any(|p| p.exists())
-            {
+            if self.failed_path(id).exists() {
                 continue;
             }
+            // Made by this timing already: again only with a better model.
+            let done = [self.synced_path(id), self.recognized_path(id)]
+                .iter()
+                .find_map(|p| std::fs::read_to_string(p).ok());
+            if let Some(done) = done {
+                let current = self.model().map(|p| bl_asr::models::id_of(&p));
+                let good = bl_asr::sync::made_with(&done).is_some_and(|(v, m)| {
+                    v >= bl_asr::sync::VERSION
+                        && current.as_deref().map_or(true, |c| {
+                            bl_asr::models::rank(&m) >= bl_asr::models::rank(c)
+                        })
+                });
+                if good {
+                    continue;
+                }
+                return Some(id.clone());
+            }
             match state.lyrics.source_text(e) {
-                Some((t, _)) if is_synced(&t) => continue,
+                // A text with word times needs nothing.
+                Some((t, _)) if bl_asr::sync::has_word_times(&t) => continue,
                 _ => return Some(id.clone()),
             }
         }
@@ -342,9 +360,10 @@ impl LyricsSync {
         state: &State,
         e: &Entry,
         model: &bl_asr::model::Model,
+        model_id: &str,
     ) -> Result<(), String> {
         let id = e.track.id.clone();
-        let progress = |p: f32| {
+        let mut progress = |p: f32| {
             self.set(&id, Status::Running(p));
             true
         };
@@ -357,55 +376,23 @@ impl LyricsSync {
             &mut || true,
         )
         .map_err(|e| e.to_string())?;
-        let text = state
-            .lyrics
-            .source_text(e)
-            .map(|(t, _)| t)
-            .filter(|t| !is_synced(t));
-        // The last part of the text steers the recognition (prompt).
-        let prompt = text.as_deref().map(|t| {
-            let words: Vec<&str> = t.split_whitespace().collect();
-            words[words.len().saturating_sub(120)..].join(" ")
-        });
-        let t = bl_asr::transcribe::Transcriber::new(model);
-        let mut cb = progress;
-        let segments = t
-            .transcribe(
-                &samples,
-                bl_asr::transcribe::Options {
-                    language: None,
-                    prompt: prompt.as_deref(),
-                    progress: &mut cb,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        if segments.is_empty() {
-            return Err("no singing recognised".into());
-        }
-        let (lrc, path) = match &text {
-            Some(t) => {
-                let (lrc, matched) = bl_asr::align::align_text_words(t, &segments);
-                if matched < MIN_MATCH {
-                    return Err(format!(
-                        "the song text was not recognised ({:.0} % of the words)",
-                        matched * 100.0
-                    ));
-                }
-                (lrc, self.synced_path(&id))
-            }
-            None => {
-                let conf =
-                    segments.iter().map(|s| s.avg_logprob).sum::<f32>() / segments.len() as f32;
-                if conf < -1.2 {
-                    return Err("the words could not be recognised reliably".into());
-                }
-                (
-                    bl_asr::align::segments_to_lrc_words(&segments),
-                    self.recognized_path(&id),
-                )
-            }
+        // The song's own text (plain or with line times); a text with word
+        // times is timed again from its lines.
+        let text = state.lyrics.source_text(e).map(|(t, _)| t);
+        let timed =
+            bl_asr::sync::time_song(model, model_id, &samples, text.as_deref(), &mut progress)?;
+        let path = if timed.written_down {
+            self.recognized_path(&id)
+        } else {
+            self.synced_path(&id)
         };
-        write(&self.dir, &path, &lrc)
+        // One computed text per song.
+        for other in [self.synced_path(&id), self.recognized_path(&id)] {
+            if other != path {
+                let _ = std::fs::remove_file(other);
+            }
+        }
+        write(&self.dir, &path, &timed.lrc)
     }
 }
 

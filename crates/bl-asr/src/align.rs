@@ -4,7 +4,7 @@
 //! lines take the time of their first matched word (or are interpolated),
 //! and long gaps between sung parts become pause lines.
 
-use crate::transcribe::Segment;
+use crate::transcribe::{Segment, Word};
 
 /// A gap without singing of at least this length becomes a pause line.
 pub const PAUSE_SECS: f64 = 8.0;
@@ -40,10 +40,20 @@ fn similarity(a: &str, b: &str) -> f32 {
     1.0 - prev[b.len()] as f32 / n as f32
 }
 
-/// Recognised words with estimated start times.
+/// Recognised words with their start times (estimated by position in
+/// the segment when the recognition gave none).
 fn timed_words(segments: &[Segment]) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for s in segments {
+        if !s.words.is_empty() {
+            out.extend(
+                s.words
+                    .iter()
+                    .map(|w| (norm(&w.text), w.start))
+                    .filter(|(n, _)| !n.is_empty()),
+            );
+            continue;
+        }
         let words: Vec<&str> = s.text.split_whitespace().collect();
         let total: usize = words
             .iter()
@@ -106,38 +116,66 @@ fn spread(words: &[&str], known: &[Option<f64>], start: f64, end: f64) -> Vec<f6
 }
 
 /// Pairs (song text word index, recognised word index) of an alignment.
+///
+/// A match that continues a run of matches scores more, so a phrase is
+/// matched as a whole: song texts repeat their lines (choruses), and
+/// without this the words of one line could be matched to scattered
+/// words of several repetitions.
 fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
     let (n, m) = (text.len(), rec.len());
     const GAP: f32 = -0.4;
-    let mut score = vec![0f32; (n + 1) * (m + 1)];
-    let at = |i: usize, j: usize| i * (m + 1) + j;
+    const MISMATCH: f32 = -1.0;
+    const RUN: f32 = 0.6;
+    let w = m + 1;
+    let at = |i: usize, j: usize| i * w + j;
+    let sim = |i: usize, j: usize| {
+        let s = similarity(&text[i - 1], &rec[j - 1]);
+        (s >= 0.6).then_some(2.0 * s)
+    };
+    // best: the best score of the first i and j words; run: the best that
+    // ends with text[i - 1] matched to rec[j - 1].
+    let mut best = vec![0f32; (n + 1) * w];
+    let mut run = vec![f32::NEG_INFINITY; (n + 1) * w];
     for i in 1..=n {
-        score[at(i, 0)] = score[at(i - 1, 0)] + GAP;
+        best[at(i, 0)] = best[at(i - 1, 0)] + GAP;
     }
     for j in 1..=m {
-        score[at(0, j)] = score[at(0, j - 1)] + GAP;
+        best[at(0, j)] = best[at(0, j - 1)] + GAP;
     }
     for i in 1..=n {
         for j in 1..=m {
-            let sim = similarity(&text[i - 1], &rec[j - 1]);
-            let pair = if sim >= 0.6 { 2.0 * sim } else { -1.0 };
-            score[at(i, j)] = (score[at(i - 1, j - 1)] + pair)
-                .max(score[at(i - 1, j)] + GAP)
-                .max(score[at(i, j - 1)] + GAP);
+            if let Some(pair) = sim(i, j) {
+                run[at(i, j)] = pair + best[at(i - 1, j - 1)].max(run[at(i - 1, j - 1)] + RUN);
+            }
+            best[at(i, j)] = run[at(i, j)]
+                .max(best[at(i - 1, j - 1)] + MISMATCH)
+                .max(best[at(i - 1, j)] + GAP)
+                .max(best[at(i, j - 1)] + GAP);
         }
     }
+    // Back from the end; `in_run`: the path continues a run at (i, j).
+    let close = |a: f32, b: f32| (a - b).abs() <= 1e-3 * (1.0 + a.abs());
     let mut pairs = Vec::new();
     let (mut i, mut j) = (n, m);
+    let mut in_run = false;
     while i > 0 && j > 0 {
-        let sim = similarity(&text[i - 1], &rec[j - 1]);
-        let pair = if sim >= 0.6 { 2.0 * sim } else { -1.0 };
-        if (score[at(i, j)] - (score[at(i - 1, j - 1)] + pair)).abs() < 1e-4 {
-            if sim >= 0.6 {
-                pairs.push((i - 1, j - 1));
-            }
+        let here = if in_run {
+            run[at(i, j)]
+        } else {
+            best[at(i, j)]
+        };
+        if in_run || close(here, run[at(i, j)]) {
+            pairs.push((i - 1, j - 1));
+            let pair = sim(i, j).unwrap_or(0.0);
+            in_run = run[at(i - 1, j - 1)].is_finite()
+                && close(here, pair + run[at(i - 1, j - 1)] + RUN)
+                && !close(here, pair + best[at(i - 1, j - 1)]);
             i -= 1;
             j -= 1;
-        } else if (score[at(i, j)] - (score[at(i - 1, j)] + GAP)).abs() < 1e-4 {
+        } else if close(here, best[at(i - 1, j - 1)] + MISMATCH) {
+            i -= 1;
+            j -= 1;
+        } else if close(here, best[at(i - 1, j)] + GAP) {
             i -= 1;
         } else {
             j -= 1;
@@ -161,9 +199,25 @@ fn pauses(segments: &[Segment]) -> Vec<f64> {
         .collect()
 }
 
+/// Pause lines (their times) for long gaps in the singing before the
+/// next of `line_times`.
+pub fn pause_lines(segments: &[Segment], line_times: &[f64]) -> Vec<f64> {
+    pauses(&speech_segments(segments))
+        .into_iter()
+        .filter(|p| {
+            line_times
+                .iter()
+                .find(|t| **t > *p)
+                .is_some_and(|n| n - p >= PAUSE_SECS)
+        })
+        .collect()
+}
+
 /// A recognised line gets broken at punctuation after this many characters
 /// (and anywhere after twice as many).
 const LINE_CHARS: usize = 32;
+/// A pause between words of at least this long (seconds) ends a line.
+const LINE_PAUSE: f64 = 0.45;
 
 /// Text without what the model writes for sounds (`[applause]`,
 /// `(music)`, `♪`, `[BLANK_AUDIO]`).
@@ -198,46 +252,85 @@ fn speech_segments(segments: &[Segment]) -> Vec<Segment> {
             words.len() <= 3 && prev.len() > words.len() && prev.ends_with(&words)
         });
         if !echo {
-            out.push(Segment { text, ..s.clone() });
+            let words = s
+                .words
+                .iter()
+                .filter(|w| !strip_annotations(&w.text).is_empty())
+                .cloned()
+                .collect();
+            out.push(Segment {
+                text,
+                words,
+                ..s.clone()
+            });
         }
     }
     out
 }
 
-/// A segment's text as lines of readable length, each with its estimated
-/// start time and the estimated time of each word.
-fn split_lines(s: &Segment) -> Vec<(f64, String, Vec<f64>)> {
+/// A segment's words with times (estimated by character position when
+/// the recognition gave none).
+fn segment_words(s: &Segment) -> Vec<Word> {
+    if !s.words.is_empty() {
+        return s.words.clone();
+    }
     let words: Vec<&str> = s.text.split_whitespace().collect();
     let total: usize = words
         .iter()
         .map(|w| w.chars().count() + 1)
         .sum::<usize>()
         .max(1);
+    let at = |pos: usize| s.start + (s.end - s.start) * pos as f64 / total as f64;
+    let mut pos = 0usize;
+    words
+        .iter()
+        .map(|w| {
+            let start = at(pos);
+            pos += w.chars().count() + 1;
+            Word {
+                text: w.to_string(),
+                start,
+                end: at(pos - 1),
+                pieces: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// A segment's words as lines of readable length.
+fn split_lines(s: &Segment) -> Vec<Vec<Word>> {
+    let words = segment_words(s);
     let mut lines = Vec::new();
-    let (mut line, mut start, mut pos) = (String::new(), s.start, 0usize);
-    let mut times = Vec::new();
+    let mut line: Vec<Word> = Vec::new();
+    let mut len = 0usize;
     for (i, w) in words.iter().enumerate() {
-        let t = s.start + (s.end - s.start) * pos as f64 / total as f64;
-        if line.is_empty() {
-            start = t;
-        } else {
-            line.push(' ');
-        }
-        line.push_str(w);
-        times.push(t);
-        pos += w.chars().count() + 1;
-        let len = line.chars().count();
-        let rest: usize = words[i + 1..].iter().map(|w| w.chars().count() + 1).sum();
-        let breaks = w.ends_with(['.', ',', '!', '?', ';', ':']);
+        len += w.text.chars().count() + usize::from(!line.is_empty());
+        line.push(w.clone());
+        let rest: usize = words[i + 1..]
+            .iter()
+            .map(|w| w.text.chars().count() + 1)
+            .sum();
+        let breaks = w.text.ends_with(['.', ',', '!', '?', ';', ':']);
+        // Sung lines often come without punctuation: a pause after the word,
+        // or a capital starting the next one, ends a line too.
+        let (gap, capital) = words.get(i + 1).map_or((0.0, false), |n| {
+            let first = n.text.split('\'').next().unwrap_or_default();
+            let capital = n.text.chars().next().is_some_and(char::is_uppercase) && first != "I";
+            (n.start - w.end, capital)
+        });
+        let pause = gap >= LINE_PAUSE && len >= LINE_CHARS / 4;
+        // (Over music, words follow each other without gaps.)
+        let new_line = capital && len >= LINE_CHARS * 3 / 4;
         if i + 1 < words.len()
-            && rest >= LINE_CHARS / 2
-            && ((breaks && len >= LINE_CHARS) || len >= 2 * LINE_CHARS)
+            && rest >= LINE_CHARS / 4
+            && (pause || new_line || (breaks && len >= LINE_CHARS) || len >= 2 * LINE_CHARS)
         {
-            lines.push((start, std::mem::take(&mut line), std::mem::take(&mut times)));
+            lines.push(std::mem::take(&mut line));
+            len = 0;
         }
     }
     if !line.is_empty() {
-        lines.push((start, line, times));
+        lines.push(line);
     }
     lines
 }
@@ -245,6 +338,39 @@ fn split_lines(s: &Segment) -> Vec<(f64, String, Vec<f64>)> {
 fn word_tag(t: f64) -> String {
     let cs = (t.max(0.0) * 100.0).round() as u64;
     format!("<{:02}:{:02}.{:02}>", cs / 6000, cs / 100 % 60, cs % 100)
+}
+
+/// Words held at least this long are written with the times of their
+/// pieces (syllable-like), so a display can follow a long note.
+const PIECES_FROM: f64 = 0.5;
+/// A pause after a word of at least this long gets the word's end time.
+const END_GAP: f64 = 0.25;
+
+/// A line of timed words (enhanced LRC): the start time before each word
+/// (and before each piece of a long word), the end time right after a
+/// word that is followed by a pause and after the last one. `line_end`:
+/// when the next line starts.
+pub fn words_line(words: &[Word], line_end: f64) -> String {
+    let mut out = String::new();
+    for (i, w) in words.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        if w.pieces.len() > 1 && w.end - w.start >= PIECES_FROM {
+            for (t, p) in &w.pieces {
+                out.push_str(&word_tag(*t));
+                out.push_str(p);
+            }
+        } else {
+            out.push_str(&word_tag(w.start));
+            out.push_str(&w.text);
+        }
+        let next = words.get(i + 1).map_or(line_end, |n| n.start);
+        if i + 1 == words.len() || next - w.end >= END_GAP {
+            out.push_str(&word_tag(w.end.max(w.start)));
+        }
+    }
+    out
 }
 
 /// A line with a time before each word (enhanced LRC).
@@ -270,15 +396,21 @@ pub fn segments_to_lrc_words(segments: &[Segment]) -> String {
 
 fn segments_lrc(segments: &[Segment], word_times: bool) -> String {
     let speech = speech_segments(segments);
-    let mut lines: Vec<(f64, String)> = speech
+    let split: Vec<Vec<Word>> = speech.iter().flat_map(split_lines).collect();
+    let mut lines: Vec<(f64, String)> = split
         .iter()
-        .flat_map(split_lines)
-        .map(|(t, l, times)| {
+        .enumerate()
+        .map(|(i, words)| {
+            let t = words.first().map_or(0.0, |w| w.start);
             if word_times {
-                let words: Vec<&str> = l.split_whitespace().collect();
-                (t, timed_line(&words, &times))
+                let end = split
+                    .get(i + 1)
+                    .and_then(|l| l.first())
+                    .map_or(t + 10.0, |w| w.start);
+                (t, words_line(words, end))
             } else {
-                (t, l)
+                let text: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+                (t, text.join(" "))
             }
         })
         .collect();
@@ -309,16 +441,83 @@ pub fn align_text_words(text: &str, segments: &[Segment]) -> (String, f32) {
     align(text, segments, true)
 }
 
-fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
+/// For each word of a line (split at whitespace): whether it is in
+/// parentheses.
+fn in_parentheses(line: &str) -> Vec<bool> {
+    let mut depth = 0usize;
+    line.split_whitespace()
+        .map(|w| {
+            let mut inside = None;
+            for c in w.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth = depth.saturating_sub(1),
+                    c if c.is_alphanumeric() && inside.is_none() => inside = Some(depth > 0),
+                    _ => {}
+                }
+            }
+            inside.unwrap_or(depth > 0)
+        })
+        .collect()
+}
+
+/// A line of a song text with the time it starts at, found by matching
+/// its words to recognised ones (`matched`), else estimated between the
+/// matched lines around it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Anchor {
+    pub time: f64,
+    pub text: String,
+    pub matched: bool,
+}
+
+/// The lines of a song text (empty ones left out) with their times, and
+/// the share of words that matched.
+pub fn anchor_lines(text: &str, segments: &[Segment]) -> (Vec<Anchor>, f32) {
     let song_end = segments.last().map_or(0.0, |s| s.end);
     let segments = &speech_segments(segments)[..];
+    let t = line_times(text, segments, song_end);
+    let anchors = t
+        .lines
+        .iter()
+        .zip(&t.times)
+        .zip(&t.found)
+        .filter(|((l, _), _)| !l.is_empty())
+        .filter_map(|((l, time), found)| {
+            time.map(|time| Anchor {
+                time,
+                text: l.to_string(),
+                matched: *found,
+            })
+        })
+        .collect();
+    (anchors, t.matched)
+}
+
+struct LineTimes<'a> {
+    lines: Vec<&'a str>,
+    times: Vec<Option<f64>>,
+    /// Whether the line's time comes from a matched word.
+    found: Vec<bool>,
+    /// Recognised time per song text word (index over all words).
+    word_time: std::collections::HashMap<usize, f64>,
+    matched: f32,
+}
+
+fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTimes<'a> {
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     let mut words = Vec::new();
     let mut word_line = Vec::new();
+    // Backing vocals (in parentheses) are mostly not recognised; matched,
+    // their repetitions of the lead's words would take the lead's times.
+    let mut lead = Vec::new();
     for (li, l) in lines.iter().enumerate() {
-        for w in l.split_whitespace() {
+        for (w, backing) in l.split_whitespace().zip(in_parentheses(l)) {
             let n = norm(w);
             if !n.is_empty() {
+                if !backing {
+                    lead.push(words.len());
+                }
                 words.push(n);
                 word_line.push(li);
             }
@@ -326,13 +525,31 @@ fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
     }
     let rec = timed_words(segments);
     let rec_words: Vec<String> = rec.iter().map(|(w, _)| w.clone()).collect();
-    let pairs = align_words(&words, &rec_words);
-    let matched = pairs.len() as f32 / words.len().max(1) as f32;
-    // First matched time per line.
+    let lead_words: Vec<String> = lead.iter().map(|&i| words[i].clone()).collect();
+    let pairs: Vec<(usize, usize)> = align_words(&lead_words, &rec_words)
+        .into_iter()
+        .map(|(wi, ri)| (lead[wi], ri))
+        .collect();
+    let matched = pairs.len() as f32 / lead.len().max(1) as f32;
+    // Per line the time of its first word that matched together with a
+    // neighbour (two words in a row on both sides): a single word that
+    // matched may well be a common one ("the", "who") of another line.
+    let lead_pos: std::collections::HashMap<usize, usize> =
+        lead.iter().enumerate().map(|(p, &w)| (w, p)).collect();
+    let mut lead_count = vec![0usize; lines.len()];
+    for &w in &lead {
+        lead_count[word_line[w]] += 1;
+    }
+    let follows = |a: (usize, usize), b: (usize, usize)| {
+        lead_pos[&b.0] == lead_pos[&a.0] + 1 && b.1 == a.1 + 1 && word_line[a.0] == word_line[b.0]
+    };
     let mut line_time: Vec<Option<f64>> = vec![None; lines.len()];
-    for &(wi, ri) in &pairs {
+    for (k, &(wi, ri)) in pairs.iter().enumerate() {
         let li = word_line[wi];
-        if line_time[li].is_none() {
+        let in_run = (k > 0 && follows(pairs[k - 1], pairs[k]))
+            || pairs.get(k + 1).is_some_and(|&n| follows(pairs[k], n))
+            || lead_count[li] == 1;
+        if in_run && line_time[li].is_none() {
             line_time[li] = Some(rec[ri].1);
         }
     }
@@ -347,6 +564,7 @@ fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
             }
         }
     }
+    let found: Vec<bool> = line_time.iter().map(Option::is_some).collect();
     // Interpolate lines without a match (by word count) between neighbours.
     let counts: Vec<usize> = lines
         .iter()
@@ -367,9 +585,25 @@ fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
         line_time[i] = Some(t0 + (t1 - t0) * before as f64 / total as f64);
         i += 1;
     }
-    // Recognised time per song text word (index into `words`).
-    let matched_time: std::collections::HashMap<usize, f64> =
-        pairs.iter().map(|&(wi, ri)| (wi, rec[ri].1)).collect();
+    LineTimes {
+        lines,
+        times: line_time,
+        found,
+        word_time: pairs.iter().map(|&(wi, ri)| (wi, rec[ri].1)).collect(),
+        matched,
+    }
+}
+
+fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
+    let song_end = segments.last().map_or(0.0, |s| s.end);
+    let segments = &speech_segments(segments)[..];
+    let LineTimes {
+        lines,
+        times: line_time,
+        word_time: matched_time,
+        matched,
+        ..
+    } = line_times(text, segments, song_end);
     let mut out: Vec<(f64, String)> = Vec::new();
     let mut wi = 0usize;
     for (li, (l, t)) in lines.iter().zip(&line_time).enumerate() {
@@ -427,6 +661,7 @@ mod tests {
             end,
             text: text.into(),
             avg_logprob: -0.3,
+            words: Vec::new(),
         }
     }
 
