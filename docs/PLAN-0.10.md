@@ -64,19 +64,19 @@ server runs, and a web interface to manage them.
 
 ## Phase 2: devices: remote control and transfer
 
-- [ ] Event channel `GET /api/events` (long polling, per login) for
+- [x] Event channel `GET /api/events` (long polling, per login) for
   changes, commands and job progress.
-- [ ] Device registry on the server: every logged-in app is a device
+- [x] Device registry on the server: every logged-in app is a device
   (name, type, platform, online state, what it plays, volume); visible only
   within the same account (or the server password login).
-- [ ] Commands through the event channel (no open ports on the devices):
+- [x] Commands through the event channel (no open ports on the devices):
   play/pause, seek, skip, volume, queue changes, "play on …". Each device
   can refuse remote control (setting).
-- [ ] Transfer playback: queue and position move to another device.
-- [ ] App: device page (list, control a device as if it were local),
+- [x] Transfer playback: queue and position move to another device.
+- [x] App: device page (list, control a device as if it were local),
   "Play on" in song menus and the player.
-- [ ] Groups that play in sync (multi-room, basic): clock sync with the
-  server, start at a common time, drift correction.
+- [x] Groups that play in sync (multi-room, basic): clock sync with the
+  server, start at a common time. Open: drift correction while playing.
 
 ## Phase 3: settings follow the account
 

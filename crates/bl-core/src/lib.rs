@@ -10,6 +10,7 @@ mod airplay;
 pub mod capture;
 mod commands;
 pub mod core;
+mod devices;
 #[cfg(not(target_arch = "wasm32"))]
 mod dlna_receiver;
 #[cfg(target_arch = "wasm32")]

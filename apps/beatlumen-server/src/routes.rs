@@ -189,6 +189,14 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
+    // Devices see the devices of the same login: an account, or everyone
+    // with the server password.
+    if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
+        let scope = user
+            .as_deref()
+            .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
+        return state.devices.handle(req, segs, &scope);
+    }
     match segs {
         ["logout"] => match m {
             "POST" => {

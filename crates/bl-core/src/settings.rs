@@ -162,6 +162,12 @@ pub struct Settings {
     pub airplay_password: String,
     /// Random device ID announced instead of a hardware address (hex).
     pub airplay_id: String,
+    /// This device among the devices of a server login (random, hex).
+    pub device_id: String,
+    /// Its name there (empty: the platform's name).
+    pub device_name: String,
+    /// Other devices may control this one.
+    pub remote_control: bool,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -214,6 +220,9 @@ impl Default for Settings {
             notifications: true,
             airplay_password: String::new(),
             airplay_id: String::new(),
+            device_id: String::new(),
+            device_name: String::new(),
+            remote_control: true,
             ui: Value::object(),
         }
     }
@@ -289,6 +298,14 @@ impl Settings {
             notifications: v.bool_or("notifications", true),
             airplay_password: v.str_or("airplayPassword", "").chars().take(64).collect(),
             airplay_id: v.str_or("airplayId", "").to_string(),
+            device_id: v
+                .str_or("deviceId", "")
+                .chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .take(32)
+                .collect(),
+            device_name: v.str_or("deviceName", "").trim().chars().take(48).collect(),
+            remote_control: v.bool_or("remoteControl", true),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -343,6 +360,9 @@ impl Settings {
             .with("vaultRemember", self.vault_remember)
             .with("notifications", self.notifications)
             .with("airplayPassword", self.airplay_password.as_str())
+            .with("deviceId", self.device_id.as_str())
+            .with("deviceName", self.device_name.as_str())
+            .with("remoteControl", self.remote_control)
             .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
     }

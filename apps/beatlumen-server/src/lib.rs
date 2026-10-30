@@ -26,6 +26,7 @@ pub mod analysis;
 pub mod auth;
 pub mod config;
 pub mod covers;
+pub mod devices;
 pub mod extensions;
 pub mod images;
 pub mod library;
@@ -126,6 +127,7 @@ pub struct State {
     restart_handler: OnceLock<RestartHandler>,
     pub admin: admin::Admin,
     pub models: Arc<models::Models>,
+    pub devices: devices::Devices,
     /// Absolute music folder paths (index = root index in track ids).
     pub roots: Vec<PathBuf>,
     pub data: DataPaths,
@@ -588,6 +590,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         restart_handler: OnceLock::new(),
         admin,
         models,
+        devices: devices::Devices::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
         presets: presets::Presets::new(data.presets.clone()),
         images: images::Images::new(

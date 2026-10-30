@@ -406,6 +406,7 @@ impl Core {
             }
             "lyrics.remove" => self.lyrics_remove(host),
             "lyrics.sync" => self.lyrics_sync(host),
+            n if n.starts_with("devices.") => self.devices_command(host, n, c),
             "offline.save" => self.offline_save(host, strs(c.get("ids"))),
             "offline.remove" => {
                 let ids = if c.bool_or("all", false) {

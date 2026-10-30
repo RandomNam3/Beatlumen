@@ -314,6 +314,33 @@ Item {
                 font.pixelSize: 12
             }
 
+            // ---- this device among the server's devices -----------------------
+            SectionLabel { text: Theme.tr("This device"); visible: page.server === "connected" }
+            RowLayout {
+                visible: page.server === "connected"
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                spacing: 8
+                Label { textFormat: Text.PlainText; text: Theme.tr("Name"); color: Theme.text; Layout.preferredWidth: 120 }
+                TextField {
+                    id: deviceName
+                    Layout.fillWidth: true
+                    placeholderText: Core.state.deviceName || ""
+                    text: page.settings.deviceName || ""
+                    maximumLength: 48
+                    onEditingFinished: if (text !== (page.settings.deviceName || "")) Core.call("settings.set", { key: "deviceName", value: text.trim() })
+                    Accessible.name: Theme.tr("Device name")
+                }
+            }
+            SwitchRow {
+                visible: page.server === "connected"
+                Layout.fillWidth: true
+                title: Theme.tr("Allow remote control")
+                detail: Theme.tr("Your other devices on this server may control the playback here and move music to this device.")
+                on: page.settings.remoteControl !== false
+                onSwitched: (on) => Core.call("settings.set", { key: "remoteControl", value: on })
+            }
+
             // ---- account ----------------------------------------------------
             SectionLabel { text: Theme.tr("Account"); visible: page.server === "connected" || page.server === "login" }
             ColumnLayout {

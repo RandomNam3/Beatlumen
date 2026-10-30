@@ -730,6 +730,7 @@ fn overview(state: &State) -> Value {
         .with("users", state.vault.user_count() as u64)
         .with("links", state.vault.link_count() as u64)
         .with("logins", state.auth.token_count() as u64)
+        .with("devices", state.devices.count_online() as u64)
         .with("passwordRequired", state.auth.required())
         .with("speech", state.lyrics_sync.summary())
         .with("downloads", state.models.active())

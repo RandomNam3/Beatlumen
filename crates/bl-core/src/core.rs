@@ -72,6 +72,10 @@ pub(crate) enum Req {
     Loudness(String),
     Lyrics(String),
     LyricsSync(String),
+    DeviceAnnounce,
+    DeviceList,
+    DeviceEvents,
+    DeviceCommand,
     LyricsSaved,
     TrackDownload {
         track_id: String,
@@ -163,6 +167,7 @@ pub(crate) struct Revisions {
     pub analysis: u64,
     pub settings: u64,
     pub lyrics: u64,
+    pub devices: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -212,6 +217,7 @@ pub struct Core {
     pub(crate) lyrics_box: Mailbox<(String, Option<(String, String)>)>,
     /// Offline copies of server songs.
     pub(crate) offline: crate::offline::OfflineState,
+    pub(crate) devices: crate::devices::DevicesState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -399,6 +405,7 @@ impl Core {
             lyrics: Default::default(),
             lyrics_box: Mailbox::default(),
             offline: Default::default(),
+            devices: Default::default(),
             queue,
             bg_queue,
             library,
@@ -642,6 +649,8 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
+            .with("devicesRev", self.revs.devices)
+            .with("deviceName", self.device_name(host))
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
@@ -870,6 +879,10 @@ impl Core {
             }
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
+            r
+            @ (Req::DeviceAnnounce | Req::DeviceList | Req::DeviceEvents | Req::DeviceCommand) => {
+                self.devices_response(host, r, &res)
+            }
             Req::LyricsSaved => {
                 if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
                     self.toast(self.tr("Saving the song text failed"), true);
@@ -2376,6 +2389,7 @@ impl Core {
         self.poll_loudness(host);
         self.poll_lyrics();
         self.poll_lyrics_sync(host);
+        self.poll_devices(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_covers();

@@ -26,6 +26,10 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - **Offline copies**: songs from the server (with their song text, cover
   and analysis) can be kept on the device in one file each and play
   without a connection; the library shows them while the server is away.
+- **Devices**: all apps connected to the same server see each other with
+  what they play; control them remotely, play songs on another device,
+  move your music there or take theirs over, or start several devices
+  together.
 - **Song texts** over the visuals: from the file's tags, an `.lrc` or
   `.txt` file next to it, or added in the app. Synced texts (LRC, also with
   word timing) follow the song; tapping a line jumps there. With a

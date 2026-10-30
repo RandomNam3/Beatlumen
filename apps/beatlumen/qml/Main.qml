@@ -267,6 +267,12 @@ ApplicationWindow {
                     onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
                 }
             }
+            Loader {
+                active: win.page === 4 || item !== null
+                sourceComponent: DevicesPage {
+                    onOpenSettings: win.page = 3
+                }
+            }
         }
     }
 

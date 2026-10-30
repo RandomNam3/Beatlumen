@@ -53,6 +53,15 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
 With an active server connection, all apps and devices logged in to the
 server see each other.
 
+- Done: device list (name, platform, online, what it plays), remote
+  control (play/pause, seek, skip, volume), "Play on" from the song menu,
+  moving playback to another device or taking it over, and starting
+  several devices together at a common server time. Commands go through
+  the server's event channel (long polling); remote control can be turned
+  off per device; remote commands only play server songs.
+- Next: keeping grouped devices in step while they play (drift
+  correction), editing another device's queue.
+
 - Device list with name, type, online state and what is playing.
 - Each device plays on its own by default (own queue, own position).
 - Remote control of any device: play/pause, seek, skip, volume, edit the

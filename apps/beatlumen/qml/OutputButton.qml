@@ -10,12 +10,25 @@ IconButton {
     property color fg: Theme.text
     readonly property var outputs: Core.state.outputs || ({})
     readonly property bool remote: (outputs.active || "local") !== "local"
-    visible: Core.platform !== "web"
+    // Other Beatlumen devices (server login).
+    property var beatlumen: []
+    visible: Core.platform !== "web" || beatlumen.length > 0
+    Connections {
+        target: Core
+        function onStateChanged() {
+            if (Core.state.server !== "connected") { if (btn.beatlumen.length) btn.beatlumen = []; return }
+            const rev = Core.state.devicesRev || 0
+            if (rev === btn.devicesRev) return
+            btn.devicesRev = rev
+            btn.beatlumen = (Core.call("devices.list") || []).filter(d => !d.self && d.online && d.remote !== false)
+        }
+    }
+    property int devicesRev: -1
     iconName: remote ? "speaker" : "cast"
     iconColor: fg
     active: remote
     tip: remote ? Theme.tr("Playing on") + " " + (outputs.activeName || "") : Theme.tr("Play on…")
-    onClicked: { Core.call("outputs.scan"); menu.open() }
+    onClicked: { if (Core.platform !== "web") Core.call("outputs.scan"); menu.open() }
 
     Menu {
         id: menu
@@ -41,6 +54,16 @@ IconButton {
                     else
                         Core.call("outputs.select", { id: modelData.id })
                 }
+            }
+        }
+        // Beatlumen on other devices: the music moves there.
+        Repeater {
+            model: btn.beatlumen
+            delegate: MenuItem {
+                required property var modelData
+                text: modelData.name
+                icon.source: Theme.icon("devices")
+                onTriggered: Core.call("devices.transfer", { id: modelData.id })
             }
         }
         MenuItem {
