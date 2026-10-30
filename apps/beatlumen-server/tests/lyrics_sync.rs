@@ -147,13 +147,28 @@ fn plain_text_gets_timed_and_speech_gets_transcribed() {
     assert_eq!(l.str_or("source", ""), "synced");
     let text = l.str_or("text", "");
     eprintln!("{text}");
-    let lines: Vec<&str> = text.lines().collect();
+    // (After the tag naming the speech model; each word has its times.)
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with("[re:")).collect();
     assert_eq!(lines.len(), 3, "{text}");
+    let words = |l: &str| {
+        let mut out = String::new();
+        let mut tag = false;
+        for c in l[10..].chars() {
+            match c {
+                '<' => tag = true,
+                '>' => tag = false,
+                c if !tag => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    };
+    assert!(lines[0].contains("<00:0"), "{text}");
     assert!(
-        lines[0].starts_with("[00:00.") && lines[0].ends_with("And so, my fellow Americans,"),
+        lines[0].starts_with("[00:00.") && words(lines[0]) == "And so, my fellow Americans,",
         "{text}"
     );
-    assert!(lines[1].contains("ask not what your country can do for you,"));
+    assert!(words(lines[1]).contains("ask not what your country can do for you,"));
     let t = |l: &str| l[1..3].parse::<f64>().unwrap() * 60.0 + l[4..9].parse::<f64>().unwrap();
     assert!(
         t(lines[0]) < t(lines[1]) && t(lines[1]) < t(lines[2]) && t(lines[2]) < 11.0,
@@ -163,10 +178,16 @@ fn plain_text_gets_timed_and_speech_gets_transcribed() {
     // No text: what is said becomes the text.
     let l = wait_done(&id_of("Other"));
     assert_eq!(l.str_or("source", ""), "recognized");
-    assert!(l
+    let said: Vec<String> = l
         .str_or("text", "")
-        .to_lowercase()
-        .contains("fellow americans"));
+        .lines()
+        .filter(|l| l.starts_with("[0"))
+        .map(words)
+        .collect();
+    assert!(
+        said.join(" ").to_lowercase().contains("fellow americans"),
+        "{said:?}"
+    );
 
     // An imported text replaces the computed timings.
     let id = id_of("Speech");

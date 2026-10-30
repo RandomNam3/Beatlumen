@@ -404,6 +404,9 @@ impl<'a> Transcriber<'a> {
             .filter(|&i| !tokens[i].is_empty())
             .collect();
         let max_tokens = p.n_text_ctx - 8;
+        // Where the words placed so far end: a line whose time is only
+        // known roughly is looked for after them.
+        let mut after = 0.0f64;
         let mut k = 0;
         while k < todo.len() {
             if !progress(k as f32 / todo.len() as f32) {
@@ -411,7 +414,8 @@ impl<'a> Transcriber<'a> {
             }
             // A window from just before the first line, with the lines
             // that end within it.
-            let begin = (lines[todo[k]].start - 0.3).max(0.0);
+            let first = &lines[todo[k]];
+            let begin = (first.start.max(after.min(first.end - 0.2)) - 0.3).max(0.0);
             let mut group = vec![todo[k]];
             let mut n_tok = tokens[todo[k]].len().min(max_tokens);
             while k + group.len() < todo.len() {
@@ -451,9 +455,12 @@ impl<'a> Transcriber<'a> {
                 let li = owner[first];
                 let l = &lines[li];
                 let words = &mut out[li];
-                let floor = words.last().map_or(l.start - 0.3, |x: &Word| x.start);
+                let floor = words
+                    .last()
+                    .map_or(l.start.max(begin) - 0.3, |x: &Word| x.start);
                 let start = (begin + w.start).clamp(floor.max(0.0), l.end.max(l.start));
                 let end = (begin + w.end).clamp(start, l.end.max(start));
+                after = after.max(end);
                 words.push(shifted(w, begin, start, end));
             }
             k += group.len();

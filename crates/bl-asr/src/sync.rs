@@ -11,7 +11,7 @@
 //! Its `[re:]` tag names this timing's version and the model, so that a
 //! run over a whole library skips what the same or a better model did.
 
-use crate::align::{align_text, segments_to_lrc_words, words_line};
+use crate::align::{anchor_lines, pause_lines, segments_to_lrc_words, words_line, Anchor};
 use crate::model::Model;
 use crate::transcribe::{Line, Options, Transcriber};
 
@@ -84,10 +84,6 @@ pub fn time_song(
             written_down: false,
         });
     }
-    let prompt = text.map(|t| {
-        let words: Vec<&str> = t.split_whitespace().collect();
-        words[words.len().saturating_sub(120)..].join(" ")
-    });
     let share = 0.6;
     let mut first = |p: f32| progress(p * share);
     let segments = t
@@ -95,7 +91,9 @@ pub fn time_song(
             samples,
             Options {
                 language: None,
-                prompt: prompt.as_deref(),
+                // Not the song text: with it as context the model tends to
+                // copy it instead of listening, and skips verses.
+                prompt: None,
                 progress: &mut first,
             },
         )
@@ -105,22 +103,16 @@ pub fn time_song(
     }
     match text {
         Some(text) => {
-            let (lines, matched) = align_text(text, &segments);
+            let (anchors, matched) = anchor_lines(text, &segments);
             if matched < MIN_MATCH {
                 return Err(format!(
                     "the song text was not recognised ({:.0} % of the words)",
                     matched * 100.0
                 ));
             }
-            let lines = lrc_lines(&lines).unwrap_or_default();
             let mut rest = |p: f32| progress(share + p * (1.0 - share));
-            time_lines(
-                &t,
-                samples,
-                &lines,
-                creator_tag(model_id),
-                song_end,
-                &mut rest,
+            time_anchors(
+                &t, samples, &segments, &anchors, model_id, song_end, &mut rest,
             )
             .map(|lrc| Timed {
                 lrc,
@@ -150,6 +142,88 @@ pub fn time_song(
             })
         }
     }
+}
+
+/// Times the words of a song text's lines found in the recognition
+/// (`anchors`) and writes the LRC. A matched line is looked for from its
+/// time on; a line that was not matched anywhere between the matched lines
+/// around it. Each line starts with its first word.
+fn time_anchors(
+    t: &Transcriber,
+    samples: &[f32],
+    segments: &[crate::transcribe::Segment],
+    anchors: &[Anchor],
+    model_id: &str,
+    song_end: f64,
+    progress: &mut dyn FnMut(f32) -> bool,
+) -> Result<String, String> {
+    let matched_after = |i: usize| {
+        anchors[i + 1..]
+            .iter()
+            .find(|a| a.matched && a.time > anchors[i].time)
+            .map_or(song_end, |a| a.time)
+    };
+    let mut prev_matched = 0.0f64;
+    let lines: Vec<Line> = anchors
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let next = anchors.get(i + 1).map_or(song_end, |n| n.time);
+            let line = if a.matched {
+                prev_matched = a.time;
+                // Up to the next line when that one was matched too.
+                let end = if anchors.get(i + 1).is_some_and(|n| n.matched) {
+                    next
+                } else {
+                    matched_after(i)
+                };
+                Line {
+                    start: a.time,
+                    end: end.min(a.time + LAST_LINE),
+                    text: a.text.clone(),
+                }
+            } else {
+                Line {
+                    start: prev_matched,
+                    end: matched_after(i),
+                    text: a.text.clone(),
+                }
+            };
+            Line {
+                end: line.end.max(line.start + 0.2),
+                ..line
+            }
+        })
+        .collect();
+    let words = t
+        .time_lines(samples, &lines, None, progress)
+        .map_err(|e| e.to_string())?;
+    let mut out: Vec<(f64, String)> = Vec::new();
+    let mut last = 0.0f64;
+    for ((a, l), w) in anchors.iter().zip(&lines).zip(words) {
+        let start = w.first().map_or(a.time, |w| w.start).max(last);
+        last = start;
+        let text = if w.is_empty() {
+            l.text.trim().to_string()
+        } else {
+            words_line(&w, l.end)
+        };
+        out.push((start, text));
+    }
+    let times: Vec<f64> = out.iter().map(|(t, _)| *t).collect();
+    out.extend(
+        pause_lines(segments, &times)
+            .into_iter()
+            .map(|p| (p, String::new())),
+    );
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut lrc = creator_tag(model_id);
+    for (t, l) in out {
+        lrc.push_str(&lrc_time(t));
+        lrc.push_str(&l);
+        lrc.push('\n');
+    }
+    Ok(lrc)
 }
 
 /// Times the words of LRC lines and writes them back (line times kept).

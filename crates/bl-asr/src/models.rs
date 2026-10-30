@@ -320,7 +320,8 @@ impl Models {
         before: u64,
         total: u64,
     ) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         let part = dir.join(format!("{}.part", m.name));
         let mut have = std::fs::metadata(&part).map(|md| md.len()).unwrap_or(0);
         if have > m.size {
@@ -413,7 +414,10 @@ impl Models {
         let total: u64 = files.iter().map(|f| f.size).sum();
         {
             let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
-            if matches!(d.get(id), Some(Download::Running { .. } | Download::Checking)) {
+            if matches!(
+                d.get(id),
+                Some(Download::Running { .. } | Download::Checking)
+            ) {
                 return;
             }
             d.insert(id.to_string(), Download::Running { done: 0, total });
