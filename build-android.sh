@@ -12,7 +12,7 @@
 #   ABIS="arm64-v8a x86_64"                ABIs in the APK; the first one is the primary
 #   BUILD_TYPE=Release                     CMake build type (Release/RelWithDebInfo/Debug)
 #   BUILD_DIR=build/android                CMake build directory
-#   VERSION_CODE=100                       android:versionCode
+#   VERSION_CODE=110                       android:versionCode
 #   KEYSTORE, KEY_ALIAS                    release key (PKCS12/JKS keystore and alias)
 #   KEYSTORE_PASS, KEY_PASS                its passwords (KEY_PASS defaults to KEYSTORE_PASS)
 #                                          Without KEYSTORE, build/android-debug.keystore is
@@ -37,7 +37,7 @@ export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-/opt/android/android-ndk-r27d}"
 ABIS="${ABIS:-arm64-v8a}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build/android}"
-VERSION_CODE="${VERSION_CODE:-100}"
+VERSION_CODE="${VERSION_CODE:-110}"
 OUT_DIR="$ROOT/dist/android"
 OUT_APK="$OUT_DIR/beatlumen.apk"
 

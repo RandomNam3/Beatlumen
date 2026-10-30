@@ -2,8 +2,11 @@
 
 ## 0.11.0 (beta)
 
-Song texts to sing along with: every word (and long note) fills while it
-is sung, who sings is shown, and the text can be translated.
+The first published beta. Song texts to sing along with: every word (and
+long note) fills while it is sung, who sings is shown, and the text can be
+translated. It also contains everything listed under 0.10.0 in
+[CHANGELOG.md](https://github.com/RandomNam3/Beatlumen/blob/main/CHANGELOG.md), which
+was not published on its own.
 
 ### Song texts
 
@@ -52,7 +55,7 @@ is sung, who sings is shown, and the text can be translated.
   it gives the same result and is faster. Settings and the admin
   interface show where it runs. `BL_ASR_GPU=0` turns it off.
 
-## 0.10.0 (beta)
+## 0.10.0 (beta, not published on its own)
 
 The first beta: Beatlumen plays music from many places, on many devices,
 and the server is managed in the browser.
