@@ -10,10 +10,10 @@ even a distroless one). It contains only what the server needs, about 14 MB:
 | `/usr/share/doc/beatlumen/` | License texts, which the AGPL requires to accompany the program |
 
 There is no shell, no package manager and no user database: the server
-runs as the numeric user `10001`. CA certificates will be added once the
-server connects to HTTPS remote sources itself (see `docs/ROADMAP.md`);
-until then they would be unused. It works with Docker and Podman (rootful and
-rootless).
+runs as the numeric user `10001`. For its few HTTPS connections (speech
+model downloads the admin starts, push services) the server carries the
+Mozilla root certificates built in. It works with Docker and Podman
+(rootful and rootless).
 
 | File | Purpose |
 |---|---|
@@ -136,6 +136,38 @@ On SELinux systems `:z` (shared) or `:Z` (private) relabels a host folder
 for container use; do not use them on system folders such as `/home` or
 `/usr`.
 
+## Admin interface
+
+The server is managed in the browser at `http://<server>:7878/admin/`:
+library folders, accounts and invitations, shared links, speech
+recognition (models are downloaded in the background when picked), source
+extensions, network settings, the server password and the log.
+
+On the first start the server logs a one-time link that sets the admin
+password (valid for a day):
+
+```sh
+docker compose logs server | grep admin     # or: docker logs beatlumen
+```
+
+`beatlumen-server admin-link` creates a new link (valid for an hour), also
+to reset a forgotten admin password:
+
+```sh
+docker exec beatlumen /beatlumen-server admin-link
+```
+
+The link contains `<server address>` when the server listens on all
+addresses: open it with the address you reach the server by. Without a
+browser, `BEATLUMEN_ADMIN_PASSWORD_FILE` (a secret like the server
+password) sets the admin password.
+
+Settings made there are kept in `/data/settings.json`. Settings given by
+environment variables or command line parameters stay fixed and are shown
+read-only; `compose.yml` therefore passes only the values set in `.env`.
+Most changes apply at once; folders, extensions, the public address and
+the push options need a restart, which the admin interface does itself.
+
 ## Environment variables
 
 | Variable | Default (image) | Meaning |
@@ -156,7 +188,9 @@ for container use; do not use them on system folders such as `/home` or
 | `BEATLUMEN_VAULT_PEPPER_FILE` | `/data/vault/pepper` | Secret (at least 32 bytes) mixed into the account verifiers. As a secret outside `/data`, a copy of the volume alone does not even allow testing password guesses. Losing it locks every account out (the files stay encrypted and are lost with it) |
 | `BEATLUMEN_VAULT_QUOTA_MB` | `10240` | Encrypted storage per account in MiB, `0` = unlimited |
 | `BEATLUMEN_REGISTRATION` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
-| `BEATLUMEN_SPEECH_MODEL` | – | Whisper model file for timing song texts (see [Song texts](#song-texts-speech-recognition)) |
+| `BEATLUMEN_ADMIN_PASSWORD_FILE` | – | File with the admin password (instead of the setup link) |
+| `BEATLUMEN_SPEECH_MODEL` | – | Whisper model file for timing song texts; usually picked in the admin interface (see [Song texts](#song-texts-speech-recognition)) |
+| `BEATLUMEN_MODEL_SOURCE` | huggingface.co (whisper.cpp) | Mirror of the speech model files offered in the admin interface |
 | `BEATLUMEN_AUTO_SYNC_LYRICS` | `false` | `true`: time the song texts of the whole library in the background (needs the model) |
 | `BEATLUMEN_PUSH_ALLOW_PRIVATE` | `false` | `true`: allow push services (UnifiedPush, e.g. ntfy) in private networks and over plain http |
 | `BEATLUMEN_CA_FILE` | – | Extra root certificates (PEM) for outgoing TLS, e.g. a private CA of a push service at home |
@@ -194,9 +228,11 @@ environment variables:
 | `--vault-quota-mb MB` | Encrypted storage per account |
 | `--registration MODE` | `invite` or `off` |
 | `--speech-model FILE` | Whisper model file for timing song texts |
+| `--model-source URL` | Mirror of the speech model files |
 | `--auto-sync-lyrics` | Time the song texts of the whole library in the background |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |
+| `admin-link` (command) | Prints a one-time link that sets the admin password |
 | `--help`, `--version` | |
 
 Precedence: built-in defaults < `--config` file < environment variables <
@@ -207,24 +243,27 @@ command line parameters.
 With a Whisper model the server times plain song texts (`.txt`, tags
 without times, texts added in the apps) by recognising the sung words, and
 writes down what is sung when a song has no text at all. The recognition
-runs on the server itself (own implementation, no external service, no
-network access). In the apps, the song text view then offers *Sync
-automatically* (or *Recognize song text*); with
-`BEATLUMEN_AUTO_SYNC_LYRICS=true` the server works through the whole
-library in the background on half of the processor cores. The results are
-stored in `/data/lyrics`; texts added later replace them.
+runs on the server itself (own implementation, no external service). In
+the apps, the song text view then offers *Sync automatically* (or
+*Recognize song text*); with *Time the whole library* the server works
+through the whole library in the background on half of the processor
+cores. The results are stored in `/data/lyrics`; texts added later replace
+them.
 
-Model files in the ggml format of whisper.cpp (f16 or f32, not quantised)
-work, e.g. `ggml-base.bin` (about 150 MB on disk, 0.4 GB of memory) or
-`ggml-small.bin` (about 470 MB, 1.2 GB of memory; better for sung text).
-Download one from the whisper.cpp model page
-(`https://huggingface.co/ggerganov/whisper.cpp`), put it into a folder and
-mount it read-only:
+The model is picked in the admin interface (*Song texts*): the server
+downloads it in the background from the whisper.cpp model page
+(`https://huggingface.co/ggerganov/whisper.cpp`, or the mirror set with
+`BEATLUMEN_MODEL_SOURCE`) into `/data/models`, checks it against the
+SHA-256 in its list and switches to it. *small (q5_1)* (190 MB, about
+450 MB of memory) is a good choice for songs; quantised models (q4, q5,
+q8) need far less memory than the full ones.
+
+Own model files in the ggml format of whisper.cpp (f32, f16 or quantised)
+work as well: mount a folder read-only and set the file:
 
 ```yaml
     environment:
       BEATLUMEN_SPEECH_MODEL: /models/ggml-small.bin
-      BEATLUMEN_AUTO_SYNC_LYRICS: "true"
     volumes:
       - ./models:/models:ro,z
 ```

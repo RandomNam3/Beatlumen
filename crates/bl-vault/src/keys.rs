@@ -94,6 +94,34 @@ pub(crate) fn argon2id(
     Ok(root)
 }
 
+/// A password the server checks itself (its admin password and the
+/// server's login password): Argon2id with the default parameters and a
+/// random salt. Only the hash is stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verifier {
+    pub salt: [u8; SALT_LEN],
+    pub hash: [u8; 32],
+    pub params: KdfParams,
+}
+
+impl Verifier {
+    pub fn new(password: &str) -> Result<Verifier, Error> {
+        let mut salt = [0u8; SALT_LEN];
+        random(&mut salt)?;
+        let params = KdfParams::DEFAULT;
+        Ok(Verifier {
+            hash: argon2id(password, &salt, params)?,
+            salt,
+            params,
+        })
+    }
+
+    /// Whether `password` is the one this verifier was made from.
+    pub fn matches(&self, password: &str) -> bool {
+        argon2id(password, &self.salt, self.params).is_ok_and(|h| crate::ct_eq(&h, &self.hash))
+    }
+}
+
 /// What the password derives.
 pub struct PasswordKeys {
     /// Sent to the server at login (the server stores only a hash of it).
@@ -394,6 +422,14 @@ impl Account {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_verifier() {
+        let v = Verifier::new("correct horse").unwrap();
+        assert!(v.matches("correct horse"));
+        assert!(!v.matches("correct horse "));
+        assert_ne!(Verifier::new("correct horse").unwrap().salt, v.salt);
+    }
 
     #[test]
     fn register_unlock_change_recover() {

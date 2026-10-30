@@ -16,7 +16,7 @@ const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob
 media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 /// Entry point for every request.
-pub fn handle(state: &State, req: Request) -> Response {
+pub fn handle(state: &std::sync::Arc<State>, req: Request) -> Response {
     let t0 = Instant::now();
     let is_api = req.path == "/api" || req.path.starts_with("/api/");
     let mut resp = match check_origin(state, &req) {
@@ -49,7 +49,7 @@ fn host_allowed(state: &State, host: &str) -> bool {
         || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
             .iter()
             .any(|s| h.ends_with(s))
-        || state.config.allowed_hosts.iter().any(|a| *a == h)
+        || state.config().allowed_hosts.contains(&h)
 }
 
 /// Strips the port from a `Host` header value (`[v6]:port`, `name:port`).
@@ -101,7 +101,10 @@ fn finish_headers(resp: &mut Response, is_api: bool) {
     if h.get("content-type")
         .is_some_and(|t| t.starts_with("text/html"))
     {
-        h.set("Content-Security-Policy", CSP);
+        // Pages with a stricter policy of their own keep it.
+        if h.get("content-security-policy").is_none() {
+            h.set("Content-Security-Policy", CSP);
+        }
         h.set("Cross-Origin-Opener-Policy", "same-origin");
         h.set("Cross-Origin-Embedder-Policy", "require-corp");
         h.set("X-Frame-Options", "DENY");
@@ -111,7 +114,7 @@ fn finish_headers(resp: &mut Response, is_api: bool) {
     }
 }
 
-fn route(state: &State, req: &Request) -> Response {
+fn route(state: &std::sync::Arc<State>, req: &Request) -> Response {
     if !req.path.starts_with('/') || req.path.contains(['\0', '\\']) {
         return Response::error(400, "invalid path");
     }
@@ -122,7 +125,9 @@ fn route(state: &State, req: &Request) -> Response {
         return assetlinks(state);
     }
     match segs.as_slice() {
+        ["api", "admin", rest @ ..] => crate::admin::handle(state, req, rest),
         ["api", rest @ ..] => api(state, req, rest),
+        ["admin", rest @ ..] => crate::admin_web::serve(req, rest),
         // Public links (/share/<id>#<secret>) open the share page.
         ["share", id] if !id.contains('.') => state.web.serve(req, &["share", "index.html"]),
         _ => state.web.serve(req, &segs),
@@ -512,7 +517,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
 }
 
 fn assetlinks(state: &State) -> Response {
-    let certs = state.config.all_android_certs();
+    let certs = state.config().all_android_certs();
     if certs.is_empty() || state.vault.rp.is_none() {
         return Response::error(404, "not found");
     }

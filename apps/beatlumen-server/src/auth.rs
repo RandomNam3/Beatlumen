@@ -4,10 +4,12 @@
 //! * Only SHA-256 digests of tokens are kept (in memory and in
 //!   `data/tokens.json`), so a leaked data folder does not leak usable
 //!   tokens.
-//! * The password is compared in constant time (digests of equal length).
-//! * Tokens do not expire; `POST /api/logout` revokes one. Changing the
-//!   password invalidates all tokens (a salted password digest is stored to
-//!   detect that).
+//! * A password from the configuration is compared in constant time
+//!   (digests of equal length); one set in the admin interface is kept only
+//!   as an Argon2id verifier.
+//! * Tokens expire after 180 days; `POST /api/logout` revokes one. Changing
+//!   the password invalidates all tokens (a salted password digest is
+//!   stored to detect that).
 //! * Failed logins are delayed and limited per client address.
 
 use crate::sha256::{sha256, sha256_parts};
@@ -35,6 +37,36 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// The server password: from the configuration (digest) or set in the
+/// admin interface (Argon2id verifier).
+pub enum Secret {
+    Plain([u8; 32], String),
+    Verifier(bl_vault::keys::Verifier),
+}
+
+impl Secret {
+    pub fn plain(password: &str) -> Secret {
+        Secret::Plain(sha256(password.as_bytes()), password.to_string())
+    }
+
+    fn matches(&self, password: &str) -> bool {
+        match self {
+            Secret::Plain(d, _) => ct_eq(&sha256(password.as_bytes()), d),
+            Secret::Verifier(v) => v.matches(password),
+        }
+    }
+
+    /// Salted digest stored next to the tokens: tokens issued under another
+    /// password are dropped at start.
+    fn check(&self, salt: &str) -> String {
+        let material: &[u8] = match self {
+            Secret::Plain(_, p) => p.as_bytes(),
+            Secret::Verifier(v) => &v.hash,
+        };
+        util::hex(&sha256_parts(&[salt.as_bytes(), b"\0", material]))
+    }
+}
+
 /// Token digests in issue order (for trimming) plus a set for lookups.
 #[derive(Default)]
 struct TokenStore {
@@ -44,10 +76,10 @@ struct TokenStore {
 }
 
 pub struct Auth {
-    password_digest: Option<[u8; 32]>,
+    secret: RwLock<Option<Secret>>,
     path: PathBuf,
     salt: String,
-    check: String,
+    check: RwLock<String>,
     tokens: RwLock<TokenStore>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
     /// Serializes password checks.
@@ -64,8 +96,7 @@ pub enum LoginError {
 impl Auth {
     /// Creates the authenticator and loads persisted tokens (discarded when
     /// the password changed).
-    pub fn new(password: Option<&str>, path: PathBuf) -> Auth {
-        let password_digest = password.map(|p| sha256(p.as_bytes()));
+    pub fn new(secret: Option<Secret>, path: PathBuf) -> Auth {
         let stored = std::fs::read(&path)
             .ok()
             .and_then(|d| bl_json::parse_bytes(&d).ok())
@@ -75,12 +106,9 @@ impl Auth {
             salt = crate::random::hex(16)
                 .unwrap_or_else(|_| util::hex(&sha256(path.to_string_lossy().as_bytes())[..16]));
         }
-        let check = match password {
-            Some(p) => util::hex(&sha256_parts(&[salt.as_bytes(), b"\0", p.as_bytes()])),
-            None => String::new(),
-        };
+        let check = secret.as_ref().map(|s| s.check(&salt)).unwrap_or_default();
         let mut list = Vec::new();
-        if password.is_some()
+        if secret.is_some()
             && ct_eq(
                 stored.str_or("passwordCheck", "").as_bytes(),
                 check.as_bytes(),
@@ -103,29 +131,70 @@ impl Auth {
         }
         let set: HashMap<[u8; 32], u64> = list.iter().copied().collect();
         let list: Vec<[u8; 32]> = list.into_iter().map(|(d, _)| d).collect();
+        let required = secret.is_some();
         let auth = Auth {
-            password_digest,
+            secret: RwLock::new(secret),
             path,
             salt,
-            check,
+            check: RwLock::new(check),
             tokens: RwLock::new(TokenStore { order: list, set }),
             failures: Mutex::new(HashMap::new()),
             check_lock: Mutex::new(()),
         };
-        if password.is_some() {
+        if required {
             auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()));
         }
         auth
     }
 
     pub fn required(&self) -> bool {
-        self.password_digest.is_some()
+        self.secret
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// Sets or removes the password (admin interface); all logins end.
+    pub fn set_secret(&self, secret: Option<Secret>) {
+        let _serial = self.check_lock.lock().unwrap_or_else(|e| e.into_inner());
+        *self.check.write().unwrap_or_else(|e| e.into_inner()) = secret
+            .as_ref()
+            .map(|s| s.check(&self.salt))
+            .unwrap_or_default();
+        *self.secret.write().unwrap_or_else(|e| e.into_inner()) = secret;
+        self.revoke_all();
+    }
+
+    /// Ends every login (apps ask for the password again).
+    pub fn revoke_all(&self) {
+        let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        g.order.clear();
+        g.set.clear();
+        self.save(&g);
+    }
+
+    /// Logins currently valid.
+    pub fn token_count(&self) -> usize {
+        let now = unix_now();
+        self.tokens
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .set
+            .values()
+            .filter(|issued| now.saturating_sub(**issued) < TOKEN_LIFETIME)
+            .count()
     }
 
     fn save(&self, store: &TokenStore) {
         let v = Value::object()
             .with("salt", self.salt.as_str())
-            .with("passwordCheck", self.check.as_str())
+            .with(
+                "passwordCheck",
+                self.check
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_str(),
+            )
             .with(
                 "tokens",
                 Value::Array(
@@ -183,11 +252,11 @@ impl Auth {
 
     /// Checks the password and issues a new token.
     pub fn login(&self, body: &[u8], remote: Option<IpAddr>) -> Result<String, LoginError> {
-        let Some(expected) = self.password_digest else {
+        if !self.required() {
             // No password configured: nothing to log in to; an empty token
             // works because no endpoint checks it.
             return Ok(String::new());
-        };
+        }
         let v = bl_json::parse_bytes(body)
             .map_err(|e| LoginError::BadRequest(format!("invalid JSON: {e}")))?;
         let pw = v
@@ -217,7 +286,13 @@ impl Auth {
         // FAILURE_DELAY, so guessing is slow however many addresses an
         // attacker uses.
         let _serial = self.check_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if !ct_eq(&sha256(pw.as_bytes()), &expected) {
+        let ok = self
+            .secret
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.matches(pw));
+        if !ok {
             let recent: u32 = {
                 let mut f = self.failures.lock().unwrap_or_else(|e| e.into_inner());
                 let e = f.entry(ip).or_insert((0, Instant::now()));

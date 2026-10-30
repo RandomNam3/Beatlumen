@@ -46,7 +46,8 @@ a { color: #8fb4ff; }
 <h1>Beatlumen Server is running</h1>
 <p>The web client is not installed on this server. Connect with an Beatlumen app,
 or start the server with <code>--web-dir</code> pointing to the built web client.</p>
-<p>Server information: <a href="/api/info">/api/info</a></p>
+<p>Server information: <a href="/api/info">/api/info</a> ·
+Administration: <a href="/admin/">/admin/</a></p>
 </main>
 </body>
 </html>

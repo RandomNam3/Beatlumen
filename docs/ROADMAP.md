@@ -45,6 +45,9 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
 - Settings that follow a user account across devices.
 - Done: public links to encrypted files (expiry, optional password, the key
   stays in the link; see `docs/ENCRYPTION.md`).
+- Done: admin interface at `/admin/` (settings kept in the data folder,
+  most applied without a restart; accounts, invitations, links, speech
+  models downloaded in the background, extensions, server password, log).
 
 ## Devices: remote control and individual playback
 With an active server connection, all apps and devices logged in to the

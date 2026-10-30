@@ -20,7 +20,7 @@ Legend: `[ ]` open, `[~]` in progress, `[x]` done.
 Foundation for everything after it: settings that can be changed while the
 server runs, and a web interface to manage them.
 
-- [ ] Settings store: settings changed in the admin interface are kept in
+- [x] Settings store: settings changed in the admin interface are kept in
   `data/settings.json`. Order: defaults < `--config` file < admin settings
   < environment < command line; values set by the environment or command
   line are shown read-only with their origin. Settings are applied live
@@ -29,19 +29,18 @@ server runs, and a web interface to manage them.
   ask for a restart, which the server does itself (re-exec).
   The container examples stop passing defaults for settings the admin
   interface manages.
-- [ ] Event channel `GET /api/events` (long polling, per login) for
-  changes and job progress; used by the admin interface and later by
-  devices.
-- [ ] Admin login:
+- Moved to phase 2: the event channel (the admin pages poll for now).
+- [x] Admin login:
   - No admin yet: the server logs a one-time setup link (valid one hour);
     `beatlumen-server admin-link` creates a new one. The link sets the
-    admin password (Argon2id, at least 12 characters); a passkey can be
-    added. `BEATLUMEN_ADMIN_PASSWORD_FILE` for setups without a browser.
+    admin password (Argon2id, at least 12 characters).
+    `BEATLUMEN_ADMIN_PASSWORD_FILE` for setups without a browser. Open:
+    a passkey for the admin login.
   - Sessions: random 256-bit cookie (only its digest stored), `HttpOnly`,
     `SameSite=Strict`, `Secure` behind TLS; idle timeout 12 h, at most
     7 days; CSRF header and origin check; failed logins limited per
     address; password change ends all sessions.
-- [ ] Admin pages at `/admin` (plain HTML/JS/CSS like the share page, in
+- [x] Admin pages at `/admin` (plain HTML/JS/CSS like the share page, in
   the signed manifest with SRI, no external resources):
   - Overview: version, uptime, library size, running jobs (scan, analysis,
     speech recognition, downloads, imports), disk use, warnings.
@@ -55,7 +54,7 @@ server runs, and a web interface to manage them.
   - Network: name, allowed host names, public URL, push options, extra
     CA certificates.
   - Log: recent server log lines (no secrets).
-- [ ] Speech models download themselves: the admin picks a model from a
+- [x] Speech models download themselves: the admin picks a model from a
   built-in list (tiny, base, small, medium, large-v3-turbo of whisper.cpp,
   with size and memory needs); the server downloads it in the background
   (resumable, progress in the overview, SHA-256 checked against the value
@@ -65,6 +64,8 @@ server runs, and a web interface to manage them.
 
 ## Phase 2: devices: remote control and transfer
 
+- [ ] Event channel `GET /api/events` (long polling, per login) for
+  changes, commands and job progress.
 - [ ] Device registry on the server: every logged-in app is a device
   (name, type, platform, online state, what it plays, volume); visible only
   within the same account (or the server password login).

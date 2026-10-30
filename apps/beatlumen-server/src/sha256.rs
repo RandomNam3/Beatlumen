@@ -51,6 +51,66 @@ fn compress(h: &mut [u32; 8], block: &[u8]) {
     }
 }
 
+const H0: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
+
+/// Incremental SHA-256 (large downloads).
+pub struct Sha256 {
+    h: [u32; 8],
+    buf: Vec<u8>,
+    len: u64,
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Sha256 {
+            h: H0,
+            buf: Vec::with_capacity(64),
+            len: 0,
+        }
+    }
+}
+
+impl Sha256 {
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.len += data.len() as u64;
+        if !self.buf.is_empty() {
+            let take = (64 - self.buf.len()).min(data.len());
+            self.buf.extend_from_slice(&data[..take]);
+            data = &data[take..];
+            if self.buf.len() < 64 {
+                return;
+            }
+            let block = std::mem::take(&mut self.buf);
+            compress(&mut self.h, &block);
+        }
+        let mut blocks = data.chunks_exact(64);
+        for b in &mut blocks {
+            compress(&mut self.h, b);
+        }
+        self.buf.extend_from_slice(blocks.remainder());
+    }
+
+    pub fn finish(mut self) -> [u8; 32] {
+        let bit_len = self.len.wrapping_mul(8);
+        let mut tail = std::mem::take(&mut self.buf);
+        tail.push(0x80);
+        while tail.len() % 64 != 56 {
+            tail.push(0);
+        }
+        tail.extend_from_slice(&bit_len.to_be_bytes());
+        for block in tail.chunks_exact(64) {
+            compress(&mut self.h, block);
+        }
+        let mut out = [0u8; 32];
+        for (o, v) in out.chunks_exact_mut(4).zip(self.h) {
+            o.copy_from_slice(&v.to_be_bytes());
+        }
+        out
+    }
+}
+
 /// Computes the SHA-256 digest of the concatenation of `parts`.
 pub fn sha256_parts(parts: &[&[u8]]) -> [u8; 32] {
     let mut h: [u32; 8] = [
@@ -85,6 +145,17 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::util::hex;
+
+    #[test]
+    fn incremental() {
+        let data: Vec<u8> = (0..1000u32).map(|i| (i * 7) as u8).collect();
+        for split in [0, 1, 63, 64, 65, 500, 1000] {
+            let mut h = Sha256::default();
+            h.update(&data[..split]);
+            h.update(&data[split..]);
+            assert_eq!(h.finish(), sha256(&data), "split {split}");
+        }
+    }
 
     #[test]
     fn vectors() {

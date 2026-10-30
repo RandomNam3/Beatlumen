@@ -38,6 +38,17 @@ pub(super) struct Link {
 }
 
 impl Link {
+    /// What the admin interface shows (no key material).
+    pub(super) fn admin_json(&self) -> Value {
+        Value::object()
+            .with("id", self.id.as_str())
+            .with("file", self.file.as_str())
+            .with("owner", self.owner.as_str())
+            .with("created", self.created)
+            .with("expires", self.expires)
+            .with("password", self.password.is_some())
+    }
+
     fn to_json(&self) -> Value {
         let mut v = Value::object()
             .with("id", self.id.as_str())
@@ -119,7 +130,7 @@ pub(super) fn load(dir: &Path) -> HashMap<String, Link> {
 }
 
 impl Vault {
-    fn link_path(&self, id: &str) -> std::path::PathBuf {
+    pub(super) fn link_path(&self, id: &str) -> std::path::PathBuf {
         self.links_dir.join(format!("{id}.json"))
     }
 

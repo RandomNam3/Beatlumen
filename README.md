@@ -64,7 +64,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   password manager (`docs/ENCRYPTION.md`).
 - Light/dark mode and accent colour follow your system.
 - **Beatlumen Server** shares a music folder on your network and serves the
-  web version of the app.
+  web version of the app. It is managed in the browser at `/admin/`
+  (folders, accounts, invitations, shared links, speech models, extensions,
+  password, log); the first start logs a link that sets the admin password.
 
 **Privacy:** the apps only ever connect to the server you configure; the
 server connects only to remote sources its admin sets up (none by default).
@@ -95,6 +97,7 @@ cmake --build build/desktop
 # Server
 cargo build --release -p beatlumen-server
 ./target/release/beatlumen-server --music ~/Music --web-dir dist/web [--password secret]
+# then open the setup link from the log: http://<host>:7878/admin/#setup=...
 
 # Web version (needs emsdk 4.0.7 and Qt for WebAssembly, single-threaded)
 EMSDK_DIR=~/emsdk ./build-web.sh

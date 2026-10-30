@@ -3,10 +3,26 @@
 //! Lines look like `2026-10-27 17:45:01.123Z INFO  message`. Debug lines are
 //! only printed when verbose logging is enabled (`--verbose`).
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+/// Recent lines for the admin interface.
+static RECENT: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+const RECENT_LINES: usize = 500;
+
+/// The most recent log lines, oldest first.
+pub fn recent() -> Vec<String> {
+    RECENT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
 
 /// Enables or disables debug output.
 pub fn set_verbose(on: bool) {
@@ -51,6 +67,18 @@ pub fn timestamp() -> String {
 
 /// Writes one log line (a single `eprintln!` call so lines do not interleave).
 pub fn write(level: &str, msg: &str) {
+    let line = format!("{} {level:<5} {msg}", timestamp());
+    eprintln!("{line}");
+    let mut r = RECENT.lock().unwrap_or_else(|e| e.into_inner());
+    if r.len() >= RECENT_LINES {
+        r.pop_front();
+    }
+    r.push_back(line);
+}
+
+/// Writes a line that carries a secret (the admin setup link): to stderr
+/// only, not into the lines the admin interface shows.
+pub fn write_private(level: &str, msg: &str) {
     eprintln!("{} {level:<5} {msg}", timestamp());
 }
 
