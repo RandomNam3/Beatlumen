@@ -39,6 +39,7 @@ fn plays_on_an_airplay_speaker() {
         name: "Speaker".into(),
         id: [6, 5, 4, 3, 2, 1],
         password: None,
+        airplay2: false,
     })
     .unwrap();
     let mut app = App::new("airplay-send");

@@ -350,7 +350,8 @@ impl Sources {
     }
 
     /// Adds or changes a source after checking that it connects. A
-    /// missing secret keeps the stored one.
+    /// missing secret keeps the stored one (unless the address, kind or
+    /// user changed).
     pub fn put(
         &self,
         id: Option<&str>,
@@ -362,8 +363,9 @@ impl Sources {
         if id.is_some() && existing.is_none() {
             return Err((404, "no such source".into()));
         }
+        // The stored secret only goes to the same login at the same place.
         if cfg.secret.is_empty() {
-            if let Some(e) = &existing {
+            if let Some(e) = existing.as_ref().filter(|e| same_login(&e.cfg, &cfg)) {
                 cfg.secret = e.cfg.secret.clone();
             }
         }
@@ -717,5 +719,55 @@ impl Sources {
                 });
             }
         }
+    }
+}
+/// Whether two source settings log in as the same user at the same place
+/// (kind, user and the scheme, host and port of the address).
+pub(crate) fn same_login(a: &SourceConfig, b: &SourceConfig) -> bool {
+    fn origin(url: &str) -> String {
+        let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        format!("{scheme}://{authority}").to_ascii_lowercase()
+    }
+    a.kind == b.kind && a.user == b.user && origin(&a.url) == origin(&b.url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_secret_stays_with_its_login() {
+        let cfg = |kind: &str, url: &str, user: &str| SourceConfig {
+            kind: kind.into(),
+            url: url.into(),
+            user: user.into(),
+            ..Default::default()
+        };
+        let a = cfg("jellyfin", "https://music.example/jf", "anna");
+        assert!(same_login(
+            &a,
+            &cfg("jellyfin", "https://MUSIC.example/other", "anna")
+        ));
+        assert!(!same_login(
+            &a,
+            &cfg("jellyfin", "https://evil.example/jf", "anna")
+        ));
+        assert!(!same_login(
+            &a,
+            &cfg("jellyfin", "http://music.example/jf", "anna")
+        ));
+        assert!(!same_login(
+            &a,
+            &cfg("jellyfin", "https://music.example:8443/jf", "anna")
+        ));
+        assert!(!same_login(
+            &a,
+            &cfg("subsonic", "https://music.example/jf", "anna")
+        ));
+        assert!(!same_login(
+            &a,
+            &cfg("jellyfin", "https://music.example/jf", "ben")
+        ));
     }
 }

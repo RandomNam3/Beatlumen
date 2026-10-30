@@ -84,6 +84,14 @@ pub struct Url {
 impl Url {
     pub fn parse(s: &str) -> Result<Url, String> {
         let s = s.trim();
+        // The URL goes into the request line: line breaks or other control
+        // characters would add headers or requests of their own.
+        if s.chars().any(|c| c.is_control()) {
+            return Err("invalid URL (control characters)".into());
+        }
+        // Spaces (as in hand-written playlists) are sent encoded.
+        let spaced = s.contains(' ').then(|| s.replace(' ', "%20"));
+        let s = spaced.as_deref().unwrap_or(s);
         let (scheme, rest) = s
             .split_once("://")
             .ok_or_else(|| format!("invalid URL (missing scheme): {s}"))?;
@@ -539,6 +547,15 @@ impl Seek for HttpStream {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn urls_cannot_add_headers() {
+        assert!(Url::parse("http://h/a.mp3 HTTP/1.1\r\nX-Injected: yes").is_err());
+        assert!(Url::parse("http://h/a\nb").is_err());
+        assert!(Url::parse("http://h/a\u{7f}").is_err());
+        let u = Url::parse("http://h/My Song.mp3").unwrap();
+        assert_eq!(u.path, "/My%20Song.mp3");
+    }
+
     use super::*;
 
     #[test]

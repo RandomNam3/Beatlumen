@@ -704,6 +704,13 @@ impl Core {
                     enabled: c.bool_or("enabled", true),
                     cfg,
                 };
+                // The stored secret only goes to the same login at the same
+                // place: a changed address asks for it again.
+                if let Some(i) = existing {
+                    if !same_login(&self.sources.list[i].cfg, &s.cfg) {
+                        self.sources.secrets.remove(&id);
+                    }
+                }
                 match existing {
                     Some(i) => self.sources.list[i] = s,
                     None => self.sources.list.push(s),
@@ -974,4 +981,14 @@ impl Core {
             }
         }
     }
+}
+/// Whether two source settings log in as the same user at the same place
+/// (kind, user and the scheme, host and port of the address).
+fn same_login(a: &SourceConfig, b: &SourceConfig) -> bool {
+    fn origin(url: &str) -> String {
+        let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        format!("{scheme}://{authority}").to_ascii_lowercase()
+    }
+    a.kind == b.kind && a.user == b.user && origin(&a.url) == origin(&b.url)
 }

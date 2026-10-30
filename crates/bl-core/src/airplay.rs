@@ -108,6 +108,7 @@ impl Core {
             name: name.clone(),
             id,
             password,
+            airplay2: self.settings.airplay2,
         }) {
             Ok(r) => r,
             Err(e) => {

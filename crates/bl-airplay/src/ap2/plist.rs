@@ -99,6 +99,10 @@ struct Reader<'a> {
     count: usize,
     table: usize,
     nodes: usize,
+    /// Bytes of data and strings that may still be decoded: shared
+    /// references copy them again, so this keeps the result near the
+    /// size of the input.
+    budget: usize,
 }
 
 fn be(bytes: &[u8]) -> u64 {
@@ -116,6 +120,12 @@ impl Reader<'_> {
             return Err("object offset out of range");
         }
         Ok(off)
+    }
+
+    /// Counts `n` decoded bytes against the budget.
+    fn charge(&mut self, n: usize) -> Result<(), &'static str> {
+        self.budget = self.budget.checked_sub(n).ok_or("too much data")?;
+        Ok(())
     }
 
     fn bytes(&self, at: usize, len: usize) -> Result<&[u8], &'static str> {
@@ -187,14 +197,17 @@ impl Reader<'_> {
             )),
             0x4 => {
                 let (n, at) = self.count_at(pos, nibble)?;
+                self.charge(n)?;
                 Value::Data(self.bytes(at, n)?.to_vec())
             }
             0x5 => {
                 let (n, at) = self.count_at(pos, nibble)?;
+                self.charge(n)?;
                 Value::String(String::from_utf8_lossy(self.bytes(at, n)?).into_owned())
             }
             0x6 => {
                 let (n, at) = self.count_at(pos, nibble)?;
+                self.charge(n.saturating_mul(2))?;
                 let b = self.bytes(at, n.checked_mul(2).ok_or("length too large")?)?;
                 let units: Vec<u16> = b
                     .chunks_exact(2)
@@ -266,6 +279,7 @@ pub fn parse(data: &[u8]) -> Result<Value, &'static str> {
         count: count as usize,
         table: table as usize,
         nodes: 0,
+        budget: data.len().saturating_mul(2).saturating_add(64 * 1024),
     };
     r.object(top as usize, 0)
 }
@@ -545,5 +559,33 @@ mod tests {
         wide.extend_from_slice(&0u64.to_be_bytes());
         wide.extend_from_slice(&table.to_be_bytes());
         assert!(parse(&wide).is_err());
+    }
+
+    #[test]
+    fn shared_data_cannot_expand_the_input() {
+        // Object 0: 64 KiB of data; object 1: an array of 50 000 references
+        // to it (3 GB when each is copied).
+        let mut p = b"bplist00".to_vec();
+        let data_at = p.len() as u32;
+        p.extend_from_slice(&[0x4f, 0x12]);
+        p.extend_from_slice(&65536u32.to_be_bytes());
+        p.extend(std::iter::repeat(7u8).take(65536));
+        let array_at = p.len() as u32;
+        p.extend_from_slice(&[0xaf, 0x12]);
+        p.extend_from_slice(&50_000u32.to_be_bytes());
+        for _ in 0..50_000 {
+            p.extend_from_slice(&[0, 0]);
+        }
+        let table = p.len() as u64;
+        p.extend_from_slice(&data_at.to_be_bytes());
+        p.extend_from_slice(&array_at.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0, 0, 0, 4, 2]);
+        p.extend_from_slice(&2u64.to_be_bytes());
+        p.extend_from_slice(&1u64.to_be_bytes());
+        p.extend_from_slice(&table.to_be_bytes());
+        assert_eq!(parse(&p), Err("too much data"));
+        // A few references are fine.
+        let small = Value::Array(vec![Value::Data(vec![1; 1000]); 3]);
+        assert_eq!(parse(&write(&small)).unwrap(), small);
     }
 }

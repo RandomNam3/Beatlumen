@@ -373,8 +373,13 @@ impl Admin {
     /// Logs in with the admin password; returns the session token.
     fn login(&self, pw: &str, ip: IpAddr) -> Result<String, (u16, String)> {
         self.guard(ip)?;
-        let _serial = self.check_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if !self.check_password(pw) {
+        // One password check at a time; the delay after a failure comes
+        // after it, so others are not held up.
+        let ok = {
+            let _serial = self.check_lock.lock().unwrap_or_else(|e| e.into_inner());
+            self.check_password(pw)
+        };
+        if !ok {
             self.failed(ip);
             return Err((401, "wrong password".into()));
         }
@@ -475,10 +480,10 @@ fn body(req: &Request) -> Result<Value, (u16, String)> {
     bl_json::parse_bytes(&req.body).map_err(|e| (400, format!("invalid JSON: {e}")))
 }
 
+/// The client's address (behind a reverse proxy on the same machine, the
+/// one it forwards), so a proxy's address is not blocked for everyone.
 fn ip_of(req: &Request) -> IpAddr {
-    req.remote
-        .map(|a| a.ip())
-        .unwrap_or(IpAddr::from([0, 0, 0, 0]))
+    crate::routes::client_ip(req).unwrap_or(IpAddr::from([0, 0, 0, 0]))
 }
 
 /// The session cookie; `Secure` when the request came over HTTPS.

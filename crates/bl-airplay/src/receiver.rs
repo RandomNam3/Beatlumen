@@ -31,6 +31,9 @@ pub struct Config {
     pub id: [u8; 6],
     /// Required password (none = open to the local network).
     pub password: Option<String>,
+    /// Answer AirPlay 2 requests (pairing, buffered streams); off, only
+    /// AirPlay 1 is reachable.
+    pub airplay2: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,6 +71,32 @@ struct Shared {
     /// AirPlay 2 identity (a new key per start) and paired controllers.
     identity: Identity,
     pairings: Pairings,
+    /// Pairing attempts one at a time, with failed ones counted across all
+    /// connections (slows down guessing the password).
+    pair_gate: Mutex<PairGate>,
+}
+
+#[derive(Default)]
+pub(crate) struct PairGate {
+    pub(crate) failures: u32,
+    pub(crate) last: Option<std::time::Instant>,
+}
+
+impl PairGate {
+    /// Counts a failed attempt; returns how long to wait before answering
+    /// (1 s, doubling every 10 failures up to 30 s; forgotten after 10
+    /// quiet minutes).
+    pub(crate) fn failed(&mut self) -> Duration {
+        if self
+            .last
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(600))
+        {
+            self.failures = 0;
+        }
+        self.failures += 1;
+        self.last = Some(std::time::Instant::now());
+        Duration::from_secs((1u64 << (self.failures / 10).min(5)).min(30))
+    }
 }
 
 impl Shared {
@@ -106,6 +135,7 @@ impl Receiver {
         let shared = Arc::new(Shared {
             identity,
             pairings: Pairings::default(),
+            pair_gate: Mutex::new(PairGate::default()),
             config,
             stream: LiveStream::new(),
             events: Mutex::new(tx),
@@ -548,5 +578,19 @@ impl<'a> Connection<'a> {
                 == 0;
         self.authorized = ok;
         ok
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_pairings_slow_down() {
+        let mut g = PairGate::default();
+        let waits: Vec<u64> = (0..60).map(|_| g.failed().as_secs()).collect();
+        assert_eq!(waits[0], 1);
+        assert_eq!(waits[10], 2);
+        assert_eq!(waits[59], 30);
     }
 }

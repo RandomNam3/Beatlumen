@@ -14,6 +14,7 @@ fn main() {
         name: "Beatlumen Test".into(),
         id: [0x0a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f],
         password,
+        airplay2: false,
     })
     .expect("start receiver");
     let _mdns = args.iter().any(|a| a == "--mdns").then(|| {

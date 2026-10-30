@@ -504,6 +504,49 @@ fn admin_interface() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Behind a reverse proxy every client has the proxy's address: wrong
+/// passwords from one client do not block the others.
+#[test]
+fn login_limit_per_forwarded_client() {
+    let root = temp("proxy");
+    let data = root.join("data");
+    let server = beatlumen_server::start(Config {
+        data_dir: data.clone(),
+        bind: "127.0.0.1:0".into(),
+        rescan_interval: 0,
+        ..Default::default()
+    })
+    .unwrap();
+    let http = Http {
+        base: format!("http://{}/api/admin/", server.addr),
+        cookie: None,
+    };
+    let token = beatlumen_server::admin::create_setup_token(&data, 3600).unwrap();
+    let setup = Value::object()
+        .with("token", token.as_str())
+        .with("password", "a long enough password");
+    assert_eq!(http.json("POST", "setup", Some(setup)).0, 200);
+    let login = |pw: &str, from: &str| {
+        http.req(
+            "POST",
+            "login",
+            Some(Value::object().with("password", pw)),
+            &[("X-Forwarded-For", from)],
+        )
+        .status
+    };
+    let mut blocked = false;
+    for _ in 0..12 {
+        if login("wrong password", "203.0.113.7") == 429 {
+            blocked = true;
+            break;
+        }
+    }
+    assert!(blocked, "the guessing client is blocked");
+    assert_eq!(login("a long enough password", "198.51.100.2"), 200);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A real model through the download: checked and switched to. Needs the
 /// tiny model file: `BL_SPEECH_MODEL_TINY=ggml-tiny.bin cargo test
 /// --release --test admin -- --ignored`.

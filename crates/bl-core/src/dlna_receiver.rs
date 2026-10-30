@@ -206,7 +206,9 @@ impl Core {
     /// known, held while the user is asked about a new one.
     fn dlna_from(&mut self, host: &mut dyn Host, c: Command, client: Client) {
         let ip = client.ip;
-        let known = ip.is_loopback()
+        // This device itself is trusted on desktops; on Android any other
+        // app could send commands from there, so it is asked about too.
+        let known = (ip.is_loopback() && host.platform() != "android")
             || self.dlna.allowed_now.contains(&ip)
             || self.settings.dlna_allowed.contains(&ip.to_string());
         if known {

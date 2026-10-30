@@ -93,6 +93,9 @@ impl Connection<'_> {
         req: &Request,
         local: Option<SocketAddr>,
     ) -> Option<Response> {
+        if !self.shared.config.airplay2 {
+            return None;
+        }
         let plist_body = req.content_type().starts_with(BPLIST);
         Some(match (req.method.as_str(), req.uri.as_str()) {
             ("GET", "/info") => self.info(),
@@ -103,12 +106,19 @@ impl Connection<'_> {
                     .password
                     .as_deref()
                     .unwrap_or(TRANSIENT_PIN);
+                let shared = self.shared;
+                let mut gate = shared.pair_gate.lock().unwrap_or_else(|e| e.into_inner());
                 let r = self.ap2.setup.handle(
                     &req.body,
                     pin,
                     &self.shared.identity,
                     &self.shared.pairings,
                 );
+                if r.failed {
+                    // Others wait too: guesses do not add up over connections.
+                    std::thread::sleep(gate.failed());
+                }
+                drop(gate);
                 self.paired(r)
             }
             ("POST", "/pair-verify") => {
@@ -116,6 +126,9 @@ impl Connection<'_> {
                     self.ap2
                         .verify
                         .handle(&req.body, &self.shared.identity, &self.shared.pairings);
+                if r.failed {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
                 self.paired(r)
             }
             // FairPlay and MFi authentication are not available.
@@ -143,10 +156,6 @@ impl Connection<'_> {
     }
 
     fn paired(&mut self, r: Reply) -> Response {
-        if r.failed {
-            // Slows down guessing a password.
-            std::thread::sleep(Duration::from_secs(1));
-        }
         if let Some(secret) = r.secret {
             self.ap2.paired = true;
             self.ap2.pending_secret = Some(secret);
@@ -596,8 +605,30 @@ mod tests {
             name: "Test".into(),
             id: [2, 1, 2, 3, 4, 5],
             password: None,
+            airplay2: true,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn airplay2_off_answers_airplay1_only() {
+        let rx = Receiver::start(Config {
+            name: "Test".into(),
+            id: [2, 1, 2, 3, 4, 7],
+            password: None,
+            airplay2: false,
+        })
+        .unwrap();
+        let mut tx = Sender::connect(rx.port());
+        let r = tx.request(
+            "POST",
+            "/pair-setup",
+            "application/octet-stream",
+            &[0, 1, 0],
+        );
+        assert_ne!(r.status, 200);
+        let r = tx.request("GET", "/info", "application/octet-stream", &[]);
+        assert_ne!(r.status, 200);
     }
 
     /// Pairs transiently and sets up the session; the encrypted sender.
@@ -729,6 +760,7 @@ mod tests {
             name: "Test".into(),
             id: [2, 1, 2, 3, 4, 6],
             password: Some("geheim".into()),
+            airplay2: true,
         })
         .unwrap();
         assert!(rx.airplay_txt().contains(&"flags=0x84".to_string()));

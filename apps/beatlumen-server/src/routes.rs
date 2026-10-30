@@ -50,6 +50,11 @@ fn host_allowed(state: &State, host: &str) -> bool {
             .iter()
             .any(|s| h.ends_with(s))
         || state.config().allowed_hosts.contains(&h)
+        || state.config().public_url.as_deref().is_some_and(|u| {
+            let rest = u.split_once("://").map_or(u, |(_, r)| r);
+            let authority = rest.split('/').next().unwrap_or("");
+            host_name(authority).eq_ignore_ascii_case(&h)
+        })
 }
 
 /// Strips the port from a `Host` header value (`[v6]:port`, `name:port`).
@@ -67,10 +72,12 @@ fn host_name(v: &str) -> &str {
 }
 
 /// Rejects requests from other web sites: cross-site writes (CSRF) always,
-/// unknown host names (DNS rebinding) when no password protects the server.
+/// unknown host names (DNS rebinding) when no password protects the server
+/// and always for the admin interface.
 fn check_origin(state: &State, req: &Request) -> Result<(), Response> {
     let host = req.header("host").unwrap_or("");
-    if !state.auth.required() && !host_allowed(state, host_name(host)) {
+    let admin = req.path.starts_with("/admin") || req.path.starts_with("/api/admin");
+    if (admin || !state.auth.required()) && !host_allowed(state, host_name(host)) {
         crate::warn!("refused request for unknown host name {host:?} (allow it with --allow-host)");
         return Err(Response::error(
             421,
@@ -437,7 +444,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
 /// The client address used for login rate limiting. Behind a reverse proxy
 /// on the same machine (peer is loopback) the proxy's `X-Forwarded-For` /
 /// `X-Real-IP` is used; remote peers cannot spoof it.
-fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
+pub(crate) fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
     let peer = req.remote.map(|a| a.ip())?;
     if peer.is_loopback() {
         let forwarded = req
