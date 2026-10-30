@@ -94,7 +94,11 @@ fn attention(
         res
     };
     let work = nq * nk * dim;
-    let threads = if work < 1 << 20 { 1 } else { threads().min(tasks.len()) };
+    let threads = if work < 1 << 20 {
+        1
+    } else {
+        threads().min(tasks.len())
+    };
     let parts: Vec<Vec<(usize, usize, Vec<f32>)>> = if threads <= 1 {
         vec![run(&tasks)]
     } else {

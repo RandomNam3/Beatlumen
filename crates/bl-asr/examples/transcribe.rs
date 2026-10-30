@@ -48,7 +48,13 @@ fn main() {
                     .iter()
                     .map(|(t, p)| format!("{t:.2}:{p}"))
                     .collect();
-                println!("    {:6.2} - {:6.2} {} {}", w.start, w.end, w.text, pieces.join(" "));
+                println!(
+                    "    {:6.2} - {:6.2} {} {}",
+                    w.start,
+                    w.end,
+                    w.text,
+                    pieces.join(" ")
+                );
             }
         }
     }

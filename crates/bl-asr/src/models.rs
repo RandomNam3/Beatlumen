@@ -109,11 +109,14 @@ pub fn rank(id: &str) -> usize {
 
 /// The catalog id of a model file (by its file name), or the file's name.
 pub fn id_of(path: &std::path::Path) -> String {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-    CATALOG
-        .iter()
-        .find(|m| m.file == name)
-        .map_or_else(|| name.trim_end_matches(".bin").to_string(), |m| m.id.to_string())
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    CATALOG.iter().find(|m| m.file == name).map_or_else(
+        || name.trim_end_matches(".bin").to_string(),
+        |m| m.id.to_string(),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]

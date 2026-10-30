@@ -100,7 +100,10 @@ fn song_text_timed_on_the_device() {
     );
     // Where it is kept, and with which model.
     let origin = l.str_or("origin", "");
-    assert!(origin.contains("this device") && origin.contains("tiny"), "{origin}");
+    assert!(
+        origin.contains("this device") && origin.contains("tiny"),
+        "{origin}"
+    );
 }
 
 /// All songs of the device at once: one with line times (LRC) gets word
@@ -174,9 +177,17 @@ fn all_songs_timed_on_the_device() {
         let first = l.get("lines").at(0);
         if name == "Lines" {
             // The line times of the LRC file stay.
-            assert!((first.f64_or("t", 0.0) - 0.3).abs() < 0.01, "{}", l.to_json());
+            assert!(
+                (first.f64_or("t", 0.0) - 0.3).abs() < 0.01,
+                "{}",
+                l.to_json()
+            );
         }
-        assert!(first.str_or("text", "").starts_with("And so"), "{}", l.to_json());
+        assert!(
+            first.str_or("text", "").starts_with("And so"),
+            "{}",
+            l.to_json()
+        );
     }
     // Done with this model: nothing left.
     let r = app.cmd(Value::object().with("cmd", "speech.runAll"));

@@ -265,7 +265,9 @@ impl Core {
             return Err(self.tr("Pick a speech model first").to_string());
         };
         let Some(opener) = self.speech_opener(host, id) else {
-            return Err(self.tr("This song cannot be read on this device").to_string());
+            return Err(self
+                .tr("This song cannot be read on this device")
+                .to_string());
         };
         let progress = Arc::new(AtomicU32::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -298,8 +300,16 @@ impl Core {
             let res = if keep {
                 Ok(None)
             } else {
-                recognize(&loaded, &model_path, &model_id, opener, text, &progress, &cancel)
-                    .map(Some)
+                recognize(
+                    &loaded,
+                    &model_path,
+                    &model_id,
+                    opener,
+                    text,
+                    &progress,
+                    &cancel,
+                )
+                .map(Some)
             };
             results.post((id, res));
         }));

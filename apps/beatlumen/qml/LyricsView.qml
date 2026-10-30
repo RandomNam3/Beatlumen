@@ -33,6 +33,27 @@ Item {
     // Following the song pauses while the user scrolls.
     property bool follow: true
 
+    // Voices: their own tint (the first stays white); backing voices (in
+    // parentheses) dimmer and slanted.
+    function voiceColor(v) {
+        return v === 2 ? "#a8e8ff" : v === 3 ? "#ffd59a" : v >= 4 ? "#d6b8ff" : "white"
+    }
+    // A singer's name before the line: the voice's tint, dimmed.
+    function nameColor(v) {
+        return v === 2 ? "#99a8e8ff" : v === 3 ? "#99ffd59a" : v >= 4 ? "#99d6b8ff" : "#99ffffff"
+    }
+    function esc(s) {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    }
+    // A line as styled text (everything from the file is escaped).
+    function styled(line) {
+        const parts = line.parts || [{ s: line.text, b: false }]
+        let out = parts.map(p => p.b ? "<i><font color=\"#b3ffffff\">" + esc(p.s) + "</font></i>" : esc(p.s)).join("")
+        if (line.who)
+            out = "<font color=\"" + nameColor(line.v || 1) + "\" size=\"2\">" + esc(line.who) + " · </font>" + out
+        return out
+    }
+
     function load() {
         if (visible)
             info = Core.call("lyrics.get") || { status: "none" }
@@ -101,10 +122,10 @@ Item {
                 id: lineText
                 visible: !(row.isCurrent && words.active)
                 width: parent.width
-                textFormat: Text.PlainText
-                text: row.modelData.text === "" && lv.synced ? "♪" : row.modelData.text
+                textFormat: Text.StyledText
+                text: row.modelData.text === "" && lv.synced ? "♪" : lv.styled(row.modelData)
                 wrapMode: Text.WordWrap
-                color: "white"
+                color: lv.voiceColor(row.modelData.v || 0)
                 font.pixelSize: lv.synced ? (lv.compact ? 22 : 30) : (lv.compact ? 17 : 21)
                 font.weight: row.isCurrent ? Font.Bold : Font.DemiBold
                 style: Text.Raised
@@ -118,6 +139,15 @@ Item {
                 readonly property bool active: row.isCurrent && (row.modelData.words || []).length > 0
                 visible: active
                 width: parent.width
+                Label {
+                    visible: !!row.modelData.who
+                    textFormat: Text.PlainText
+                    text: (row.modelData.who || "") + " · "
+                    color: lv.nameColor(row.modelData.v || 1)
+                    font.pixelSize: lineText.font.pixelSize * 0.6
+                    style: Text.Raised
+                    styleColor: Qt.rgba(0, 0, 0, 0.4)
+                }
                 Repeater {
                     model: words.active ? row.modelData.words : []
                     Item {
@@ -134,8 +164,11 @@ Item {
                             id: base
                             textFormat: Text.PlainText
                             text: piece.modelData.w
-                            color: "white"
-                            font: lineText.font
+                            color: lv.voiceColor(row.modelData.v || 0)
+                            opacity: piece.modelData.b ? 0.75 : 1
+                            font.italic: piece.modelData.b === true
+                            font.pixelSize: lineText.font.pixelSize
+                            font.weight: lineText.font.weight
                             style: Text.Raised
                             styleColor: Qt.rgba(0, 0, 0, 0.4)
                         }
@@ -148,7 +181,9 @@ Item {
                                 textFormat: Text.PlainText
                                 text: piece.modelData.w
                                 color: Theme.accent
-                                font: lineText.font
+                                font.italic: piece.modelData.b === true
+                                font.pixelSize: lineText.font.pixelSize
+                                font.weight: lineText.font.weight
                                 style: Text.Raised
                                 styleColor: Qt.rgba(0, 0, 0, 0.4)
                             }
@@ -242,19 +277,26 @@ Item {
     }
 
     // Where the text comes from and where it is kept.
-    Label {
-        anchors.left: parent.left
-        anchors.right: removeButton.visible ? removeButton.left : parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 8
+    Rectangle {
+        x: 8
+        y: 8
+        width: Math.min(originLabel.implicitWidth + 20, parent.width - 176)
+        height: originLabel.implicitHeight + 8
+        radius: height / 2
+        color: Qt.rgba(0, 0, 0, 0.5)
         visible: lv.ready && lv.controlsVisible && (lv.info.origin || "") !== "" && !lv.sync
-        textFormat: Text.PlainText
-        text: lv.info.origin || ""
-        elide: Text.ElideRight
-        color: Qt.rgba(1, 1, 1, 0.7)
-        font.pixelSize: 12
-        style: Text.Raised
-        styleColor: Qt.rgba(0, 0, 0, 0.4)
+        Label {
+            id: originLabel
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            text: lv.info.origin || ""
+            elide: Text.ElideRight
+            color: Qt.rgba(1, 1, 1, 0.8)
+            font.pixelSize: 12
+        }
     }
 
     IconButton {

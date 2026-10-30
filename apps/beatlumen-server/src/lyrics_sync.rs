@@ -79,8 +79,14 @@ impl LyricsSync {
 
     /// Switches the model and the automatic run (admin interface).
     pub fn configure(&self, model: Option<PathBuf>, auto: bool) {
-        *self.model_path.write().unwrap_or_else(|e| e.into_inner()) = model;
-        if auto && !self.auto.swap(true, Ordering::Relaxed) {
+        let changed = {
+            let mut m = self.model_path.write().unwrap_or_else(|e| e.into_inner());
+            let changed = *m != model;
+            *m = model;
+            changed
+        };
+        // Turned on, or another model: every song is looked at again.
+        if auto && (!self.auto.swap(true, Ordering::Relaxed) || changed) {
             self.inner
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -331,9 +337,9 @@ impl LyricsSync {
                 let current = self.model().map(|p| bl_asr::models::id_of(&p));
                 let good = bl_asr::sync::made_with(&done).is_some_and(|(v, m)| {
                     v >= bl_asr::sync::VERSION
-                        && current
-                            .as_deref()
-                            .map_or(true, |c| bl_asr::models::rank(&m) >= bl_asr::models::rank(c))
+                        && current.as_deref().map_or(true, |c| {
+                            bl_asr::models::rank(&m) >= bl_asr::models::rank(c)
+                        })
                 });
                 if good {
                     continue;

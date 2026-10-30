@@ -47,8 +47,11 @@ pub fn made_with(lrc: &str) -> Option<(u32, String)> {
 /// Whether an LRC text has word times (`<mm:ss.xx>`).
 pub fn has_word_times(lrc: &str) -> bool {
     lrc.lines().any(|l| {
-        l.match_indices('<')
-            .any(|(i, _)| l[i + 1..].split_once('>').is_some_and(|(t, _)| parse_time(t).is_some()))
+        l.match_indices('<').any(|(i, _)| {
+            l[i + 1..]
+                .split_once('>')
+                .is_some_and(|(t, _)| parse_time(t).is_some())
+        })
     })
 }
 
@@ -76,17 +79,16 @@ pub fn time_song(
     if let Some(lrc) = text.and_then(lrc_lines) {
         let lrc_text = text.unwrap_or_default();
         let head = creator_tag(model_id) + &header(lrc_text);
-        return time_lines(&t, samples, &lrc, head, song_end, progress)
-            .map(|lrc| Timed {
-                lrc,
-                written_down: false,
-            });
+        return time_lines(&t, samples, &lrc, head, song_end, progress).map(|lrc| Timed {
+            lrc,
+            written_down: false,
+        });
     }
     let prompt = text.map(|t| {
         let words: Vec<&str> = t.split_whitespace().collect();
         words[words.len().saturating_sub(120)..].join(" ")
     });
-    let share = if text.is_some() { 0.6 } else { 1.0 };
+    let share = 0.6;
     let mut first = |p: f32| progress(p * share);
     let segments = t
         .transcribe(
@@ -112,7 +114,15 @@ pub fn time_song(
             }
             let lines = lrc_lines(&lines).unwrap_or_default();
             let mut rest = |p: f32| progress(share + p * (1.0 - share));
-            time_lines(&t, samples, &lines, creator_tag(model_id), song_end, &mut rest).map(|lrc| Timed {
+            time_lines(
+                &t,
+                samples,
+                &lines,
+                creator_tag(model_id),
+                song_end,
+                &mut rest,
+            )
+            .map(|lrc| Timed {
                 lrc,
                 written_down: false,
             })
@@ -122,8 +132,20 @@ pub fn time_song(
             if conf < MIN_CONFIDENCE {
                 return Err("the words could not be recognised reliably".into());
             }
-            Ok(Timed {
-                lrc: creator_tag(model_id) + &segments_to_lrc_words(&segments),
+            // The written-down lines are timed like a given text (word
+            // times and voices).
+            let lines = lrc_lines(&segments_to_lrc_words(&segments)).unwrap_or_default();
+            let mut rest = |p: f32| progress(share + p * (1.0 - share));
+            time_lines(
+                &t,
+                samples,
+                &lines,
+                creator_tag(model_id),
+                song_end,
+                &mut rest,
+            )
+            .map(|lrc| Timed {
+                lrc,
                 written_down: true,
             })
         }
@@ -275,7 +297,11 @@ mod tests {
         assert_eq!(strip_word_times("a <b> c"), "a <b> c");
         let tag = creator_tag("small-q5_1");
         assert_eq!(made_with(&tag), Some((VERSION, "small-q5_1".to_string())));
-        assert_eq!(header(&(tag + "[ar:X]\n")), "[ar:X]\n", "an old tag is replaced");
+        assert_eq!(
+            header(&(tag + "[ar:X]\n")),
+            "[ar:X]\n",
+            "an old tag is replaced"
+        );
         assert!(has_word_times("[00:01.00]<00:01.00>a <00:01.50>b"));
         assert!(!has_word_times("[00:01.00]a <b>"));
     }

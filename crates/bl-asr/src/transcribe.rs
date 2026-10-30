@@ -228,12 +228,12 @@ impl<'a> Transcriber<'a> {
                 let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ (seek as u64) << 8 ^ attempt as u64);
                 let d = self.decode_window(&mut dec, &prefix, lang, temp, &mut rng)?;
                 let silent = d.no_speech > NO_SPEECH && d.avg_logprob < MIN_LOGPROB;
-                let good = !d.looped
-                    && d.compression <= MAX_COMPRESSION
-                    && d.avg_logprob >= MIN_LOGPROB;
+                let good =
+                    !d.looped && d.compression <= MAX_COMPRESSION && d.avg_logprob >= MIN_LOGPROB;
                 let done = good || silent;
                 // Keep the best try: one without repetition, then the surest.
-                let worse = |x: &Decoded| (x.looped || x.compression > MAX_COMPRESSION, -x.avg_logprob);
+                let worse =
+                    |x: &Decoded| (x.looped || x.compression > MAX_COMPRESSION, -x.avg_logprob);
                 let better = !best.as_ref().is_some_and(|b| worse(b) <= worse(&d));
                 if better || done {
                     best = Some(d);
@@ -277,7 +277,8 @@ impl<'a> Transcriber<'a> {
                             if !text_tokens.is_empty() {
                                 let text = self.decode_text(&text_tokens).trim().to_string();
                                 if !text.is_empty() {
-                                    ranges.push((all_text.len(), all_text.len() + text_tokens.len()));
+                                    ranges
+                                        .push((all_text.len(), all_text.len() + text_tokens.len()));
                                     all_text.extend_from_slice(&text_tokens);
                                     segments.push(Segment {
                                         start: seek_secs + s,
@@ -399,7 +400,9 @@ impl<'a> Transcriber<'a> {
                 }
             })
             .collect();
-        let todo: Vec<usize> = (0..lines.len()).filter(|&i| !tokens[i].is_empty()).collect();
+        let todo: Vec<usize> = (0..lines.len())
+            .filter(|&i| !tokens[i].is_empty())
+            .collect();
         let max_tokens = p.n_text_ctx - 8;
         let mut k = 0;
         while k < todo.len() {
@@ -538,7 +541,9 @@ impl<'a> Transcriber<'a> {
                 if let Some(p) = parts.last_mut() {
                     p.1 = p.1.trim_end().to_string();
                 }
-                if parts.len() < 2 || parts.iter().map(|p| p.1.as_str()).collect::<String>() != trimmed {
+                if parts.len() < 2
+                    || parts.iter().map(|p| p.1.as_str()).collect::<String>() != trimmed
+                {
                     parts.clear();
                 }
                 Some((
@@ -557,7 +562,8 @@ impl<'a> Transcriber<'a> {
     fn best_language(&self, logits: &[f32]) -> u32 {
         let best = (0..self.sp.n_lang)
             .max_by(|&a, &b| {
-                logits[(self.sp.lang0 + a) as usize].total_cmp(&logits[(self.sp.lang0 + b) as usize])
+                logits[(self.sp.lang0 + a) as usize]
+                    .total_cmp(&logits[(self.sp.lang0 + b) as usize])
             })
             .unwrap_or(0);
         self.sp.lang0 + best
@@ -609,7 +615,13 @@ impl<'a> Transcriber<'a> {
         let mut tokens: Vec<u32> = Vec::new();
         let mut lps = Vec::new();
         let mut looped = false;
-        let max_len = self.m.params.n_text_ctx / 2;
+        // What fits after the prompt (it may take half the context).
+        let room = self
+            .m
+            .params
+            .n_text_ctx
+            .saturating_sub(prefix.len() + task.len() + 1);
+        let max_len = (self.m.params.n_text_ctx / 2).min(room);
         for step in 0..max_len {
             // Suppress special tokens except <eot> and timestamps.
             for t in sp.eot + 1..sp.ts_begin {
@@ -884,7 +896,11 @@ mod tests {
         assert!(compression_ratio(looped.as_bytes()) > 10.0);
         // zlib: 2.21 (a chorus said twice is no loop), 4.89 and 27.8.
         let chorus = "Haven't I made it obvious? Haven't I made it clear? ".repeat(2);
-        assert!(compression_ratio(chorus.as_bytes()) < 2.4, "{}", compression_ratio(chorus.as_bytes()));
+        assert!(
+            compression_ratio(chorus.as_bytes()) < 2.4,
+            "{}",
+            compression_ratio(chorus.as_bytes())
+        );
         let ready = "I'm ready, I'm ready. ".repeat(6);
         assert!(compression_ratio(ready.as_bytes()) > 3.0);
     }

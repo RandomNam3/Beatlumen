@@ -108,8 +108,8 @@
     "Address": "Adresse",
     "Add": "Hinzufügen",
     "Remove": "Entfernen",
+    "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped.": "Synchronisiert die Songtexte aller Songs im Hintergrund, mit der Hälfte der Prozessorkerne. Songs, die schon mit demselben oder einem besseren Modell erkannt wurden, werden übersprungen.",
     "Time the whole library": "Ganze Bibliothek synchronisieren",
-    "Times the song texts of all songs in the background, on half of the processor cores.": "Synchronisiert die Songtexte aller Titel im Hintergrund, auf der Hälfte der Prozessorkerne.",
     "Detailed log": "Ausführliches Protokoll",
     "Logs every request.": "Protokolliert jede Anfrage.",
     "Set by %1": "Festgelegt durch %1",
@@ -441,7 +441,7 @@
     pushAllowPrivate: { label: "Push services in the local network", type: "switch", hint: "Allow UnifiedPush servers in private networks and over plain http." },
     sourceUrl: { label: "Source code link", type: "text", hint: "Required by the AGPL when you run a modified version for others." },
     extensions: { label: "Extensions", type: "map", hint: "Source extensions: a name and the address the extension listens on." },
-    autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores." },
+    autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped." },
     verbose: { label: "Detailed log", type: "switch", hint: "Logs every request." },
   };
 

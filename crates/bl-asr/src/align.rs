@@ -264,7 +264,10 @@ fn split_lines(s: &Segment) -> Vec<Vec<Word>> {
     for (i, w) in words.iter().enumerate() {
         len += w.text.chars().count() + usize::from(!line.is_empty());
         line.push(w.clone());
-        let rest: usize = words[i + 1..].iter().map(|w| w.text.chars().count() + 1).sum();
+        let rest: usize = words[i + 1..]
+            .iter()
+            .map(|w| w.text.chars().count() + 1)
+            .sum();
         let breaks = w.text.ends_with(['.', ',', '!', '?', ';', ':']);
         // Sung lines often come without punctuation: a pause after the word,
         // or a capital starting the next one, ends a line too.
@@ -278,10 +281,7 @@ fn split_lines(s: &Segment) -> Vec<Vec<Word>> {
         let new_line = capital && len >= LINE_CHARS * 3 / 4;
         if i + 1 < words.len()
             && rest >= LINE_CHARS / 4
-            && (pause
-                || new_line
-                || (breaks && len >= LINE_CHARS)
-                || len >= 2 * LINE_CHARS)
+            && (pause || new_line || (breaks && len >= LINE_CHARS) || len >= 2 * LINE_CHARS)
         {
             lines.push(std::mem::take(&mut line));
             len = 0;
@@ -361,7 +361,10 @@ fn segments_lrc(segments: &[Segment], word_times: bool) -> String {
         .map(|(i, words)| {
             let t = words.first().map_or(0.0, |w| w.start);
             if word_times {
-                let end = split.get(i + 1).and_then(|l| l.first()).map_or(t + 10.0, |w| w.start);
+                let end = split
+                    .get(i + 1)
+                    .and_then(|l| l.first())
+                    .map_or(t + 10.0, |w| w.start);
                 (t, words_line(words, end))
             } else {
                 let text: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();

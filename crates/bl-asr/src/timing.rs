@@ -44,7 +44,10 @@ fn focus(w: &[f32], rows: usize, stride: usize, frames: usize) -> f32 {
         peaks.push(i);
     }
     let forward = peaks.windows(2).filter(|p| p[1] >= p[0]).count() as f32 / (rows - 1) as f32;
-    let (lo, hi) = (peaks.iter().min().copied().unwrap_or(0), peaks.iter().max().copied().unwrap_or(0));
+    let (lo, hi) = (
+        peaks.iter().min().copied().unwrap_or(0),
+        peaks.iter().max().copied().unwrap_or(0),
+    );
     let cover = (hi - lo) as f32 / frames as f32;
     peak_sum / rows as f32 * forward * cover
 }
@@ -203,7 +206,12 @@ pub fn frame_energy(samples: &[f32]) -> Vec<f32> {
 /// parts near the start of a row's stretch, the row starts after the
 /// quiet part and the row before ends where it began. Only stretches
 /// longer than `min_len` frames change.
-pub fn refine_starts(energy: &[f32], starts: &mut [usize], ends_at: usize, min_len: usize) -> Vec<usize> {
+pub fn refine_starts(
+    energy: &[f32],
+    starts: &mut [usize],
+    ends_at: usize,
+    min_len: usize,
+) -> Vec<usize> {
     let rows = starts.len();
     let mut ends: Vec<usize> = (0..rows)
         .map(|r| starts.get(r + 1).copied().unwrap_or(ends_at))
