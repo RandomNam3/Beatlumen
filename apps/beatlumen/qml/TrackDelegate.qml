@@ -21,7 +21,7 @@ ItemDelegate {
     onClicked: play()
     onPressAndHold: if (showMenu) menu(track, menuButton)
 
-    Component.onCompleted: if (track.local && !track.cover) Covers.request(track.id)
+    Component.onCompleted: if ((track.local || track.source) && !track.cover) Covers.request(track.id)
 
     contentItem: RowLayout {
         anchors.fill: parent

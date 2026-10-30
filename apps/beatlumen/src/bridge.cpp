@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
+#include <QNetworkInformation>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QPalette>
@@ -224,6 +225,49 @@ bool takeResume(QJniObject &intent)
     return true;
 }
 
+// Songs, playlists and links shared with the app ("Share", "Open with"):
+// documents are copied like picked files, then the core asks what to do.
+bool takeShared(Bridge *bridge, const QJniObject &intent)
+{
+    if (!intent.isValid())
+        return false;
+    const char *cls = "io/github/randomnam3/beatlumen/FileImport";
+    QJniObject uris = QJniObject::callStaticObjectMethod(cls, "shared", "(Landroid/content/Intent;)[Ljava/lang/String;", intent.object());
+    QJniObject text = QJniObject::callStaticObjectMethod(cls, "sharedText", "(Landroid/content/Intent;)Ljava/lang/String;", intent.object());
+    QJniEnvironment env;
+    const jsize n = uris.isValid() ? env->GetArrayLength(uris.object<jobjectArray>()) : 0;
+    const QString link = text.isValid() ? text.toString() : QString();
+    if (n == 0 && link.isEmpty())
+        return false;
+    // Handled once (also when the activity is recreated).
+    intent.callObjectMethod("setAction", "(Ljava/lang/String;)Landroid/content/Intent;", QJniObject::fromString(QStringLiteral("android.intent.action.MAIN")).object<jstring>());
+    QPointer<Bridge> b = bridge;
+    if (!link.isEmpty()) {
+        QMetaObject::invokeMethod(bridge, [b, link]() { if (b) b->call(QStringLiteral("share.receive"), { { QStringLiteral("text"), link } }); }, Qt::QueuedConnection);
+        return true;
+    }
+    const QString dest = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/shared");
+    QThreadPool::globalInstance()->start([b, uris, dest]() {
+        QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+        QJniObject result = QJniObject::callStaticObjectMethod(
+            "io/github/randomnam3/beatlumen/FileImport", "copy",
+            "(Landroid/content/Context;[Ljava/lang/String;Ljava/lang/String;J)[Ljava/lang/String;",
+            ctx.object(), uris.object(), QJniObject::fromString(dest).object<jstring>(), jlong(2) << 30);
+        QVariantList paths;
+        if (result.isValid()) {
+            QJniEnvironment e;
+            auto arr = result.object<jobjectArray>();
+            for (jsize i = 0; i < e->GetArrayLength(arr); ++i)
+                paths << QJniObject::fromLocalRef(e->GetObjectArrayElement(arr, i)).toString();
+        }
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [b, paths]() {
+            if (b && !paths.isEmpty())
+                b->call(QStringLiteral("share.receive"), { { QStringLiteral("paths"), paths } });
+        }, Qt::QueuedConnection);
+    });
+    return true;
+}
+
 // beatlumen://auth?state=…&result=… opened by the sign-in page in the
 // browser (passkeys), while the app runs or when the link starts it.
 struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
@@ -241,6 +285,8 @@ struct AuthLinkListener : QtAndroidPrivate::NewIntentListener {
             QMetaObject::invokeMethod(bridge, [b]() { if (b) b->call(QStringLiteral("play")); }, Qt::QueuedConnection);
             return true;
         }
+        if (takeShared(bridge, i))
+            return true;
         QJniObject uri = i.callObjectMethod("getData", "()Landroid/net/Uri;");
         if (!uri.isValid())
             return false;
@@ -267,6 +313,10 @@ void setupAuthLinks(Bridge *bridge)
         QPointer<Bridge> b = bridge;
         // After the core restored the queue.
         QTimer::singleShot(500, bridge, [b]() { if (b) b->call(QStringLiteral("play")); });
+    } else {
+        QPointer<Bridge> b = bridge;
+        QJniObject i = intent;
+        QTimer::singleShot(500, bridge, [b, i]() { if (b) takeShared(b, i); });
     }
 }
 
@@ -355,6 +405,22 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     });
 #if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
     m_desktopMedia = new DesktopMedia(this);
+#endif
+#ifndef Q_OS_WASM
+    // Mobile data or not: picks the stream quality setting for the network.
+    if (QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Metered)
+        || QNetworkInformation::loadDefaultBackend()) {
+        if (auto *net = QNetworkInformation::instance()) {
+            auto report = [this, net]() {
+                const bool metered = net->isMetered()
+                    || net->transportMedium() == QNetworkInformation::TransportMedium::Cellular;
+                call(QStringLiteral("net.metered"), {{QStringLiteral("metered"), metered}});
+            };
+            connect(net, &QNetworkInformation::isMeteredChanged, this, report);
+            connect(net, &QNetworkInformation::transportMediumChanged, this, report);
+            report();
+        }
+    }
 #endif
 #ifdef Q_OS_ANDROID
     // Background playback: media session, notification, foreground service.

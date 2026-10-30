@@ -14,19 +14,13 @@ fn main() {
         name: "Beatlumen Test".into(),
         id: [0x0a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f],
         password,
+        airplay2: false,
     })
     .expect("start receiver");
     let _mdns = args.iter().any(|a| a == "--mdns").then(|| {
-        bl_airplay::mdns::Responder::start(
-            bl_airplay::mdns::Service {
-                instance: rx.instance_name(),
-                service_type: "_raop._tcp".into(),
-                port: rx.port(),
-                txt: rx.txt(),
-            },
-            "beatlumen-test".into(),
-        )
-        .expect("mdns")
+        // AirPlay 1 (_raop._tcp) and AirPlay 2 (_airplay._tcp).
+        bl_airplay::mdns::Responder::start_all(rx.services(), "beatlumen-test".into())
+            .expect("mdns")
     });
     println!("PORT {}", rx.port());
     std::io::stdout().flush().ok();

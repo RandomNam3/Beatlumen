@@ -2,21 +2,25 @@ bl-opus is part of Beatlumen and is licensed under the GNU Affero General Public
 workspace license). It is a Rust port of the decoder part of the libopus
 reference implementation (version 1.5.2, https://opus-codec.org/, the
 reference code of RFC 6716), float build, plus the multistream decoder of
-RFC 7845. The ported code remains subject to the libopus BSD-3-Clause license
+RFC 7845, and of a reduced CELT-only encoder (range encoder, CELT encoder
+analysis and quantisation). The ported code remains subject to the libopus BSD-3-Clause license
 reproduced below; the copyright notices of the ported files are also kept in
 the headers of the corresponding Rust source files.
 
 Ported libopus files:
   celt/entdec.c, celt/entcode.c, celt/laplace.c       -> src/range_dec.rs
+  celt/entenc.c, celt/entcode.c, celt/laplace.c       -> src/range_enc.rs
   celt/static_modes_float.h, celt/modes.c             -> src/celt/static_modes.rs, src/celt/mode.rs
   celt/kiss_fft.c, celt/mdct.c                        -> src/celt/mdct.rs
   celt/cwrs.c, celt/vq.c                              -> src/celt/vq.rs
-  celt/bands.c                                        -> src/celt/bands.rs
+  celt/bands.c                                        -> src/celt/bands.rs, src/celt/enc_bands.rs
   celt/quant_bands.c                                  -> src/celt/energy.rs, src/celt/mode.rs
   celt/rate.c, celt/rate.h                            -> src/celt/rate.rs
   celt/celt.c, celt/pitch.c, celt/celt_lpc.c          -> src/celt/pitch.rs, src/celt/mode.rs
   celt/mathops.c, celt/mathops.h, celt/x86/pitch_sse.c -> src/celt/math.rs
   celt/celt_decoder.c                                 -> src/celt/decoder.rs
+  celt/celt_encoder.c                                 -> src/celt/encoder.rs
+  src/opus_encoder.c (DC rejection)                   -> src/encoder.rs
   silk/dec_API.c, silk/stereo_*.c                     -> src/silk/mod.rs
   silk/decode_*.c, silk/decoder_set_fs.c, silk/init_decoder.c,
   silk/shell_coder.c, silk/code_signs.c, silk/gain_quant.c -> src/silk/decode.rs

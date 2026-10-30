@@ -145,16 +145,8 @@ fn conv3(
             }
         }
     }
-    let wt = Tensor {
-        cols: cin * 3,
-        rows: w.data.len() / (cin * 3),
-        data: w.data.clone(),
-    };
-    let bias = Tensor {
-        cols: b.data.len(),
-        rows: 1,
-        data: b.data.clone(),
-    };
+    let wt = Tensor::from_f32(cin * 3, w.values().len() / (cin * 3), w.values().to_vec());
+    let bias = Tensor::from_f32(b.values().len(), 1, b.values().to_vec());
     (linear(&patches, tout, &wt, Some(&bias)), tout)
 }
 
@@ -192,7 +184,7 @@ pub fn encode(m: &Model, mel: &[f32]) -> io::Result<Vec<f32>> {
     x.truncate(n * p.n_audio_state);
     let pos = m.get("encoder.positional_embedding")?;
     for (i, row) in x.chunks_mut(p.n_audio_state).enumerate() {
-        for (a, b) in row.iter_mut().zip(pos.row(i)) {
+        for (a, b) in row.iter_mut().zip(pos.row(i).iter()) {
             *a += b;
         }
     }
@@ -280,8 +272,8 @@ impl<'a> Decoder<'a> {
             let row = &mut x[i * d..(i + 1) * d];
             for ((a, e), q) in row
                 .iter_mut()
-                .zip(emb.row(t as usize))
-                .zip(pos.row(self.len + i))
+                .zip(emb.row(t as usize).iter())
+                .zip(pos.row(self.len + i).iter())
             {
                 *a = e + q;
             }

@@ -31,6 +31,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+#[path = "vault_admin.rs"]
+mod admin;
 #[path = "vault_links.rs"]
 mod links;
 
@@ -360,9 +362,9 @@ pub struct Vault {
     sessions_path: PathBuf,
     pepper: Vec<u8>,
     /// Bytes per user (0 = unlimited).
-    quota: u64,
+    quota: std::sync::atomic::AtomicU64,
     /// New accounts with invitation codes (off: no new accounts at all).
-    open_registration: bool,
+    open_registration: std::sync::atomic::AtomicBool,
     pub push: crate::push::Push,
     users: RwLock<HashMap<String, User>>,
     files: RwLock<HashMap<String, FileRec>>,
@@ -463,6 +465,12 @@ fn load_pepper(file: Option<&Path>, default: &Path) -> Result<Vec<u8>, String> {
 }
 
 impl Vault {
+    /// A key for server data derived from the pepper (kept apart from the
+    /// data with `--vault-pepper-file`).
+    pub fn server_key(&self, label: &str) -> bl_vault::Secret {
+        bl_vault::derive(&self.pepper, label)
+    }
+
     pub fn open(
         data: &Path,
         pepper_file: Option<&Path>,
@@ -587,8 +595,8 @@ impl Vault {
             invites_dir: invites_dir(data),
             sessions_path,
             pepper,
-            quota,
-            open_registration,
+            quota: quota.into(),
+            open_registration: open_registration.into(),
             push,
             users: RwLock::new(users),
             files: RwLock::new(files),
@@ -856,7 +864,7 @@ impl Vault {
                         Value::Array(list.into_iter().map(|f| f.entry(&me)).collect()),
                     )
                     .with("used", used)
-                    .with("quota", self.quota);
+                    .with("quota", self.quota());
                 Ok(Response::json(200, &v))
             }
             ["files"] if post => self.create_file(req, &me),
@@ -1263,7 +1271,7 @@ impl Vault {
     }
 
     fn register(&self, req: &Request, ip: Option<IpAddr>) -> Result<Response, Failure> {
-        if !self.open_registration {
+        if !self.registration_open() {
             return fail(403, "registration is disabled on this server");
         }
         let v = body(req)?;
@@ -1442,6 +1450,13 @@ impl Vault {
                 .ok_or((401, "no such user".to_string()))?
         };
         self.check_proof(req, &v, &user, ip)?;
+        self.remove_account(me)?;
+        crate::info!("vault: user {me} deleted their account");
+        Ok(Response::new(204))
+    }
+
+    /// Removes an account with its files, links, data and sessions.
+    fn remove_account(&self, me: &str) -> Result<(), Failure> {
         {
             let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
             let ids: Vec<String> = files.keys().cloned().collect();
@@ -1466,8 +1481,7 @@ impl Vault {
         s.retain(|_, s| s.user != me);
         self.save_sessions(&s);
         self.push.forget(me);
-        crate::info!("vault: user {me} deleted their account");
-        Ok(Response::new(204))
+        Ok(())
     }
 
     fn remove_file(&self, id: &str) {
@@ -1518,7 +1532,8 @@ impl Vault {
             return fail(507, "too many files");
         }
         let used: u64 = mine.iter().map(|f| f.size).sum();
-        if self.quota > 0 && used + size > self.quota {
+        let quota = self.quota();
+        if quota > 0 && used + size > quota {
             return fail(507, "storage quota exceeded");
         }
         let rec = FileRec {

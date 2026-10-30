@@ -1,4 +1,5 @@
-//! Mixed-radix FFT (radix 2, 3, 4, 5) and inverse MDCT for the CELT mode.
+//! Mixed-radix FFT (radix 2, 3, 4, 5) and the forward / inverse MDCT for
+//! the CELT mode.
 //!
 //! Ported from libopus `celt/kiss_fft.c` and `celt/mdct.c`:
 //!
@@ -410,6 +411,147 @@ pub fn mdct_backward(
             out[xp1] = wp1 * x2 + wp2 * x1;
             yp1 += 1;
             xp1 -= 1;
+        }
+    }
+}
+
+/// Forward MDCT (`clt_mdct_forward`) with the low-overlap CELT window.
+///
+/// `input` holds `N/2 + overlap` samples (N = 1920 >> `shift`); the `N/2`
+/// coefficients are written to `out` with stride `stride` (interleaving
+/// short blocks). `scratch` and `fold` are reused buffers.
+#[allow(clippy::too_many_arguments)]
+pub fn mdct_forward(
+    input: &[f32],
+    out: &mut [f32],
+    window: &[f32],
+    overlap: usize,
+    shift: usize,
+    stride: usize,
+    scratch: &mut Vec<Cpx>,
+    fold: &mut Vec<f32>,
+) {
+    let mut n = 1920usize;
+    let mut trig_off = 0usize;
+    for _ in 0..shift {
+        n >>= 1;
+        trig_off += n;
+    }
+    let trig = &MDCT_TWIDDLES960[trig_off..];
+    let n2 = n >> 1;
+    let n4 = n >> 2;
+    let st = &FFT_STATES[shift];
+    let scale = 1.0 / st.nfft as f32;
+    let input = &input[..n2 + overlap];
+    fold.clear();
+    fold.resize(n2, 0.0);
+    // Window, shuffle and fold: the input is made of four blocks [a, b, c, d].
+    {
+        let half = overlap >> 1;
+        let lim = (overlap + 3) >> 2;
+        for i in 0..n4 {
+            let xp1 = half + 2 * i;
+            let xp2 = n2 - 1 + half - 2 * i;
+            let (re, im) = if i < lim {
+                // Real part arranged as -d-cR, imaginary part as -b+aR.
+                let wp1 = window[half + 2 * i];
+                let wp2 = window[half - 1 - 2 * i];
+                (
+                    wp2 * input[xp1 + n2] + wp1 * input[xp2],
+                    wp1 * input[xp1] - wp2 * input[xp2 - n2],
+                )
+            } else if i < n4 - lim {
+                // Real part arranged as a-bR, imaginary part as -c-dR.
+                (input[xp2], input[xp1])
+            } else {
+                let k = i - (n4 - lim);
+                let wp1 = window[2 * k];
+                let wp2 = window[overlap - 1 - 2 * k];
+                (
+                    -wp1 * input[xp1 - n2] + wp2 * input[xp2],
+                    wp2 * input[xp1] + wp1 * input[xp2 + n2],
+                )
+            };
+            fold[2 * i] = re;
+            fold[2 * i + 1] = im;
+        }
+    }
+    if scratch.len() < n4 {
+        scratch.resize(n4, Cpx::default());
+    }
+    let f2 = &mut scratch[..n4];
+    // Pre-rotation, storing in bit-reversed order.
+    for i in 0..n4 {
+        let re = fold[2 * i];
+        let im = fold[2 * i + 1];
+        let t0 = trig[i];
+        let t1 = trig[n4 + i];
+        let yr = re * t0 - im * t1;
+        let yi = im * t0 + re * t1;
+        f2[st.bitrev[i] as usize] = Cpx {
+            r: yr * scale,
+            i: yi * scale,
+        };
+    }
+    fft_impl(st, f2);
+    // Post-rotation.
+    for i in 0..n4 {
+        let fp = f2[i];
+        let t0 = trig[i];
+        let t1 = trig[n4 + i];
+        out[2 * i * stride] = fp.i * t1 - fp.r * t0;
+        out[stride * (n2 - 1 - 2 * i)] = fp.r * t1 + fp.i * t0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::celt::mode::WINDOW120;
+
+    /// Forward MDCT followed by the decoder's inverse MDCT and its in-place
+    /// overlap-add must reconstruct the input (delayed by the overlap).
+    #[test]
+    fn forward_inverse_reconstructs() {
+        for shift in 0..4 {
+            let n = 960 >> shift;
+            let ov = 120;
+            let frames = 6;
+            let sig: Vec<f32> = (0..n * frames + ov)
+                .map(|i| (i as f32 * 0.013).sin() * 1000.0 + ((i * 7919) % 101) as f32)
+                .collect();
+            let mut mem = vec![0f32; n * (frames + 1) + ov];
+            let mut coefs = vec![0f32; n];
+            let mut sc = Vec::new();
+            let mut fold = Vec::new();
+            for f in 0..frames {
+                mdct_forward(
+                    &sig[f * n..f * n + n + ov],
+                    &mut coefs,
+                    &WINDOW120,
+                    ov,
+                    shift,
+                    1,
+                    &mut sc,
+                    &mut fold,
+                );
+                mdct_backward(
+                    &coefs,
+                    &mut mem[f * n..f * n + n + ov],
+                    &WINDOW120,
+                    ov,
+                    shift,
+                    1,
+                    &mut sc,
+                );
+            }
+            // Output sample j of the stream equals input sample j (the first
+            // overlap is not complete).
+            let mut err = 0f32;
+            for j in ov..n * frames {
+                err = err.max((mem[j] - sig[j]).abs());
+            }
+            assert!(err < 0.05, "shift {shift}: max error {err}");
         }
     }
 }

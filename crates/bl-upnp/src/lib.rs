@@ -92,7 +92,8 @@ impl Renderer {
         Url::parse(&self.av_transport).ok().map(|u| u.host)
     }
 
-    fn soap(
+    /// Calls a SOAP action of a UPnP service; returns the answer's XML.
+    pub fn soap(
         url: &str,
         service: &str,
         action: &str,

@@ -6,7 +6,7 @@
 use crate::host::{Host, HttpResponse};
 use crate::jobs::{decode_mono, extension, Mailbox};
 use crate::library::{self, LibraryState, LOCAL_PREFIX};
-use crate::player::{PlayState, Player, PlayerEvent, SourceOpener};
+use crate::player::{Opener, PlayState, Player, PlayerEvent, SourceOpener};
 use crate::queue::Queue;
 use crate::server::{ServerClient, ServerState};
 use crate::settings::{BackgroundMode, Repeat, Settings, VisualizerKind};
@@ -72,6 +72,12 @@ pub(crate) enum Req {
     Loudness(String),
     Lyrics(String),
     LyricsSync(String),
+    DeviceAnnounce(u64),
+    DeviceList(u64),
+    DeviceEvents(u64),
+    DeviceCommand,
+    AccountSettingsGet(String),
+    AccountSettingsPut(String),
     LyricsSaved,
     TrackDownload {
         track_id: String,
@@ -163,6 +169,7 @@ pub(crate) struct Revisions {
     pub analysis: u64,
     pub settings: u64,
     pub lyrics: u64,
+    pub devices: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -212,6 +219,8 @@ pub struct Core {
     pub(crate) lyrics_box: Mailbox<(String, Option<(String, String)>)>,
     /// Offline copies of server songs.
     pub(crate) offline: crate::offline::OfflineState,
+    pub(crate) devices: crate::devices::DevicesState,
+    pub(crate) account_sync: crate::account_sync::SyncState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -224,7 +233,15 @@ pub struct Core {
     /// another app in front) no visuals are drawn, so the track analysis
     /// they need is put off until the app is visible again.
     pub(crate) visible: bool,
+    /// The device is on a metered network (mobile data), as the platform
+    /// reports it.
+    pub(crate) metered: bool,
     pub(crate) live: RealtimeAnalyzer,
+    /// Tempo and phase of the music as it plays (live sources: effects on
+    /// the predicted beats).
+    pub(crate) beats: bl_analysis::beat::BeatTracker,
+    /// Taps of the sync measurement (heard beat minus predicted beat, s).
+    pub(crate) sync_taps: Vec<f64>,
     live_buf: Vec<f32>,
     last_live_pos: f64,
     pub(crate) spectrum: Vec<f32>,
@@ -262,6 +279,9 @@ pub struct Core {
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) ext: crate::extensions::ExtState,
+    pub(crate) sources: crate::sources::SourcesState,
+    pub(crate) share: crate::share::ShareState,
+    pub(crate) speech: crate::speech::SpeechState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -399,6 +419,8 @@ impl Core {
             lyrics: Default::default(),
             lyrics_box: Mailbox::default(),
             offline: Default::default(),
+            devices: Default::default(),
+            account_sync: Default::default(),
             queue,
             bg_queue,
             library,
@@ -408,7 +430,10 @@ impl Core {
             analysis_box: Mailbox::default(),
             analysis_requested: false,
             visible: true,
+            metered: false,
             live: RealtimeAnalyzer::new(48000, &analysis_cfg),
+            beats: bl_analysis::beat::BeatTracker::new(48000.0 / 1024.0),
+            sync_taps: Vec::new(),
             live_buf: vec![0.0; 2048],
             last_live_pos: 0.0,
             spectrum: Vec::new(),
@@ -443,6 +468,9 @@ impl Core {
             dlna: Default::default(),
             capture: Default::default(),
             ext: Default::default(),
+            sources: Default::default(),
+            share: Default::default(),
+            speech: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -595,6 +623,7 @@ impl Core {
             .unwrap_or(Value::Null);
         Value::object()
             .with("platform", host.platform())
+            .with("metered", self.metered)
             .with("play", play)
             .with(
                 "duration",
@@ -642,12 +671,18 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
+            .with("devicesRev", self.revs.devices)
+            .with("deviceName", self.device_name(host))
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
             .with("extensions", self.extensions_json())
+            .with("sources", self.sources_json())
+            .with("share", self.share_json())
+            .with("tempo", self.tempo_json())
+            .with("speechLocal", self.speech_json(host))
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -674,6 +709,7 @@ impl Core {
             .with("track", t.track)
             .with("year", t.year)
             .with("local", library::is_local(&t.id))
+            .with("source", t.id.starts_with(crate::sources::ID_PREFIX))
             .with("offline", self.is_offline(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
@@ -870,6 +906,12 @@ impl Core {
             }
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
+            r @ (Req::DeviceAnnounce(_)
+            | Req::DeviceList(_)
+            | Req::DeviceEvents(_)
+            | Req::DeviceCommand) => self.devices_response(host, r, &res),
+            Req::AccountSettingsGet(user) => self.account_settings_fetched(host, &user, &res),
+            Req::AccountSettingsPut(user) => self.account_settings_saved(host, &user, &res),
             Req::LyricsSaved => {
                 if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
                     self.toast(self.tr("Saving the song text failed"), true);
@@ -1007,6 +1049,7 @@ impl Core {
                 self.player.device_rate().max(8000),
                 &self.preset.analysis_config(),
             );
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
             self.request_analysis_for_current();
         }
     }
@@ -1020,6 +1063,7 @@ impl Core {
                 self.player.device_rate().max(8000),
                 &self.preset.analysis_config(),
             );
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
             self.request_analysis_for_current();
         }
     }
@@ -1168,6 +1212,9 @@ impl Core {
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
+        if let Some(t) = self.radio_track(id) {
+            return t;
+        }
         if let Some(name) = id.strip_prefix("mem:") {
             return library::local_track(name, 0, 0, None);
         }
@@ -1246,8 +1293,10 @@ impl Core {
         self.player.set_gain(gain, load);
         if !load {
             // Already playing (gapless advance).
-        } else if let Some(opener) = self.opener_for(host, &id) {
-            self.player.load(host, opener, autoplay);
+        } else if id.starts_with(crate::sources::RADIO_PREFIX) {
+            self.play_radio(host, &id, autoplay);
+        } else if let Some(opener) = self.track_opener(host, &id) {
+            self.player.load_opener(host, opener, autoplay);
         } else if let Some(path) = library::local_path(&id) {
             match host.fs_read(path) {
                 Ok(data) => {
@@ -1262,6 +1311,10 @@ impl Core {
                 }
                 Err(e) => self.toast(e, true),
             }
+        } else if id.starts_with(crate::sources::ID_PREFIX) {
+            let msg = self.tr("The song's source is not available").to_string();
+            self.player.stop(host);
+            self.toast(msg, true);
         } else if id.starts_with(crate::vault::ID_PREFIX) {
             // Encrypted file without streaming: downloaded first.
             self.player.stop(host);
@@ -1287,6 +1340,9 @@ impl Core {
             );
             self.download_progress = Some(track.title.clone());
         }
+        if load && id.starts_with(crate::sources::ID_PREFIX) {
+            self.source_played(host, &id);
+        }
         self.request_analysis_for_current_with(host);
         if self.settings.cover_fallback && self.bg_queue.is_empty() {
             self.show_cover_background(host);
@@ -1294,9 +1350,54 @@ impl Core {
         self.settings_changed();
     }
 
+    /// Bitrate (kbit/s) the server converts its songs to on the current
+    /// network (0: the original files).
+    pub(crate) fn stream_kbps(&self) -> u32 {
+        if self.metered {
+            self.settings.stream_kbps_metered
+        } else {
+            self.settings.stream_kbps
+        }
+    }
+
+    /// Opener for a track: a server track converted to Opus when the
+    /// setting for the current network asks for it, otherwise the file.
+    fn track_opener(&self, host: &dyn Host, id: &str) -> Option<Opener> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let kbps = self.stream_kbps();
+            let server_track = !id.contains(':') && library::local_path(id).is_none();
+            if kbps > 0
+                && server_track
+                && host.has_threads()
+                && !host.audio_is_push()
+                && self.offline_opener(id).is_none()
+            {
+                let url = self.server.media_url(&format!(
+                    "{}?format=opus&bitrate={kbps}",
+                    bl_net::api::paths::track_stream(id)
+                ));
+                let (headers, track) = (self.server.headers(), self.track_for(id));
+                return Some(Opener::Decoder(Box::new(move || {
+                    crate::transcoded::Transcoded::open(
+                        url,
+                        headers,
+                        track.duration_ms,
+                        track.codec,
+                    )
+                    .map(|d| Box::new(d) as Box<dyn bl_media::Decoder>)
+                })));
+            }
+        }
+        self.opener_for(host, id).map(Opener::Source)
+    }
+
     /// Opener streaming a track (None when it must be read or downloaded
     /// up front because the platform has no threads).
     fn opener_for(&self, host: &dyn Host, id: &str) -> Option<SourceOpener> {
+        if id.starts_with(crate::sources::ID_PREFIX) {
+            return self.source_opener(id);
+        }
         if let Some(path) = library::local_path(id).map(str::to_string) {
             if !host.has_threads() {
                 return None;
@@ -1366,7 +1467,7 @@ impl Core {
         if self.preloaded.0 == serial && self.preloaded.1 == want {
             return;
         }
-        let opener = want.as_deref().and_then(|id| self.opener_for(host, id));
+        let opener = want.as_deref().and_then(|id| self.track_opener(host, id));
         let want = if opener.is_some() { want } else { None };
         if self.player.preload(opener) {
             let gain = match &want {
@@ -1394,7 +1495,10 @@ impl Core {
     /// Normalization gain of a track: 1 when normalization is off, None
     /// while its loudness is being measured (the measurement is started).
     fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
-        if !self.settings.normalize || id.starts_with(crate::extensions::ID_PREFIX) {
+        if !self.settings.normalize
+            || id.starts_with(crate::extensions::ID_PREFIX)
+            || id.starts_with(crate::sources::RADIO_PREFIX)
+        {
             return Some(1.0);
         }
         match self.loudness.get(id) {
@@ -1466,6 +1570,13 @@ impl Core {
             } else {
                 mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)));
             }
+        } else if id.starts_with(crate::sources::ID_PREFIX) {
+            let Some(opener) = self.source_opener(id) else {
+                return;
+            };
+            host.spawn(Box::new(move || {
+                mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))))
+            }));
         } else if id.starts_with(crate::vault::ID_PREFIX) {
             let Some(opener) = self.vault_opener(host, id) else {
                 return;
@@ -1732,9 +1843,9 @@ impl Core {
             return;
         };
         if track.id.starts_with(crate::airplay::ID_PREFIX)
-            || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
             || track.id.starts_with(crate::capture::ID_PREFIX)
             || track.id.starts_with(crate::extensions::ID_PREFIX)
+            || track.id.starts_with(crate::sources::RADIO_PREFIX)
         {
             // Live or foreign stream: the visuals follow the audio as it plays.
             return;
@@ -1792,6 +1903,35 @@ impl Core {
             if let Some(data) = self.memory_files.get(name).cloned() {
                 let res = analyze(Box::new(std::io::Cursor::new(data)), extension(name), cfg);
                 self.analysis_box.post((key, res));
+            }
+        } else if track.id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            // A control point's file: read ahead over a second connection
+            // and analysed as a whole. Live streams (no length) and very
+            // long ones are left to the live analysis as they play.
+            if let (Some(opener), true) = (self.dlna_opener(), self.dlna_analysable(host)) {
+                let mailbox = self.analysis_box.clone();
+                host.spawn(Box::new(move || {
+                    use std::io::{Seek, SeekFrom};
+                    let res = opener()
+                        .and_then(|(mut src, ext)| {
+                            match src.seek(SeekFrom::End(0)) {
+                                Ok(n) if n > 0 && n <= 300 << 20 => {}
+                                _ => return Err("a live stream".to_string()),
+                            }
+                            src.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+                            Ok((src, ext))
+                        })
+                        .and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                }));
+            }
+        } else if track.id.starts_with(crate::sources::ID_PREFIX) {
+            if let Some(opener) = self.source_opener(&track.id) {
+                let mailbox = self.analysis_box.clone();
+                host.spawn(Box::new(move || {
+                    let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                }));
             }
         } else if track.id.starts_with(crate::vault::ID_PREFIX) {
             // Encrypted: only this device can analyse it. Without streaming
@@ -1868,7 +2008,7 @@ impl Core {
             self.capture.cover_url().to_string()
         } else if t.id.starts_with(crate::extensions::ID_PREFIX) {
             self.ext_cover_url(&t.id)
-        } else if library::is_local(&t.id) {
+        } else if library::is_local(&t.id) || t.id.starts_with(crate::sources::ID_PREFIX) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
                 _ => String::new(),
@@ -1888,6 +2028,14 @@ impl Core {
     /// Starts extracting the covers of local tracks (embedded picture or a
     /// cover file next to it) into the cache; emits `cover` events.
     pub(crate) fn request_covers(&mut self, host: &mut dyn Host, ids: Vec<String>) {
+        let (from_sources, ids): (Vec<String>, Vec<String>) = ids
+            .into_iter()
+            .partition(|id| id.starts_with(crate::sources::ID_PREFIX));
+        let from_sources = from_sources
+            .into_iter()
+            .filter(|id| !self.covers.contains_key(id))
+            .collect();
+        self.request_source_covers(host, from_sources);
         let mut jobs = Vec::new();
         for id in ids {
             if self.covers.contains_key(&id) || !library::is_local(&id) {
@@ -2267,6 +2415,8 @@ impl Core {
                 audio.push(format!("{LOCAL_PREFIX}{p}"));
             } else if library::is_image_extension(&ext) {
                 images.push(format!("{LOCAL_PREFIX}{p}"));
+            } else if matches!(ext.as_str(), "m3u" | "m3u8" | "pls" | "xspf") {
+                self.import_playlist_file(host, &p, play);
             } else if ext == "hfx" {
                 if let Ok(d) = host.fs_read(&p) {
                     let name = std::path::Path::new(&p)
@@ -2326,6 +2476,43 @@ impl Core {
 
     // ---- tick and render ----------------------------------------------------------
 
+    /// Live analysis of the samples played since the last call: novelty
+    /// per band (the lows on the predicted beats when the beat is steady).
+    pub fn update_live(&mut self, host: &mut dyn Host) -> [f32; 3] {
+        let playing = self.player.state() == PlayState::Playing;
+        let position = self.player.position(host);
+        // Live analysis from the samples played since the last frame.
+        if playing {
+            let rate = self.player.device_rate().max(1) as f64;
+            let new = (((position - self.last_live_pos) * rate) as usize).min(self.live_buf.len());
+            if new > 0 && position > self.last_live_pos {
+                let mut tmp = vec![0.0f32; self.live_buf.len()];
+                self.player.recent_samples(&mut tmp);
+                self.live.push(&tmp[tmp.len() - new..]);
+            }
+            // Onsets with the stream time their frame ends at.
+            let onsets = self.live.take_onsets();
+            let step = 1.0 / self.live.frame_rate();
+            let end = position - self.live.pending() as f64 / rate;
+            for (j, v) in onsets.iter().enumerate() {
+                self.beats
+                    .push(*v, end - (onsets.len() - 1 - j) as f64 * step);
+            }
+        }
+        self.last_live_pos = position;
+        let mut live = [0.0f32; 3];
+        for (i, v) in self.live.novelty().iter().take(3).enumerate() {
+            live[i] = *v;
+        }
+        // Live sources: with a steady beat, the lows pulse on the predicted
+        // beats as they are heard instead of after the analysis caught them.
+        if self.settings.beat_prediction && self.beats.confidence() > 0.35 {
+            let heard = position + self.settings.sync_offset_ms as f64 / 1000.0;
+            live[0] = (live[0] * 0.4).max(self.beats.pulse(heard));
+        }
+        live
+    }
+
     /// Advances everything that does not need GL: network, background jobs,
     /// playback, live analysis, settings persistence. Call regularly (every
     /// frame, and from a timer while the window is hidden).
@@ -2333,6 +2520,7 @@ impl Core {
         self.time = host.now();
         if !self.started {
             self.started = true;
+            self.load_sources(host);
             let files = std::mem::take(&mut self.launch.files);
             if !files.is_empty() {
                 let paths = files.iter().map(|f| absolute(f)).collect();
@@ -2376,8 +2564,12 @@ impl Core {
         self.poll_loudness(host);
         self.poll_lyrics();
         self.poll_lyrics_sync(host);
+        self.poll_devices(host);
+        self.poll_account_sync(host);
         self.poll_offline(host);
         self.poll_scan(host);
+        self.poll_sources(host);
+        self.poll_speech(host);
         self.poll_covers();
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);
@@ -2411,6 +2603,7 @@ impl Core {
                             self.player.device_rate(),
                             &self.preset.analysis_config(),
                         );
+                        self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
                     }
                 }
             }
@@ -2472,21 +2665,7 @@ impl Core {
         self.poll_images(host, gl);
         let playing = self.player.state() == PlayState::Playing;
         let position = self.player.position(host);
-        // Live analysis from the samples played since the last frame.
-        if playing {
-            let rate = self.player.device_rate().max(1) as f64;
-            let new = (((position - self.last_live_pos) * rate) as usize).min(self.live_buf.len());
-            if new > 0 && position > self.last_live_pos {
-                let mut tmp = vec![0.0f32; self.live_buf.len()];
-                self.player.recent_samples(&mut tmp);
-                self.live.push(&tmp[tmp.len() - new..]);
-            }
-        }
-        self.last_live_pos = position;
-        let mut live = [0.0f32; 3];
-        for (i, v) in self.live.novelty().iter().take(3).enumerate() {
-            live[i] = *v;
-        }
+        let live = self.update_live(host);
         let k = 1.0 - (-12.0 * dt as f32).exp();
         self.menu_blur += (self.blur_target - self.menu_blur) * k;
         if (self.menu_blur - self.blur_target).abs() < 0.01 {

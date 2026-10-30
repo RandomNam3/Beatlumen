@@ -1,5 +1,6 @@
-//! PVQ codeword decoding (CWRS) and the vector-quantisation helpers used by
-//! the band decoder (spreading rotation, normalisation).
+//! PVQ codeword coding (CWRS), the pulse search of the encoder and the
+//! vector-quantisation helpers used by the band coders (spreading rotation,
+//! normalisation).
 //!
 //! Ported from libopus `celt/cwrs.c` and `celt/vq.c`:
 //!
@@ -16,6 +17,7 @@
 use super::math::{celt_cos_norm, celt_rsqrt, inner_prod};
 use super::mode::SPREAD_NONE;
 use crate::range_dec::RangeDecoder;
+use crate::range_enc::RangeEncoder;
 use std::sync::OnceLock;
 
 const U_DIM: usize = 180;
@@ -235,6 +237,119 @@ pub fn alg_unquant(
     }
     exp_rotation(x, n, -1, b, k, spread);
     extract_collapse_mask(iy, n, b)
+}
+
+/// `icwrs`: index of the pulse vector `y` (`n >= 2`) among all vectors
+/// with the same number of pulses.
+fn icwrs(n: usize, y: &[i32], t: &[u32]) -> u32 {
+    let mut j = n - 1;
+    let mut i = (y[j] < 0) as u32;
+    let mut k = y[j].unsigned_abs() as usize;
+    loop {
+        j -= 1;
+        i = i.wrapping_add(pvq_u(t, n - j, k));
+        k += y[j].unsigned_abs() as usize;
+        if y[j] < 0 {
+            i = i.wrapping_add(pvq_u(t, n - j, k + 1));
+        }
+        if j == 0 {
+            break;
+        }
+    }
+    i
+}
+
+/// Encodes the pulse vector `y` (`k` pulses in `n` dimensions).
+pub fn encode_pulses(y: &[i32], n: usize, k: usize, enc: &mut RangeEncoder) {
+    let t = u_table();
+    debug_assert!((2..U_DIM).contains(&n) && k > 0 && k + 1 < U_DIM);
+    let v = pvq_u(t, n, k).wrapping_add(pvq_u(t, n, k + 1));
+    enc.uint(icwrs(n, y, t), v);
+}
+
+/// `op_pvq_search`: finds the pulse vector of `k` pulses closest in angle to
+/// `x` (which is overwritten with its absolute values).
+pub fn pvq_search(x: &mut [f32], iy: &mut [i32], k: usize, n: usize) {
+    const EPSILON: f32 = 1e-15;
+    let x = &mut x[..n];
+    let iy = &mut iy[..n];
+    let mut y = [0f32; 176];
+    let mut signx = [false; 176];
+    for j in 0..n {
+        signx[j] = x[j] < 0.0;
+        x[j] = x[j].abs();
+        iy[j] = 0;
+    }
+    let mut xy = 0f32;
+    let mut yy = 0f32;
+    let mut pulses_left = k as i32;
+    // Pre-search by projecting on the pyramid.
+    if k > n >> 1 {
+        let mut sum: f32 = x.iter().sum();
+        // If X is too small (or not finite), replace it with a pulse at 0.
+        if !(sum > EPSILON && sum < 64.0) {
+            x[0] = 1.0;
+            x[1..].fill(0.0);
+            sum = 1.0;
+        }
+        // Using K+e with e < 1 guarantees we cannot get more than K pulses.
+        let rcp = (k as f32 + 0.8) * (1.0 / sum);
+        for j in 0..n {
+            // Rounding towards zero is important here.
+            iy[j] = (rcp * x[j]).floor() as i32;
+            y[j] = iy[j] as f32;
+            yy += y[j] * y[j];
+            xy += x[j] * y[j];
+            y[j] *= 2.0;
+            pulses_left -= iy[j];
+        }
+    }
+    // Should not happen, but just in case: fill the first bin.
+    if pulses_left > n as i32 + 3 {
+        let tmp = pulses_left as f32;
+        yy += tmp * tmp;
+        yy += tmp * y[0];
+        iy[0] += pulses_left;
+        pulses_left = 0;
+    }
+    for _ in 0..pulses_left.max(0) {
+        let mut best_id = 0usize;
+        // The squared magnitude term gets added anyway.
+        yy += 1.0;
+        let rxy = xy + x[0];
+        let ryy = yy + y[0];
+        let mut best_num = rxy * rxy;
+        let mut best_den = ryy;
+        for j in 1..n {
+            let rxy = xy + x[j];
+            let ryy = yy + y[j];
+            let rxy = rxy * rxy;
+            // Maximise Rxy/sqrt(Ryy) without a division.
+            if best_den * rxy > ryy * best_num {
+                best_den = ryy;
+                best_num = rxy;
+                best_id = j;
+            }
+        }
+        xy += x[best_id];
+        yy += y[best_id];
+        y[best_id] += 2.0;
+        iy[best_id] += 1;
+    }
+    for j in 0..n {
+        if signx[j] {
+            iy[j] = -iy[j];
+        }
+    }
+}
+
+/// Quantises the (unit norm) vector `x` with `k` pulses and encodes it
+/// (`alg_quant` without resynthesis). `x` is clobbered.
+pub fn alg_quant(x: &mut [f32], n: usize, k: usize, spread: i32, b: usize, enc: &mut RangeEncoder) {
+    let mut iy = [0i32; 176];
+    exp_rotation(x, n, 1, b, k, spread);
+    pvq_search(x, &mut iy, k, n);
+    encode_pulses(&iy, n, k, enc);
 }
 
 /// Rescales `x` to have norm `gain`.

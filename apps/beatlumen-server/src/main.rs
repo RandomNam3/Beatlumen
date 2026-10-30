@@ -60,6 +60,22 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        Action::AdminLink(cfg) => {
+            match beatlumen_server::admin::create_setup_token(
+                &cfg.data_dir,
+                beatlumen_server::admin::LINK_SETUP_SECS,
+            ) {
+                Ok(token) => {
+                    println!("/admin/#setup={token}");
+                    eprintln!("Open this path on the server's address within an hour, e.g. http://<server>:7878/admin/#setup={token}, to set the admin password.");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Action::Users(cfg) => {
             for u in beatlumen_server::vault::list_users(&cfg.data_dir) {
                 println!("{u}");
@@ -75,7 +91,12 @@ fn main() {
         }
     };
     match beatlumen_server::start(cfg) {
-        Ok(server) => server.join(),
+        Ok(server) => {
+            server
+                .state
+                .set_restart_handler(Box::new(beatlumen_server::restart_process));
+            server.join()
+        }
         Err(e) => {
             beatlumen_server::error!("{e}");
             std::process::exit(1);

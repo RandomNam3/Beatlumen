@@ -70,6 +70,10 @@ impl MultistreamDecoder {
         }
     }
 
+    pub fn final_range(&self) -> u32 {
+        self.streams.iter().fold(0, |a, s| a ^ s.range_final)
+    }
+
     /// Validates the packet layout (`opus_multistream_packet_validate`) and
     /// returns the number of samples per channel.
     fn validate(&self, data: &[u8]) -> Result<usize, Error> {

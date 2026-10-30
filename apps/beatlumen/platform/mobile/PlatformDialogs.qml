@@ -14,11 +14,18 @@ Item {
     function openLyrics() { Core.call("lyrics.expectImport"); Core.pickFiles("*/*", false) }
     function addMusicFolder() { folderPicker.showFor(false) }
     function addImageFolder() { folderPicker.showFor(true) }
+    function exportPlaylist(id) { folderPicker.exportId = id; folderPicker.images = false; folderPicker.show() }
 
     FolderPicker {
         id: folderPicker
         property bool forImages: false
-        function showFor(img) { forImages = img; images = img; show() }
-        onChosen: (p) => forImages ? Core.call("backgrounds.addFolder", { path: p }) : Core.call("library.addFolder", { path: p })
+        // A playlist to export into the chosen folder.
+        property string exportId: ""
+        function showFor(img) { exportId = ""; forImages = img; images = img; show() }
+        onChosen: (p) => {
+            if (exportId) { Core.call("playlist.export", { id: exportId, folder: p }); exportId = "" }
+            else if (forImages) Core.call("backgrounds.addFolder", { path: p })
+            else Core.call("library.addFolder", { path: p })
+        }
     }
 }

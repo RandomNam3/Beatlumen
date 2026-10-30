@@ -10,7 +10,8 @@ use crate::State;
 use bl_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock, Weak};
 
 /// Longest song analysed (minutes).
 const MAX_MINUTES: u32 = 15;
@@ -34,8 +35,11 @@ struct Inner {
 }
 
 pub struct LyricsSync {
-    model_path: Option<PathBuf>,
-    auto: bool,
+    /// The model in use (changed in the admin interface).
+    model_path: RwLock<Option<PathBuf>>,
+    auto: AtomicBool,
+    /// The worker holds a model in memory.
+    loaded: AtomicBool,
     dir: PathBuf,
     inner: Mutex<Inner>,
     wake: Condvar,
@@ -52,8 +56,9 @@ pub fn is_synced(text: &str) -> bool {
 impl LyricsSync {
     pub fn new(model_path: Option<PathBuf>, auto: bool, dir: PathBuf) -> LyricsSync {
         LyricsSync {
-            model_path,
-            auto,
+            model_path: RwLock::new(model_path),
+            auto: AtomicBool::new(auto),
+            loaded: AtomicBool::new(false),
             dir,
             inner: Mutex::default(),
             wake: Condvar::new(),
@@ -62,7 +67,93 @@ impl LyricsSync {
     }
 
     pub fn available(&self) -> bool {
-        self.model_path.is_some()
+        self.model().is_some_and(|p| p.is_file())
+    }
+
+    pub fn model(&self) -> Option<PathBuf> {
+        self.model_path
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Switches the model and the automatic run (admin interface).
+    pub fn configure(&self, model: Option<PathBuf>, auto: bool) {
+        *self.model_path.write().unwrap_or_else(|e| e.into_inner()) = model;
+        if auto && !self.auto.swap(true, Ordering::Relaxed) {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .seen
+                .clear();
+        }
+        self.auto.store(auto, Ordering::Relaxed);
+        self.wake.notify_all();
+    }
+
+    /// Lets the automatic run try the songs that failed before.
+    pub fn retry_failed(&self) -> usize {
+        let mut n = 0;
+        for e in std::fs::read_dir(&self.dir).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().ends_with(".failed")
+                && std::fs::remove_file(e.path()).is_ok()
+            {
+                n += 1;
+            }
+        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.seen.clear();
+        inner.status.retain(|_, s| !matches!(s, Status::Failed(_)));
+        drop(inner);
+        self.wake.notify_all();
+        n
+    }
+
+    /// What the admin interface shows: model, automatic run, queue.
+    pub fn summary(&self) -> Value {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let running = inner.status.iter().find_map(|(id, s)| match s {
+            Status::Running(p) => Some(
+                Value::object()
+                    .with("id", id.as_str())
+                    .with("progress", *p as f64),
+            ),
+            _ => None,
+        });
+        let count = |f: fn(&Status) -> bool| inner.status.values().filter(|s| f(s)).count() as u64;
+        let failed_files = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".failed"))
+            .count() as u64;
+        let timed = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name();
+                let n = n.to_string_lossy();
+                n.ends_with(".synced.lrc") || n.ends_with(".recognized.lrc")
+            })
+            .count() as u64;
+        Value::object()
+            .with(
+                "model",
+                self.model()
+                    .map_or(Value::Null, |p| Value::from(p.display().to_string())),
+            )
+            .with("available", self.available())
+            .with("loaded", self.loaded.load(Ordering::Relaxed))
+            .with("auto", self.auto.load(Ordering::Relaxed))
+            .with("queued", inner.queue.len() as u64)
+            .with("running", running.unwrap_or(Value::Null))
+            .with("done", count(|s| matches!(s, Status::Done)))
+            .with(
+                "failed",
+                failed_files.max(count(|s| matches!(s, Status::Failed(_)))),
+            )
+            .with("timed", timed)
     }
 
     pub fn synced_path(&self, id: &str) -> PathBuf {
@@ -95,7 +186,7 @@ impl LyricsSync {
 
     /// Starts the worker (with a model).
     pub fn attach(self: &Arc<Self>, state: &Arc<State>) {
-        if self.model_path.is_none() || self.state.set(Arc::downgrade(state)).is_err() {
+        if self.state.set(Arc::downgrade(state)).is_err() {
             return;
         }
         let me = self.clone();
@@ -142,15 +233,20 @@ impl LyricsSync {
     }
 
     fn run(self: Arc<Self>) {
-        let mut model: Option<bl_asr::model::Model> = None;
+        let mut model: Option<(PathBuf, bl_asr::model::Model)> = None;
         loop {
             let (id, background) = {
                 let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 loop {
+                    // A model that was switched off leaves memory.
+                    if model.is_some() && self.model().is_none() {
+                        model = None;
+                        self.loaded.store(false, Ordering::Relaxed);
+                    }
                     if let Some(id) = inner.queue.pop_front() {
                         break (id, false);
                     }
-                    if self.auto {
+                    if self.auto.load(Ordering::Relaxed) && self.available() {
                         if let Some(id) = self.next_automatic(&mut inner) {
                             break (id, true);
                         }
@@ -170,14 +266,24 @@ impl LyricsSync {
                 self.set(&id, Status::Failed("song not found".into()));
                 continue;
             };
-            if model.is_none() {
-                let path = self.model_path.clone().expect("checked in attach");
+            let Some(path) = self.model() else {
+                self.set(&id, Status::Failed("no speech model".into()));
+                continue;
+            };
+            if !matches!(&model, Some((p, _)) if *p == path) {
+                model = None;
+                self.loaded.store(false, Ordering::Relaxed);
                 match std::fs::File::open(&path)
                     .and_then(|f| bl_asr::model::Model::load(&mut std::io::BufReader::new(f)))
                 {
                     Ok(m) => {
-                        crate::info!("speech model {} loaded", path.display());
-                        model = Some(m);
+                        crate::info!(
+                            "speech model {} loaded ({} MB)",
+                            path.display(),
+                            m.weight_bytes() / 1_000_000
+                        );
+                        model = Some((path, m));
+                        self.loaded.store(true, Ordering::Relaxed);
                     }
                     Err(e) => {
                         crate::warn!("cannot load the speech model {}: {e}", path.display());
@@ -189,7 +295,7 @@ impl LyricsSync {
             let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
             bl_asr::ops::set_max_threads(if background { (cores / 2).max(1) } else { 0 });
             self.set(&id, Status::Running(0.0));
-            let res = self.sync_one(&state, entry, model.as_ref().expect("loaded"));
+            let res = self.sync_one(&state, entry, &model.as_ref().expect("loaded").1);
             match res {
                 Ok(()) => self.set(&id, Status::Done),
                 Err(e) => {
@@ -242,10 +348,7 @@ impl LyricsSync {
             self.set(&id, Status::Running(p));
             true
         };
-        let src: Box<dyn bl_media::Source> = Box::new(std::io::BufReader::with_capacity(
-            256 * 1024,
-            std::fs::File::open(&e.abs).map_err(|e| e.to_string())?,
-        ));
+        let src = state.sources.open_entry(e).map_err(|(_, m)| m)?;
         let samples = bl_media::decode_mono(
             src,
             Some(&e.ext()),
@@ -281,7 +384,7 @@ impl LyricsSync {
         }
         let (lrc, path) = match &text {
             Some(t) => {
-                let (lrc, matched) = bl_asr::align::align_text(t, &segments);
+                let (lrc, matched) = bl_asr::align::align_text_words(t, &segments);
                 if matched < MIN_MATCH {
                     return Err(format!(
                         "the song text was not recognised ({:.0} % of the words)",
@@ -297,7 +400,7 @@ impl LyricsSync {
                     return Err("the words could not be recognised reliably".into());
                 }
                 (
-                    bl_asr::align::segments_to_lrc(&segments),
+                    bl_asr::align::segments_to_lrc_words(&segments),
                     self.recognized_path(&id),
                 )
             }

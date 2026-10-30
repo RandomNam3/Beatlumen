@@ -1,7 +1,10 @@
 //! Loading Whisper models in the ggml file format (as published for
-//! whisper.cpp): hyperparameters, mel filters, vocabulary and the weights
-//! (f32 or f16, converted to f32 on load).
+//! whisper.cpp): hyperparameters, mel filters, vocabulary and the weights.
+//! Weight matrices stay in the file's format (f32, f16 or the quantised
+//! q4_0, q4_1, q5_0, q5_1 and q8_0) and are expanded row by row while
+//! computing; vectors, convolutions and position embeddings become f32.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, Read};
 
@@ -21,16 +24,169 @@ pub struct Params {
     pub n_mels: usize,
 }
 
+/// Quantised block formats of ggml (32 values per block).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QType {
+    Q4_0,
+    Q4_1,
+    Q5_0,
+    Q5_1,
+    Q8_0,
+}
+
+/// Values per quantised block.
+pub const QK: usize = 32;
+
+impl QType {
+    fn from_ggml(t: i32) -> Option<QType> {
+        Some(match t {
+            2 => QType::Q4_0,
+            3 => QType::Q4_1,
+            6 => QType::Q5_0,
+            7 => QType::Q5_1,
+            8 => QType::Q8_0,
+            _ => return None,
+        })
+    }
+
+    /// Bytes per block of 32 values.
+    pub fn block_bytes(self) -> usize {
+        match self {
+            QType::Q4_0 => 18,
+            QType::Q4_1 => 20,
+            QType::Q5_0 => 22,
+            QType::Q5_1 => 24,
+            QType::Q8_0 => 34,
+        }
+    }
+
+    /// Expands one block into 32 values.
+    fn dequantize(self, b: &[u8], out: &mut [f32]) {
+        let h = |i: usize| f16_to_f32(u16::from_le_bytes([b[i], b[i + 1]]));
+        let d = h(0);
+        match self {
+            QType::Q8_0 => {
+                for (o, &q) in out.iter_mut().zip(&b[2..34]) {
+                    *o = q as i8 as f32 * d;
+                }
+            }
+            QType::Q4_0 | QType::Q4_1 => {
+                let (min, qs) = match self {
+                    QType::Q4_0 => (-8.0 * d, &b[2..18]),
+                    _ => (h(2), &b[4..20]),
+                };
+                for (j, &q) in qs.iter().enumerate() {
+                    out[j] = (q & 0x0f) as f32 * d + min;
+                    out[j + 16] = (q >> 4) as f32 * d + min;
+                }
+            }
+            QType::Q5_0 | QType::Q5_1 => {
+                let (min, at) = match self {
+                    QType::Q5_0 => (-16.0 * d, 2),
+                    _ => (h(2), 4),
+                };
+                let qh = u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+                for (j, &q) in b[at + 4..at + 20].iter().enumerate() {
+                    let hi0 = ((qh >> j) << 4) & 0x10;
+                    let hi1 = (qh >> (j + 12)) & 0x10;
+                    out[j] = ((q as u32 & 0x0f) | hi0) as f32 * d + min;
+                    out[j + 16] = ((q as u32 >> 4) | hi1) as f32 * d + min;
+                }
+            }
+        }
+    }
+}
+
+/// How a tensor's values are kept in memory.
+pub enum Store {
+    F32(Vec<f32>),
+    F16(Vec<u16>),
+    Quant(QType, Vec<u8>),
+}
+
 /// A weight tensor: `rows` rows of `cols` values (ggml's ne0 = cols).
 pub struct Tensor {
     pub cols: usize,
     pub rows: usize,
-    pub data: Vec<f32>,
+    store: Store,
 }
 
 impl Tensor {
-    pub fn row(&self, r: usize) -> &[f32] {
-        &self.data[r * self.cols..(r + 1) * self.cols]
+    pub fn from_f32(cols: usize, rows: usize, data: Vec<f32>) -> Tensor {
+        Tensor {
+            cols,
+            rows,
+            store: Store::F32(data),
+        }
+    }
+
+    /// All values (tensors kept as f32: vectors, convolutions, position
+    /// embeddings).
+    pub fn values(&self) -> &[f32] {
+        match &self.store {
+            Store::F32(v) => v,
+            _ => panic!("tensor is not kept as f32"),
+        }
+    }
+
+    /// The f32 values of a whole-f32 tensor, if it is one.
+    pub fn as_f32(&self) -> Option<&[f32]> {
+        match &self.store {
+            Store::F32(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Row `r` as f32 values.
+    pub fn row(&self, r: usize) -> Cow<'_, [f32]> {
+        match &self.store {
+            Store::F32(v) => Cow::Borrowed(&v[r * self.cols..(r + 1) * self.cols]),
+            _ => {
+                let mut out = vec![0f32; self.cols];
+                self.row_into(r, &mut out);
+                Cow::Owned(out)
+            }
+        }
+    }
+
+    /// Writes row `r` as f32 values into `out` (`cols` long).
+    pub fn row_into(&self, r: usize, out: &mut [f32]) {
+        let c = self.cols;
+        match &self.store {
+            Store::F32(v) => out.copy_from_slice(&v[r * c..(r + 1) * c]),
+            Store::F16(v) => {
+                for (o, &h) in out.iter_mut().zip(&v[r * c..(r + 1) * c]) {
+                    *o = f16_to_f32(h);
+                }
+            }
+            Store::Quant(t, v) => {
+                let bb = t.block_bytes();
+                let row = &v[r * (c / QK) * bb..(r + 1) * (c / QK) * bb];
+                for (blk, o) in row.chunks_exact(bb).zip(out.chunks_exact_mut(QK)) {
+                    t.dequantize(blk, o);
+                }
+            }
+        }
+    }
+
+    /// Memory the values take (bytes).
+    pub fn bytes(&self) -> usize {
+        match &self.store {
+            Store::F32(v) => v.len() * 4,
+            Store::F16(v) => v.len() * 2,
+            Store::Quant(_, v) => v.len(),
+        }
+    }
+
+    fn into_f32(self) -> Tensor {
+        if matches!(self.store, Store::F32(_)) {
+            return self;
+        }
+        let mut data = vec![0f32; self.cols * self.rows];
+        for (r, out) in data.chunks_exact_mut(self.cols).enumerate() {
+            self.row_into(r, out);
+        }
+        Tensor::from_f32(self.cols, self.rows, data)
     }
 }
 
@@ -153,30 +309,40 @@ impl Model {
                 .and_then(|c| c.checked_mul(ne[2]))
                 .filter(|&c| c <= 1 << 30)
                 .ok_or_else(|| bad("tensor too large"))?;
-            let mut data = vec![0f32; count];
-            match ttype {
-                0 => read_f32s(r, &mut data)?,
+            let store = match ttype {
+                0 => {
+                    let mut data = vec![0f32; count];
+                    read_f32s(r, &mut data)?;
+                    Store::F32(data)
+                }
                 1 => {
                     let mut raw = vec![0u8; count * 2];
                     r.read_exact(&mut raw)?;
-                    for (d, c) in data.iter_mut().zip(raw.chunks_exact(2)) {
-                        *d = f16_to_f32(u16::from_le_bytes([c[0], c[1]]));
+                    Store::F16(
+                        raw.chunks_exact(2)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect(),
+                    )
+                }
+                t => {
+                    let q = QType::from_ggml(t).ok_or_else(|| bad("unsupported tensor type"))?;
+                    if ne[0] % QK != 0 {
+                        return Err(bad("quantised row length"));
                     }
+                    let mut raw = vec![0u8; count / QK * q.block_bytes()];
+                    r.read_exact(&mut raw)?;
+                    Store::Quant(q, raw)
                 }
-                _ => {
-                    return Err(bad(
-                        "unsupported tensor type (quantised models are not supported)",
-                    ))
-                }
-            }
-            tensors.insert(
-                name,
-                Tensor {
-                    cols: ne[0],
-                    rows: ne[1] * ne[2],
-                    data,
-                },
-            );
+            };
+            let t = Tensor {
+                cols: ne[0],
+                rows: ne[1] * ne[2],
+                store,
+            };
+            // Matrices stay compact; the rest is used as f32 directly.
+            let compact =
+                n_dims >= 2 && !name.contains("conv") && !name.contains("positional_embedding");
+            tensors.insert(name, if compact { t } else { t.into_f32() });
         }
         Ok(Model {
             params,
@@ -191,6 +357,11 @@ impl Model {
         self.tensors
             .get(name)
             .ok_or_else(|| bad(&format!("missing tensor {name}")))
+    }
+
+    /// Memory the weights take (bytes).
+    pub fn weight_bytes(&self) -> usize {
+        self.tensors.values().map(Tensor::bytes).sum()
     }
 
     /// Whether the model knows several languages (else English only).
@@ -211,6 +382,42 @@ fn read_f32s(r: &mut dyn Read, out: &mut [f32]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quantised_blocks() {
+        let one = 0x3c00u16.to_le_bytes(); // 1.0
+        let half = 0x3800u16.to_le_bytes(); // 0.5
+        let mut out = [0f32; 32];
+        // q8_0: d, 32 signed bytes.
+        let mut b = one.to_vec();
+        b.extend((0..32).map(|i| (i as i8 - 16) as u8));
+        QType::Q8_0.dequantize(&b, &mut out);
+        assert_eq!((out[0], out[31]), (-16.0, 15.0));
+        // q4_0: d, nibbles (low: first half, high: second half), minus 8.
+        let mut b = one.to_vec();
+        b.extend([0x9fu8; 16]);
+        QType::Q4_0.dequantize(&b, &mut out);
+        assert_eq!((out[0], out[16]), (7.0, 1.0));
+        // q4_1: d, m, nibbles.
+        let mut b = half.to_vec();
+        b.extend(one);
+        b.extend([0x21u8; 16]);
+        QType::Q4_1.dequantize(&b, &mut out);
+        assert_eq!((out[0], out[16]), (1.5, 2.0));
+        // q5_0: d, high bits, nibbles, minus 16.
+        let mut b = one.to_vec();
+        b.extend(1u32.to_le_bytes()); // high bit of value 0
+        b.extend([0x00u8; 16]);
+        QType::Q5_0.dequantize(&b, &mut out);
+        assert_eq!((out[0], out[1], out[16]), (0.0, -16.0, -16.0));
+        // q5_1: d, m, high bits (bit 16 = value 16), nibbles.
+        let mut b = one.to_vec();
+        b.extend(half);
+        b.extend((1u32 << 16).to_le_bytes());
+        b.extend([0x10u8; 16]);
+        QType::Q5_1.dequantize(&b, &mut out);
+        assert_eq!((out[0], out[16]), (0.5, 17.5));
+    }
 
     #[test]
     fn half_floats() {

@@ -1,8 +1,10 @@
 //! The UDP side of a stream: audio packets (decrypted and decoded into the
 //! [`LiveStream`]), sync packets on the control port, requests for lost
-//! packets, and the timing port.
+//! packets, and the timing port. AirPlay 2 realtime streams use the same
+//! packets with ChaCha20-Poly1305 instead of AES.
 
 use crate::crypto::aes::Aes128;
+use crate::crypto::chacha::open_in_place;
 use crate::meta::{Codec, StreamFormat};
 use crate::stream::{Format, LiveStream};
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -16,6 +18,8 @@ const MAX_RESEND: u16 = 128;
 pub struct Session {
     stop: Arc<AtomicBool>,
     threads: Vec<std::thread::JoinHandle<()>>,
+    /// Generation of the stream in the [`LiveStream`].
+    pub generation: u64,
     pub server_port: u16,
     pub control_port: u16,
     pub timing_port: u16,
@@ -24,15 +28,38 @@ pub struct Session {
 /// Turns RTP payloads into PCM.
 struct PacketDecoder {
     aes: Option<(Aes128, [u8; 16])>,
+    /// AirPlay 2: the packet's payload is sealed with this key (nonce: the
+    /// last 8 bytes, associated data: header bytes 4..12).
+    chacha: Option<[u8; 32]>,
     alac: Option<bl_media::AlacDecoder>,
     channels: usize,
     buf: Vec<u8>,
 }
 
 impl PacketDecoder {
-    fn decode(&mut self, payload: &[u8]) -> Option<Vec<f32>> {
+    /// Decodes an RTP packet (12-byte header and payload).
+    fn decode(&mut self, packet: &[u8]) -> Option<Vec<f32>> {
         self.buf.clear();
-        self.buf.extend_from_slice(payload);
+        if let Some(key) = &self.chacha {
+            let n = packet.len();
+            if n < 12 + 16 + 8 {
+                return None;
+            }
+            let mut nonce = [0u8; 12];
+            nonce[4..].copy_from_slice(&packet[n - 8..]);
+            self.buf.extend_from_slice(&packet[12..n - 8 - 16]);
+            if !open_in_place(
+                key,
+                &nonce,
+                &packet[4..12],
+                &mut self.buf,
+                &packet[n - 24..n - 8],
+            ) {
+                return None;
+            }
+        } else {
+            self.buf.extend_from_slice(&packet[12..]);
+        }
         if let Some((aes, iv)) = &self.aes {
             aes.decrypt_cbc(iv, &mut self.buf);
         }
@@ -79,7 +106,7 @@ impl Shared {
             self.track_sequence(seq);
         }
         let pcm = match self.decoder.lock() {
-            Ok(mut d) => d.decode(&packet[12..]),
+            Ok(mut d) => d.decode(packet),
             Err(_) => None,
         };
         if let Some(pcm) = pcm {
@@ -126,8 +153,9 @@ impl Shared {
             return;
         }
         match packet[1] {
-            // Sync: the frame "now minus latency" is heard now.
-            0xd4 if packet.len() >= 20 => {
+            // Sync (AirPlay 2: with the sender's PTP time): the frame "now
+            // minus latency" is heard now.
+            0xd4 | 0xd7 if packet.len() >= 20 => {
                 let frame = u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]);
                 self.stream.sync(self.generation, frame, received);
             }
@@ -140,12 +168,14 @@ impl Shared {
 
 impl Session {
     /// Opens the UDP ports for a stream from `peer`; `peer_control_port`
-    /// is where lost packets are requested.
+    /// is where lost packets are requested; `chacha` is the key of AirPlay 2
+    /// realtime streams.
     pub fn start(
         format: &StreamFormat,
         stream: LiveStream,
         peer: IpAddr,
         peer_control_port: Option<u16>,
+        chacha: Option<[u8; 32]>,
     ) -> std::io::Result<Session> {
         let bind = |_: ()| -> std::io::Result<UdpSocket> {
             let s = UdpSocket::bind(if peer.is_ipv6() {
@@ -174,6 +204,7 @@ impl Session {
         let shared = Arc::new(Shared {
             decoder: Mutex::new(PacketDecoder {
                 aes: format.aes.map(|(k, iv)| (Aes128::new(&k), iv)),
+                chacha,
                 alac,
                 channels: format.channels.max(1) as usize,
                 buf: Vec::with_capacity(2048),
@@ -236,6 +267,7 @@ impl Session {
         Ok(Session {
             stop,
             threads,
+            generation,
             server_port: ports.0,
             control_port: ports.1,
             timing_port: ports.2,

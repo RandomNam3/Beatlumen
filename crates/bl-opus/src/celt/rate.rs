@@ -1,4 +1,6 @@
-//! CELT bit allocation (decoder side).
+//! CELT bit allocation, shared by the decoder and the encoder. The only
+//! encoder-side choices (band skipping, intensity and dual stereo) go
+//! through the [`AllocCoder`] trait.
 //!
 //! Ported from libopus `celt/rate.c` and `celt/rate.h`:
 //!
@@ -13,6 +15,7 @@
 
 use super::mode::*;
 use crate::range_dec::{RangeDecoder, BITRES};
+use crate::range_enc::RangeEncoder;
 
 const ALLOC_STEPS: i32 = 6;
 
@@ -60,6 +63,90 @@ pub fn pulses2bits(band: usize, lm: i32, pulses: i32) -> i32 {
     }
 }
 
+/// Codes the side decisions of the allocation: the decoder reads them, the
+/// encoder chooses and writes them.
+pub trait AllocCoder {
+    /// Whether to stop skipping at band `j` (the last of `coded_bands`).
+    #[allow(clippy::too_many_arguments)]
+    fn keep_band(
+        &mut self,
+        j: usize,
+        start: usize,
+        coded_bands: usize,
+        band_bits: i32,
+        band_width: i32,
+        lm: i32,
+    ) -> bool;
+    /// First intensity-coded band, in `[start, coded_bands]`.
+    fn intensity(&mut self, start: usize, coded_bands: usize) -> usize;
+    fn dual_stereo(&mut self) -> bool;
+}
+
+impl AllocCoder for RangeDecoder<'_> {
+    fn keep_band(&mut self, _: usize, _: usize, _: usize, _: i32, _: i32, _: i32) -> bool {
+        self.bit_logp(1)
+    }
+    fn intensity(&mut self, start: usize, coded_bands: usize) -> usize {
+        start + self.uint((coded_bands + 1 - start) as u32) as usize
+    }
+    fn dual_stereo(&mut self) -> bool {
+        self.bit_logp(1)
+    }
+}
+
+/// Encoder side of [`AllocCoder`] (decisions of libopus' `interp_bits2pulses`).
+pub struct AllocEncoder<'a> {
+    pub enc: &'a mut RangeEncoder,
+    /// Requested intensity band (lowered to the number of coded bands).
+    pub intensity: usize,
+    pub dual_stereo: bool,
+    /// Coded bands of the previous frame (hysteresis), 0 for none.
+    pub prev: usize,
+    /// Last band with significant signal.
+    pub signal_bandwidth: usize,
+}
+
+impl AllocCoder for AllocEncoder<'_> {
+    fn keep_band(
+        &mut self,
+        j: usize,
+        start: usize,
+        coded_bands: usize,
+        band_bits: i32,
+        band_width: i32,
+        lm: i32,
+    ) -> bool {
+        // Hysteresis keeps bands from fluctuating in and out, but we try not
+        // to fold below a certain point.
+        let depth_threshold = if coded_bands > 17 {
+            if j < self.prev {
+                7
+            } else {
+                9
+            }
+        } else {
+            0
+        };
+        let keep = coded_bands <= start + 2
+            || (band_bits > (depth_threshold * band_width << lm << BITRES) >> 4
+                && j <= self.signal_bandwidth);
+        self.enc.bit_logp(keep, 1);
+        keep
+    }
+    fn intensity(&mut self, start: usize, coded_bands: usize) -> usize {
+        self.intensity = self.intensity.clamp(start, coded_bands);
+        self.enc.uint(
+            (self.intensity - start) as u32,
+            (coded_bands + 1 - start) as u32,
+        );
+        self.intensity
+    }
+    fn dual_stereo(&mut self) -> bool {
+        self.enc.bit_logp(self.dual_stereo, 1);
+        self.dual_stereo
+    }
+}
+
 /// Output of [`compute_allocation`].
 pub struct Allocation {
     pub coded_bands: usize,
@@ -86,7 +173,7 @@ fn interp_bits2pulses(
     mut dual_stereo_rsv: i32,
     c: i32,
     lm: i32,
-    dec: &mut RangeDecoder,
+    coder: &mut impl AllocCoder,
     out: &mut Allocation,
 ) {
     let alloc_floor = c << BITRES;
@@ -147,7 +234,7 @@ fn interp_bits2pulses(
             .wrapping_add(percoeff.wrapping_mul(band_width))
             .wrapping_add(rem);
         if band_bits >= thresh[j].max(alloc_floor + (1 << BITRES)) {
-            if dec.bit_logp(1) {
+            if coder.keep_band(j, start, coded_bands, band_bits, band_width, lm) {
                 break;
             }
             psum += 1 << BITRES;
@@ -168,7 +255,7 @@ fn interp_bits2pulses(
     }
 
     if intensity_rsv > 0 {
-        out.intensity = start + dec.uint((coded_bands + 1 - start) as u32) as usize;
+        out.intensity = coder.intensity(start, coded_bands);
     } else {
         out.intensity = 0;
     }
@@ -177,7 +264,7 @@ fn interp_bits2pulses(
         dual_stereo_rsv = 0;
     }
     out.dual_stereo = if dual_stereo_rsv > 0 {
-        dec.bit_logp(1)
+        coder.dual_stereo()
     } else {
         false
     };
@@ -255,7 +342,7 @@ fn interp_bits2pulses(
     out.coded_bands = coded_bands;
 }
 
-/// `clt_compute_allocation` (decoder).
+/// `clt_compute_allocation`.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_allocation(
     start: usize,
@@ -266,7 +353,7 @@ pub fn compute_allocation(
     total: i32,
     c: i32,
     lm: i32,
-    dec: &mut RangeDecoder,
+    coder: &mut impl AllocCoder,
 ) -> Allocation {
     let mut total = total.max(0);
     let len = NB_EBANDS;
@@ -377,7 +464,7 @@ pub fn compute_allocation(
         dual_stereo_rsv,
         c,
         lm,
-        dec,
+        coder,
         &mut out,
     );
     out

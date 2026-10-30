@@ -406,7 +406,24 @@ impl Core {
             }
             "lyrics.remove" => self.lyrics_remove(host),
             "lyrics.sync" => self.lyrics_sync(host),
+            n if n.starts_with("devices.") => self.devices_command(host, n, c),
+            n if n.starts_with("share.") => self.share_command(host, n, c),
+            n if n.starts_with("speech.") => self.speech_command(host, n, c),
+            n if n.starts_with("sync.") => self.sync_command(host, n),
+            "dlna.answer" => {
+                self.dlna_answer(host, b("allow"), b("always"));
+                ok()
+            }
+            "dlna.forget" => {
+                self.settings.dlna_allowed.clear();
+                self.settings_changed();
+                ok()
+            }
+            n if n.starts_with("sources.") || n.starts_with("radio.") => {
+                self.sources_command(host, n, c)
+            }
             "offline.save" => self.offline_save(host, strs(c.get("ids"))),
+            "offline.overview" => self.offline_overview(),
             "offline.remove" => {
                 let ids = if c.bool_or("all", false) {
                     self.offline.entries.keys().cloned().collect()
@@ -582,6 +599,7 @@ impl Core {
                 }
                 ok()
             }
+            "playlist.export" => self.export_playlist(&s("id"), &s("folder")),
             "playlist.delete" => {
                 self.delete_playlist(host, &s("id"));
                 ok()
@@ -1004,6 +1022,10 @@ impl Core {
                 self.visible = b("visible");
                 ok()
             }
+            "net.metered" => {
+                self.metered = b("metered");
+                ok()
+            }
             "save" => {
                 self.save_settings(host);
                 ok()
@@ -1019,7 +1041,7 @@ impl Core {
         }
     }
 
-    fn set_setting(&mut self, host: &mut dyn Host, key: &str, value: Value) {
+    pub(crate) fn set_setting(&mut self, host: &mut dyn Host, key: &str, value: Value) {
         if let Some(sub) = key.strip_prefix("ui.") {
             self.settings.ui.set(sub, value);
             self.settings_changed();
@@ -1354,7 +1376,7 @@ impl Core {
             .with("tracks", Value::Array(tracks))
     }
 
-    fn find_playlist(&self, id: &str) -> Option<&Playlist> {
+    pub(crate) fn find_playlist(&self, id: &str) -> Option<&Playlist> {
         self.local_playlists
             .iter()
             .chain(self.server_playlists.iter())

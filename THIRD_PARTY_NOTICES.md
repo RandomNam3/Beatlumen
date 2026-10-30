@@ -14,7 +14,7 @@ contain the ported code and carries the full license text where required.
 | [three.js](https://github.com/mrdoob/three.js) | copy, blend, RGB shift and vignette shaders (`bl-render`) | MIT |
 | [webgl-noise](https://github.com/stegu/webgl-noise) | 2D simplex noise shader (`bl-render`) | MIT |
 | [minimp3](https://github.com/lieff/minimp3) | MP3 decoder tables and kernels (`bl-mp3`) | CC0 1.0 |
-| [libopus](https://opus-codec.org/) 1.5.2 | Opus decoder (`bl-opus`) | BSD-3-Clause |
+| [libopus](https://opus-codec.org/) 1.5.2 | Opus decoder and CELT encoder (`bl-opus`) | BSD-3-Clause |
 | [libvorbis](https://xiph.org/vorbis/) | floor 0 and codebook limits (`bl-vorbis`) | BSD-3-Clause |
 | [Apple ALAC](https://github.com/macosforge/alac) | ALAC decoder (`bl-media`) | Apache-2.0 |
 | RFC 6386 code components | VP8 tables (`bl-image`) | BSD (IETF Trust) |

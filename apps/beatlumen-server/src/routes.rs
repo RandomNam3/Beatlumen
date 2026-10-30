@@ -16,7 +16,7 @@ const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob
 media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
 /// Entry point for every request.
-pub fn handle(state: &State, req: Request) -> Response {
+pub fn handle(state: &std::sync::Arc<State>, req: Request) -> Response {
     let t0 = Instant::now();
     let is_api = req.path == "/api" || req.path.starts_with("/api/");
     let mut resp = match check_origin(state, &req) {
@@ -49,7 +49,12 @@ fn host_allowed(state: &State, host: &str) -> bool {
         || [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
             .iter()
             .any(|s| h.ends_with(s))
-        || state.config.allowed_hosts.iter().any(|a| *a == h)
+        || state.config().allowed_hosts.contains(&h)
+        || state.config().public_url.as_deref().is_some_and(|u| {
+            let rest = u.split_once("://").map_or(u, |(_, r)| r);
+            let authority = rest.split('/').next().unwrap_or("");
+            host_name(authority).eq_ignore_ascii_case(&h)
+        })
 }
 
 /// Strips the port from a `Host` header value (`[v6]:port`, `name:port`).
@@ -67,10 +72,12 @@ fn host_name(v: &str) -> &str {
 }
 
 /// Rejects requests from other web sites: cross-site writes (CSRF) always,
-/// unknown host names (DNS rebinding) when no password protects the server.
+/// unknown host names (DNS rebinding) when no password protects the server
+/// and always for the admin interface.
 fn check_origin(state: &State, req: &Request) -> Result<(), Response> {
     let host = req.header("host").unwrap_or("");
-    if !state.auth.required() && !host_allowed(state, host_name(host)) {
+    let admin = req.path.starts_with("/admin") || req.path.starts_with("/api/admin");
+    if (admin || !state.auth.required()) && !host_allowed(state, host_name(host)) {
         crate::warn!("refused request for unknown host name {host:?} (allow it with --allow-host)");
         return Err(Response::error(
             421,
@@ -101,7 +108,10 @@ fn finish_headers(resp: &mut Response, is_api: bool) {
     if h.get("content-type")
         .is_some_and(|t| t.starts_with("text/html"))
     {
-        h.set("Content-Security-Policy", CSP);
+        // Pages with a stricter policy of their own keep it.
+        if h.get("content-security-policy").is_none() {
+            h.set("Content-Security-Policy", CSP);
+        }
         h.set("Cross-Origin-Opener-Policy", "same-origin");
         h.set("Cross-Origin-Embedder-Policy", "require-corp");
         h.set("X-Frame-Options", "DENY");
@@ -111,7 +121,7 @@ fn finish_headers(resp: &mut Response, is_api: bool) {
     }
 }
 
-fn route(state: &State, req: &Request) -> Response {
+fn route(state: &std::sync::Arc<State>, req: &Request) -> Response {
     if !req.path.starts_with('/') || req.path.contains(['\0', '\\']) {
         return Response::error(400, "invalid path");
     }
@@ -122,10 +132,52 @@ fn route(state: &State, req: &Request) -> Response {
         return assetlinks(state);
     }
     match segs.as_slice() {
+        ["api", "admin", rest @ ..] => crate::admin::handle(state, req, rest),
         ["api", rest @ ..] => api(state, req, rest),
+        ["admin", rest @ ..] => crate::admin_web::serve(req, rest),
         // Public links (/share/<id>#<secret>) open the share page.
         ["share", id] if !id.contains('.') => state.web.serve(req, &["share", "index.html"]),
         _ => state.web.serve(req, &segs),
+    }
+}
+
+/// Largest settings document of an account (encrypted, bytes).
+const MAX_ACCOUNT_SETTINGS: usize = 256 * 1024;
+
+/// `GET/PUT /api/vault/settings`: an account's settings as the apps
+/// encrypted them (the server cannot read them). A change is announced to
+/// the account's other devices.
+fn account_settings(state: &State, req: &Request) -> Response {
+    let Some(user) = state.vault.session_user(req) else {
+        return Response::error(401, "authentication required");
+    };
+    let path = state.vault.user_data_dir(&user).join("settings.bin");
+    match req.method.as_str() {
+        "GET" | "HEAD" => match std::fs::read(&path) {
+            Ok(d) => Response::bytes(200, "application/octet-stream", d),
+            Err(_) => Response::error(404, "no settings yet"),
+        },
+        "PUT" => {
+            if req.body.is_empty() || req.body.len() > MAX_ACCOUNT_SETTINGS {
+                return Response::error(413, "settings too large");
+            }
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = util::write_atomic(&path, &req.body) {
+                crate::warn!("cannot store settings of {user}: {e}");
+                return Response::error(500, "cannot store");
+            }
+            util::make_private(&path);
+            state.devices.notify(
+                &format!("user:{user}"),
+                Value::object()
+                    .with("type", "settings")
+                    .with("from", req.query("device").unwrap_or("")),
+            );
+            Response::new(204)
+        }
+        _ => not_allowed("GET, HEAD, PUT"),
     }
 }
 
@@ -167,6 +219,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 not_allowed("POST")
             }
         }
+        // Settings that follow an account (encrypted by the apps).
+        ["vault", "settings"] => return account_settings(state, req),
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         // Public links to encrypted files: no account needed.
         ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),
@@ -184,6 +238,14 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
+    // Devices see the devices of the same login: an account, or everyone
+    // with the server password.
+    if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
+        let scope = user
+            .as_deref()
+            .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
+        return state.devices.handle(req, segs, &scope);
+    }
     match segs {
         ["logout"] => match m {
             "POST" => {
@@ -272,7 +334,17 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             }
         }
         ["playlists"] => match m {
-            "GET" | "HEAD" => json(200, &playlists.list_json()),
+            "GET" | "HEAD" => {
+                let mut list = playlists.list_json();
+                if let Value::Array(a) = &mut list {
+                    let folder = state
+                        .folder_playlists
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner());
+                    a.extend(folder.iter().map(|p| p.to_json().with("folder", true)));
+                }
+                json(200, &list)
+            }
             "POST" => match playlists.create(&req.body) {
                 Ok(p) => json(201, &p.to_json()),
                 Err(e) => fail(e),
@@ -282,6 +354,22 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["playlists", id] => {
             if !util::is_id(id) {
                 return Response::error(404, "playlist not found");
+            }
+            let folder = state
+                .folder_playlists
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .find(|p| p.id == *id)
+                .cloned();
+            if let Some(p) = folder {
+                return match m {
+                    "GET" | "HEAD" => json(200, &p.to_json().with("folder", true)),
+                    _ => Response::error(
+                        403,
+                        "this playlist is a file in a music folder; change it there",
+                    ),
+                };
             }
             match m {
                 "GET" | "HEAD" => match playlists.get(id) {
@@ -356,7 +444,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
 /// The client address used for login rate limiting. Behind a reverse proxy
 /// on the same machine (peer is loopback) the proxy's `X-Forwarded-For` /
 /// `X-Real-IP` is used; remote peers cannot spoof it.
-fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
+pub(crate) fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
     let peer = req.remote.map(|a| a.ip())?;
     if peer.is_loopback() {
         let forwarded = req
@@ -397,6 +485,25 @@ fn library(state: &State, req: &Request) -> Response {
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
+    if req.query("format") == Some("opus") {
+        return transcoded(state, req, e);
+    }
+    if let Some((src, key)) = &e.remote {
+        let range = req.header("range");
+        return match state.sources.open(src, key) {
+            Ok(file) => {
+                if range.map_or("bytes=0-", str::trim).starts_with("bytes=0-") {
+                    state.sources.played(src, key);
+                }
+                Response::seekable(file, util::audio_mime(&e.ext()), range)
+                    .with_header("Cache-Control", "private, max-age=3600")
+            }
+            Err(err) => {
+                crate::warn!("cannot open {}: {err}", e.track.path);
+                Response::error(502, "cannot read the song from its source")
+            }
+        };
+    }
     let resp = Response::file(&e.abs, util::audio_mime(&e.ext()), req.header("range"));
     if resp.status == 404 {
         crate::warn!("track file vanished: {}", e.abs.display());
@@ -404,6 +511,101 @@ fn stream(state: &State, req: &Request, e: &Entry) -> Response {
         return Response::error(404, "track file not found");
     }
     resp.with_header("Cache-Control", "private, max-age=3600")
+}
+
+/// The song converted to Ogg Opus while it is sent (smaller streams for
+/// mobile data): `bitrate` in kbit/s, `start` in milliseconds (seeking
+/// opens a new stream there). The length is not known up front, so byte
+/// ranges are ignored.
+fn transcoded(state: &State, req: &Request, e: &Entry) -> Response {
+    use std::sync::atomic::Ordering;
+    let bitrate = req
+        .query("bitrate")
+        .and_then(|b| b.parse::<u32>().ok())
+        .unwrap_or(128)
+        .clamp(24, 256);
+    let start_ms = req
+        .query("start")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let running = state.transcodes.fetch_add(1, Ordering::SeqCst);
+    let slot = TranscodeSlot(state.transcodes.clone());
+    if running >= crate::MAX_TRANSCODES {
+        return Response::error(503, "too many songs are converted right now")
+            .with_header("Retry-After", "5");
+    }
+    let src: Box<dyn bl_media::Source> = match &e.remote {
+        Some((src, key)) => match state.sources.open(src, key) {
+            Ok(s) => {
+                if start_ms == 0 {
+                    state.sources.played(src, key);
+                }
+                s
+            }
+            Err(err) => {
+                crate::warn!("cannot open {}: {err}", e.track.path);
+                return Response::error(502, "cannot read the song from its source");
+            }
+        },
+        None => match std::fs::File::open(&e.abs) {
+            Ok(f) => Box::new(std::io::BufReader::with_capacity(64 * 1024, f)),
+            Err(_) => {
+                crate::warn!("track file vanished: {}", e.abs.display());
+                state.file_missing();
+                return Response::error(404, "track file not found");
+            }
+        },
+    };
+    let mut decoder = match bl_media::open(src, Some(&e.ext())) {
+        Ok(d) => d,
+        Err(err) => {
+            crate::debug!("cannot decode {}: {err}", e.rel);
+            return Response::error(415, "cannot decode the song");
+        }
+    };
+    if start_ms > 0 {
+        let frame = start_ms * decoder.spec().sample_rate as u64 / 1000;
+        if let Err(err) = decoder.seek(frame) {
+            crate::debug!("cannot seek in {}: {err}", e.rel);
+            return Response::error(416, "cannot start the song there");
+        }
+    }
+    let mut opts = bl_opus_enc::TranscodeOptions::new(bitrate * 1000);
+    // The same bytes when the client reconnects (it reads the start again
+    // while finding out the format).
+    opts.serial = Some(e.track.id.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ b as u32).wrapping_mul(0x0100_0193)
+    }));
+    match bl_opus_enc::Transcoder::with_options(decoder, &opts) {
+        Ok(t) => {
+            let mut r = Response::new(200);
+            r.body = bl_net::server::Body::Stream(Box::new(Slotted(t, slot)));
+            r.with_header("Content-Type", "audio/ogg")
+                .with_header("Cache-Control", "no-store")
+                .with_header("X-Beatlumen-Transcoded", "opus")
+        }
+        Err(err) => {
+            crate::debug!("cannot convert {}: {err}", e.rel);
+            Response::error(415, "cannot convert the song")
+        }
+    }
+}
+
+/// Counts a running conversion until the response is sent (or dropped).
+struct TranscodeSlot(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for TranscodeSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+struct Slotted<R>(R, #[allow(dead_code)] TranscodeSlot);
+
+impl<R: std::io::Read> std::io::Read for Slotted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
 }
 
 /// Serves a cover thumbnail of a track (cached per size and source stamp).
@@ -429,7 +631,7 @@ fn cover(state: &State, req: &Request, idx: &Index, e: &Entry) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::cover_source(idx, e) else {
+    let Some(src) = covers::cover_source(&state.sources, idx, e) else {
         return Response::error(404, "no cover");
     };
     match covers::make_thumbnail(&src, size) {
@@ -512,7 +714,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
 }
 
 fn assetlinks(state: &State) -> Response {
-    let certs = state.config.all_android_certs();
+    let certs = state.config().all_android_certs();
     if certs.is_empty() || state.vault.rp.is_none() {
         return Response::error(404, "not found");
     }

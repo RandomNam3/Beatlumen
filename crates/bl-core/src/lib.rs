@@ -6,10 +6,12 @@
 //! visualizer with [`Core::render`]. Platform services come in through
 //! [`host::Host`].
 
+mod account_sync;
 mod airplay;
 pub mod capture;
 mod commands;
 pub mod core;
+mod devices;
 #[cfg(not(target_arch = "wasm32"))]
 mod dlna_receiver;
 #[cfg(target_arch = "wasm32")]
@@ -30,7 +32,21 @@ mod push;
 pub mod queue;
 pub mod server;
 pub mod settings;
+mod share;
+#[cfg(not(target_arch = "wasm32"))]
+mod sources;
+#[cfg(target_arch = "wasm32")]
+#[path = "sources_web.rs"]
+mod sources;
+#[cfg(not(target_arch = "wasm32"))]
+mod speech;
+#[cfg(target_arch = "wasm32")]
+#[path = "speech_web.rs"]
+mod speech;
 pub mod strings;
+mod tempo;
+#[cfg(not(target_arch = "wasm32"))]
+mod transcoded;
 mod vault;
 mod visual;
 mod webcheck;

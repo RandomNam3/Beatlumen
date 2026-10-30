@@ -63,6 +63,48 @@ fn timed_words(segments: &[Segment]) -> Vec<(String, f64)> {
     out
 }
 
+/// Word times of a line from `start` to `end`: known times stay (kept in
+/// order), the others are spread by character position between them.
+fn spread(words: &[&str], known: &[Option<f64>], start: f64, end: f64) -> Vec<f64> {
+    let pos: Vec<f64> = words
+        .iter()
+        .scan(0usize, |p, w| {
+            let at = *p;
+            *p += w.chars().count() + 1;
+            Some(at as f64)
+        })
+        .collect();
+    let total = words
+        .iter()
+        .map(|w| w.chars().count() + 1)
+        .sum::<usize>()
+        .max(1) as f64;
+    // Anchors: the line's start and end and the known words in order.
+    let mut anchors: Vec<(f64, f64)> = vec![(0.0, start)];
+    let mut last = start;
+    for (i, k) in known.iter().enumerate() {
+        if let Some(t) = k {
+            if *t >= last && *t < end {
+                anchors.push((pos[i], *t));
+                last = *t;
+            }
+        }
+    }
+    anchors.push((total, end));
+    pos.iter()
+        .map(|&p| {
+            let j = anchors.iter().rposition(|a| a.0 <= p).unwrap_or(0);
+            let (p0, t0) = anchors[j];
+            let (p1, t1) = anchors.get(j + 1).copied().unwrap_or((total, end));
+            if p1 <= p0 {
+                t0
+            } else {
+                t0 + (t1 - t0) * (p - p0) / (p1 - p0)
+            }
+        })
+        .collect()
+}
+
 /// Pairs (song text word index, recognised word index) of an alignment.
 fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
     let (n, m) = (text.len(), rec.len());
@@ -140,20 +182,31 @@ fn strip_annotations(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The segments with speech (sounds removed).
+/// The segments with speech (sounds removed). A short segment that only
+/// repeats the end of the one before is dropped (models echo the last
+/// words into the silence after them).
 fn speech_segments(segments: &[Segment]) -> Vec<Segment> {
-    segments
-        .iter()
-        .filter_map(|s| {
-            let text = strip_annotations(&s.text);
-            (!text.is_empty()).then(|| Segment { text, ..s.clone() })
-        })
-        .collect()
+    let mut out: Vec<Segment> = Vec::new();
+    for s in segments {
+        let text = strip_annotations(&s.text);
+        if text.is_empty() {
+            continue;
+        }
+        let words: Vec<String> = text.split_whitespace().map(norm).collect();
+        let echo = out.last().is_some_and(|p| {
+            let prev: Vec<String> = p.text.split_whitespace().map(norm).collect();
+            words.len() <= 3 && prev.len() > words.len() && prev.ends_with(&words)
+        });
+        if !echo {
+            out.push(Segment { text, ..s.clone() });
+        }
+    }
+    out
 }
 
 /// A segment's text as lines of readable length, each with its estimated
-/// start time.
-fn split_lines(s: &Segment) -> Vec<(f64, String)> {
+/// start time and the estimated time of each word.
+fn split_lines(s: &Segment) -> Vec<(f64, String, Vec<f64>)> {
     let words: Vec<&str> = s.text.split_whitespace().collect();
     let total: usize = words
         .iter()
@@ -162,13 +215,16 @@ fn split_lines(s: &Segment) -> Vec<(f64, String)> {
         .max(1);
     let mut lines = Vec::new();
     let (mut line, mut start, mut pos) = (String::new(), s.start, 0usize);
+    let mut times = Vec::new();
     for (i, w) in words.iter().enumerate() {
+        let t = s.start + (s.end - s.start) * pos as f64 / total as f64;
         if line.is_empty() {
-            start = s.start + (s.end - s.start) * pos as f64 / total as f64;
+            start = t;
         } else {
             line.push(' ');
         }
         line.push_str(w);
+        times.push(t);
         pos += w.chars().count() + 1;
         let len = line.chars().count();
         let rest: usize = words[i + 1..].iter().map(|w| w.chars().count() + 1).sum();
@@ -177,19 +233,55 @@ fn split_lines(s: &Segment) -> Vec<(f64, String)> {
             && rest >= LINE_CHARS / 2
             && ((breaks && len >= LINE_CHARS) || len >= 2 * LINE_CHARS)
         {
-            lines.push((start, std::mem::take(&mut line)));
+            lines.push((start, std::mem::take(&mut line), std::mem::take(&mut times)));
         }
     }
     if !line.is_empty() {
-        lines.push((start, line));
+        lines.push((start, line, times));
     }
     lines
 }
 
+fn word_tag(t: f64) -> String {
+    let cs = (t.max(0.0) * 100.0).round() as u64;
+    format!("<{:02}:{:02}.{:02}>", cs / 6000, cs / 100 % 60, cs % 100)
+}
+
+/// A line with a time before each word (enhanced LRC).
+fn timed_line(words: &[&str], times: &[f64]) -> String {
+    words
+        .iter()
+        .zip(times)
+        .map(|(w, t)| format!("{}{w}", word_tag(*t)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// LRC text of recognised segments (no song text known).
 pub fn segments_to_lrc(segments: &[Segment]) -> String {
+    segments_lrc(segments, false)
+}
+
+/// Like [`segments_to_lrc`] with the estimated time of each word
+/// (enhanced LRC, `<mm:ss.xx>` before each word).
+pub fn segments_to_lrc_words(segments: &[Segment]) -> String {
+    segments_lrc(segments, true)
+}
+
+fn segments_lrc(segments: &[Segment], word_times: bool) -> String {
     let speech = speech_segments(segments);
-    let mut lines: Vec<(f64, String)> = speech.iter().flat_map(split_lines).collect();
+    let mut lines: Vec<(f64, String)> = speech
+        .iter()
+        .flat_map(split_lines)
+        .map(|(t, l, times)| {
+            if word_times {
+                let words: Vec<&str> = l.split_whitespace().collect();
+                (t, timed_line(&words, &times))
+            } else {
+                (t, l)
+            }
+        })
+        .collect();
     lines.extend(pauses(&speech).into_iter().map(|t| (t, String::new())));
     // The end of the singing, when the song goes on.
     if let (Some(last), Some(end)) = (speech.last(), segments.last().map(|s| s.end)) {
@@ -208,6 +300,16 @@ pub fn segments_to_lrc(segments: &[Segment]) -> String {
 /// empty lines are kept as spacing) with the recognised segments. Returns
 /// LRC text and the share of words that matched (0..1).
 pub fn align_text(text: &str, segments: &[Segment]) -> (String, f32) {
+    align(text, segments, false)
+}
+
+/// Like [`align_text`] with a time for each word (enhanced LRC): matched
+/// words get their recognised time, the others are spread between them.
+pub fn align_text_words(text: &str, segments: &[Segment]) -> (String, f32) {
+    align(text, segments, true)
+}
+
+fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
     let song_end = segments.last().map_or(0.0, |s| s.end);
     let segments = &speech_segments(segments)[..];
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
@@ -265,14 +367,39 @@ pub fn align_text(text: &str, segments: &[Segment]) -> (String, f32) {
         line_time[i] = Some(t0 + (t1 - t0) * before as f64 / total as f64);
         i += 1;
     }
+    // Recognised time per song text word (index into `words`).
+    let matched_time: std::collections::HashMap<usize, f64> =
+        pairs.iter().map(|&(wi, ri)| (wi, rec[ri].1)).collect();
     let mut out: Vec<(f64, String)> = Vec::new();
-    for (l, t) in lines.iter().zip(&line_time) {
+    let mut wi = 0usize;
+    for (li, (l, t)) in lines.iter().zip(&line_time).enumerate() {
+        let raw: Vec<&str> = l.split_whitespace().collect();
+        // The recognised times of this line's words.
+        let mut times: Vec<Option<f64>> = Vec::with_capacity(raw.len());
+        for w in &raw {
+            if norm(w).is_empty() {
+                times.push(None);
+            } else {
+                times.push(matched_time.get(&wi).copied());
+                wi += 1;
+            }
+        }
         if l.is_empty() {
             continue;
         }
-        if let Some(t) = t {
+        let Some(t) = t else { continue };
+        if !word_times {
             out.push((*t, l.to_string()));
+            continue;
         }
+        let end = line_time[li + 1..]
+            .iter()
+            .flatten()
+            .copied()
+            .find(|n| *n > *t)
+            .unwrap_or(t + 4.0)
+            .min(t + 10.0);
+        out.push((*t, timed_line(&raw, &spread(&raw, &times, *t, end))));
     }
     // Pause lines where nothing is sung for a while.
     for p in pauses(segments) {
@@ -360,8 +487,42 @@ mod tests {
     }
 
     #[test]
+    fn echoed_endings_are_dropped() {
+        let lrc = segments_to_lrc(&[
+            seg(0.0, 10.0, "ask what you can do for your country."),
+            seg(10.0, 12.0, " country."),
+        ]);
+        assert_eq!(lrc, "[00:00.00]ask what you can do for your country.\n");
+    }
+
+    #[test]
     fn segments_only() {
         let lrc = segments_to_lrc(&[seg(1.0, 3.0, " Hi there"), seg(20.0, 22.0, "again")]);
         assert_eq!(lrc, "[00:01.00]Hi there\n[00:03.00]\n[00:20.00]again\n");
+    }
+
+    #[test]
+    fn word_times() {
+        let segments = vec![seg(10.0, 14.0, "Hello darkness my old friend")];
+        let (lrc, _) = align_text_words("Hello darkness, my old friend", &segments);
+        assert!(
+            lrc.starts_with("[00:10.00]<00:10.00>Hello <00:10."),
+            "{lrc}"
+        );
+        let tags: Vec<&str> = lrc.matches('<').collect();
+        assert_eq!(tags.len(), 5, "{lrc}");
+        // Increasing.
+        let times: Vec<f64> = lrc
+            .split('<')
+            .skip(1)
+            .map(|p| {
+                let t = &p[..8];
+                t[..2].parse::<f64>().unwrap() * 60.0 + t[3..].parse::<f64>().unwrap()
+            })
+            .collect();
+        assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
+        assert!(*times.last().unwrap() < 14.0);
+        let lrc = segments_to_lrc_words(&[seg(1.0, 3.0, "one two three")]);
+        assert!(lrc.starts_with("[00:01.00]<00:01.00>one <00:01."), "{lrc}");
     }
 }

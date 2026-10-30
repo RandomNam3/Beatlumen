@@ -134,6 +134,16 @@ pub struct Settings {
     /// Shifts the effects against the audio in milliseconds (positive =
     /// earlier), for outputs with unreported latency (e.g. Bluetooth).
     pub sync_offset_ms: f32,
+    /// Live sources: effects on the predicted beats.
+    pub beat_prediction: bool,
+    /// Most space offline copies may take (MB, 0 = no limit).
+    pub offline_limit_mb: u64,
+    /// Server songs converted to Opus at this bitrate (kbit/s, 0 = the
+    /// original files), on Wi-Fi/cable and on mobile data.
+    pub stream_kbps: u32,
+    pub stream_kbps_metered: u32,
+    /// Speech model for timing song texts on the device ("" = none).
+    pub speech_model: String,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
@@ -144,8 +154,13 @@ pub struct Settings {
     pub skip_silence: bool,
     /// Offer this device as an AirPlay speaker in the local network.
     pub airplay: bool,
+    /// Also announce the AirPlay 2 receiver (experimental).
+    pub airplay2: bool,
     /// Reachable as a DLNA/UPnP speaker (media renderer).
     pub dlna_receiver: bool,
+    /// Control points allowed to play here (addresses); others are asked
+    /// for first.
+    pub dlna_allowed: Vec<String>,
     /// Where songs from server extensions go: "" (ask), "library", "vault".
     pub extension_target: String,
     /// The renderer's stable UPnP device id.
@@ -162,6 +177,16 @@ pub struct Settings {
     pub airplay_password: String,
     /// Random device ID announced instead of a hardware address (hex).
     pub airplay_id: String,
+    /// This device among the devices of a server login (random, hex).
+    pub device_id: String,
+    /// Its name there (empty: the platform's name).
+    pub device_name: String,
+    /// Other devices may control this one.
+    pub remote_control: bool,
+    /// Settings that follow the account: {key: {value, t}} as last
+    /// synced, and the account they belong to.
+    pub sync_items: Value,
+    pub sync_user: String,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -200,12 +225,19 @@ impl Default for Settings {
             waveform_thickness: 0.3,
             intensity: 1.0,
             sync_offset_ms: 0.0,
+            beat_prediction: true,
+            offline_limit_mb: 0,
+            stream_kbps: 0,
+            stream_kbps_metered: 0,
+            speech_model: String::new(),
             adaptive: true,
             normalize: false,
             crossfade: 0.0,
             skip_silence: true,
             airplay: false,
             dlna_receiver: false,
+            airplay2: false,
+            dlna_allowed: Vec::new(),
             extension_target: String::new(),
             dlna_uuid: String::new(),
             airplay_name: String::new(),
@@ -214,6 +246,11 @@ impl Default for Settings {
             notifications: true,
             airplay_password: String::new(),
             airplay_id: String::new(),
+            device_id: String::new(),
+            device_name: String::new(),
+            remote_control: true,
+            sync_items: Value::object(),
+            sync_user: String::new(),
             ui: Value::object(),
         }
     }
@@ -272,12 +309,19 @@ impl Settings {
             sync_offset_ms: v
                 .f32_or("syncOffsetMs", d.sync_offset_ms)
                 .clamp(-500.0, 500.0),
+            beat_prediction: v.bool_or("beatPrediction", d.beat_prediction),
+            offline_limit_mb: v.get("offlineLimitMb").as_u64().unwrap_or(0).min(1 << 24),
+            stream_kbps: stream_kbps(v.get("streamKbps").as_u64()),
+            stream_kbps_metered: stream_kbps(v.get("streamKbpsMetered").as_u64()),
+            speech_model: v.str_or("speechModel", "").chars().take(64).collect(),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
+            airplay2: v.bool_or("airplay2", false),
+            dlna_allowed: strs(v.get("dlnaAllowed")).into_iter().take(64).collect(),
             extension_target: match v.str_or("extensionTarget", "") {
                 t @ ("library" | "vault") => t.to_string(),
                 _ => String::new(),
@@ -289,6 +333,19 @@ impl Settings {
             notifications: v.bool_or("notifications", true),
             airplay_password: v.str_or("airplayPassword", "").chars().take(64).collect(),
             airplay_id: v.str_or("airplayId", "").to_string(),
+            device_id: v
+                .str_or("deviceId", "")
+                .chars()
+                .filter(|c| c.is_ascii_hexdigit())
+                .take(32)
+                .collect(),
+            device_name: v.str_or("deviceName", "").trim().chars().take(48).collect(),
+            remote_control: v.bool_or("remoteControl", true),
+            sync_items: match v.get("syncItems") {
+                o @ Value::Object(_) => o.clone(),
+                _ => Value::object(),
+            },
+            sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -330,12 +387,19 @@ impl Settings {
             .with("waveformThickness", self.waveform_thickness)
             .with("intensity", self.intensity)
             .with("syncOffsetMs", self.sync_offset_ms)
+            .with("beatPrediction", self.beat_prediction)
+            .with("offlineLimitMb", self.offline_limit_mb)
+            .with("streamKbps", self.stream_kbps)
+            .with("streamKbpsMetered", self.stream_kbps_metered)
+            .with("speechModel", self.speech_model.as_str())
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
             .with("airplay", self.airplay)
             .with("dlnaReceiver", self.dlna_receiver)
+            .with("airplay2", self.airplay2)
+            .with("dlnaAllowed", self.dlna_allowed.clone())
             .with("extensionTarget", self.extension_target.as_str())
             .with("dlnaUuid", self.dlna_uuid.as_str())
             .with("airplayName", self.airplay_name.as_str())
@@ -343,8 +407,21 @@ impl Settings {
             .with("vaultRemember", self.vault_remember)
             .with("notifications", self.notifications)
             .with("airplayPassword", self.airplay_password.as_str())
+            .with("deviceId", self.device_id.as_str())
+            .with("deviceName", self.device_name.as_str())
+            .with("remoteControl", self.remote_control)
+            .with("syncItems", self.sync_items.clone())
+            .with("syncUser", self.sync_user.as_str())
             .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
+    }
+}
+
+/// A stream bitrate: 0 (original files) or 24..=256 kbit/s.
+fn stream_kbps(v: Option<u64>) -> u32 {
+    match v.unwrap_or(0) {
+        0 => 0,
+        k => k.clamp(24, 256) as u32,
     }
 }
 

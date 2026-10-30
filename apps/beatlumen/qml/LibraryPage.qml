@@ -12,10 +12,12 @@ Item {
     signal openFiles()
     signal connectServer()
     signal uploadVault()
+    signal exportPlaylist(string id)
 
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
     readonly property int trackCount: Core.state.libraryTracks || 0
+    readonly property bool hasContent: trackCount > 0 || ((Core.state.sources || {}).stations || []).length > 0
     property var tracks: []
     property var albums: []
     property var artists: []
@@ -64,6 +66,7 @@ Item {
 
     TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
     PlaylistPicker { id: picker }
+    StationDialog { id: stationDialog }
     TextPrompt {
         id: newPlaylist
         title: Theme.tr("New playlist")
@@ -88,32 +91,6 @@ Item {
     }
 
     // ---- building blocks --------------------------------------------------
-
-    // Filter chip of the section bar.
-    component Chip: AbstractButton {
-        id: chip
-        implicitHeight: 36
-        implicitWidth: implicitContentWidth + leftPadding + rightPadding
-        leftPadding: 12
-        rightPadding: 12
-        font.pixelSize: 14
-        font.weight: Font.Medium
-        Accessible.name: text
-        contentItem: Label {
-            textFormat: Text.PlainText
-            text: chip.text
-            font: chip.font
-            verticalAlignment: Text.AlignVCenter
-            color: chip.checked ? Theme.onAccent : Theme.text
-        }
-        background: Rectangle {
-            radius: height / 2
-            color: chip.checked ? Theme.accent : chip.down ? Theme.outline : Theme.surfaceVariant
-            border.width: chip.checked ? 0 : 1
-            border.color: Theme.outline
-            Behavior on color { ColorAnimation { duration: 120 } }
-        }
-    }
 
     // Round play button on top of covers.
     component PlayBadge: RoundButton {
@@ -269,7 +246,7 @@ Item {
                 Layout.preferredHeight: 36
                 Layout.topMargin: 10
                 Layout.bottomMargin: 6
-                visible: !main.searching && page.trackCount > 0
+                visible: !main.searching && page.hasContent
                 contentWidth: chipRow.width + 24
                 flickableDirection: Flickable.HorizontalFlick
                 boundsBehavior: Flickable.StopAtBounds
@@ -289,6 +266,7 @@ Item {
                     spacing: 6
                     Repeater {
                         model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists")]
+                               .concat((Core.state.sources || {}).available === true ? [Theme.tr("Radio")] : [])
                         Chip {
                             required property string modelData
                             required property int index
@@ -322,13 +300,20 @@ Item {
                 EmptyState {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - 48, 420)
-                    visible: page.loaded && page.trackCount === 0 && !main.searching
+                    visible: page.loaded && !page.hasContent && !main.searching
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
                     AccentButton { text: Theme.tr("Add music folder"); highlighted: true; icon.source: Theme.icon("create_new_folder"); onClicked: page.addFolder() }
                     Button { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onClicked: page.openFiles() }
                     Button { text: Theme.tr("Connect server"); flat: true; icon.source: Theme.icon("cloud"); onClicked: page.connectServer() }
+                    Button {
+                        visible: (Core.state.sources || {}).available === true
+                        text: Theme.tr("Add radio station")
+                        flat: true
+                        icon.source: Theme.icon("graphic_eq")
+                        onClicked: stationDialog.openFor(null)
+                    }
                     Button {
                         visible: (Core.state.capture || {}).available === true
                         text: Theme.tr("Visualize other apps")
@@ -401,7 +386,7 @@ Item {
 
                 StackLayout {
                     anchors.fill: parent
-                    visible: !main.searching && page.trackCount > 0
+                    visible: !main.searching && page.hasContent
                     currentIndex: main.section
 
                     // Songs: play/shuffle scroll away with the list.
@@ -565,6 +550,62 @@ Item {
                                     iconColor: Theme.accent
                                     tip: Theme.tr("Play")
                                     onClicked: Core.call("playlist.play", { id: playlistRow.modelData.id })
+                                }
+                            }
+                        }
+                    }
+
+                    // Internet radio
+                    Item {
+                        readonly property var stations: (Core.state.sources || {}).stations || []
+                        EmptyState {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 420)
+                            visible: parent.stations.length === 0
+                            iconName: "graphic_eq"
+                            title: Theme.tr("No stations yet")
+                            text: Theme.tr("Add an internet radio station with its stream address or station file (.pls, .m3u). The visuals follow the music live.")
+                            AccentButton { text: Theme.tr("Add station"); highlighted: true; icon.source: Theme.icon("add"); onClicked: stationDialog.openFor(null) }
+                        }
+                        ListView {
+                            anchors.fill: parent
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            visible: parent.stations.length > 0
+                            model: parent.stations
+                            ScrollBar.vertical: ScrollBar { }
+                            header: ListRow {
+                                title: Theme.tr("Add station")
+                                onClicked: stationDialog.openFor(null)
+                                lead: Rectangle {
+                                    anchors.fill: parent
+                                    radius: 12
+                                    color: "transparent"
+                                    border.width: 1.5
+                                    border.color: Theme.outline
+                                    Icon { anchors.centerIn: parent; name: "add"; color: Theme.accent }
+                                }
+                            }
+                            delegate: ListRow {
+                                id: stationRow
+                                required property var modelData
+                                readonly property bool playing: Core.state.current && Core.state.current.id === modelData.id
+                                title: modelData.name
+                                subtitle: playing && Core.state.current.title !== modelData.name
+                                          ? (Core.state.current.artist ? Core.state.current.artist + " – " : "") + Core.state.current.title
+                                          : modelData.url
+                                onClicked: Core.call("play", { ids: [modelData.id] })
+                                onPressAndHold: stationDialog.openFor(modelData)
+                                lead: CoverImage {
+                                    anchors.fill: parent
+                                    radius: 12
+                                    placeholder: "graphic_eq"
+                                    seed: stationRow.modelData.name || ""
+                                }
+                                IconButton {
+                                    iconName: "more_vert"
+                                    tip: Theme.tr("Edit")
+                                    onClicked: stationDialog.openFor(stationRow.modelData)
                                 }
                             }
                         }
@@ -803,6 +844,7 @@ Item {
             cover: playlist.cover || ""
             menuItems: [
                 { text: Theme.tr("Rename"), action: () => renamePrompt.open() },
+                { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) },
                 { text: Theme.tr("Delete"), action: () => { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() } }
             ]
             onTrackMenu: (t, a) => {

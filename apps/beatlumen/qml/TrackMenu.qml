@@ -51,6 +51,23 @@ Menu {
         icon.source: Theme.icon("queue_music")
         onTriggered: Core.call("enqueue", { ids: menu.ids })
     }
+    // Other devices of the server login (server songs only).
+    Menu {
+        id: playOn
+        title: Theme.tr("Play on")
+        readonly property var targets: (menu.opened && Core.state.server === "connected")
+            ? (Core.call("devices.list") || []).filter(d => !d.self && d.online && d.remote !== false) : []
+        enabled: targets.length > 0 && menu.ids.some(id => String(id).indexOf(":") < 0)
+        Repeater {
+            model: playOn.targets
+            MenuItem {
+                required property var modelData
+                text: modelData.name
+                icon.source: Theme.icon("devices")
+                onTriggered: Core.call("devices.playOn", { id: modelData.id, ids: menu.ids, start: 0 })
+            }
+        }
+    }
     MenuItem {
         text: Theme.tr("Add to playlist…")
         icon.source: Theme.icon("playlist_add")

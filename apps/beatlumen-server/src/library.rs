@@ -56,11 +56,20 @@ pub struct Entry {
     pub dir_cover_file: Option<String>,
     /// Track of the same directory whose embedded picture serves as fallback.
     pub dir_cover_track: Option<String>,
+    /// A song of a remote source: (source id, key within the source).
+    /// Such entries have `root == REMOTE_ROOT` and no file path.
+    pub remote: Option<(String, String)>,
 }
+
+/// `root` of the songs of remote sources.
+pub const REMOTE_ROOT: usize = usize::MAX;
 
 impl Entry {
     pub fn ext(&self) -> String {
-        util::ext_lower(&self.abs)
+        match self.remote {
+            Some(_) => self.track.codec.clone(),
+            None => util::ext_lower(&self.abs),
+        }
     }
 }
 
@@ -288,6 +297,7 @@ pub fn save_cache(path: &Path, idx: &Index) -> std::io::Result<()> {
     let entries: Vec<Value> = idx
         .entries
         .iter()
+        .filter(|e| e.remote.is_none())
         .map(|e| {
             Value::object()
                 .with("root", e.root)
@@ -367,6 +377,7 @@ pub fn load_cache(path: &Path, roots: &[PathBuf]) -> Option<(u64, Vec<Entry>)> {
             embedded_cover: e.get("embeddedCover").as_bool(),
             dir_cover_file: e.get("dirCoverFile").as_str().map(str::to_string),
             dir_cover_track: e.get("dirCoverTrack").as_str().map(str::to_string),
+            remote: None,
         });
     }
     Some((revision, out))
@@ -402,15 +413,108 @@ pub struct ScanStats {
     pub tag_errors: usize,
     /// Files that could not be opened (not listed).
     pub skipped: usize,
+    /// Playlist files found in the music folders.
+    pub playlists: Vec<PathBuf>,
+}
+
+/// How long a music folder may make no progress (no directory read)
+/// before the scan goes on without it.
+pub const WALK_STALL: Duration = Duration::from_secs(60);
+
+/// What a walk of one music folder found.
+struct Walked {
+    present: bool,
+    files: Vec<FileRec>,
+    dirs: Vec<DirRec>,
+    visited: HashSet<PathBuf>,
+    playlists: Vec<PathBuf>,
+}
+
+/// Playlist files taken from the music folders.
+const MAX_FOLDER_PLAYLISTS: usize = 1000;
+
+/// Walks a music folder on a thread of its own: a hung network mount (NFS,
+/// SMB, SSHFS) must not stall the scan. Without progress for `stall` the
+/// folder counts as missing for this scan, so its previous entries stay;
+/// the thread ends by itself once the mount answers again.
+fn walk_watched(
+    root_idx: usize,
+    root: &Path,
+    files: &mut Vec<FileRec>,
+    dirs: &mut Vec<DirRec>,
+    visited: &mut HashSet<PathBuf>,
+    stall: Duration,
+    playlists: &mut Vec<PathBuf>,
+) -> bool {
+    let progress = std::sync::Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (path, seen, counter) = (root.to_path_buf(), visited.clone(), progress.clone());
+    let spawned = std::thread::Builder::new()
+        .name("walk".into())
+        .spawn(move || {
+            let mut w = Walked {
+                present: false,
+                files: Vec::new(),
+                dirs: Vec::new(),
+                visited: seen,
+                playlists: Vec::new(),
+            };
+            w.present = walk(
+                root_idx,
+                &path,
+                &mut w.files,
+                &mut w.dirs,
+                &mut w.visited,
+                &counter,
+                &mut w.playlists,
+            );
+            let _ = tx.send(w);
+        });
+    if spawned.is_err() {
+        return walk(root_idx, root, files, dirs, visited, &progress, playlists);
+    }
+    let (mut seen, mut since) = (0, Instant::now());
+    loop {
+        match rx.recv_timeout(Duration::from_millis(250).min(stall)) {
+            Ok(w) => {
+                // Directory indices continue after the folders walked before.
+                let offset = dirs.len();
+                files.extend(w.files.into_iter().map(|mut f| {
+                    f.dir += offset;
+                    f
+                }));
+                dirs.extend(w.dirs);
+                *visited = w.visited;
+                playlists.extend(w.playlists);
+                return w.present;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let now = progress.load(Ordering::Relaxed);
+                if now != seen {
+                    (seen, since) = (now, Instant::now());
+                } else if since.elapsed() >= stall {
+                    crate::warn!(
+                        "music folder {} does not answer (a hung network mount?); scanning without it",
+                        root.display()
+                    );
+                    return false;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
+        }
+    }
 }
 
 /// Walks one music folder. Returns false if the folder is missing.
+/// `progress` counts the directories read.
 fn walk(
     root_idx: usize,
     root: &Path,
     files: &mut Vec<FileRec>,
     dirs: &mut Vec<DirRec>,
     visited: &mut HashSet<PathBuf>,
+    progress: &AtomicUsize,
+    playlists: &mut Vec<PathBuf>,
 ) -> bool {
     if !root.is_dir() {
         return false;
@@ -422,6 +526,7 @@ fn walk(
         if !visited.insert(canonical) {
             continue;
         }
+        progress.fetch_add(1, Ordering::Relaxed);
         let rd = match std::fs::read_dir(&dir) {
             Ok(r) => r,
             Err(e) => {
@@ -475,6 +580,12 @@ fn walk(
         let mut first = true;
         for (name, path, meta) in here {
             let ext = util::ext_lower(Path::new(&name));
+            if matches!(ext.as_str(), "m3u" | "m3u8" | "pls" | "xspf") {
+                if playlists.len() < MAX_FOLDER_PLAYLISTS {
+                    playlists.push(path);
+                }
+                continue;
+            }
             if ext.is_empty() || !bl_media::is_supported_extension(&ext) {
                 continue;
             }
@@ -590,6 +701,7 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
         embedded_cover: embedded,
         dir_cover_file: None,
         dir_cover_track: None,
+        remote: None,
     };
     (Some(entry), failed)
 }
@@ -622,14 +734,24 @@ pub fn scan(
     roots: &[PathBuf],
     old: &Index,
     threads: usize,
+    stall: Duration,
     publish: &mut dyn FnMut(Vec<Entry>),
 ) -> (Vec<Entry>, ScanStats) {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
     let mut visited = HashSet::new();
     let mut missing = HashSet::new();
+    let mut found_playlists = Vec::new();
     for (i, root) in roots.iter().enumerate() {
-        if !walk(i, root, &mut files, &mut dirs, &mut visited) {
+        if !walk_watched(
+            i,
+            root,
+            &mut files,
+            &mut dirs,
+            &mut visited,
+            stall,
+            &mut found_playlists,
+        ) {
             // An unmounted drive must not wipe its part of the library.
             crate::warn!(
                 "music folder {} is missing or not a directory; keeping its previous entries",
@@ -641,6 +763,7 @@ pub fn scan(
     let mut stats = ScanStats {
         dirs: dirs.len(),
         files: files.len(),
+        playlists: found_playlists,
         ..Default::default()
     };
 
@@ -753,6 +876,57 @@ pub fn scan(
     (out, stats)
 }
 
+/// The playlist files found in the music folders as read-only playlists:
+/// entries resolve only to songs of the library inside the music folders.
+pub fn folder_playlists(files: &[PathBuf], idx: &Index) -> Vec<bl_net::api::Playlist> {
+    use bl_sources::playlist::{self, Location};
+    let by_path: HashMap<&Path, &str> = idx
+        .entries
+        .iter()
+        .filter(|e| e.remote.is_none())
+        .map(|e| (e.abs.as_path(), e.track.id.as_str()))
+        .collect();
+    let mut out = Vec::new();
+    for file in files {
+        let Ok(meta) = std::fs::metadata(file) else {
+            continue;
+        };
+        if meta.len() > playlist::MAX_SIZE as u64 {
+            continue;
+        }
+        let Ok(data) = std::fs::read(file) else {
+            continue;
+        };
+        let ext = util::ext_lower(file);
+        let Ok(entries) = playlist::parse(&data, Some(&ext)) else {
+            continue;
+        };
+        let dir = file.parent().unwrap_or(Path::new("/"));
+        let items: Vec<String> = entries
+            .iter()
+            .filter_map(|e| match playlist::resolve(&e.location, dir)? {
+                Location::Path(p) => by_path.get(p.as_path()).map(|id| id.to_string()),
+                Location::Url(_) => None,
+            })
+            .collect();
+        if items.is_empty() {
+            continue;
+        }
+        out.push(bl_net::api::Playlist {
+            id: id_of(&format!("folder-playlist:{}", file.display())),
+            name: file
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            kind: bl_net::api::PlaylistKind::Track,
+            items,
+            modified: util::mtime_ns(&meta) / 1_000_000_000,
+        });
+    }
+    out.sort_by_key(|p| p.name.to_lowercase());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,6 +972,7 @@ mod tests {
             embedded_cover: Some(cover),
             dir_cover_file: None,
             dir_cover_track: None,
+            remote: None,
         }
     }
 

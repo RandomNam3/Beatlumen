@@ -11,7 +11,7 @@ Item {
     signal musicFolderChosen(string path)
     signal imageFolderChosen(string path)
 
-    readonly property var audioExts: ["mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "aif", "aiff", "mka", "webm", "mp2", "hfx"]
+    readonly property var audioExts: ["mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "aif", "aiff", "mka", "webm", "mp2", "hfx", "m3u", "m3u8", "pls", "xspf"]
     readonly property var imageExts: ["jpg", "jpeg", "png", "webp", "gif", "bmp"]
 
     function openAudio() {
@@ -33,6 +33,12 @@ Item {
     function addMusicFolder() {
         if (Core.nativeDialogs) folderDialog.open()
         else pick("folder", [], "folder", Theme.tr("Add music folder"), (p) => Core.call("library.addFolder", { path: p[0] }))
+    }
+    property string exportId: ""
+    function exportPlaylist(id) {
+        exportId = id
+        if (Core.nativeDialogs) exportDialog.open()
+        else pick("folder", [], "folder", Theme.tr("Export as file…"), (p) => Core.call("playlist.export", { id: id, folder: p[0] }))
     }
     function addImageFolder() {
         if (Core.nativeDialogs) imageFolderDialog.open()
@@ -71,11 +77,20 @@ Item {
                 Core.call("backgrounds.addFolder", { path: p[0] })
         }
     }
+    FolderDialog {
+        id: exportDialog
+        title: Theme.tr("Export as file…")
+        onAccepted: {
+            const p = Core.localPaths([selectedFolder])
+            if (p.length > 0)
+                Core.call("playlist.export", { id: dialogs.exportId, folder: p[0] })
+        }
+    }
     FileDialog {
         id: audioDialog
         title: Theme.tr("Open files")
         fileMode: FileDialog.OpenFiles
-        nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "Styles (*.hfx)", "* (*)"]
+        nameFilters: ["Audio (*.mp3 *.flac *.ogg *.oga *.opus *.m4a *.mp4 *.aac *.wav *.aif *.aiff *.mka *.webm *.mp2)", "Playlists (*.m3u *.m3u8 *.pls *.xspf)", "Styles (*.hfx)", "* (*)"]
         onAccepted: Core.openUrls(selectedFiles)
     }
     FileDialog {

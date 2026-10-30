@@ -21,14 +21,16 @@
 //! AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED (see NOTICE for the
 //! full license text).
 
-const EC_SYM_BITS: u32 = 8;
-const EC_CODE_BITS: u32 = 32;
-const EC_SYM_MAX: u32 = (1 << EC_SYM_BITS) - 1;
-const EC_CODE_TOP: u32 = 1 << (EC_CODE_BITS - 1);
-const EC_CODE_BOT: u32 = EC_CODE_TOP >> EC_SYM_BITS;
+pub(crate) const EC_SYM_BITS: u32 = 8;
+pub(crate) const EC_CODE_BITS: u32 = 32;
+pub(crate) const EC_SYM_MAX: u32 = (1 << EC_SYM_BITS) - 1;
+pub(crate) const EC_CODE_TOP: u32 = 1 << (EC_CODE_BITS - 1);
+pub(crate) const EC_CODE_BOT: u32 = EC_CODE_TOP >> EC_SYM_BITS;
 const EC_CODE_EXTRA: u32 = (EC_CODE_BITS - 2) % EC_SYM_BITS + 1;
-const EC_WINDOW_SIZE: i32 = 32;
-const EC_UINT_BITS: i32 = 8;
+pub(crate) const EC_WINDOW_SIZE: i32 = 32;
+pub(crate) const EC_UINT_BITS: i32 = 8;
+pub(crate) const LAPLACE_MINP: u32 = 1;
+pub(crate) const LAPLACE_NMIN: u32 = 16;
 
 /// Resolution of fractional bit counts (1/8 bit).
 pub const BITRES: i32 = 3;
@@ -37,6 +39,19 @@ pub const BITRES: i32 = 3;
 #[inline(always)]
 pub fn ec_ilog(x: u32) -> i32 {
     32 - x.leading_zeros() as i32
+}
+
+/// `ec_tell_frac`: bits used so far in 1/8 bit units (shared by the range
+/// decoder and encoder).
+pub(crate) fn ec_tell_frac(nbits_total: i32, rng: u32) -> u32 {
+    const CORRECTION: [u32; 8] = [35733, 38967, 42495, 46340, 50535, 55109, 60097, 65535];
+    let nbits = (nbits_total as u32).wrapping_shl(BITRES as u32);
+    let mut l = ec_ilog(rng);
+    let r = rng >> (l - 16).max(0);
+    let mut b = ((r >> 12) as i32 - 8).clamp(0, 7) as u32;
+    b += (r > CORRECTION[b as usize]) as u32;
+    l = (l << 3) + b as i32;
+    nbits.wrapping_sub(l as u32)
 }
 
 /// Range decoder state over a borrowed packet buffer.
@@ -243,20 +258,11 @@ impl<'a> RangeDecoder<'a> {
 
     /// Number of bits used so far in 1/8 bit units.
     pub fn tell_frac(&self) -> u32 {
-        const CORRECTION: [u32; 8] = [35733, 38967, 42495, 46340, 50535, 55109, 60097, 65535];
-        let nbits = (self.nbits_total as u32).wrapping_shl(BITRES as u32);
-        let mut l = ec_ilog(self.rng);
-        let r = self.rng >> (l - 16).max(0);
-        let mut b = ((r >> 12) as i32 - 8).clamp(0, 7) as u32;
-        b += (r > CORRECTION[b as usize]) as u32;
-        l = (l << 3) + b as i32;
-        nbits.wrapping_sub(l as u32)
+        ec_tell_frac(self.nbits_total, self.rng)
     }
 
     /// Laplace-distributed value (CELT coarse energy).
     pub fn laplace(&mut self, fs: u32, decay: i32) -> i32 {
-        const LAPLACE_MINP: u32 = 1;
-        const LAPLACE_NMIN: u32 = 16;
         let mut val = 0i32;
         let fm = self.decode_bin(15);
         let mut fl = 0u32;

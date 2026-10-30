@@ -40,64 +40,73 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     s
 }
 
+/// Weight rows expanded at a time (and used for all input rows).
+const BLOCK: usize = 16;
+
 /// `x` (`n` rows of `w.cols`) times `w` transposed, plus `bias`:
-/// `n` rows of `w.rows`.
+/// `n` rows of `w.rows`. The output columns are split over the threads;
+/// each expands its weight rows (f16 or quantised) in blocks once and
+/// uses them for every input row.
 pub fn linear(x: &[f32], n: usize, w: &Tensor, bias: Option<&Tensor>) -> Vec<f32> {
     let (k, m) = (w.cols, w.rows);
     debug_assert_eq!(x.len(), n * k);
-    let mut out = vec![0f32; n * m];
     let work = n * m * k;
-    let threads = if work < 1 << 18 { 1 } else { threads() };
-    // Split over output columns when there are few rows (decoding one
-    // token), else over rows.
-    if n < threads {
-        let chunk = m.div_ceil(threads);
-        let cols: Vec<(usize, Vec<f32>)> = std::thread::scope(|s| {
+    let threads = if work < 1 << 18 {
+        1
+    } else {
+        threads().min(m.div_ceil(BLOCK))
+    };
+    let chunk = m.div_ceil(threads).next_multiple_of(BLOCK);
+    let column_range = |c0: usize, c1: usize| -> Vec<f32> {
+        let width = c1 - c0;
+        let mut part = vec![0f32; n * width];
+        let mut buf = vec![0f32; BLOCK * k];
+        for b0 in (c0..c1).step_by(BLOCK) {
+            let b1 = (b0 + BLOCK).min(c1);
+            let rows: &[f32] = match w.as_f32() {
+                Some(all) => &all[b0 * k..b1 * k],
+                None => {
+                    for (r, out) in (b0..b1).zip(buf.chunks_exact_mut(k)) {
+                        w.row_into(r, out);
+                    }
+                    &buf[..(b1 - b0) * k]
+                }
+            };
+            for i in 0..n {
+                let xi = &x[i * k..(i + 1) * k];
+                let o = &mut part[i * width + (b0 - c0)..i * width + (b1 - c0)];
+                for (v, wr) in o.iter_mut().zip(rows.chunks_exact(k)) {
+                    *v = dot(xi, wr);
+                }
+            }
+        }
+        part
+    };
+    let parts: Vec<(usize, Vec<f32>)> = if threads == 1 {
+        vec![(0, column_range(0, m))]
+    } else {
+        std::thread::scope(|s| {
             (0..threads)
-                .map(|t| {
-                    s.spawn(move || {
-                        let (c0, c1) = (t * chunk, ((t + 1) * chunk).min(m));
-                        let mut part = vec![0f32; n * c1.saturating_sub(c0)];
-                        for i in 0..n {
-                            let xi = &x[i * k..(i + 1) * k];
-                            for (j, o) in (c0..c1).enumerate() {
-                                part[i * (c1 - c0) + j] = dot(xi, w.row(o));
-                            }
-                        }
-                        (c0, part)
-                    })
+                .filter_map(|t| {
+                    let (c0, c1) = (t * chunk, ((t + 1) * chunk).min(m));
+                    (c0 < c1).then(|| (c0, s.spawn(move || column_range(c0, c1))))
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
-                .map(|h| h.join().expect("matmul thread"))
+                .map(|(c0, h)| (c0, h.join().expect("matmul thread")))
                 .collect()
-        });
-        for (c0, part) in cols {
-            let w = part.len() / n.max(1);
-            for i in 0..n {
-                out[i * m + c0..i * m + c0 + w].copy_from_slice(&part[i * w..(i + 1) * w]);
-            }
+        })
+    };
+    let mut out = vec![0f32; n * m];
+    for (c0, part) in parts {
+        let width = part.len() / n.max(1);
+        for i in 0..n {
+            out[i * m + c0..i * m + c0 + width].copy_from_slice(&part[i * width..(i + 1) * width]);
         }
-    } else {
-        let rows_per = n.div_ceil(threads);
-        std::thread::scope(|s| {
-            for (t, chunk) in out.chunks_mut(rows_per * m).enumerate() {
-                s.spawn(move || {
-                    for (ri, orow) in chunk.chunks_mut(m).enumerate() {
-                        let i = t * rows_per + ri;
-                        let xi = &x[i * k..(i + 1) * k];
-                        // Blocks of output columns keep weight rows in cache.
-                        for (o, v) in orow.iter_mut().enumerate() {
-                            *v = dot(xi, w.row(o));
-                        }
-                    }
-                });
-            }
-        });
     }
     if let Some(b) = bias {
         for row in out.chunks_mut(m) {
-            for (v, bb) in row.iter_mut().zip(&b.data) {
+            for (v, bb) in row.iter_mut().zip(b.values()) {
                 *v += bb;
             }
         }
@@ -106,12 +115,13 @@ pub fn linear(x: &[f32], n: usize, w: &Tensor, bias: Option<&Tensor>) -> Vec<f32
 }
 
 pub fn layer_norm(x: &mut [f32], dim: usize, w: &Tensor, b: &Tensor) {
+    let (w, b) = (w.values(), b.values());
     for row in x.chunks_mut(dim) {
         let mean = row.iter().sum::<f32>() / dim as f32;
         let var = row.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / dim as f32;
         let inv = 1.0 / (var + 1e-5).sqrt();
         for (i, v) in row.iter_mut().enumerate() {
-            *v = (*v - mean) * inv * w.data[i] + b.data[i];
+            *v = (*v - mean) * inv * w[i] + b[i];
         }
     }
 }

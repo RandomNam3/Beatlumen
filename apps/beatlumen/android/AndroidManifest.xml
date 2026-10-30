@@ -10,6 +10,8 @@
 
     <!-- Music server configured by the user (plain HTTP on the LAN). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Mobile data or Wi-Fi: the stream quality setting per network. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Local music library and background images. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -64,6 +66,27 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- "Share" from other apps: songs, playlists and links. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- "Open with" for songs and playlist files. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/xspf+xml" />
+                <data android:mimeType="application/vnd.apple.mpegurl" />
             </intent-filter>
             <!-- Return from the sign-in page in the browser (passkeys); the
                  result is sealed to the app's one-time key. -->

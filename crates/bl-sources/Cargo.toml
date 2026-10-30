@@ -1,0 +1,16 @@
+[package]
+name = "bl-sources"
+description = "Remote music sources: Subsonic, Jellyfin, WebDAV/Nextcloud, SFTP, DLNA media servers, internet radio and playlist files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-aac = { path = "../bl-aac" }
+bl-json = { path = "../bl-json" }
+bl-media = { path = "../bl-media" }
+bl-mp3 = { path = "../bl-mp3" }
+bl-net = { path = "../bl-net" }
+bl-upnp = { path = "../bl-upnp" }
+bl-ssh = { path = "../bl-ssh" }

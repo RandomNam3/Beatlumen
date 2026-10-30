@@ -2,8 +2,10 @@
 //! configuration file.
 //!
 //! Precedence (lowest to highest): built-in defaults, the `--config` file,
-//! `BEATLUMEN_*` environment variables (see [`ENV_VARS`]), command line
-//! flags.
+//! the settings made in the admin interface (`<data>/settings.json`, see
+//! [`ADMIN_SETTINGS`]), `BEATLUMEN_*` environment variables (see
+//! [`ENV_VARS`]), command line flags. Settings fixed by the environment or
+//! the command line are read-only in the admin interface ([`Config::origins`]).
 //! Repeatable flags (`--music`, `--images`) given on the command line replace
 //! the lists from the configuration file. Relative paths in the
 //! configuration file are resolved against the file's directory.
@@ -61,6 +63,14 @@ pub struct Config {
     pub speech_model: Option<PathBuf>,
     /// Time the song texts of the whole library in the background.
     pub auto_sync_lyrics: bool,
+    /// Admin password from a file (setups without a browser).
+    pub admin_password_file: Option<PathBuf>,
+    /// Where speech models are downloaded from (a mirror of the files of
+    /// [`crate::models::SOURCE`], ending with `/`).
+    pub model_source: Option<String>,
+    /// Settings fixed by the environment or the command line: (settings
+    /// key, where it is set).
+    pub origins: Vec<(String, String)>,
 }
 
 impl Config {
@@ -110,8 +120,198 @@ impl Default for Config {
             extension_token_file: None,
             speech_model: None,
             auto_sync_lyrics: false,
+            admin_password_file: None,
+            model_source: None,
+            origins: Vec::new(),
         }
     }
+}
+
+/// A setting the admin interface manages.
+pub struct AdminSetting {
+    /// Key in `settings.json` (as in the `--config` file).
+    pub key: &'static str,
+    /// Takes effect without a restart.
+    pub live: bool,
+}
+
+/// The settings made in the admin interface.
+pub const ADMIN_SETTINGS: &[AdminSetting] = &[
+    AdminSetting {
+        key: "name",
+        live: true,
+    },
+    AdminSetting {
+        key: "music",
+        live: false,
+    },
+    AdminSetting {
+        key: "images",
+        live: false,
+    },
+    AdminSetting {
+        key: "rescanInterval",
+        live: true,
+    },
+    AdminSetting {
+        key: "scanThreads",
+        live: true,
+    },
+    AdminSetting {
+        key: "analysisMaxMinutes",
+        live: true,
+    },
+    AdminSetting {
+        key: "registration",
+        live: true,
+    },
+    AdminSetting {
+        key: "vaultQuotaMb",
+        live: true,
+    },
+    AdminSetting {
+        key: "allowedHosts",
+        live: true,
+    },
+    AdminSetting {
+        key: "publicUrl",
+        live: false,
+    },
+    AdminSetting {
+        key: "androidCerts",
+        live: false,
+    },
+    AdminSetting {
+        key: "pushAllowPrivate",
+        live: false,
+    },
+    AdminSetting {
+        key: "sourceUrl",
+        live: false,
+    },
+    AdminSetting {
+        key: "extensions",
+        live: false,
+    },
+    AdminSetting {
+        key: "speechModel",
+        live: true,
+    },
+    AdminSetting {
+        key: "autoSyncLyrics",
+        live: true,
+    },
+    AdminSetting {
+        key: "verbose",
+        live: true,
+    },
+];
+
+/// Where the admin interface keeps its settings.
+pub fn settings_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("settings.json")
+}
+
+/// The value of a setting as the admin interface shows it.
+pub fn setting_value(cfg: &Config, key: &str) -> Value {
+    let paths = |v: &[PathBuf]| -> Value {
+        Value::Array(
+            v.iter()
+                .map(|p| Value::from(p.display().to_string()))
+                .collect(),
+        )
+    };
+    let strs = |v: &[String]| -> Value {
+        Value::Array(v.iter().map(|s| Value::from(s.as_str())).collect())
+    };
+    match key {
+        "name" => Value::from(cfg.name.as_str()),
+        "music" => paths(&cfg.music_dirs),
+        "images" => paths(&cfg.image_dirs),
+        "rescanInterval" => Value::from(cfg.rescan_interval),
+        "scanThreads" => Value::from(cfg.scan_threads as u64),
+        "analysisMaxMinutes" => Value::from(cfg.analysis_max_minutes),
+        "registration" => Value::from(if cfg.registration { "invite" } else { "off" }),
+        "vaultQuotaMb" => Value::from(cfg.vault_quota_mb),
+        "allowedHosts" => strs(&cfg.allowed_hosts),
+        "publicUrl" => cfg.public_url.as_deref().map_or(Value::Null, Value::from),
+        "androidCerts" => strs(&cfg.android_certs),
+        "pushAllowPrivate" => Value::from(cfg.push_allow_private),
+        "sourceUrl" => Value::from(cfg.source_url.as_str()),
+        "extensions" => {
+            let mut o = Value::object();
+            for (id, url) in &cfg.extensions {
+                o = o.with(id, url.as_str());
+            }
+            o
+        }
+        "speechModel" => cfg
+            .speech_model
+            .as_ref()
+            .map_or(Value::Null, |p| Value::from(p.display().to_string())),
+        "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
+        "verbose" => Value::from(cfg.verbose),
+        _ => Value::Null,
+    }
+}
+
+/// Environment variables and the settings key each one fixes.
+const ENV_KEYS: &[(&str, &str)] = &[
+    ("BEATLUMEN_MUSIC", "music"),
+    ("BEATLUMEN_IMAGES", "images"),
+    ("BEATLUMEN_DATA", "data"),
+    ("BEATLUMEN_BIND", "bind"),
+    ("BEATLUMEN_PASSWORD", "password"),
+    ("BEATLUMEN_PASSWORD_FILE", "password"),
+    ("BEATLUMEN_WEB_DIR", "webDir"),
+    ("BEATLUMEN_NAME", "name"),
+    ("BEATLUMEN_ALLOWED_HOSTS", "allowedHosts"),
+    ("BEATLUMEN_SOURCE_URL", "sourceUrl"),
+    ("BEATLUMEN_RESCAN_INTERVAL", "rescanInterval"),
+    ("BEATLUMEN_ANALYSIS_MAX_MINUTES", "analysisMaxMinutes"),
+    ("BEATLUMEN_SCAN_THREADS", "scanThreads"),
+    ("BEATLUMEN_VAULT_PEPPER_FILE", "vaultPepperFile"),
+    ("BEATLUMEN_VAULT_QUOTA_MB", "vaultQuotaMb"),
+    ("BEATLUMEN_PUBLIC_URL", "publicUrl"),
+    ("BEATLUMEN_ANDROID_CERTS", "androidCerts"),
+    ("BEATLUMEN_EXTENSIONS", "extensions"),
+    ("BEATLUMEN_EXTENSION_TOKEN_FILE", "extensionTokenFile"),
+    ("BEATLUMEN_PUSH_ALLOW_PRIVATE", "pushAllowPrivate"),
+    ("BEATLUMEN_REGISTRATION", "registration"),
+    ("BEATLUMEN_SPEECH_MODEL", "speechModel"),
+    ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
+    ("BEATLUMEN_VERBOSE", "verbose"),
+    ("BEATLUMEN_ADMIN_PASSWORD_FILE", "adminPassword"),
+];
+
+/// The settings key a command line flag fixes.
+fn flag_key(flag: &str) -> Option<&'static str> {
+    Some(match flag {
+        "--music" => "music",
+        "--images" => "images",
+        "--data" => "data",
+        "--bind" => "bind",
+        "--password" => "password",
+        "--web-dir" => "webDir",
+        "--rescan-interval" => "rescanInterval",
+        "--analysis-max-minutes" => "analysisMaxMinutes",
+        "--scan-threads" => "scanThreads",
+        "--name" => "name",
+        "--source-url" => "sourceUrl",
+        "--allow-host" => "allowedHosts",
+        "--verbose" => "verbose",
+        "--vault-pepper-file" => "vaultPepperFile",
+        "--vault-quota-mb" => "vaultQuotaMb",
+        "--registration" => "registration",
+        "--push-allow-private" => "pushAllowPrivate",
+        "--public-url" => "publicUrl",
+        "--android-cert" => "androidCerts",
+        "--extension" => "extensions",
+        "--extension-token-file" => "extensionTokenFile",
+        "--speech-model" => "speechModel",
+        "--auto-sync-lyrics" => "autoSyncLyrics",
+        _ => return None,
+    })
 }
 
 /// Parses an extension given as `id=http://host:port`.
@@ -154,6 +354,8 @@ pub enum Action {
     Invite(Box<Config>, u64),
     /// Lists the accounts.
     Users(Box<Config>),
+    /// Creates a one-time link that sets the admin password.
+    AdminLink(Box<Config>),
     /// Writes the integrity manifest of a web client folder (and signs it
     /// when `BEATLUMEN_RELEASE_SIGNING_KEY` is set).
     WebManifest {
@@ -247,7 +449,30 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "BEATLUMEN_AUTO_SYNC_LYRICS",
         "true: time the song texts of the whole library in the background",
     ),
+    (
+        "BEATLUMEN_ADMIN_PASSWORD_FILE",
+        "file containing the admin password (instead of the setup link)",
+    ),
+    (
+        "BEATLUMEN_MODEL_SOURCE",
+        "address of a mirror of the speech model files",
+    ),
 ];
+
+/// A download address for speech models: http(s), ending with `/`.
+fn model_source(v: &str) -> Result<String, String> {
+    let v = v.trim();
+    if !(v.starts_with("https://") || v.starts_with("http://")) {
+        return Err(format!(
+            "model source \"{v}\": expected an http(s):// address"
+        ));
+    }
+    Ok(if v.ends_with('/') {
+        v.to_string()
+    } else {
+        format!("{v}/")
+    })
+}
 
 fn registration(v: &str) -> Result<bool, String> {
     match v.trim().to_ascii_lowercase().as_str() {
@@ -363,6 +588,18 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "1" | "true" | "yes" | "on"
         );
     }
+    if let Some(v) = get("BEATLUMEN_ADMIN_PASSWORD_FILE") {
+        cfg.admin_password_file = Some(PathBuf::from(v.trim()));
+    }
+    if let Some(v) = get("BEATLUMEN_MODEL_SOURCE") {
+        cfg.model_source = Some(model_source(&v)?);
+    }
+    for (var, key) in ENV_KEYS {
+        if get(var).is_some() && !cfg.origins.iter().any(|(k, _)| k == key) {
+            cfg.origins
+                .push((key.to_string(), format!("environment variable {var}")));
+        }
+    }
     Ok(())
 }
 
@@ -373,6 +610,8 @@ USAGE:
     beatlumen-server [OPTIONS]
     beatlumen-server invite [--days N] [OPTIONS]   Create an account invitation
     beatlumen-server users [OPTIONS]               List the accounts
+    beatlumen-server admin-link [OPTIONS]          Create a link that sets the admin
+                                                   password (also to reset it)
     beatlumen-server web-manifest DIR [--version V]
                                     Write the integrity manifest of a web client
                                     (signed when BEATLUMEN_RELEASE_SIGNING_KEY is set)
@@ -426,6 +665,8 @@ OPTIONS:
                             ggml-base.bin) for timing song texts on request
     --auto-sync-lyrics      Also time the song texts of the whole library in the
                             background (needs --speech-model)
+    --model-source URL      Mirror of the speech model files offered in the admin
+                            interface [default: the whisper.cpp models on huggingface.co]
     --public-url URL        The server's https:// address as users reach it (e.g. the
                             reverse proxy's). Enables passkeys, whose relying party
                             is this host
@@ -456,6 +697,14 @@ The server connects only to remote sources you configure (no update checks,
 telemetry or metadata lookups). It does not provide TLS:
 for access over the internet use a VPN, or a reverse proxy with HTTPS
 together with --allow-host.
+
+ADMIN INTERFACE:
+    The server is managed in the browser at /admin. On the first start the
+    server logs a one-time link that sets the admin password (valid for a
+    day); `beatlumen-server admin-link` creates a new one (valid for an
+    hour), also to reset a forgotten password. Settings made there are kept
+    in <data>/settings.json; settings given by environment variables or the
+    command line are fixed and shown read-only.
 
 ACCOUNTS:
     Users with an account store end-to-end encrypted files on the server and
@@ -633,10 +882,99 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     .as_u64()
                     .ok_or_else(|| err("expected a non-negative integer"))?
             }
+            "modelSource" => {
+                cfg.model_source = Some(
+                    model_source(val.as_str().ok_or_else(|| err("expected a string"))?)
+                        .map_err(|e| err(&e))?,
+                )
+            }
             _ => crate::warn!("ignoring unknown configuration key \"{k}\""),
         }
     }
     Ok(())
+}
+
+type Items = [(String, Option<String>)];
+
+/// The configuration from defaults, the `--config` file, the admin
+/// interface's settings (`admin`: document and data folder), the
+/// environment and the command line `items`.
+fn build(
+    items: &Items,
+    command: Option<&str>,
+    admin: Option<(&Value, &Path)>,
+) -> Result<(Config, bool, u64), String> {
+    let mut cfg = Config::default();
+    if let Some((_, Some(path))) = items.iter().rev().find(|(f, _)| f == "--config") {
+        let p = PathBuf::from(path);
+        let text = std::fs::read(&p)
+            .map_err(|e| format!("cannot read config file {}: {e}", p.display()))?;
+        let v = bl_json::parse_bytes(&text)
+            .map_err(|e| format!("invalid config file {}: {e}", p.display()))?;
+        let base = p.parent().map(Path::to_path_buf).unwrap_or_default();
+        apply_json(&mut cfg, &v, &base)?;
+    }
+    if let Some((v, data)) = admin {
+        apply_json(&mut cfg, v, data)?;
+    }
+    apply_env(&mut cfg, |k| std::env::var(k).ok())?;
+
+    let num = |flag: &str, v: &str| {
+        v.trim()
+            .parse::<u64>()
+            .map_err(|_| format!("{flag}: expected a non-negative integer, got \"{v}\""))
+    };
+    let mut music_cli = Vec::new();
+    let mut images_cli = Vec::new();
+    let mut health_check = false;
+    let mut days = crate::vault::INVITE_DAYS;
+    for (flag, v) in items {
+        if let Some(key) = flag_key(flag) {
+            cfg.origins.retain(|(k, _)| k != key);
+            cfg.origins
+                .push((key.to_string(), format!("command line {flag}")));
+        }
+        let v = v.clone().unwrap_or_default();
+        match flag.as_str() {
+            "--music" => music_cli.push(PathBuf::from(v)),
+            "--images" => images_cli.push(PathBuf::from(v)),
+            "--data" => cfg.data_dir = PathBuf::from(v),
+            "--bind" => cfg.bind = v,
+            "--password" => cfg.password = (!v.is_empty()).then_some(v),
+            "--web-dir" => cfg.web_dir = Some(PathBuf::from(v)),
+            "--rescan-interval" => cfg.rescan_interval = num(flag, &v)?,
+            "--analysis-max-minutes" => cfg.analysis_max_minutes = num(flag, &v)?,
+            "--scan-threads" => cfg.scan_threads = num(flag, &v)? as usize,
+            "--name" => cfg.name = v,
+            "--source-url" => cfg.source_url = v,
+            "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
+            "--verbose" => cfg.verbose = true,
+            "--health-check" => health_check = true,
+            "--vault-pepper-file" => cfg.vault_pepper_file = Some(PathBuf::from(v)),
+            "--vault-quota-mb" => cfg.vault_quota_mb = num(flag, &v)?,
+            "--registration" => cfg.registration = registration(&v)?,
+            "--push-allow-private" => cfg.push_allow_private = true,
+            "--public-url" => cfg.public_url = Some(v.trim_end_matches('/').to_string()),
+            "--android-cert" => cfg
+                .android_certs
+                .push(v.replace(':', "").to_ascii_lowercase()),
+            "--extension" => cfg.extensions.push(parse_extension(&v)?),
+            "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
+            "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
+            "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
+            "--model-source" => cfg.model_source = Some(model_source(&v)?),
+            "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
+            "--days" => return Err("--days only applies to `invite`".into()),
+            _ => {}
+        }
+    }
+    if !music_cli.is_empty() {
+        cfg.music_dirs = music_cli;
+    }
+    if !images_cli.is_empty() {
+        cfg.image_dirs = images_cli;
+    }
+    Ok((cfg, health_check, days))
 }
 
 /// Parses command line arguments (without the program name).
@@ -664,7 +1002,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         _ => {}
     }
     let command = match it.peek().map(String::as_str) {
-        Some(c @ ("invite" | "users")) => {
+        Some(c @ ("invite" | "users" | "admin-link")) => {
             let c = c.to_string();
             it.next();
             Some(c)
@@ -699,6 +1037,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--extension"
                 | "--extension-token-file"
                 | "--speech-model"
+                | "--model-source"
                 | "--days"
         );
         match flag.as_str() {
@@ -718,75 +1057,33 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         }
     }
 
-    let mut cfg = Config::default();
-    if let Some((_, Some(path))) = items.iter().rev().find(|(f, _)| f == "--config") {
-        let p = PathBuf::from(path);
-        let text = std::fs::read(&p)
-            .map_err(|e| format!("cannot read config file {}: {e}", p.display()))?;
-        let v = bl_json::parse_bytes(&text)
-            .map_err(|e| format!("invalid config file {}: {e}", p.display()))?;
-        let base = p.parent().map(Path::to_path_buf).unwrap_or_default();
-        apply_json(&mut cfg, &v, &base)?;
-    }
-    apply_env(&mut cfg, |k| std::env::var(k).ok())?;
-
-    let num = |flag: &str, v: &str| {
-        v.trim()
-            .parse::<u64>()
-            .map_err(|_| format!("{flag}: expected a non-negative integer, got \"{v}\""))
-    };
-    let mut music_cli = Vec::new();
-    let mut images_cli = Vec::new();
-    let mut health_check = false;
-    let mut days = crate::vault::INVITE_DAYS;
-    for (flag, v) in items {
-        let v = v.unwrap_or_default();
-        match flag.as_str() {
-            "--music" => music_cli.push(PathBuf::from(v)),
-            "--images" => images_cli.push(PathBuf::from(v)),
-            "--data" => cfg.data_dir = PathBuf::from(v),
-            "--bind" => cfg.bind = v,
-            "--password" => cfg.password = (!v.is_empty()).then_some(v),
-            "--web-dir" => cfg.web_dir = Some(PathBuf::from(v)),
-            "--rescan-interval" => cfg.rescan_interval = num(&flag, &v)?,
-            "--analysis-max-minutes" => cfg.analysis_max_minutes = num(&flag, &v)?,
-            "--scan-threads" => cfg.scan_threads = num(&flag, &v)? as usize,
-            "--name" => cfg.name = v,
-            "--source-url" => cfg.source_url = v,
-            "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
-            "--verbose" => cfg.verbose = true,
-            "--health-check" => health_check = true,
-            "--vault-pepper-file" => cfg.vault_pepper_file = Some(PathBuf::from(v)),
-            "--vault-quota-mb" => cfg.vault_quota_mb = num(&flag, &v)?,
-            "--registration" => cfg.registration = registration(&v)?,
-            "--push-allow-private" => cfg.push_allow_private = true,
-            "--public-url" => cfg.public_url = Some(v.trim_end_matches('/').to_string()),
-            "--android-cert" => cfg
-                .android_certs
-                .push(v.replace(':', "").to_ascii_lowercase()),
-            "--extension" => cfg.extensions.push(parse_extension(&v)?),
-            "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
-            "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
-            "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
-            "--days" if command.as_deref() == Some("invite") => {
-                days = num(&flag, &v)?.clamp(1, 365)
+    let (cfg, health_check, days) = build(&items, command.as_deref(), None)?;
+    // The admin interface's settings live in the data folder, which only
+    // the first pass knows.
+    let admin_file = settings_path(&cfg.data_dir);
+    let (mut cfg, health_check, days) = match std::fs::read(&admin_file) {
+        Ok(text) => match bl_json::parse_bytes(&text) {
+            Ok(v) => match build(&items, command.as_deref(), Some((&v, &cfg.data_dir))) {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::warn!("ignoring {}: {e}", admin_file.display());
+                    (cfg, health_check, days)
+                }
+            },
+            Err(e) => {
+                crate::warn!("ignoring {}: {e}", admin_file.display());
+                (cfg, health_check, days)
             }
-            "--days" => return Err("--days only applies to `invite`".into()),
-            _ => {}
-        }
-    }
-    if !music_cli.is_empty() {
-        cfg.music_dirs = music_cli;
-    }
-    if !images_cli.is_empty() {
-        cfg.image_dirs = images_cli;
-    }
+        },
+        Err(_) => (cfg, health_check, days),
+    };
     if cfg.name.trim().is_empty() {
         cfg.name = Config::default().name;
     }
     match command.as_deref() {
         Some("invite") => return Ok(Action::Invite(Box::new(cfg), days)),
         Some("users") => return Ok(Action::Users(Box::new(cfg))),
+        Some("admin-link") => return Ok(Action::AdminLink(Box::new(cfg))),
         _ => {}
     }
     if health_check {

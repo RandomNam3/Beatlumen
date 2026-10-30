@@ -104,7 +104,7 @@ Item {
                     opacity: list.dragFrom === index ? 0.4 : 1
                     onClicked: Core.call("queue.play", { pos: modelData.pos })
                     onPressAndHold: songMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])
-                    Component.onCompleted: if (modelData.local && !modelData.cover) Covers.request(modelData.id)
+                    Component.onCompleted: if ((modelData.local || modelData.source) && !modelData.cover) Covers.request(modelData.id)
                     swipe.right: Rectangle {
                         width: parent.width
                         height: parent.height

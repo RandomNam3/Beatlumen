@@ -6,6 +6,9 @@ stays in force: remote sources are accessed through the Beatlumen server
 whenever one is connected, and directly from the app only when the user
 explicitly sets them up for app-only use.
 
+The order in which the open items are built, and the 0.10.0 beta after
+them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
+
 ## Lyrics
 - Done: song texts over the visuals from embedded tags (ID3 USLT/SYLT,
   Vorbis comments, MP4, APE, Matroska) or an `.lrc`/`.txt` file next to the
@@ -39,13 +42,27 @@ explicitly sets them up for app-only use.
 - Done: playlists and presets per user account (signing in with the
   server password keeps the shared ones); personal backgrounds through the
   encrypted images.
-- Settings that follow a user account across devices.
+- Done: settings that follow a user account across devices (appearance,
+  styles and effects, playback options; end-to-end encrypted, newest change
+  wins per setting).
 - Done: public links to encrypted files (expiry, optional password, the key
   stays in the link; see `docs/ENCRYPTION.md`).
+- Done: admin interface at `/admin/` (settings kept in the data folder,
+  most applied without a restart; accounts, invitations, links, speech
+  models downloaded in the background, extensions, server password, log).
 
 ## Devices: remote control and individual playback
 With an active server connection, all apps and devices logged in to the
 server see each other.
+
+- Done: device list (name, platform, online, what it plays), remote
+  control (play/pause, seek, skip, volume), "Play on" from the song menu,
+  moving playback to another device or taking it over, and starting
+  several devices together at a common server time. Commands go through
+  the server's event channel (long polling); remote control can be turned
+  off per device; remote commands only play server songs.
+- Next: keeping grouped devices in step while they play (drift
+  correction), editing another device's queue.
 
 - Device list with name, type, online state and what is playing.
 - Each device plays on its own by default (own queue, own position).

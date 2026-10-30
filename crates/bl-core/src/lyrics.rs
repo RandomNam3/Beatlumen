@@ -252,7 +252,7 @@ pub(crate) struct SyncState {
 const SYNC_POLL_SECS: f64 = 2.0;
 
 /// Storage key of an imported song text for a track of this device.
-fn import_key(id: &str) -> String {
+pub(crate) fn import_key(id: &str) -> String {
     format!("lyrics/{:016x}.lrc", library::fnv(id))
 }
 
@@ -333,6 +333,12 @@ impl Core {
                 });
                 mailbox.post(done(found));
             }
+        } else if id.starts_with(crate::sources::ID_PREFIX) {
+            // Songs of the app's sources: texts added here (or computed).
+            let found = host
+                .storage_read(&import_key(id))
+                .map(|b| (bl_media::lyrics::decode_text(&b), "imported".to_string()));
+            mailbox.post(done(found));
         } else if let Some(name) = id.strip_prefix("mem:") {
             let found = self.memory_files.get(name).and_then(|d| {
                 let mut c = std::io::Cursor::new(d.as_slice());
@@ -434,7 +440,7 @@ impl Core {
                 "text/plain; charset=utf-8",
             );
             self.requests.insert(rid, Req::LyricsSaved);
-        } else if library::local_path(&id).is_some() {
+        } else if library::local_path(&id).is_some() || id.starts_with(crate::sources::ID_PREFIX) {
             host.storage_write(&import_key(&id), text.as_bytes());
         } else {
             return Value::object().with(

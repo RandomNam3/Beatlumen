@@ -74,7 +74,7 @@ Comment=Music player with beat-synchronized visuals
 Exec=beatlumen %F
 Icon=$APP_ID
 Categories=AudioVideo;Audio;Player;
-MimeType=audio/mpeg;audio/flac;audio/ogg;audio/x-vorbis+ogg;audio/opus;audio/mp4;audio/aac;audio/x-wav;audio/x-matroska;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/x-vorbis+ogg;audio/opus;audio/mp4;audio/aac;audio/x-wav;audio/x-matroska;audio/x-mpegurl;audio/x-scpls;application/xspf+xml;
 Terminal=false
 EOF
 install -Dm644 LICENSE "$APPDIR/usr/share/doc/beatlumen/LICENSE"

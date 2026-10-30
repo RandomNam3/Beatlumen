@@ -12,6 +12,7 @@ fn receiver(password: Option<&str>) -> Receiver {
         name: "Test".into(),
         id: [1, 2, 3, 4, 5, 6],
         password: password.map(String::from),
+        airplay2: false,
     })
     .unwrap()
 }

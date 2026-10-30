@@ -8,11 +8,11 @@
 //! starting a duplicate.
 
 use crate::library::Entry;
+use crate::sources::Sources;
 use crate::util::{self, Semaphore};
 use bl_analysis::AnalysisConfig;
 use bl_json::Value;
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
@@ -35,7 +35,8 @@ struct Slot {
 
 pub struct Analyzer {
     dir: PathBuf,
-    max_minutes: u64,
+    sources: Arc<Sources>,
+    max_minutes: std::sync::atomic::AtomicU64,
     inflight: Mutex<HashMap<String, Arc<Slot>>>,
     sem: Semaphore,
 }
@@ -102,10 +103,17 @@ pub fn config_from_query(cfg: Option<&str>) -> Result<AnalysisConfig, String> {
 }
 
 impl Analyzer {
-    pub fn new(dir: PathBuf, max_minutes: u64) -> Analyzer {
+    /// Changes the longest track analysed (admin interface).
+    pub fn set_max_minutes(&self, m: u64) {
+        self.max_minutes
+            .store(m, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn new(dir: PathBuf, max_minutes: u64, sources: Arc<Sources>) -> Analyzer {
         Analyzer {
             dir,
-            max_minutes,
+            sources,
+            max_minutes: max_minutes.into(),
             inflight: Mutex::new(HashMap::new()),
             sem: Semaphore::new(MAX_CONCURRENT),
         }
@@ -192,14 +200,11 @@ impl Analyzer {
             }
         }
         let _permit = self.sem.acquire();
-        let file =
-            std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;
+        let src = self.sources.open_entry(e)?;
         let ext = e.ext();
         let l = util::catch(
             "loudness",
             move || -> Result<bl_analysis::loudness::Loudness, Failure> {
-                let src: Box<dyn bl_media::Source> =
-                    Box::new(BufReader::with_capacity(256 * 1024, file));
                 let mut dec = bl_media::open(src, Some(&ext))
                     .map_err(|err| (415, format!("cannot decode track: {err}")))?;
                 let spec = dec.spec();
@@ -234,13 +239,11 @@ impl Analyzer {
     }
 
     fn compute(&self, e: &Entry, cfg: &AnalysisConfig) -> Result<Vec<u8>, Failure> {
-        let file =
-            std::fs::File::open(&e.abs).map_err(|_| (404, "track file not found".to_string()))?;
+        let src = self.sources.open_entry(e)?;
         let ext = e.ext();
-        let max_minutes = self.max_minutes;
+        let max_minutes = self.max_minutes.load(std::sync::atomic::Ordering::Relaxed);
         let rel = e.rel.clone();
         util::catch("analysis", move || -> Result<Vec<u8>, Failure> {
-            let src: Box<dyn bl_media::Source> = Box::new(BufReader::with_capacity(256 * 1024, file));
             let mut dec = bl_media::open(src, Some(&ext)).map_err(|err| (415, format!("cannot decode track: {err}")))?;
             let spec = dec.spec();
             if spec.sample_rate == 0 || spec.channels == 0 {

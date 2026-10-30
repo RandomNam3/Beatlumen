@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import Beatlumen.Core
 
 // Bottom navigation for phones; `rail` turns it into a vertical rail.
 Rectangle {
@@ -9,13 +10,32 @@ Rectangle {
     property bool rail: false
     signal selected(int index)
 
-    readonly property var items: [
-        { icon: "graphic_eq", label: Theme.tr("Now playing") },
-        { icon: "library_music", label: Theme.tr("Library") },
-        { icon: "queue_music", label: Theme.tr("Queue") },
-        { icon: "auto_awesome", label: Theme.tr("Visuals") },
-        { icon: "settings", label: Theme.tr("Settings") }
-    ]
+    // `page`: what the item opens (-1 = now playing). Devices only with a
+    // server connection.
+    readonly property var all: [
+        { icon: "graphic_eq", label: Theme.tr("Now playing"), page: -1 },
+        { icon: "library_music", label: Theme.tr("Library"), page: 0 },
+        { icon: "queue_music", label: Theme.tr("Queue"), page: 1 },
+        { icon: "auto_awesome", label: Theme.tr("Visuals"), page: 2 },
+        { icon: "devices", label: Theme.tr("Devices"), page: 4 },
+        { icon: "settings", label: Theme.tr("Settings"), page: 3 }
+    ].filter(i => i.page !== 4 || Core.state.server === "connected")
+    // Phones: at most five; the rest behind "More" (page -2).
+    readonly property var items: rail || all.length <= 5 ? all
+        : all.slice(0, 4).concat([{ icon: "more_vert", label: Theme.tr("More"), page: -2 }])
+    readonly property var more: rail || all.length <= 5 ? [] : all.slice(4)
+
+    Menu {
+        id: moreMenu
+        Repeater {
+            model: nav.more
+            MenuItem {
+                text: modelData.label
+                icon.source: Theme.icon(modelData.icon)
+                onTriggered: nav.selected(modelData.page)
+            }
+        }
+    }
 
     color: Theme.surfaceStrong
     implicitHeight: rail ? 0 : 80
@@ -34,13 +54,22 @@ Rectangle {
             model: nav.items
             delegate: AbstractButton {
                 id: btn
-                readonly property bool sel: (index === 0 ? -1 : index - 1) === nav.current
+                readonly property bool sel: modelData.page === nav.current
+                    || (modelData.page === -2 && nav.more.some(m => m.page === nav.current))
                 Layout.fillWidth: true
                 Layout.fillHeight: !nav.rail
                 Layout.preferredHeight: nav.rail ? 72 : -1
                 text: modelData.label
                 Accessible.name: modelData.label
-                onClicked: nav.selected(index === 0 ? -1 : index - 1)
+                onClicked: {
+                    if (modelData.page === -2) {
+                        moreMenu.y = -moreMenu.implicitHeight
+                        moreMenu.x = btn.x + btn.width - moreMenu.width
+                        moreMenu.open()
+                    } else {
+                        nav.selected(modelData.page)
+                    }
+                }
                 contentItem: Column {
                     spacing: 4
                     anchors.centerIn: parent

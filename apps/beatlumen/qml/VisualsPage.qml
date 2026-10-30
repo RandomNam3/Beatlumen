@@ -24,6 +24,53 @@ Item {
         return false
     }
 
+    // Sync measurement: tap along to the beat you hear.
+    AppDialog {
+        id: tapDialog
+        readonly property var tempo: Core.state.tempo || ({})
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(420, page.width - 32)
+        title: Theme.tr("Tap along to the beat")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("Play a song with a clear beat and tap the button on every beat you hear. The difference to the predicted beats is the delay of your speakers.")
+            }
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                color: Theme.text
+                text: (tapDialog.tempo.bpm ? Math.round(tapDialog.tempo.bpm) + " BPM · " : Theme.tr("Listening for the beat…") + " · ")
+                      + Theme.tr("%1 of %2 taps").arg(tapDialog.tempo.taps || 0).arg(tapDialog.tempo.needed || 6)
+                      + (tapDialog.tempo.measuredMs !== undefined && tapDialog.tempo.measuredMs !== null ? " · " + Math.round(tapDialog.tempo.measuredMs) + " ms" : "")
+            }
+            AccentButton {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 96
+                text: Theme.tr("Tap")
+                highlighted: true
+                enabled: !!tapDialog.tempo.bpm
+                onPressed: Core.call("sync.tap")
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                Button { text: Theme.tr("Cancel"); flat: true; onClicked: tapDialog.close() }
+                AccentButton {
+                    text: Theme.tr("Apply")
+                    highlighted: true
+                    enabled: tapDialog.tempo.measuredMs !== undefined && tapDialog.tempo.measuredMs !== null
+                    onClicked: { Core.call("sync.apply"); tapDialog.close() }
+                }
+            }
+        }
+    }
+
     StackView {
         id: stack
         anchors.fill: parent
@@ -125,6 +172,19 @@ Item {
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                             }
+                            Button {
+                                text: Theme.tr("Measure by tapping along…")
+                                flat: true
+                                icon.source: Theme.icon("graphic_eq")
+                                onClicked: { Core.call("sync.reset"); tapDialog.open() }
+                            }
+                        }
+                        SwitchRow {
+                            Layout.fillWidth: true
+                            title: Theme.tr("Predict the beat")
+                            detail: Theme.tr("Live music (radio, other apps, AirPlay, DLNA): effects land on the coming beats instead of following them.")
+                            on: page.settings.beatPrediction !== false
+                            onSwitched: (on) => Core.call("settings.set", { key: "beatPrediction", value: on })
                         }
                         SwitchRow {
                             Layout.fillWidth: true

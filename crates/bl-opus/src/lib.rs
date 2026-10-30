@@ -1,5 +1,5 @@
-//! Opus decoder (RFC 6716 / RFC 7845, std only). Packet level; container
-//! handling is done by the caller.
+//! Opus decoder (RFC 6716 / RFC 7845, std only) and a CELT-only encoder.
+//! Packet level; container handling is done by the caller.
 //!
 //! Output is interleaved `f32` (nominally in [-1, 1]) at the configured
 //! output rate (48 kHz recommended). Multichannel streams (mapping family 1)
@@ -16,10 +16,15 @@
 //! SSE accumulation order of its float kernels is reproduced in portable
 //! scalar code); SILK is fixed point and bit-exact everywhere.
 //!
-//! Module layout: `range_dec` (range decoder), `silk` (SILK decoder),
-//! `celt` (CELT decoder), `opus` (single-stream decoder with mode
-//! switching), `packet` (TOC / framing), `multistream` (stream packing and
-//! channel mapping).
+//! The encoder ([`OpusEncoder`]) produces CELT-only fullband packets with
+//! one 20 ms frame each at a constant bitrate (mono or stereo, 48 kHz),
+//! ported from the libopus float encoder with a reduced analysis (no pitch
+//! pre-filter, no TF resolution analysis).
+//!
+//! Module layout: `range_dec` / `range_enc` (range coder), `silk` (SILK
+//! decoder), `celt` (CELT decoder and encoder), `opus` (single-stream
+//! decoder with mode switching), `encoder` (Opus packet encoder), `packet`
+//! (TOC / framing), `multistream` (stream packing and channel mapping).
 
 #![forbid(unsafe_code)]
 // The DSP code is a faithful port of fixed/float C code: keep the original
@@ -35,11 +40,15 @@
 )]
 
 mod celt;
+mod encoder;
 mod multistream;
 mod opus;
 mod packet;
 mod range_dec;
+mod range_enc;
 mod silk;
+
+pub use encoder::{OpusEncoder, MAX_BITRATE, MIN_BITRATE};
 
 #[derive(Debug)]
 pub enum Error {
@@ -222,6 +231,12 @@ impl OpusDecoder {
     /// Resets decoder state (after seeking).
     pub fn reset(&mut self) {
         self.ms.reset();
+    }
+    /// Final range coder state of the last decoded packet (XOR over all
+    /// streams), as `OPUS_GET_FINAL_RANGE`: equal to the encoder's value
+    /// when encoder and decoder agree on every coded symbol.
+    pub fn final_range(&self) -> u32 {
+        self.ms.final_range()
     }
 }
 

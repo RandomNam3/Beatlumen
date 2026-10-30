@@ -28,7 +28,9 @@ Secret=beatlumen_password,mode=0400,uid=10001
 Environment=BEATLUMEN_PASSWORD_FILE=/run/secrets/beatlumen_password
 Secret=beatlumen_pepper,mode=0400,uid=10001
 Environment=BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/beatlumen_pepper
-Environment=BEATLUMEN_NAME=Beatlumen Server
+# Other settings are made in the admin interface (/admin/); a variable
+# set here is fixed there, e.g.
+# Environment=BEATLUMEN_NAME=Beatlumen Server
 RunInit=true
 ReadOnly=true
 DropCapability=ALL

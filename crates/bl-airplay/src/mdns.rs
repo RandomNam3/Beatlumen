@@ -1,7 +1,7 @@
 //! A small mDNS/DNS-SD responder (RFC 6762/6763) that announces the
-//! receiver in the local network and answers queries for it. Used on
-//! desktop systems; Android registers the service through the system
-//! (NsdManager) instead.
+//! receiver's services (AirPlay 1 and 2) in the local network and answers
+//! queries for them. Used on desktop systems; Android registers the
+//! service through the system (NsdManager) instead.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,7 +13,6 @@ const PORT: u16 = 5353;
 const T_A: u16 = 1;
 const T_PTR: u16 = 12;
 const T_TXT: u16 = 16;
-const T_AAAA: u16 = 28;
 const T_SRV: u16 = 33;
 const T_ANY: u16 = 255;
 const CACHE_FLUSH: u16 = 0x8000;
@@ -38,6 +37,12 @@ pub struct Responder {
 impl Responder {
     /// Starts announcing `service` with the host name `<host>.local`.
     pub fn start(service: Service, host: String) -> std::io::Result<Responder> {
+        Responder::start_all(vec![service], host)
+    }
+
+    /// Starts announcing several services of this host (e.g.
+    /// [`Receiver::services`](crate::Receiver::services)).
+    pub fn start_all(services: Vec<Service>, host: String) -> std::io::Result<Responder> {
         let socket = bl_net::udp::bind_shared_v4(PORT)?;
         socket.join_multicast_v4(&GROUP, &Ipv4Addr::UNSPECIFIED)?;
         socket.set_multicast_loop_v4(true)?;
@@ -47,7 +52,7 @@ impl Responder {
         let flag = stop.clone();
         let thread = std::thread::Builder::new()
             .name("bl-mdns".into())
-            .spawn(move || run(socket, service, host, flag))?;
+            .spawn(move || run(socket, services, host, flag))?;
         Ok(Responder {
             stop,
             thread: Some(thread),
@@ -75,13 +80,32 @@ pub fn local_ipv4() -> Option<Ipv4Addr> {
     }
 }
 
-struct Records {
+/// Records of one announced service.
+struct Svc {
     service: Vec<String>,
     instance: Vec<String>,
-    host: Vec<String>,
-    meta: Vec<String>,
     port: u16,
     txt: Vec<String>,
+}
+
+impl Svc {
+    fn new(s: Service) -> Svc {
+        let service = labels(&format!("{}.local", s.service_type));
+        let mut instance = vec![s.instance];
+        instance.extend(service.iter().cloned());
+        Svc {
+            service,
+            instance,
+            port: s.port,
+            txt: s.txt,
+        }
+    }
+}
+
+struct Records {
+    services: Vec<Svc>,
+    host: Vec<String>,
+    meta: Vec<String>,
     ip: Option<Ipv4Addr>,
 }
 
@@ -92,17 +116,11 @@ fn labels(name: &str) -> Vec<String> {
         .collect()
 }
 
-fn run(socket: UdpSocket, service: Service, host: String, stop: Arc<AtomicBool>) {
-    let service_name = labels(&format!("{}.local", service.service_type));
-    let mut instance = vec![service.instance.clone()];
-    instance.extend(service_name.iter().cloned());
+fn run(socket: UdpSocket, services: Vec<Service>, host: String, stop: Arc<AtomicBool>) {
     let mut rec = Records {
-        service: service_name,
-        instance,
+        services: services.into_iter().map(Svc::new).collect(),
         host: labels(&format!("{host}.local")),
         meta: labels("_services._dns-sd._udp.local"),
-        port: service.port,
-        txt: service.txt,
         ip: local_ipv4(),
     };
     let group = SocketAddr::V4(SocketAddrV4::new(GROUP, PORT));
@@ -193,34 +211,43 @@ fn name_bytes(labels: &[String]) -> Vec<u8> {
     m.out
 }
 
+/// A record; services are referred to by index.
 #[derive(Clone, Copy, PartialEq)]
 enum Rr {
-    Meta,
-    Ptr,
-    Srv,
-    Txt,
+    Meta(usize),
+    Ptr(usize),
+    Srv(usize),
+    Txt(usize),
     A,
 }
 
 fn write_rr(m: &mut Msg, rec: &Records, rr: Rr, long_ttl: u32, short_ttl: u32) -> bool {
     match rr {
-        Rr::Meta => m.record(&rec.meta, T_PTR, 0, long_ttl, &name_bytes(&rec.service)),
-        Rr::Ptr => m.record(&rec.service, T_PTR, 0, long_ttl, &name_bytes(&rec.instance)),
-        Rr::Srv => {
-            let mut d = vec![0, 0, 0, 0];
-            d.extend_from_slice(&rec.port.to_be_bytes());
-            d.extend(name_bytes(&rec.host));
-            m.record(&rec.instance, T_SRV, CACHE_FLUSH, short_ttl, &d);
+        Rr::Meta(i) => {
+            let svc = &rec.services[i];
+            m.record(&rec.meta, T_PTR, 0, long_ttl, &name_bytes(&svc.service));
         }
-        Rr::Txt => {
+        Rr::Ptr(i) => {
+            let svc = &rec.services[i];
+            m.record(&svc.service, T_PTR, 0, long_ttl, &name_bytes(&svc.instance));
+        }
+        Rr::Srv(i) => {
+            let svc = &rec.services[i];
+            let mut d = vec![0, 0, 0, 0];
+            d.extend_from_slice(&svc.port.to_be_bytes());
+            d.extend(name_bytes(&rec.host));
+            m.record(&svc.instance, T_SRV, CACHE_FLUSH, short_ttl, &d);
+        }
+        Rr::Txt(i) => {
+            let svc = &rec.services[i];
             let mut d = Vec::new();
-            for s in &rec.txt {
+            for s in &svc.txt {
                 let b = s.as_bytes();
                 let len = b.len().min(255);
                 d.push(len as u8);
                 d.extend_from_slice(&b[..len]);
             }
-            m.record(&rec.instance, T_TXT, CACHE_FLUSH, long_ttl, &d);
+            m.record(&svc.instance, T_TXT, CACHE_FLUSH, long_ttl, &d);
         }
         Rr::A => match rec.ip {
             Some(ip) => m.record(&rec.host, T_A, CACHE_FLUSH, short_ttl, &ip.octets()),
@@ -232,7 +259,13 @@ fn write_rr(m: &mut Msg, rec: &Records, rr: Rr, long_ttl: u32, short_ttl: u32) -
 
 fn announcement(rec: &Records, long_ttl: u32, short_ttl: u32) -> Vec<u8> {
     let mut m = Msg::new(0);
-    for rr in [Rr::Ptr, Rr::Srv, Rr::Txt, Rr::A, Rr::Meta] {
+    let mut rrs = Vec::new();
+    for i in 0..rec.services.len() {
+        rrs.extend([Rr::Ptr(i), Rr::Srv(i), Rr::Txt(i)]);
+    }
+    rrs.push(Rr::A);
+    rrs.extend((0..rec.services.len()).map(Rr::Meta));
+    for rr in rrs {
         if write_rr(&mut m, rec, rr, long_ttl, short_ttl) {
             m.answers += 1;
         }
@@ -301,21 +334,28 @@ fn answer(rec: &Records, msg: &[u8], legacy: bool) -> Option<(Vec<u8>, bool)> {
             unicast = true;
         }
         let any = ty == T_ANY;
-        if same(&name, &rec.service) && (ty == T_PTR || any) {
-            answers.push(Rr::Ptr);
-        } else if same(&name, &rec.instance) {
-            if ty == T_SRV || any {
-                answers.push(Rr::Srv);
+        let mut add = |rr: Rr| {
+            if !answers.contains(&rr) {
+                answers.push(rr);
             }
-            if ty == T_TXT || any {
-                answers.push(Rr::Txt);
+        };
+        for (i, svc) in rec.services.iter().enumerate() {
+            if same(&name, &svc.service) && (ty == T_PTR || any) {
+                add(Rr::Ptr(i));
+            } else if same(&name, &svc.instance) {
+                if ty == T_SRV || any {
+                    add(Rr::Srv(i));
+                }
+                if ty == T_TXT || any {
+                    add(Rr::Txt(i));
+                }
+            } else if same(&name, &rec.meta) && (ty == T_PTR || any) {
+                add(Rr::Meta(i));
             }
-        } else if same(&name, &rec.host) && (ty == T_A || any) {
-            answers.push(Rr::A);
-        } else if same(&name, &rec.meta) && (ty == T_PTR || any) {
-            answers.push(Rr::Meta);
-        } else if same(&name, &rec.host) && ty == T_AAAA {
-            // No IPv6 address: nothing to say.
+        }
+        // No IPv6 address: AAAA queries get no answer.
+        if same(&name, &rec.host) && (ty == T_A || any) {
+            add(Rr::A);
         }
     }
     if answers.is_empty() {
@@ -336,13 +376,17 @@ fn answer(rec: &Records, msg: &[u8], legacy: bool) -> Option<(Vec<u8>, bool)> {
     }
     // Additional records a browser needs to connect.
     let mut extra = Vec::new();
-    if answers.contains(&Rr::Ptr) {
-        extra.extend([Rr::Srv, Rr::Txt, Rr::A]);
-    } else if answers.contains(&Rr::Srv) {
-        extra.push(Rr::A);
+    for &rr in &answers {
+        match rr {
+            Rr::Ptr(i) => extra.extend([Rr::Srv(i), Rr::Txt(i), Rr::A]),
+            Rr::Srv(_) => extra.push(Rr::A),
+            _ => {}
+        }
     }
+    let mut written = answers.clone();
     for rr in extra {
-        if !answers.contains(&rr) && write_rr(&mut m, rec, rr, 4500, 120) {
+        if !written.contains(&rr) && write_rr(&mut m, rec, rr, 4500, 120) {
+            written.push(rr);
             m.additional += 1;
         }
     }
@@ -355,17 +399,22 @@ mod tests {
 
     fn records() -> Records {
         Records {
-            service: labels("_raop._tcp.local"),
-            instance: vec![
-                "0A1B2C3D4E5F@Beatlumen".into(),
-                "_raop".into(),
-                "_tcp".into(),
-                "local".into(),
+            services: vec![
+                Svc::new(Service {
+                    instance: "0A1B2C3D4E5F@Beatlumen".into(),
+                    service_type: "_raop._tcp".into(),
+                    port: 7000,
+                    txt: vec!["txtvers=1".into(), "cn=0,1".into()],
+                }),
+                Svc::new(Service {
+                    instance: "Beatlumen".into(),
+                    service_type: "_airplay._tcp".into(),
+                    port: 7000,
+                    txt: vec!["deviceid=0A:1B:2C:3D:4E:5F".into()],
+                }),
             ],
             host: labels("beatlumen-0a1b.local"),
             meta: labels("_services._dns-sd._udp.local"),
-            port: 7000,
-            txt: vec!["txtvers=1".into(), "cn=0,1".into()],
             ip: Some(Ipv4Addr::new(192, 168, 1, 20)),
         }
     }
@@ -409,7 +458,27 @@ mod tests {
         assert_eq!(&rrs[1].2[4..6], &7000u16.to_be_bytes());
         // Case-insensitive, and nothing for other services.
         assert!(answer(&rec, &query("_RAOP._TCP.LOCAL", T_PTR), false).is_some());
-        assert!(answer(&rec, &query("_airplay._tcp.local", T_PTR), false).is_none());
+        assert!(answer(&rec, &query("_googlecast._tcp.local", T_PTR), false).is_none());
+        // The AirPlay 2 service of the same host.
+        let (reply, _) = answer(&rec, &query("_airplay._tcp.local", T_PTR), false).unwrap();
+        let rrs = records_of(&reply);
+        assert_eq!(rrs[0].0, labels("_airplay._tcp.local"));
+        assert_eq!(rrs[0].2, name_bytes(&rec.services[1].instance));
+        assert_eq!(rrs[2].2[1..], *b"deviceid=0A:1B:2C:3D:4E:5F");
+        // Service enumeration lists both.
+        let (reply, _) =
+            answer(&rec, &query("_services._dns-sd._udp.local", T_PTR), false).unwrap();
+        assert_eq!(records_of(&reply).len(), 2);
+    }
+
+    #[test]
+    fn announcement_contains_both_services() {
+        let rrs = records_of(&announcement(&records(), 4500, 120));
+        let types: Vec<u16> = rrs.iter().map(|r| r.1).collect();
+        assert_eq!(
+            types,
+            vec![T_PTR, T_SRV, T_TXT, T_PTR, T_SRV, T_TXT, T_A, T_PTR, T_PTR]
+        );
     }
 
     #[test]

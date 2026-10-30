@@ -67,6 +67,8 @@ pub struct ArtistEntry {
 pub struct LibraryState {
     pub local: Vec<Track>,
     pub remote: Library,
+    /// Songs of the music sources the app uses itself.
+    pub sources: Vec<Track>,
     /// Combined, sorted view (local first when both are present).
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
@@ -138,6 +140,11 @@ impl LibraryState {
         self.rebuild();
     }
 
+    pub fn set_sources(&mut self, tracks: Vec<Track>) {
+        self.sources = tracks;
+        self.rebuild();
+    }
+
     /// Rebuilds the combined view, albums and artists.
     pub fn rebuild(&mut self) {
         let mut tracks: Vec<Track> = self
@@ -145,6 +152,7 @@ impl LibraryState {
             .iter()
             .cloned()
             .chain(self.remote.tracks.iter().cloned())
+            .chain(self.sources.iter().cloned())
             .collect();
         tracks.sort_by_cached_key(sort_key);
         self.index = tracks
@@ -155,7 +163,9 @@ impl LibraryState {
         // Albums: remote albums as delivered, local albums computed.
         let mut albums: Vec<Album> = self.remote.albums.clone();
         let mut local_albums: HashMap<String, Album> = HashMap::new();
-        for t in &self.local {
+        // Songs of the app's sources group like local ones (and join a
+        // local album of the same name).
+        for t in self.local.iter().chain(&self.sources) {
             let a = local_albums
                 .entry(t.album_id.clone())
                 .or_insert_with(|| Album {

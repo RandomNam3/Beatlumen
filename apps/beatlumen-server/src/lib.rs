@@ -20,15 +20,19 @@
 
 pub mod log;
 
+pub mod admin;
+pub mod admin_web;
 pub mod analysis;
 pub mod auth;
 pub mod config;
 pub mod covers;
+pub mod devices;
 pub mod extensions;
 pub mod images;
 pub mod library;
 pub mod lyrics;
 pub mod lyrics_sync;
+pub mod models;
 pub mod playlists;
 pub mod presets;
 pub mod push;
@@ -36,6 +40,7 @@ pub mod random;
 pub mod release;
 pub mod routes;
 pub mod sha256;
+pub mod sources;
 pub mod tls;
 pub mod userdata;
 pub mod util;
@@ -49,12 +54,14 @@ use library::{Entry, Index};
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Concurrent thumbnail generations (bounds decoder memory use).
 const MAX_THUMBNAILS: usize = 2;
+/// Songs converted to Opus at the same time (for mobile data).
+pub(crate) const MAX_TRANSCODES: usize = 16;
 
 /// Locations inside the data folder.
 pub struct DataPaths {
@@ -110,9 +117,24 @@ struct ScanFlags {
     last_finished: Option<Instant>,
 }
 
+/// How the server restarts itself (set by the program; tests have none).
+pub type RestartHandler = Box<dyn Fn() + Send + Sync>;
+
 /// Shared server state.
 pub struct State {
-    pub config: Config,
+    /// The configuration; settings made in the admin interface replace it.
+    config: RwLock<Arc<Config>>,
+    pub started: Instant,
+    /// Settings changed that take effect after a restart.
+    restart_pending: AtomicBool,
+    restart_handler: OnceLock<RestartHandler>,
+    pub admin: admin::Admin,
+    pub models: Arc<models::Models>,
+    pub devices: devices::Devices,
+    /// Remote music sources (their songs are part of the library).
+    pub sources: Arc<sources::Sources>,
+    /// Playlist files in the music folders (read-only playlists).
+    pub folder_playlists: RwLock<Vec<bl_net::api::Playlist>>,
     /// Absolute music folder paths (index = root index in track ids).
     pub roots: Vec<PathBuf>,
     pub data: DataPaths,
@@ -129,12 +151,71 @@ pub struct State {
     pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
+    /// Opus conversions running now.
+    pub transcodes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub web: web::WebClient,
     pub vault: vault::Vault,
     pub extensions: extensions::Extensions,
 }
 
 impl State {
+    /// The current configuration.
+    pub fn config(&self) -> Arc<Config> {
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Takes a new configuration from the admin interface: live settings
+    /// apply now, `restart` marks the others as waiting for a restart.
+    pub fn apply_config(&self, cfg: Config, restart: bool) {
+        log::set_verbose(cfg.verbose);
+        self.vault.set_registration(cfg.registration);
+        self.vault
+            .set_quota(cfg.vault_quota_mb.saturating_mul(1024 * 1024));
+        self.analyzer.set_max_minutes(cfg.analysis_max_minutes);
+        self.lyrics_sync
+            .configure(cfg.speech_model.clone(), cfg.auto_sync_lyrics);
+        *self.config.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(cfg);
+        if restart {
+            self.restart_pending.store(true, Ordering::Relaxed);
+        }
+        // The rescan interval may have changed.
+        self.scan_cv.notify_all();
+    }
+
+    pub fn restart_pending(&self) -> bool {
+        self.restart_pending.load(Ordering::Relaxed)
+    }
+
+    /// Sets how the server restarts itself (see [`restart_process`]).
+    pub fn set_restart_handler(&self, h: RestartHandler) {
+        let _ = self.restart_handler.set(h);
+    }
+
+    pub fn can_restart(&self) -> bool {
+        self.restart_handler.get().is_some()
+    }
+
+    /// Restarts the server shortly (after the answer went out); false when
+    /// it cannot restart itself.
+    pub fn restart(self: &Arc<Self>) -> bool {
+        if !self.can_restart() {
+            return false;
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            me.save_cache();
+            info!("restarting");
+            if let Some(h) = me.restart_handler.get() {
+                h();
+            }
+        });
+        true
+    }
+
     /// The current library snapshot.
     pub fn library(&self) -> Arc<Index> {
         self.library
@@ -175,14 +256,14 @@ impl State {
     pub fn info(&self) -> bl_net::api::ServerInfo {
         let idx = self.library();
         bl_net::api::ServerInfo {
-            name: self.config.name.clone(),
+            name: self.config().name.clone(),
             version: env!("CARGO_PKG_VERSION").into(),
             api_version: bl_net::api::API_VERSION,
             auth_required: self.auth.required(),
             track_count: idx.entries.len() as u64,
             scanning: self.scanning(),
             revision: idx.revision,
-            source_url: self.config.source_url.clone(),
+            source_url: self.config().source_url.clone(),
             web_integrity: self.web.integrity.status.to_string(),
             passkeys: self.vault.rp.is_some(),
             speech: self.lyrics_sync.available(),
@@ -214,22 +295,46 @@ impl State {
         }
     }
 
+    /// Publishes the library again with the current songs of the remote
+    /// sources (after a source was listed, changed or removed).
+    pub fn sources_changed(&self) {
+        let mut entries: Vec<Entry> = self
+            .library()
+            .entries
+            .iter()
+            .filter(|e| e.remote.is_none())
+            .cloned()
+            .collect();
+        entries.extend(self.sources.entries());
+        if self.publish(entries) {
+            self.save_cache();
+        }
+    }
+
     fn run_scan(&self) {
         let t0 = Instant::now();
         let old = self.library();
         let old_rev = old.revision;
-        let (entries, stats) = library::scan(
+        let (mut entries, stats) = library::scan(
             &self.roots,
             &old,
-            self.config.scan_threads,
-            &mut |partial| {
+            self.config().scan_threads,
+            library::WALK_STALL,
+            &mut |mut partial| {
+                partial.extend(self.sources.entries());
                 if self.publish(partial) {
                     debug!("published intermediate scan results");
                 }
             },
         );
         drop(old);
+        entries.extend(self.sources.entries());
         self.publish(entries);
+        let lists = library::folder_playlists(&stats.playlists, &self.library());
+        *self
+            .folder_playlists
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = lists;
         self.save_cache();
         let idx = self.library();
         info!(
@@ -313,11 +418,12 @@ impl State {
     }
 
     fn scanner_loop(self: Arc<Self>) {
+        let mut first = true;
         loop {
             {
                 let mut f = self.scan.lock().unwrap_or_else(|e| e.into_inner());
                 while !f.requested {
-                    let interval = self.config.rescan_interval;
+                    let interval = self.config().rescan_interval;
                     if interval == 0 {
                         f = self.scan_cv.wait(f).unwrap_or_else(|e| e.into_inner());
                         continue;
@@ -337,6 +443,12 @@ impl State {
                 f.requested = false;
                 f.running = true;
             }
+            // Sources are listed at start anyway; later rescans list them
+            // again too.
+            if !first {
+                self.sources.request_all();
+            }
+            first = false;
             let _ = util::catch("library scan", || self.run_scan());
             let mut f = self.scan.lock().unwrap_or_else(|e| e.into_inner());
             f.running = false;
@@ -420,6 +532,30 @@ pub fn health_check(config: &Config) -> bool {
     head[..n].starts_with(b"HTTP/1.1 200")
 }
 
+/// Replaces the process with a new start of the same program and
+/// arguments (Unix), or starts it anew and exits (Windows): the admin
+/// interface's restart.
+pub fn restart_process() {
+    let Ok(exe) = std::env::current_exe() else {
+        error!("cannot restart: the program's path is unknown");
+        return;
+    };
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = std::process::Command::new(&exe).args(&args).exec();
+        error!("cannot restart: {e}");
+    }
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new(&exe).args(&args).spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => error!("cannot restart: {e}"),
+        }
+    }
+}
+
 /// Starts the server: prepares the data folder, loads the cached library,
 /// binds the listener and starts the scanner and HTTP threads.
 pub fn start(config: Config) -> Result<Server, String> {
@@ -477,8 +613,49 @@ pub fn start(config: Config) -> Result<Server, String> {
         push,
         rp,
     )?;
+    let admin = admin::Admin::open(&data.root, config.admin_password_file.as_deref())?;
+    // The songs of remote sources from their cached listings.
+    let sources = Arc::new(sources::Sources::load(
+        &data.root,
+        vault.server_key("beatlumen source logins v1"),
+    ));
+    let index = if sources.entries().is_empty() {
+        index
+    } else {
+        let mut entries: Vec<Entry> = index
+            .entries
+            .into_iter()
+            .filter(|e| e.remote.is_none())
+            .collect();
+        entries.extend(sources.entries());
+        Index::new(index.revision, roots.clone(), entries)
+    };
+    let secret = match (&config.password, admin.server_password()) {
+        (Some(p), _) => Some(auth::Secret::plain(p)),
+        (None, Some(v)) => Some(auth::Secret::Verifier(v)),
+        (None, None) => None,
+    };
+    let models = Arc::new(
+        match &config.model_source {
+            Some(src) => models::Models::with_source(data.root.join("models"), src.clone()),
+            None => models::Models::new(data.root.join("models")),
+        }
+        .with_log(Box::new(|msg, problem| {
+            if problem {
+                warn!("{msg}");
+            } else {
+                info!("{msg}");
+            }
+        })),
+    );
     let state = Arc::new(State {
-        auth: auth::Auth::new(config.password.as_deref(), data.tokens.clone()),
+        auth: auth::Auth::new(secret, data.tokens.clone()),
+        started: Instant::now(),
+        restart_pending: AtomicBool::new(false),
+        restart_handler: OnceLock::new(),
+        admin,
+        models,
+        devices: devices::Devices::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
         presets: presets::Presets::new(data.presets.clone()),
         images: images::Images::new(
@@ -493,8 +670,15 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.lyrics.clone(),
         )),
         user_data: userdata::UserData::default(),
-        analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
+        analyzer: analysis::Analyzer::new(
+            data.analysis.clone(),
+            config.analysis_max_minutes,
+            sources.clone(),
+        ),
+        sources,
+        folder_playlists: RwLock::new(Vec::new()),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
+        transcodes: Default::default(),
         library: RwLock::new(Arc::new(index)),
         cache_dirty: AtomicBool::new(false),
         scan: Mutex::new(ScanFlags {
@@ -507,7 +691,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         web,
         vault,
         extensions,
-        config,
+        config: RwLock::new(Arc::new(config)),
     });
     state.extensions.attach(&state);
     state.lyrics_sync.attach(&state);
@@ -527,10 +711,10 @@ pub fn start(config: Config) -> Result<Server, String> {
     }
     info!("data folder: {}", state.data.root.display());
     info!("web client: {}", state.web.describe());
+    let cfg = state.config();
     if state.auth.required() {
         info!("password protection enabled");
-        if state
-            .config
+        if cfg
             .password
             .as_ref()
             .is_some_and(|p| p.chars().count() < 12)
@@ -544,11 +728,26 @@ pub fn start(config: Config) -> Result<Server, String> {
         );
     }
 
+    let weak = Arc::downgrade(&state);
+    let lister = state.sources.clone();
+    std::thread::Builder::new()
+        .name("sources".into())
+        .spawn(move || {
+            lister.run(move || {
+                if let Some(s) = weak.upgrade() {
+                    s.sources_changed();
+                }
+            })
+        })
+        .map_err(|e| format!("cannot start the source listing: {e}"))?;
+
     let scanner = state.clone();
     std::thread::Builder::new()
         .name("scanner".into())
         .spawn(move || scanner.scanner_loop())
         .map_err(|e| format!("cannot start scanner: {e}"))?;
+
+    state.admin.announce(&state.data.root, addr);
 
     let handler_state = state.clone();
     let handler: Arc<bl_net::server::Handler> =

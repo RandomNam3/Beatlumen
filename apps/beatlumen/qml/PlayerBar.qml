@@ -85,7 +85,7 @@ Item {
             Layout.topMargin: -10
             Label { textFormat: Text.PlainText; text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
             Item { Layout.fillWidth: true }
-            Label { textFormat: Text.PlainText; text: Theme.fmtTime(bar.duration); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { textFormat: Text.PlainText; text: bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
         }
     }
 
@@ -96,7 +96,7 @@ Item {
             Layout.preferredWidth: parent.coverSize
             Layout.preferredHeight: parent.coverSize
             source: bar.cur ? Covers.url(bar.cur.id, bar.cur.cover) : ""
-            Component.onCompleted: if (bar.cur && bar.cur.local) Covers.request(bar.cur.id)
+            Component.onCompleted: if (bar.cur && (bar.cur.local || bar.cur.source)) Covers.request(bar.cur.id)
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -124,7 +124,7 @@ Item {
     Connections {
         target: Core
         function onStateChanged() {
-            if (bar.cur && bar.cur.local && !bar.cur.cover)
+            if (bar.cur && (bar.cur.local || bar.cur.source) && !bar.cur.cover)
                 Covers.request(bar.cur.id)
         }
     }
@@ -222,7 +222,7 @@ Item {
             }
             Label {
                 textFormat: Text.PlainText
-                text: Theme.fmtTime(Core.position) + " / " + Theme.fmtTime(bar.duration)
+                text: Theme.fmtTime(Core.position) + " / " + (bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"))
                 color: Theme.textDim
                 font.pixelSize: 12
                 font.features: { "tnum": 1 }

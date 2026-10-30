@@ -23,21 +23,41 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
 - Library with songs, albums, artists, folders, playlists and a play queue;
   artist and title are guessed from file names when tags are missing.
 - Background images from your folders, the server or the album cover.
-- **Offline copies**: songs from the server (with their song text, cover
-  and analysis) can be kept on the device in one file each and play
-  without a connection; the library shows them while the server is away.
+- **Offline copies**: songs, albums and playlists from the server (with
+  song text, cover and analysis) can be kept on the device in one file
+  each and play without a connection, within a storage limit you set; the
+  library shows them while the server is away.
+- **Devices**: all apps connected to the same server see each other with
+  what they play; control them remotely, play songs on another device,
+  move your music there or take theirs over, or start several devices
+  together.
 - **Song texts** over the visuals: from the file's tags, an `.lrc` or
   `.txt` file next to it, or added in the app. Synced texts (LRC, also with
   word timing) follow the song; tapping a line jumps there. With a
-  speech model, the server times plain texts by recognising the sung
-  words, or writes down what is sung (own implementation, runs on the
-  server; see `container/README.md`).
+  speech model, the server or the device itself times plain texts word by
+  word by recognising the sung words, or writes down what is sung (own
+  implementation; see `container/README.md`).
+- **Music sources**: Subsonic/OpenSubsonic (Navidrome, Gonic, …),
+  Jellyfin, WebDAV/Nextcloud, SFTP (own SSH client), DLNA media servers and
+  web folders, in the app directly or added on the server (which then
+  indexes, analyses and streams them for every app).
+- **Internet radio**: Icecast/Shoutcast and HLS stations (also from
+  `.pls`/`.m3u`) with the current song; **live beat prediction** lets the
+  effects land on the coming beats of radio, other apps, AirPlay and DLNA;
+  the speakers' delay (e.g. Bluetooth) is measured by tapping along.
+- **Playlist files**: M3U/M3U8/PLS/XSPF open as playlists (or stations),
+  playlists export as M3U8; playlist files in the server's music folders
+  appear as playlists.
 - **AirPlay receiver** (optional): the app appears as a speaker on iPhone,
   iPad and Mac and plays and visualises what they send, with title, artist
-  and cover (Linux, Windows, Android; AirPlay 1 protocol).
+  and cover (Linux, Windows, Android; AirPlay 1, AirPlay 2 experimental).
 - **DLNA/UPnP receiver** (optional): apps such as BubbleUPnP, Windows
   "Play to" and other control points can send music to the app and control
-  it (play, pause, seek, volume, next track).
+  it (play, pause, seek, volume, next track); new devices must be allowed
+  first, and files are analysed ahead.
+- **Sharing**: "Share" on Android and "Open with" send songs, playlists
+  and links to the app: play now, queue, or keep them in the encrypted
+  files.
 - **Play on speakers in the network**: AirPlay 1 receivers (AirPort
   Express, AV receivers, shairport-sync, …; encrypted when the speaker
   supports it), DLNA/UPnP renderers (TVs, AV receivers, …) and Chromecast
@@ -64,7 +84,10 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   password manager (`docs/ENCRYPTION.md`).
 - Light/dark mode and accent colour follow your system.
 - **Beatlumen Server** shares a music folder on your network and serves the
-  web version of the app.
+  web version of the app. It is managed in the browser at `/admin/`
+  (folders, music sources, accounts, invitations, shared links, speech
+  models downloaded in the background, extensions, network, password,
+  log); the first start logs a link that sets the admin password.
 
 **Privacy:** the apps only ever connect to the server you configure; the
 server connects only to remote sources its admin sets up (none by default).
@@ -95,6 +118,7 @@ cmake --build build/desktop
 # Server
 cargo build --release -p beatlumen-server
 ./target/release/beatlumen-server --music ~/Music --web-dir dist/web [--password secret]
+# then open the setup link from the log: http://<host>:7878/admin/#setup=...
 
 # Web version (needs emsdk 4.0.7 and Qt for WebAssembly, single-threaded)
 EMSDK_DIR=~/emsdk ./build-web.sh
@@ -121,7 +145,8 @@ crates/bl-fx            effect engine (triggers, camera, particles, transitions)
 crates/bl-render        OpenGL / OpenGL ES / WebGL 2 renderer
 crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
-                        bl-opus, bl-vorbis, bl-flac, bl-ogg
+                        bl-opus, bl-vorbis, bl-flac, bl-ogg; Ogg Opus encoding
+                        for streaming in bl-opus-enc
 crates/bl-gl            OpenGL bindings (loaded at run time)
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
 crates/bl-vault         end-to-end encryption of the user's files (+ bl-vault-wasm)

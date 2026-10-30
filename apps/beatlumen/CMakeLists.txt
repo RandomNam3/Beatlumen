@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(beatlumen VERSION 0.1.0 LANGUAGES C CXX)
+project(beatlumen VERSION 0.10.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,24 @@ if(NOT BL_RUST_TARGET)
     endif()
 endif()
 set(BL_CARGO_ENV "")
+if(ANDROID AND BL_RUST_TARGET)
+    # C code in Rust crates (ring, used by the SSH client) is built with
+    # the NDK's compiler for the same target and API level.
+    string(REPLACE "-" "_" BL_TARGET_ENV ${BL_RUST_TARGET})
+    set(BL_CC_TARGET ${BL_RUST_TARGET})
+    if(BL_RUST_TARGET STREQUAL "armv7-linux-androideabi")
+        set(BL_CC_TARGET armv7a-linux-androideabi)
+    endif()
+    if(ANDROID_PLATFORM_LEVEL)
+        set(BL_API ${ANDROID_PLATFORM_LEVEL})
+    else()
+        set(BL_API 24)
+    endif()
+    set(BL_CARGO_ENV
+        "CC_${BL_TARGET_ENV}=${CMAKE_C_COMPILER}"
+        "CFLAGS_${BL_TARGET_ENV}=--target=${BL_CC_TARGET}${BL_API}"
+        "AR_${BL_TARGET_ENV}=${CMAKE_AR}")
+endif()
 if(EMSCRIPTEN)
     # Qt for WebAssembly uses JavaScript exceptions; Rust panics must not unwind.
     set(BL_CARGO_ENV "CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-C panic=abort")
@@ -166,7 +184,7 @@ elseif(ANDROID)
             imageformats Qt6::QJpegPlugin Qt6::QWebpPlugin Qt6::QGifPlugin Qt6::QSvgPlugin
         EXCLUDE Qt6::QOffscreenIntegrationPlugin
         EXCLUDE_BY_TYPE qmltooling tls networkinformation multimedia)
-    set(BL_ANDROID_VERSION_CODE 3 CACHE STRING "android:versionCode")
+    set(BL_ANDROID_VERSION_CODE 100 CACHE STRING "android:versionCode")
     # Compressed native libraries: the APK is sideloaded, so its download
     # size matters more than the extraction at install time.
     option(BL_ANDROID_COMPRESS_LIBS "Store the native libraries compressed in the APK" ON)

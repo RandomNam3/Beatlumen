@@ -60,7 +60,7 @@ struct SplitCtx {
     qalloc: i32,
 }
 
-fn compute_qn(n: i32, b: i32, offset: i32, pulse_cap: i32, stereo: bool) -> i32 {
+pub(super) fn compute_qn(n: i32, b: i32, offset: i32, pulse_cap: i32, stereo: bool) -> i32 {
     const EXP2_TABLE8: [i32; 8] = [16384, 17866, 19483, 21247, 23170, 25267, 27554, 30048];
     let mut n2 = 2 * n - 1;
     if stereo && n == 2 {
@@ -336,7 +336,7 @@ fn quant_partition(
     cm
 }
 
-fn haar1(x: &mut [f32], n0: usize, stride: usize) {
+pub(super) fn haar1(x: &mut [f32], n0: usize, stride: usize) {
     let n0 = n0 >> 1;
     let s = 0.707_106_78_f32;
     for i in 0..stride {
@@ -351,7 +351,7 @@ fn haar1(x: &mut [f32], n0: usize, stride: usize) {
     }
 }
 
-fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
+pub(super) fn deinterleave_hadamard(x: &mut [f32], n0: usize, stride: usize, hadamard: bool) {
     let n = n0 * stride;
     let mut tmp = [0f32; MAX_BAND];
     if hadamard {

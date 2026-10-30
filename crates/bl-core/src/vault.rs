@@ -299,6 +299,18 @@ fn recovery_json(c: &RecoveryChange) -> Value {
 }
 
 impl Vault {
+    /// The account's session token ("" while locked).
+    pub(crate) fn session_token(&self) -> &str {
+        &self.token
+    }
+
+    /// The key of the account's synced settings (None while locked).
+    pub(crate) fn settings_key(&self) -> Option<bl_vault::Secret> {
+        self.account
+            .as_ref()
+            .map(|a| bl_vault::derive(a.master().as_bytes(), "beatlumen settings v1"))
+    }
+
     pub fn file(&self, id: &str) -> Option<&VaultFile> {
         let id = id.strip_prefix(ID_PREFIX).unwrap_or(id);
         self.files.iter().find(|f| f.id == id)
@@ -420,10 +432,15 @@ impl Core {
         self.vault.rev += 1;
     }
 
-    fn vault_ready(&self) -> bool {
+    /// A server to talk to (also while it is being connected again, e.g.
+    /// after an account opened its library; an unreachable one fails the
+    /// request itself).
+    pub(crate) fn vault_ready(&self) -> bool {
         matches!(
             self.server.state,
-            crate::server::ServerState::Connected(_) | crate::server::ServerState::NeedsLogin(_)
+            crate::server::ServerState::Connected(_)
+                | crate::server::ServerState::NeedsLogin(_)
+                | crate::server::ServerState::Connecting
         )
     }
 
@@ -1814,6 +1831,7 @@ impl Core {
             "vault.browserResult" => self.vault_browser_result(host, &s("url")),
             "vault.manageInBrowser" => self.vault_manage_in_browser(host),
             "vault.nativeSignIn" => self.vault_native_sign_in(host),
+            "vault.secret" if s("key") == "sources" => self.sources_secret(host, &s("value")),
             "vault.secret" => self.vault_secret(host, &s("key"), &s("value")),
             "vault.remember" => self.vault_set_remember(host, c.bool_or("value", true)),
             "vault.addPasskey" => self.vault_add_passkey(host, &s("password"), &s("name")),

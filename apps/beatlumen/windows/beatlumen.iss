@@ -3,12 +3,12 @@
 ; folder prepared by the CI (dist/windows: beatlumen.exe, Qt libraries,
 ; Visual C++ runtime, beatlumen-server.exe).
 ;
-;   iscc /DAppVersion=0.1.0 /DSourceDir=..\..\..\dist\windows /DOutputDir=..\..\..\dist apps\beatlumen\windows\beatlumen.iss
+;   iscc /DAppVersion=0.10.0 /DSourceDir=..\..\..\dist\windows /DOutputDir=..\..\..\dist apps\beatlumen\windows\beatlumen.iss
 ;
 ; SPDX-License-Identifier: AGPL-3.0-or-later
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.10.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\..\..\dist\windows"

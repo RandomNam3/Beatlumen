@@ -1,36 +1,178 @@
-//! Modular exponentiation for RSA with the (public) RAOP key: numbers are
-//! little-endian `u32` limbs, multiplication in Montgomery form.
+//! Modular arithmetic on big-endian byte strings: RSA with the (public)
+//! RAOP key and SRP-6a of AirPlay 2 pairing. Numbers are little-endian
+//! `u32` limbs, multiplication in Montgomery form.
 //!
-//! Not constant time: the only key used with it is public (see `key.rs`).
+//! Exponentiation performs the same operations for every exponent bit
+//! (the SRP exponents are secret); the Montgomery reduction itself has a
+//! data-dependent final subtraction.
+
+/// Montgomery context of an odd modulus.
+struct Mont {
+    m: Vec<u32>,
+    n0: u32,
+    /// R^2 mod m, R = 2^(32k).
+    r2: Vec<u32>,
+}
+
+impl Mont {
+    fn new(m: &[u8]) -> Mont {
+        let m = from_be(m);
+        let k = m.len();
+        let n0 = neg_inv(m[0]);
+        let mut r2 = vec![0u32; k];
+        r2[0] = 1;
+        for _ in 0..64 * k {
+            double_mod(&mut r2, &m);
+        }
+        Mont { m, n0, r2 }
+    }
+
+    fn limbs(&self, x: &[u8]) -> Vec<u32> {
+        let mut v = from_be(x);
+        v.resize(self.m.len(), 0);
+        v
+    }
+
+    fn mul(&self, a: &[u32], b: &[u32]) -> Vec<u32> {
+        mont_mul(a, b, &self.m, self.n0)
+    }
+
+    /// Into Montgomery form.
+    fn to_mont(&self, a: &[u32]) -> Vec<u32> {
+        self.mul(a, &self.r2)
+    }
+
+    /// Out of Montgomery form.
+    fn demont(&self, a: &[u32]) -> Vec<u32> {
+        let mut one = vec![0u32; self.m.len()];
+        one[0] = 1;
+        self.mul(a, &one)
+    }
+
+    fn bytes(&self, a: &[u32]) -> Vec<u8> {
+        to_be(a, self.m.len() * 4)
+    }
+}
 
 /// `base^exp mod m` for big-endian byte strings; `m` must be odd and
-/// `base < m`. The result has the length of `m`.
+/// `base < m`. The result has the length of `m` rounded up to 4 bytes.
 pub fn mod_pow(base: &[u8], exp: &[u8], m: &[u8]) -> Vec<u8> {
-    let m = from_be(m);
-    let k = m.len();
-    let mut b = from_be(base);
-    b.resize(k, 0);
-    let n0 = neg_inv(m[0]);
-    // R = 2^(32k); R^2 mod m by repeated doubling.
-    let mut r2 = vec![0u32; k];
-    r2[0] = 1;
-    for _ in 0..64 * k {
-        double_mod(&mut r2, &m);
-    }
-    let mut one = vec![0u32; k];
+    let ctx = Mont::new(m);
+    let mut one = vec![0u32; ctx.m.len()];
     one[0] = 1;
-    let bm = mont_mul(&b, &r2, &m, n0);
-    let mut acc = mont_mul(&one, &r2, &m, n0); // 1 in Montgomery form
+    let bm = ctx.to_mont(&ctx.limbs(base));
+    let mut acc = ctx.to_mont(&one);
     for byte in exp {
         for bit in (0..8).rev() {
-            acc = mont_mul(&acc, &acc, &m, n0);
-            if byte >> bit & 1 == 1 {
-                acc = mont_mul(&acc, &bm, &m, n0);
+            acc = ctx.mul(&acc, &acc);
+            let with = ctx.mul(&acc, &bm);
+            let mask = 0u32.wrapping_sub((byte >> bit & 1) as u32);
+            for (a, w) in acc.iter_mut().zip(&with) {
+                *a ^= mask & (*a ^ w);
             }
         }
     }
-    let out = mont_mul(&acc, &one, &m, n0);
-    to_be(&out, k * 4)
+    ctx.bytes(&ctx.demont(&acc))
+}
+
+/// `a * b mod m` (`a, b < m`, `m` odd).
+pub fn mod_mul(a: &[u8], b: &[u8], m: &[u8]) -> Vec<u8> {
+    let ctx = Mont::new(m);
+    let ab = ctx.mul(&ctx.limbs(a), &ctx.limbs(b)); // a*b/R
+    ctx.bytes(&ctx.mul(&ab, &ctx.r2))
+}
+
+/// `a + b mod m` (`a, b < m`).
+pub fn mod_add(a: &[u8], b: &[u8], m: &[u8]) -> Vec<u8> {
+    let mm = from_be(m);
+    let k = mm.len();
+    let (mut x, mut y) = (from_be(a), from_be(b));
+    x.resize(k + 1, 0);
+    y.resize(k + 1, 0);
+    let mut carry = 0u64;
+    for i in 0..=k {
+        let s = x[i] as u64 + y[i] as u64 + carry;
+        x[i] = s as u32;
+        carry = s >> 32;
+    }
+    let mut m1 = mm.clone();
+    m1.push(0);
+    if geq(&x, &m1) {
+        sub_in_place(&mut x, &m1);
+    }
+    to_be(&x[..k], k * 4)
+}
+
+/// `a - b mod m` (`a, b < m`).
+pub fn mod_sub(a: &[u8], b: &[u8], m: &[u8]) -> Vec<u8> {
+    let mm = from_be(m);
+    let k = mm.len();
+    let (mut x, mut y) = (from_be(a), from_be(b));
+    x.resize(k, 0);
+    y.resize(k, 0);
+    if !geq(&x, &y) {
+        // a + m - b
+        let mut carry = 0u64;
+        let mut ext = x.clone();
+        ext.push(0);
+        for i in 0..k {
+            let s = ext[i] as u64 + mm[i] as u64 + carry;
+            ext[i] = s as u32;
+            carry = s >> 32;
+        }
+        ext[k] = carry as u32;
+        y.push(0);
+        sub_in_place(&mut ext, &y);
+        return to_be(&ext[..k], k * 4);
+    }
+    sub_in_place(&mut x, &y);
+    to_be(&x, k * 4)
+}
+
+/// `a < b` as numbers (leading zero bytes ignored).
+pub fn less_than(a: &[u8], b: &[u8]) -> bool {
+    let a = strip(a);
+    let b = strip(b);
+    a.len() < b.len() || (a.len() == b.len() && a < b)
+}
+
+/// The number without leading zero bytes.
+pub fn strip(a: &[u8]) -> &[u8] {
+    let first = a.iter().position(|&b| b != 0).unwrap_or(a.len());
+    &a[first..]
+}
+
+/// Plain (non-modular) product.
+#[cfg(test)]
+pub fn mul(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let (x, y) = (from_be(a), from_be(b));
+    let mut out = vec![0u32; x.len() + y.len()];
+    for (i, &xi) in x.iter().enumerate() {
+        let mut carry = 0u64;
+        for (j, &yj) in y.iter().enumerate() {
+            let s = out[i + j] as u64 + xi as u64 * yj as u64 + carry;
+            out[i + j] = s as u32;
+            carry = s >> 32;
+        }
+        out[i + y.len()] = carry as u32;
+    }
+    to_be(&out, out.len() * 4)
+}
+
+/// Plain (non-modular) sum.
+#[cfg(test)]
+pub fn add(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let n = a.len().max(b.len()) / 4 + 2;
+    let (mut x, mut y) = (from_be(a), from_be(b));
+    x.resize(n, 0);
+    y.resize(n, 0);
+    let mut carry = 0u64;
+    for i in 0..n {
+        let s = x[i] as u64 + y[i] as u64 + carry;
+        x[i] = s as u32;
+        carry = s >> 32;
+    }
+    to_be(&x, n * 4)
 }
 
 fn from_be(bytes: &[u8]) -> Vec<u32> {

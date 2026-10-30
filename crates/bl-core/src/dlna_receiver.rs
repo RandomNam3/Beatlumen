@@ -7,7 +7,7 @@ use crate::core::Core;
 use crate::host::Host;
 use crate::player::{PlayState, SourceOpener};
 use bl_json::Value;
-use bl_upnp::renderer::{Command, Config, Meta, Renderer, State, Status};
+use bl_upnp::renderer::{Client, Command, Config, Meta, Renderer, State, Status};
 
 /// Track id prefix of streams sent by control points.
 pub(crate) const ID_PREFIX: &str = "dlna:";
@@ -45,6 +45,12 @@ pub(crate) struct DlnaState {
     meta: Meta,
     cover_url: String,
     pub(crate) error: Option<String>,
+    /// A new control point waiting for the user's answer, with what it
+    /// sent meanwhile.
+    asking: Option<(Client, Vec<Command>)>,
+    /// Control points allowed or refused until the app quits.
+    allowed_now: Vec<std::net::IpAddr>,
+    refused_now: Vec<std::net::IpAddr>,
 }
 
 impl DlnaState {
@@ -157,11 +163,11 @@ impl Core {
             self.dlna.active = false;
         }
         let commands = match &self.dlna.renderer {
-            Some(r) => r.poll(),
+            Some(r) => r.poll_from(),
             None => return,
         };
-        for c in commands {
-            self.on_dlna_command(host, c);
+        for (c, client) in commands {
+            self.dlna_from(host, c, client);
         }
         let state = if self.playing_dlna() {
             match self.player.state() {
@@ -193,6 +199,61 @@ impl Core {
         };
         if let Some(r) = &self.dlna.renderer {
             r.set_status(status);
+        }
+    }
+
+    /// A command from a control point: played when the control point is
+    /// known, held while the user is asked about a new one.
+    fn dlna_from(&mut self, host: &mut dyn Host, c: Command, client: Client) {
+        let ip = client.ip;
+        // This device itself is trusted on desktops; on Android any other
+        // app could send commands from there, so it is asked about too.
+        let known = (ip.is_loopback() && host.platform() != "android")
+            || self.dlna.allowed_now.contains(&ip)
+            || self.settings.dlna_allowed.contains(&ip.to_string());
+        if known {
+            return self.on_dlna_command(host, c);
+        }
+        if self.dlna.refused_now.contains(&ip) {
+            return;
+        }
+        match &mut self.dlna.asking {
+            Some((asked, held)) if asked.ip == ip => {
+                if held.len() < 32 {
+                    held.push(c);
+                }
+            }
+            // One question at a time; others wait for their next try.
+            Some(_) => {}
+            None => {
+                host.log(&format!("dlna: new control point {ip} ({})", client.agent));
+                self.dlna.asking = Some((client, vec![c]));
+                self.revs.devices += 1;
+            }
+        }
+    }
+
+    /// The user's answer about a new control point.
+    pub(crate) fn dlna_answer(&mut self, host: &mut dyn Host, allow: bool, always: bool) {
+        let Some((client, held)) = self.dlna.asking.take() else {
+            return;
+        };
+        self.revs.devices += 1;
+        if !allow {
+            self.dlna.refused_now.push(client.ip);
+            return;
+        }
+        if always {
+            let ip = client.ip.to_string();
+            if !self.settings.dlna_allowed.contains(&ip) {
+                self.settings.dlna_allowed.push(ip);
+                self.settings_changed();
+            }
+        } else {
+            self.dlna.allowed_now.push(client.ip);
+        }
+        for c in held {
+            self.on_dlna_command(host, c);
         }
     }
 
@@ -238,6 +299,12 @@ impl Core {
             Command::Volume(v) => self.set_volume(v as f32 / 100.0),
             Command::Mute(m) => self.set_muted(m),
         }
+    }
+
+    /// Whether the current stream may be analysed ahead (the job checks
+    /// that it is a file of moderate size).
+    pub(crate) fn dlna_analysable(&self, host: &dyn Host) -> bool {
+        host.has_threads() && !self.dlna.meta.duration.is_some_and(|d| d > 60.0 * 60.0)
     }
 
     pub(crate) fn dlna_opener(&self) -> Option<SourceOpener> {
@@ -288,6 +355,8 @@ impl Core {
         if let Some(opener) = self.dlna_opener() {
             self.player.load(host, opener, autoplay);
         }
+        // Read ahead and analysed when it is a file (see the analysis).
+        self.request_analysis_for_current();
         self.revs.queue += 1;
         if self.settings.cover_fallback && self.bg_queue.is_empty() {
             self.show_queue_background(host);
@@ -335,6 +404,15 @@ impl Core {
             .with("port", self.dlna.renderer.as_ref().map(|r| r.port() as u64))
             .with("name", self.dlna_name())
             .with("error", self.dlna.error.clone())
+            .with(
+                "asking",
+                self.dlna.asking.as_ref().map(|(c, _)| {
+                    Value::object()
+                        .with("ip", c.ip.to_string())
+                        .with("agent", c.agent.as_str())
+                }),
+            )
+            .with("allowed", self.settings.dlna_allowed.clone())
     }
 }
 

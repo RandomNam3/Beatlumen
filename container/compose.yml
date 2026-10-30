@@ -5,6 +5,7 @@
 #   printf '%s' 'a-long-password' > password.txt && chmod 0444 password.txt
 #   head -c 32 /dev/urandom > pepper.bin && chmod 0444 pepper.bin
 #   docker compose up -d --build     # or: podman compose up -d --build
+#   docker compose logs server | grep admin   # the admin setup link
 #
 # Ports, variables and security options: see container/README.md.
 #
@@ -26,17 +27,20 @@ services:
       # reverse proxy on the same machine.
       - "${BEATLUMEN_PORT:-7878}:7878/tcp"
     environment:
-      BEATLUMEN_NAME: "${BEATLUMEN_NAME:-Beatlumen Server}"
+      # The server password (apps log in with it). Without these two lines
+      # (and the secret below) it is set in the admin interface instead.
       BEATLUMEN_PASSWORD_FILE: /run/secrets/beatlumen_password
       # Secret of the account verifiers, kept out of the data volume.
       BEATLUMEN_VAULT_PEPPER_FILE: /run/secrets/beatlumen_pepper
-      BEATLUMEN_VAULT_QUOTA_MB: "${BEATLUMEN_VAULT_QUOTA_MB:-10240}"
-      BEATLUMEN_REGISTRATION: "${BEATLUMEN_REGISTRATION:-invite}"
-      # Domain of a reverse proxy (comma separated), e.g. music.example.org
+      # Everything else is set in the admin interface (/admin/). A value
+      # set here is fixed there; empty ones are ignored.
+      BEATLUMEN_NAME: "${BEATLUMEN_NAME:-}"
+      BEATLUMEN_VAULT_QUOTA_MB: "${BEATLUMEN_VAULT_QUOTA_MB:-}"
+      BEATLUMEN_REGISTRATION: "${BEATLUMEN_REGISTRATION:-}"
       BEATLUMEN_ALLOWED_HOSTS: "${BEATLUMEN_ALLOWED_HOSTS:-}"
-      BEATLUMEN_RESCAN_INTERVAL: "${BEATLUMEN_RESCAN_INTERVAL:-600}"
-      BEATLUMEN_ANALYSIS_MAX_MINUTES: "${BEATLUMEN_ANALYSIS_MAX_MINUTES:-20}"
-      BEATLUMEN_VERBOSE: "${BEATLUMEN_VERBOSE:-false}"
+      BEATLUMEN_RESCAN_INTERVAL: "${BEATLUMEN_RESCAN_INTERVAL:-}"
+      BEATLUMEN_ANALYSIS_MAX_MINUTES: "${BEATLUMEN_ANALYSIS_MAX_MINUTES:-}"
+      BEATLUMEN_VERBOSE: "${BEATLUMEN_VERBOSE:-}"
     secrets:
       - beatlumen_password
       - beatlumen_pepper
@@ -45,8 +49,8 @@ services:
       # (shared label, ignored on systems without SELinux).
       - "${MUSIC_DIR:-./music}:/music:ro,z"
       - "${IMAGES_DIR:-./images}:/images:ro,z"
-      # Caches, playlists, presets, uploads, login tokens, accounts and
-      # encrypted files.
+      # Caches, playlists, presets, uploads, login tokens, accounts,
+      # encrypted files, settings and downloaded speech models.
       - beatlumen-data:/data:Z
     # Hardening: nothing to write except /data, no capabilities, no
     # privilege gain, bounded resources.
@@ -60,7 +64,8 @@ services:
       # - apparmor=beatlumen-server
       # - label=type:beatlumen_server.process
     pids_limit: 256
-    mem_limit: 2g
+    # Large speech models need up to about 1.5 GB more while they work.
+    mem_limit: 3g
     healthcheck:
       test: ["CMD", "/beatlumen-server", "--health-check"]
       interval: 30s
