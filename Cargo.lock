@@ -216,6 +216,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bl-sources"
+version = "0.1.0"
+dependencies = [
+ "bl-json",
+ "bl-media",
+ "bl-net",
+ "bl-upnp",
+]
+
+[[package]]
 name = "bl-upnp"
 version = "0.1.0"
 dependencies = [
