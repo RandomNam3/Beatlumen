@@ -119,6 +119,16 @@ pub fn id_of(path: &std::path::Path) -> String {
     )
 }
 
+/// A file to download: its name in the folder, where it comes from, its
+/// size and SHA-256 (hex).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileSpec {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Download {
     Running { done: u64, total: u64 },
@@ -291,15 +301,33 @@ impl Models {
     }
 
     fn fetch(&self, m: &ModelInfo) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|e| format!("cannot create {}: {e}", self.dir.display()))?;
-        let part = self.dir.join(format!("{}.part", m.file));
+        let spec = FileSpec {
+            name: m.file.to_string(),
+            url: format!("{}{}", self.source, m.file),
+            size: m.size,
+            sha256: m.sha256.to_string(),
+        };
+        self.fetch_file(m.id, &self.dir, &spec, 0, m.size)
+    }
+
+    /// Downloads one checked file into `dir` (resuming a `.part`); progress
+    /// is reported under `id`, counting from `before` of `total` bytes.
+    fn fetch_file(
+        &self,
+        id: &str,
+        dir: &Path,
+        m: &FileSpec,
+        before: u64,
+        total: u64,
+    ) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let part = dir.join(format!("{}.part", m.name));
         let mut have = std::fs::metadata(&part).map(|md| md.len()).unwrap_or(0);
         if have > m.size {
             let _ = std::fs::remove_file(&part);
             have = 0;
         }
-        let (status, mut body) = self.open(&format!("{}{}", self.source, m.file), have)?;
+        let (status, mut body) = self.open(&m.url, have)?;
         let resumed = status == 206 && have > 0;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -326,10 +354,10 @@ impl Models {
             if last.elapsed().as_millis() > 250 {
                 last = std::time::Instant::now();
                 self.set(
-                    m.id,
+                    id,
                     Download::Running {
-                        done,
-                        total: m.size,
+                        done: before + done,
+                        total,
                     },
                 );
             }
@@ -339,7 +367,7 @@ impl Models {
         if done != m.size {
             return Err(format!("download ended after {done} of {} bytes", m.size));
         }
-        self.set(m.id, Download::Checking);
+        self.set(id, Download::Checking);
         let mut h = Sha256::default();
         let mut f = std::fs::File::open(&part).map_err(|e| e.to_string())?;
         loop {
@@ -353,10 +381,76 @@ impl Models {
             let _ = std::fs::remove_file(&part);
             return Err("the file does not match its checksum".into());
         }
-        let path = self.path(m);
+        let path = dir.join(&m.name);
         std::fs::rename(&part, &path)
             .map_err(|e| format!("cannot rename {}: {e}", part.display()))?;
         Ok(path)
+    }
+
+    /// The state of a download started with [`download_files`](Self::download_files).
+    pub fn state(&self, id: &str) -> Option<Download> {
+        self.downloads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .cloned()
+    }
+
+    /// Starts downloading a model made of several `files` into the folder
+    /// `dir/id` unless they are there or on their way; `done` runs with the
+    /// folder once all are complete and checked.
+    pub fn download_files(
+        self: &Arc<Self>,
+        id: &str,
+        files: Vec<FileSpec>,
+        done: impl FnOnce(PathBuf) + Send + 'static,
+    ) {
+        let folder = self.dir.join(id);
+        if files.iter().all(|f| folder.join(&f.name).is_file()) {
+            done(folder);
+            return;
+        }
+        let total: u64 = files.iter().map(|f| f.size).sum();
+        {
+            let mut d = self.downloads.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(d.get(id), Some(Download::Running { .. } | Download::Checking)) {
+                return;
+            }
+            d.insert(id.to_string(), Download::Running { done: 0, total });
+        }
+        let me = self.clone();
+        let id = id.to_string();
+        let _ = std::thread::Builder::new()
+            .name(format!("download {id}"))
+            .spawn(move || {
+                (me.log)(&format!("downloading {id}"), false);
+                let mut before = 0;
+                for f in &files {
+                    if !folder.join(&f.name).is_file() {
+                        if let Err(e) = me.fetch_file(&id, &folder, f, before, total) {
+                            (me.log)(&format!("download of {id} failed: {e}"), true);
+                            me.set(&id, Download::Failed(e));
+                            return;
+                        }
+                    }
+                    before += f.size;
+                }
+                me.downloads
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+                (me.log)(&format!("{id} downloaded"), false);
+                done(folder);
+            });
+    }
+
+    /// Removes a model made of several files (and partial downloads).
+    pub fn delete_files(&self, id: &str) -> bool {
+        self.downloads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+        std::fs::remove_dir_all(self.dir.join(id)).is_ok()
     }
 
     /// GET with a range from `from`, following redirects (to the file
