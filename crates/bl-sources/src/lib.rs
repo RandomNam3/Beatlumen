@@ -8,7 +8,12 @@
 //! like its own; the apps can also use sources directly (app-only use).
 //! Only the addresses configured for a source are contacted.
 
+pub mod dlna;
+pub mod jellyfin;
 pub mod md5;
+pub mod subsonic;
+pub mod tags;
+pub mod webdav;
 
 use bl_json::Value;
 
@@ -112,6 +117,10 @@ pub trait MusicSource: Send + Sync {
 /// Connects to a source (checks the login).
 pub fn connect(cfg: &SourceConfig) -> Result<Box<dyn MusicSource>, String> {
     match cfg.kind.as_str() {
+        "subsonic" => Ok(Box::new(subsonic::Subsonic::connect(cfg)?)),
+        "jellyfin" => Ok(Box::new(jellyfin::Jellyfin::connect(cfg)?)),
+        "webdav" => Ok(Box::new(webdav::WebDav::connect(cfg)?)),
+        "dlna" => Ok(Box::new(dlna::Dlna::connect(cfg)?)),
         other => Err(format!("unknown source kind \"{other}\"")),
     }
 }
