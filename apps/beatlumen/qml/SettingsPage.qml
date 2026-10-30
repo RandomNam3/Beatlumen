@@ -617,6 +617,7 @@ Item {
                         Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.label; color: Theme.text }
                         ComboBox {
                             readonly property var rates: [0, 256, 160, 128, 96, 64, 48]
+                            implicitContentWidthPolicy: ComboBox.WidestText
                             model: rates.map(r => r === 0 ? Theme.tr("Original") : r + " kbit/s")
                             currentIndex: Math.max(0, rates.indexOf(page.settings[modelData.key] || 0))
                             onActivated: (i) => Core.call("settings.set", { key: modelData.key, value: rates[i] })
