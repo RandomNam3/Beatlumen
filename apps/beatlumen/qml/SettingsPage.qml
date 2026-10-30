@@ -13,6 +13,7 @@ Item {
     readonly property var ui: settings.ui || ({})
     readonly property string server: Core.state.server || "disabled"
     readonly property var sources: Core.state.sources || ({})
+    readonly property var speechLocal: Core.state.speechLocal || ({})
 
     SourceDialog { id: sourceDialog }
 
@@ -253,6 +254,85 @@ Item {
                 Layout.leftMargin: 8
                 Layout.rightMargin: 8
                 Button { text: Theme.tr("Add music source"); icon.source: Theme.icon("add"); onClicked: sourceDialog.openFor(null) }
+            }
+
+            // ---- speech recognition on this device ----------------------------
+            SectionLabel { text: Theme.tr("Song texts on this device"); visible: page.speechLocal.available === true }
+            Label {
+                visible: page.speechLocal.available === true
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                wrapMode: Text.Wrap
+                color: Theme.textDim
+                font.pixelSize: 13
+                text: Theme.tr("With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway.")
+            }
+            Repeater {
+                id: speechModels
+                property int tick: 0
+                model: {
+                    page.speechLocal.rev; tick
+                    return page.speechLocal.available === true ? (Core.call("speech.list") || []) : []
+                }
+                delegate: ItemDelegate {
+                    Layout.fillWidth: true
+                    height: Theme.row
+                    onClicked: if (!modelData.current && !modelData.state) Core.call("speech.pick", { id: modelData.id })
+                    contentItem: RowLayout {
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.id; color: Theme.text; elide: Text.ElideRight }
+                            Label {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                                color: modelData.state === "failed" ? Theme.danger : Theme.textDim
+                                text: modelData.state === "failed" ? modelData.error
+                                    : [Theme.tr(modelData.note), Math.round(modelData.size / 1e6) + " MB", Theme.tr("%1 MB of memory").arg(modelData.memoryMb)].join(" · ")
+                            }
+                            ProgressBar {
+                                visible: modelData.state === "downloading"
+                                Layout.fillWidth: true
+                                value: modelData.total ? modelData.done / modelData.total : 0
+                            }
+                        }
+                        Label {
+                            visible: modelData.current === true
+                            textFormat: Text.PlainText
+                            text: Theme.tr("In use")
+                            color: Theme.accent
+                        }
+                        Button {
+                            visible: !modelData.current && !modelData.state
+                            flat: true
+                            text: modelData.downloaded ? Theme.tr("Use") : Theme.tr("Download")
+                            onClicked: Core.call("speech.pick", { id: modelData.id })
+                        }
+                        IconButton {
+                            visible: modelData.downloaded === true
+                            iconName: "delete"
+                            tip: Theme.tr("Delete")
+                            onClicked: Core.call("speech.delete", { id: modelData.id })
+                        }
+                    }
+                }
+            }
+            Timer {
+                // Download progress.
+                interval: 1000
+                repeat: true
+                running: page.visible && page.speechLocal.available === true
+                onTriggered: speechModels.tick++
+            }
+            Flow {
+                visible: page.speechLocal.available === true && (page.settings.speechModel || "") !== ""
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Button { text: Theme.tr("Turn off"); flat: true; onClicked: Core.call("speech.pick", { id: "" }) }
             }
 
             // ---- server -----------------------------------------------------
@@ -595,6 +675,47 @@ Item {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true
                     text: (offlineBox.off.count || 0) + " " + Theme.tr("songs") + " · " + ((offlineBox.off.bytes || 0) / 1e6).toFixed(1) + " MB"
+                          + (offlineBox.off.limit > 0 ? " " + Theme.tr("of") + " " + (offlineBox.off.limit / 1073741824).toFixed(0) + " GB" : "")
+                }
+                ProgressBar {
+                    visible: offlineBox.off.limit > 0
+                    Layout.fillWidth: true
+                    value: Math.min(1, (offlineBox.off.bytes || 0) / Math.max(1, offlineBox.off.limit || 1))
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Storage limit"); color: Theme.text }
+                    ComboBox {
+                        readonly property var sizes: [0, 1024, 2048, 5120, 10240, 20480, 51200]
+                        model: sizes.map(s => s === 0 ? Theme.tr("No limit") : (s / 1024) + " GB")
+                        currentIndex: Math.max(0, sizes.indexOf(page.settings.offlineLimitMb || 0))
+                        onActivated: (i) => Core.call("settings.set", { key: "offlineLimitMb", value: sizes[i] })
+                    }
+                }
+                // What takes the space, by album.
+                Repeater {
+                    model: {
+                        offlineBox.off.count // reload when it changes
+                        return (Core.call("offline.overview") || []).slice(0, 30)
+                    }
+                    RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.text; text: modelData.album || Theme.tr("Unknown Album") }
+                            Label {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                color: Theme.textDim
+                                font.pixelSize: 12
+                                text: [modelData.artist, modelData.songs + " " + Theme.tr("songs"), (modelData.bytes / 1e6).toFixed(1) + " MB"].filter(x => x).join(" · ")
+                            }
+                        }
+                        IconButton { iconName: "delete"; tip: Theme.tr("Remove offline copy"); onClicked: Core.call("offline.remove", { ids: modelData.ids }) }
+                    }
                 }
                 Repeater {
                     model: offlineBox.off.saving || []

@@ -143,12 +143,13 @@ them and the apps play through it).
 
 ## Phase 7: offline and song texts
 
-- [ ] Keep whole albums and playlists offline; storage limit with an
-  overview of what takes the space.
-- [ ] Speech recognition in the app without a server: model download in
+- [x] Keep whole albums and playlists offline (⋮ menu of an album or
+  playlist); storage limit with an overview by album in the settings.
+- [x] Speech recognition in the app without a server: model download in
   the app (same list as the server), start per song, computed on the
   device.
-- [ ] Word timing from the recognition (enhanced LRC).
+- [x] Word timing from the recognition (enhanced LRC), on the server and
+  in the app.
 
 ## Phase 8: offloading
 

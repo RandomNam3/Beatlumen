@@ -38,6 +38,11 @@ mod sources;
 #[cfg(target_arch = "wasm32")]
 #[path = "sources_web.rs"]
 mod sources;
+#[cfg(not(target_arch = "wasm32"))]
+mod speech;
+#[cfg(target_arch = "wasm32")]
+#[path = "speech_web.rs"]
+mod speech;
 pub mod strings;
 mod tempo;
 mod vault;

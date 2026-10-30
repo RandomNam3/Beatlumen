@@ -278,6 +278,7 @@ pub struct Core {
     pub(crate) ext: crate::extensions::ExtState,
     pub(crate) sources: crate::sources::SourcesState,
     pub(crate) share: crate::share::ShareState,
+    pub(crate) speech: crate::speech::SpeechState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -465,6 +466,7 @@ impl Core {
             ext: Default::default(),
             sources: Default::default(),
             share: Default::default(),
+            speech: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -675,6 +677,7 @@ impl Core {
             .with("sources", self.sources_json())
             .with("share", self.share_json())
             .with("tempo", self.tempo_json())
+            .with("speechLocal", self.speech_json(host))
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -2519,6 +2522,7 @@ impl Core {
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_sources(host);
+        self.poll_speech(host);
         self.poll_covers();
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);

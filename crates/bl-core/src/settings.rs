@@ -136,6 +136,10 @@ pub struct Settings {
     pub sync_offset_ms: f32,
     /// Live sources: effects on the predicted beats.
     pub beat_prediction: bool,
+    /// Most space offline copies may take (MB, 0 = no limit).
+    pub offline_limit_mb: u64,
+    /// Speech model for timing song texts on the device ("" = none).
+    pub speech_model: String,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
@@ -216,6 +220,8 @@ impl Default for Settings {
             intensity: 1.0,
             sync_offset_ms: 0.0,
             beat_prediction: true,
+            offline_limit_mb: 0,
+            speech_model: String::new(),
             adaptive: true,
             normalize: false,
             crossfade: 0.0,
@@ -295,6 +301,8 @@ impl Settings {
                 .f32_or("syncOffsetMs", d.sync_offset_ms)
                 .clamp(-500.0, 500.0),
             beat_prediction: v.bool_or("beatPrediction", d.beat_prediction),
+            offline_limit_mb: v.get("offlineLimitMb").as_u64().unwrap_or(0).min(1 << 24),
+            speech_model: v.str_or("speechModel", "").chars().take(64).collect(),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
@@ -368,6 +376,8 @@ impl Settings {
             .with("intensity", self.intensity)
             .with("syncOffsetMs", self.sync_offset_ms)
             .with("beatPrediction", self.beat_prediction)
+            .with("offlineLimitMb", self.offline_limit_mb)
+            .with("speechModel", self.speech_model.as_str())
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)

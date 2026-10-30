@@ -384,7 +384,7 @@ impl LyricsSync {
         }
         let (lrc, path) = match &text {
             Some(t) => {
-                let (lrc, matched) = bl_asr::align::align_text(t, &segments);
+                let (lrc, matched) = bl_asr::align::align_text_words(t, &segments);
                 if matched < MIN_MATCH {
                     return Err(format!(
                         "the song text was not recognised ({:.0} % of the words)",
@@ -400,7 +400,7 @@ impl LyricsSync {
                     return Err("the words could not be recognised reliably".into());
                 }
                 (
-                    bl_asr::align::segments_to_lrc(&segments),
+                    bl_asr::align::segments_to_lrc_words(&segments),
                     self.recognized_path(&id),
                 )
             }

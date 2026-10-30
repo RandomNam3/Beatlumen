@@ -408,6 +408,7 @@ impl Core {
             "lyrics.sync" => self.lyrics_sync(host),
             n if n.starts_with("devices.") => self.devices_command(host, n, c),
             n if n.starts_with("share.") => self.share_command(host, n, c),
+            n if n.starts_with("speech.") => self.speech_command(host, n, c),
             n if n.starts_with("sync.") => self.sync_command(host, n),
             "dlna.answer" => {
                 self.dlna_answer(host, b("allow"), b("always"));
@@ -422,6 +423,7 @@ impl Core {
                 self.sources_command(host, n, c)
             }
             "offline.save" => self.offline_save(host, strs(c.get("ids"))),
+            "offline.overview" => self.offline_overview(),
             "offline.remove" => {
                 let ids = if c.bool_or("all", false) {
                     self.offline.entries.keys().cloned().collect()

@@ -6,3 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bl-json = { path = "../bl-json" }
+
+# Model downloads (not in the browser).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bl-net = { path = "../bl-net" }

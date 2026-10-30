@@ -137,6 +137,16 @@ impl Core {
             .with("noveltyConfigs", self.preset.novelty.clone())
             .to_json();
         let mut started = 0;
+        // Space taken and reserved; songs beyond the limit are not saved.
+        let limit = self.settings.offline_limit_mb.saturating_mul(1 << 20);
+        let mut used: u64 = self
+            .offline
+            .entries
+            .values()
+            .map(|e| e.header.audio.len)
+            .sum::<u64>()
+            + self.offline.saving.iter().map(|s| s.size).sum::<u64>();
+        let mut over = 0usize;
         for id in ids {
             if !valid_id(&id)
                 || self.offline.entries.contains_key(&id)
@@ -147,6 +157,11 @@ impl Core {
             let Some(track) = self.library.track(&id).cloned() else {
                 continue;
             };
+            if limit > 0 && used + track.size > limit {
+                over += 1;
+                continue;
+            }
+            used += track.size;
             let analysis_key = format!(
                 "{}|{}|{}|{:016x}",
                 track.id,
@@ -180,7 +195,17 @@ impl Core {
             }));
             started += 1;
         }
-        Value::object().with("started", started as u64)
+        if over > 0 {
+            let msg = format!(
+                "{}: {over} {}",
+                self.tr("Storage limit for offline songs reached"),
+                self.tr("songs not saved")
+            );
+            self.toast(msg, true);
+        }
+        Value::object()
+            .with("started", started as u64)
+            .with("skipped", over as u64)
     }
 
     /// `offline.remove`: drops offline copies.
@@ -323,6 +348,35 @@ impl Core {
         }));
     }
 
+    /// What the offline copies take, by album (largest first).
+    pub(crate) fn offline_overview(&self) -> Value {
+        let mut albums: HashMap<(String, String), (u64, Vec<String>)> = HashMap::new();
+        for (id, e) in &self.offline.entries {
+            let artist = if e.track.album_artist.is_empty() {
+                e.track.artists.first().cloned().unwrap_or_default()
+            } else {
+                e.track.album_artist.clone()
+            };
+            let a = albums.entry((e.track.album.clone(), artist)).or_default();
+            a.0 += e.header.audio.len;
+            a.1.push(id.clone());
+        }
+        let mut list: Vec<_> = albums.into_iter().collect();
+        list.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        Value::Array(
+            list.into_iter()
+                .map(|((album, artist), (bytes, ids))| {
+                    Value::object()
+                        .with("album", album)
+                        .with("artist", artist)
+                        .with("songs", ids.len() as u64)
+                        .with("bytes", bytes)
+                        .with("ids", ids)
+                })
+                .collect(),
+        )
+    }
+
     pub(crate) fn offline_json(&self, host: &dyn Host) -> Value {
         let bytes: u64 = self
             .offline
@@ -334,6 +388,10 @@ impl Core {
             .with("available", self.offline_dir(host).is_some())
             .with("count", self.offline.entries.len() as u64)
             .with("bytes", bytes)
+            .with(
+                "limit",
+                self.settings.offline_limit_mb.saturating_mul(1 << 20),
+            )
             .with("shown", self.offline.shown)
             .with(
                 "saving",

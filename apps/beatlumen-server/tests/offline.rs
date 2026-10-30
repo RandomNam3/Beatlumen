@@ -23,7 +23,7 @@ fn songs_play_offline_with_their_text() {
     std::fs::create_dir_all(&music).unwrap();
     std::fs::write(music.join("Sine Song.wav"), common::wav(4)).unwrap();
     std::fs::write(music.join("Sine Song.lrc"), "[00:00.50]Offline line\n").unwrap();
-    std::fs::write(music.join("Other.wav"), common::wav(1)).unwrap();
+    std::fs::write(music.join("Other.wav"), common::wav(3)).unwrap();
     let server = beatlumen_server::start(beatlumen_server::Config {
         music_dirs: vec![music.clone()],
         data_dir: root.join("data"),
@@ -92,6 +92,27 @@ fn songs_play_offline_with_their_text() {
             .with("ids", vec![id.clone()]),
     );
     assert_eq!(r.get("started").as_u64(), Some(0));
+    // The overview counts it under its album.
+    let o = app.cmd(Value::object().with("cmd", "offline.overview"));
+    assert_eq!(o.at(0).get("songs").as_u64(), Some(1), "{}", o.to_json());
+    // A limit below what another song needs: not saved.
+    app.cmd(
+        Value::object()
+            .with("cmd", "settings.set")
+            .with("key", "offlineLimitMb")
+            .with("value", 1u64),
+    );
+    let other = tracks(&mut app)
+        .iter()
+        .find(|t| t.str_or("title", "").contains("Other"))
+        .map(|t| t.str_or("id", "").to_string())
+        .unwrap();
+    let r = app.cmd(
+        Value::object()
+            .with("cmd", "offline.save")
+            .with("ids", vec![other]),
+    );
+    assert_eq!(r.get("skipped").as_u64(), Some(1), "{}", r.to_json());
 
     // The server goes away; the app starts again on its data.
     drop(server);

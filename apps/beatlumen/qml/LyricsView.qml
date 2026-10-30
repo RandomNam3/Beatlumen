@@ -20,7 +20,12 @@ Item {
     readonly property bool compact: width < 600
     // The server can time the text by speech recognition.
     readonly property bool canSync: info.canSync === true
-    readonly property var sync: info.sync || null
+    // Or this device, with its own speech model (Settings).
+    readonly property var local: Core.state.speechLocal || ({})
+    readonly property var localRun: local.running && local.running.id === curId ? local.running : null
+    readonly property bool canLocal: !canSync && local.ready === true && !synced && !local.running
+    readonly property var sync: info.sync || (localRun ? { state: "running", progress: localRun.progress, local: true } : null)
+    function startSync() { Core.call(canSync ? "lyrics.sync" : "speech.run") }
     // Small lead: a line lights up as it starts being sung.
     readonly property real lead: 0.15
     property int currentLine: -1
@@ -159,10 +164,10 @@ Item {
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
-            visible: lv.canSync
+            visible: lv.canSync || lv.canLocal
             text: Theme.tr("Recognize song text")
             icon.source: Theme.icon("auto_awesome")
-            onClicked: Core.call("lyrics.sync")
+            onClicked: lv.startSync()
         }
     }
 
@@ -171,7 +176,7 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 8
-        visible: (lv.sync !== null || (lv.ready && lv.canSync)) && (lv.controlsVisible || lv.sync !== null)
+        visible: (lv.sync !== null || (lv.ready && (lv.canSync || lv.canLocal))) && (lv.controlsVisible || lv.sync !== null)
         padding: lv.sync ? 12 : 0
         Material.elevation: 2
         background: Rectangle {
@@ -184,7 +189,7 @@ Item {
                 visible: !lv.sync
                 text: Theme.tr("Sync automatically")
                 icon.source: Theme.icon("auto_awesome")
-                onClicked: Core.call("lyrics.sync")
+                onClicked: lv.startSync()
             }
             BusyIndicator {
                 visible: lv.sync !== null
@@ -198,6 +203,8 @@ Item {
                 textFormat: Text.PlainText
                 color: "white"
                 text: !lv.sync ? ""
+                    : lv.sync.local
+                        ? Theme.tr("Timing the song text on this device…") + " " + Math.round(lv.sync.progress * 100) + " %"
                     : lv.sync.state === "running"
                         ? Theme.tr("Timing the song text…") + " " + Math.round(lv.sync.progress * 100) + " %"
                         : Theme.tr("Waiting for the server…")

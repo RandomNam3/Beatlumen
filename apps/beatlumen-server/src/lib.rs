@@ -631,10 +631,19 @@ pub fn start(config: Config) -> Result<Server, String> {
         (None, Some(v)) => Some(auth::Secret::Verifier(v)),
         (None, None) => None,
     };
-    let models = Arc::new(match &config.model_source {
-        Some(src) => models::Models::with_source(data.root.join("models"), src.clone()),
-        None => models::Models::new(data.root.join("models")),
-    });
+    let models = Arc::new(
+        match &config.model_source {
+            Some(src) => models::Models::with_source(data.root.join("models"), src.clone()),
+            None => models::Models::new(data.root.join("models")),
+        }
+        .with_log(Box::new(|msg, problem| {
+            if problem {
+                warn!("{msg}");
+            } else {
+                info!("{msg}");
+            }
+        })),
+    );
     let state = Arc::new(State {
         auth: auth::Auth::new(secret, data.tokens.clone()),
         started: Instant::now(),
