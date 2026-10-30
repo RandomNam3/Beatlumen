@@ -348,10 +348,7 @@ impl LyricsSync {
             self.set(&id, Status::Running(p));
             true
         };
-        let src: Box<dyn bl_media::Source> = Box::new(std::io::BufReader::with_capacity(
-            256 * 1024,
-            std::fs::File::open(&e.abs).map_err(|e| e.to_string())?,
-        ));
+        let src = state.sources.open_entry(e).map_err(|(_, m)| m)?;
         let samples = bl_media::decode_mono(
             src,
             Some(&e.ext()),

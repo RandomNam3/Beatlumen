@@ -23,6 +23,7 @@ bl-analysis = { path = "../../crates/bl-analysis" }
 bl-fx = { path = "../../crates/bl-fx" }
 bl-vault = { path = "../../crates/bl-vault" }
 bl-asr = { path = "../../crates/bl-asr" }
+bl-sources = { path = "../../crates/bl-sources" }
 # TLS for outgoing connections (push services); pinned exactly.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "=1.0.11"

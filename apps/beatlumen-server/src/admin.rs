@@ -640,6 +640,52 @@ pub fn handle(state: &Arc<State>, req: &Request, segs: &[&str]) -> Response {
             }
             None => Response::error(404, "no such model"),
         },
+        ("GET", ["sources"]) => Response::json(200, &state.sources.admin_json()),
+        ("GET", ["sources", "discover"]) => {
+            Response::json(200, &crate::sources::Sources::discover())
+        }
+        ("POST", ["sources"]) => match body(req).and_then(|v| put_source(state, None, &v)) {
+            Ok(id) => Response::json(201, &Value::object().with("id", id)),
+            Err(e) => fail(e),
+        },
+        ("PUT", ["sources", id]) => match body(req).and_then(|v| put_source(state, Some(id), &v)) {
+            Ok(id) => Response::json(200, &Value::object().with("id", id)),
+            Err(e) => fail(e),
+        },
+        ("DELETE", ["sources", id]) => {
+            if !state.sources.delete(id) {
+                return Response::error(404, "no such source");
+            }
+            crate::info!("admin removed a music source");
+            state.sources_changed();
+            Response::new(204)
+        }
+        ("POST", ["sources", id, "sync"]) => {
+            if state.sources.get(id).is_none() {
+                return Response::error(404, "no such source");
+            }
+            state.sources.request(id);
+            Response::new(202)
+        }
+        ("POST", ["sources", "nextcloud"]) => match body(req).and_then(|v| {
+            state.sources.nextcloud_start(
+                v.str_or("url", ""),
+                v.str_or("name", ""),
+                v.str_or("path", ""),
+            )
+        }) {
+            Ok((id, url)) => Response::json(200, &Value::object().with("id", id).with("loginUrl", url)),
+            Err(e) => fail(e),
+        },
+        ("POST", ["sources", "nextcloud", id]) => match state.sources.nextcloud_poll(id) {
+            Ok(done) => Response::json(
+                200,
+                &Value::object()
+                    .with("done", done.is_some())
+                    .with("id", done.unwrap_or_default()),
+            ),
+            Err(e) => fail(e),
+        },
         ("POST", ["speech", "retry"]) => Response::json(
             200,
             &Value::object().with("retried", state.lyrics_sync.retry_failed() as u64),
@@ -649,6 +695,23 @@ pub fn handle(state: &Arc<State>, req: &Request, segs: &[&str]) -> Response {
         }
         _ => Response::error(404, "not found"),
     }
+}
+
+/// Adds (`id` None) or changes a music source from the admin's form.
+fn put_source(state: &State, id: Option<&str>, v: &Value) -> Result<String, (u16, String)> {
+    let mut cfg = bl_sources::SourceConfig::from_json(v);
+    cfg.kind = cfg.kind.trim().to_ascii_lowercase();
+    let r = state.sources.put(
+        id,
+        v.str_or("name", ""),
+        v.bool_or("enabled", true),
+        cfg,
+    )?;
+    crate::info!(
+        "admin {} a music source",
+        if id.is_some() { "changed" } else { "added" }
+    );
+    Ok(r)
 }
 
 /// Bytes in a folder (recursively), stopping after many entries.

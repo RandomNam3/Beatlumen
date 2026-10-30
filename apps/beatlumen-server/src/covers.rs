@@ -6,6 +6,7 @@
 //! the directory's first track.
 
 use crate::library::{Entry, Index};
+use crate::sources::Sources;
 use crate::util;
 use std::path::Path;
 
@@ -61,7 +62,10 @@ pub fn read_image_file(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// Finds the source image bytes for a track's cover.
-pub fn cover_source(idx: &Index, e: &Entry) -> Option<Vec<u8>> {
+pub fn cover_source(sources: &Sources, idx: &Index, e: &Entry) -> Option<Vec<u8>> {
+    if let Some((id, key)) = &e.remote {
+        return sources.cover(id, key, 1024);
+    }
     if let Some(d) = embedded_picture(&e.abs, &e.ext()) {
         return Some(d);
     }

@@ -452,6 +452,22 @@ fn library(state: &State, req: &Request) -> Response {
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
+    if let Some((src, key)) = &e.remote {
+        let range = req.header("range");
+        return match state.sources.open(src, key) {
+            Ok(file) => {
+                if range.map_or("bytes=0-", str::trim).starts_with("bytes=0-") {
+                    state.sources.played(src, key);
+                }
+                Response::seekable(file, util::audio_mime(&e.ext()), range)
+                    .with_header("Cache-Control", "private, max-age=3600")
+            }
+            Err(err) => {
+                crate::warn!("cannot open {}: {err}", e.track.path);
+                Response::error(502, "cannot read the song from its source")
+            }
+        };
+    }
     let resp = Response::file(&e.abs, util::audio_mime(&e.ext()), req.header("range"));
     if resp.status == 404 {
         crate::warn!("track file vanished: {}", e.abs.display());
@@ -484,7 +500,7 @@ fn cover(state: &State, req: &Request, idx: &Index, e: &Entry) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::cover_source(idx, e) else {
+    let Some(src) = covers::cover_source(&state.sources, idx, e) else {
         return Response::error(404, "no cover");
     };
     match covers::make_thumbnail(&src, size) {

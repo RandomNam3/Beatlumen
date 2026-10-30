@@ -40,6 +40,7 @@ pub mod random;
 pub mod release;
 pub mod routes;
 pub mod sha256;
+pub mod sources;
 pub mod tls;
 pub mod userdata;
 pub mod util;
@@ -128,6 +129,8 @@ pub struct State {
     pub admin: admin::Admin,
     pub models: Arc<models::Models>,
     pub devices: devices::Devices,
+    /// Remote music sources (their songs are part of the library).
+    pub sources: Arc<sources::Sources>,
     /// Absolute music folder paths (index = root index in track ids).
     pub roots: Vec<PathBuf>,
     pub data: DataPaths,
@@ -286,21 +289,40 @@ impl State {
         }
     }
 
+    /// Publishes the library again with the current songs of the remote
+    /// sources (after a source was listed, changed or removed).
+    pub fn sources_changed(&self) {
+        let mut entries: Vec<Entry> = self
+            .library()
+            .entries
+            .iter()
+            .filter(|e| e.remote.is_none())
+            .cloned()
+            .collect();
+        entries.extend(self.sources.entries());
+        if self.publish(entries) {
+            self.save_cache();
+        }
+    }
+
     fn run_scan(&self) {
         let t0 = Instant::now();
         let old = self.library();
         let old_rev = old.revision;
-        let (entries, stats) = library::scan(
+        let (mut entries, stats) = library::scan(
             &self.roots,
             &old,
             self.config().scan_threads,
-            &mut |partial| {
+            library::WALK_STALL,
+            &mut |mut partial| {
+                partial.extend(self.sources.entries());
                 if self.publish(partial) {
                     debug!("published intermediate scan results");
                 }
             },
         );
         drop(old);
+        entries.extend(self.sources.entries());
         self.publish(entries);
         self.save_cache();
         let idx = self.library();
@@ -385,6 +407,7 @@ impl State {
     }
 
     fn scanner_loop(self: Arc<Self>) {
+        let mut first = true;
         loop {
             {
                 let mut f = self.scan.lock().unwrap_or_else(|e| e.into_inner());
@@ -409,6 +432,12 @@ impl State {
                 f.requested = false;
                 f.running = true;
             }
+            // Sources are listed at start anyway; later rescans list them
+            // again too.
+            if !first {
+                self.sources.request_all();
+            }
+            first = false;
             let _ = util::catch("library scan", || self.run_scan());
             let mut f = self.scan.lock().unwrap_or_else(|e| e.into_inner());
             f.running = false;
@@ -574,6 +603,22 @@ pub fn start(config: Config) -> Result<Server, String> {
         rp,
     )?;
     let admin = admin::Admin::open(&data.root, config.admin_password_file.as_deref())?;
+    // The songs of remote sources from their cached listings.
+    let sources = Arc::new(sources::Sources::load(
+        &data.root,
+        vault.server_key("beatlumen source logins v1"),
+    ));
+    let index = if sources.entries().is_empty() {
+        index
+    } else {
+        let mut entries: Vec<Entry> = index
+            .entries
+            .into_iter()
+            .filter(|e| e.remote.is_none())
+            .collect();
+        entries.extend(sources.entries());
+        Index::new(index.revision, roots.clone(), entries)
+    };
     let secret = match (&config.password, admin.server_password()) {
         (Some(p), _) => Some(auth::Secret::plain(p)),
         (None, Some(v)) => Some(auth::Secret::Verifier(v)),
@@ -605,7 +650,12 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.lyrics.clone(),
         )),
         user_data: userdata::UserData::default(),
-        analyzer: analysis::Analyzer::new(data.analysis.clone(), config.analysis_max_minutes),
+        analyzer: analysis::Analyzer::new(
+            data.analysis.clone(),
+            config.analysis_max_minutes,
+            sources.clone(),
+        ),
+        sources,
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),
         cache_dirty: AtomicBool::new(false),
@@ -655,6 +705,19 @@ pub fn start(config: Config) -> Result<Server, String> {
             addr.port()
         );
     }
+
+    let weak = Arc::downgrade(&state);
+    let lister = state.sources.clone();
+    std::thread::Builder::new()
+        .name("sources".into())
+        .spawn(move || {
+            lister.run(move || {
+                if let Some(s) = weak.upgrade() {
+                    s.sources_changed();
+                }
+            })
+        })
+        .map_err(|e| format!("cannot start the source listing: {e}"))?;
 
     let scanner = state.clone();
     std::thread::Builder::new()

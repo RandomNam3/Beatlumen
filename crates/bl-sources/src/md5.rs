@@ -29,7 +29,7 @@ pub fn md5(data: &[u8]) -> [u8; 16] {
             .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
             .collect();
         let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
-        for i in 0..64 {
+        for (i, &shift) in S.iter().enumerate() {
             let (f, g) = match i / 16 {
                 0 => ((b & c) | (!b & d), i),
                 1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
@@ -40,7 +40,7 @@ pub fn md5(data: &[u8]) -> [u8; 16] {
             a = d;
             d = c;
             c = b;
-            b = b.wrapping_add(f.rotate_left(S[i]));
+            b = b.wrapping_add(f.rotate_left(shift));
         }
         a0 = a0.wrapping_add(a);
         b0 = b0.wrapping_add(b);

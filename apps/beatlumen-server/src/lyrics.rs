@@ -29,6 +29,10 @@ impl Lyrics {
         if let Some(t) = bl_media::lyrics::read_text_file(&self.imported(&e.track.id)) {
             return Some((t, "imported"));
         }
+        if e.remote.is_some() {
+            // Remote songs: imported texts and computed timings only.
+            return None;
+        }
         bl_media::lyrics::find_lyrics(&e.abs).map(|(t, s)| (t, s.name()))
     }
 

@@ -100,19 +100,23 @@ them and the apps play through it).
   scripts, same host only, size and depth limits).
 - [ ] Internet radio: Icecast/Shoutcast (MP3, AAC, Ogg, Opus) and HLS,
   station files, favourites, ICY titles, adjustable delay for look-ahead.
-- [ ] Subsonic/OpenSubsonic (Navidrome, Gonic, …): token auth, original
+- [x] Subsonic/OpenSubsonic (Navidrome, Gonic, …): token auth, original
   files, scrobbling.
-- [ ] Jellyfin: login, artists/albums/playlists, original files, playback
+- [x] Jellyfin: login, artists/albums/playlists, original files, playback
   reports.
-- [ ] WebDAV/Nextcloud: folders on WebDAV, Nextcloud login flow v2 with an
+- [x] WebDAV/Nextcloud: folders on WebDAV, Nextcloud login flow v2 with an
   app password, also backgrounds and styles.
 - [ ] SFTP: own SSH client (curve25519 key exchange, Ed25519/ECDSA/RSA host
   keys with trust on first use, ChaCha20-Poly1305/AES-GCM, key or password
   login) and SFTP v3.
-- [ ] DLNA/UPnP media servers: browse and play (discovery only while
+- [x] DLNA/UPnP media servers: browse and play (discovery only while
   searching, addresses can be entered).
-- [ ] Mounted network folders (SSHFS, SMB, NFS): scans with time limits,
+- [x] Mounted network folders (SSHFS, SMB, NFS): scans with time limits,
   periodic rescans, no blocking.
+- [x] Admin interface: *Music sources* page (add, test the login, list in
+  the background, sync now, turn off, remove), Nextcloud login flow, DLNA
+  search; logins encrypted with a key derived from the vault pepper.
+- [ ] App-only use: the same sources in the apps without a server.
 
 ## Phase 5: receiving and sharing
 

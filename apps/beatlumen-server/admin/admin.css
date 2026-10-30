@@ -100,6 +100,9 @@ button.btn.danger { color: var(--danger); }
 button.btn.small { padding: .3rem .75rem; font-weight: 500; font-size: .88rem; }
 button.btn.wide { width: 100%; padding: .7rem 1rem; }
 button.btn:disabled { opacity: .5; cursor: default; }
+a.btn { display: inline-block; padding: .5rem 1rem; border-radius: 999px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+a.btn.primary { background: var(--accent); color: var(--on-accent); }
+[hidden] { display: none !important; }
 .actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; }
 
 /* Tables */

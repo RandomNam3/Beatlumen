@@ -76,6 +76,7 @@ dependencies = [
  "bl-media",
  "bl-net",
  "bl-offline",
+ "bl-sources",
  "bl-upnp",
  "bl-vault",
  "p256",

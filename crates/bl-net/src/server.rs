@@ -51,6 +51,8 @@ pub enum Body {
     /// Produced while it is sent (length unknown): sent chunked until the
     /// reader ends.
     Stream(Box<dyn Read + Send>),
+    /// Read while it is sent, of a known length (a remote file).
+    Sized { reader: Box<dyn Read + Send>, len: u64 },
 }
 
 pub struct Response {
@@ -133,6 +135,46 @@ impl Response {
                 return e;
             }
         }
+        r
+    }
+    /// Serves a seekable stream (a remote file) honouring a `Range` header.
+    /// One whose length cannot be learned is sent whole and chunked.
+    pub fn seekable<R: Read + Seek + Send + 'static>(
+        mut src: R,
+        content_type: &str,
+        range_header: Option<&str>,
+    ) -> Response {
+        let mut r = Response::new(200);
+        r.headers.set("Content-Type", content_type);
+        let len = match src.seek(SeekFrom::End(0)) {
+            Ok(len) => len,
+            Err(_) => {
+                r.body = Body::Stream(Box::new(src));
+                return r;
+            }
+        };
+        r.headers.set("Accept-Ranges", "bytes");
+        let (start, n) = match crate::http::parse_range(range_header, len) {
+            Ok(Some((a, b))) => {
+                r.status = 206;
+                r.headers
+                    .set("Content-Range", format!("bytes {a}-{b}/{len}"));
+                (a, b - a + 1)
+            }
+            Ok(None) => (0, len),
+            Err(()) => {
+                let mut e = Response::new(416);
+                e.headers.set("Content-Range", format!("bytes */{len}"));
+                return e;
+            }
+        };
+        if src.seek(SeekFrom::Start(start)).is_err() {
+            return Response::error(502, "cannot read the file");
+        }
+        r.body = Body::Sized {
+            reader: Box::new(src.take(n)),
+            len: n,
+        };
         r
     }
 }
@@ -433,7 +475,7 @@ fn write_response(
     let len = match &resp.body {
         Body::Empty => Some(0),
         Body::Bytes(b) => Some(b.len() as u64),
-        Body::File { len, .. } => Some(*len),
+        Body::File { len, .. } | Body::Sized { len, .. } => Some(*len),
         Body::Stream(_) => None,
     };
     match len {
@@ -475,6 +517,24 @@ fn write_response(
                 let n = file.read(&mut buf[..want])?;
                 if n == 0 {
                     break;
+                }
+                w.write_all(&buf[..n])?;
+                remaining -= n as u64;
+            }
+        }
+        Body::Sized { mut reader, len } => {
+            let mut remaining = len;
+            let mut buf = vec![0u8; 64 * 1024];
+            while remaining > 0 {
+                let want = remaining.min(buf.len() as u64) as usize;
+                let n = match reader.read(&mut buf[..want]) {
+                    Ok(n) => n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                };
+                if n == 0 {
+                    // Shorter than announced: the connection must close.
+                    return Err(io::ErrorKind::UnexpectedEof.into());
                 }
                 w.write_all(&buf[..n])?;
                 remaining -= n as u64;
@@ -600,6 +660,12 @@ mod tests {
         let handler: Arc<Handler> = Arc::new(move |req: Request| match req.path.as_str() {
             "/echo" => Response::bytes(200, "application/octet-stream", req.body),
             "/file" => Response::file(&file2, "application/octet-stream", req.header("range")),
+            // The file passed through a remote stream, as for remote sources.
+            "/relay" => {
+                let url = format!("http://{addr}/file");
+                let src = client::HttpStream::open(&url, &[]).unwrap();
+                Response::seekable(src, "application/octet-stream", req.header("range"))
+            }
             "/q" => Response::text(200, req.query("x").unwrap_or("")),
             _ => Response::error(404, "nope"),
         });
@@ -623,6 +689,13 @@ mod tests {
         let mut all = Vec::new();
         s.read_to_end(&mut all).unwrap();
         assert_eq!(&all[..], &data[10..]);
+        let mut s = client::HttpStream::open(&format!("{base}/relay"), &[]).unwrap();
+        assert_eq!(s.len(), data.len() as u64);
+        s.seek(SeekFrom::Start(200_000)).unwrap();
+        s.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf[..], &data[200_000..201_000]);
+        let r = client::request("GET", &format!("{base}/relay"), &[], &[], &opts).unwrap();
+        assert_eq!(r.body, data);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

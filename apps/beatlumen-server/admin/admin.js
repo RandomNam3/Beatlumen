@@ -202,6 +202,55 @@
     "Accounts with storage are end-to-end encrypted: the admin sees names and sizes, never contents.": "Konten mit Speicher sind Ende-zu-Ende verschlüsselt: Die Verwaltung sieht Namen und Größen, nie Inhalte.",
     "Settings": "Einstellungen",
     "Not reachable": "Nicht erreichbar",
+    "Music sources": "Musikquellen",
+    "Songs on other servers and storage become part of the library: the server lists them, analyses them and plays them for the apps. The files stay where they are.": "Songs auf anderen Servern und Speichern werden Teil der Bibliothek: Der Server listet sie, analysiert sie und spielt sie für die Apps ab. Die Dateien bleiben, wo sie sind.",
+    "Sources": "Quellen",
+    "Add source": "Quelle hinzufügen",
+    "Edit source": "Quelle bearbeiten",
+    "Kind": "Art",
+    "Status": "Status",
+    "Songs": "Songs",
+    "Sync now": "Jetzt abgleichen",
+    "Edit": "Bearbeiten",
+    "Remove": "Entfernen",
+    "Removed": "Entfernt",
+    "Remove source": "Quelle entfernen",
+    "Remove %1? Its songs leave the library; the files stay on the source.": "%1 entfernen? Die Songs verschwinden aus der Bibliothek; die Dateien bleiben auf der Quelle.",
+    "No sources yet.": "Noch keine Quellen.",
+    "Listing… %1": "Wird gelistet … %1",
+    "Listed %1": "Gelistet %1",
+    "Waiting": "Wartet",
+    "Address": "Adresse",
+    "User name": "Benutzername",
+    "Password": "Passwort",
+    "Unchanged": "Unverändert",
+    "Folder": "Ordner",
+    "Only songs below this folder; empty: all.": "Nur Songs unterhalb dieses Ordners; leer: alle.",
+    "Server key": "Server-Schlüssel",
+    "SHA-256 fingerprint of the SSH host key. Empty: the key seen at the first connection is kept.": "SHA-256-Fingerabdruck des SSH-Host-Schlüssels. Leer: Der Schlüssel der ersten Verbindung wird behalten.",
+    "Turned on": "Eingeschaltet",
+    "Media servers in the network": "Medienserver im Netzwerk",
+    "Search": "Suchen",
+    "Searching…": "Suche läuft …",
+    "No media servers found.": "Keine Medienserver gefunden.",
+    "Use": "Verwenden",
+    "Connect": "Verbinden",
+    "Connecting…": "Verbinde …",
+    "Cancel": "Abbrechen",
+    "Added": "Hinzugefügt",
+    "Log in with Nextcloud": "Mit Nextcloud anmelden",
+    "Open the Nextcloud page and allow access. This page notices when you are done.": "Öffne die Nextcloud-Seite und erlaube den Zugriff. Diese Seite merkt, wenn du fertig bist.",
+    "Open Nextcloud": "Nextcloud öffnen",
+    "Waiting for Nextcloud…": "Warte auf Nextcloud …",
+    "Navidrome, Gonic, Airsonic and other Subsonic servers. The password is never sent; an API key works as \"apikey:<key>\".": "Navidrome, Gonic, Airsonic und andere Subsonic-Server. Das Passwort wird nie gesendet; ein API-Schlüssel geht als „apikey:<Schlüssel>“.",
+    "The music libraries of a Jellyfin server.": "Die Musikbibliotheken eines Jellyfin-Servers.",
+    "A folder in Nextcloud. You log in on the Nextcloud page; the server gets an app password of its own.": "Ein Ordner in Nextcloud. Du meldest dich auf der Nextcloud-Seite an; der Server bekommt ein eigenes App-Passwort.",
+    "A folder on a WebDAV share (ownCloud, NAS, …). Tags are read from the files once and kept.": "Ein Ordner auf einer WebDAV-Freigabe (ownCloud, NAS, …). Tags werden einmal aus den Dateien gelesen und gemerkt.",
+    "A folder on a computer reachable with SSH. Password or private key (OpenSSH format).": "Ein Ordner auf einem per SSH erreichbaren Rechner. Passwort oder privater Schlüssel (OpenSSH-Format).",
+    "A media server in the local network (MiniDLNA, Plex, Serviio, …).": "Ein Medienserver im lokalen Netzwerk (MiniDLNA, Plex, Serviio, …).",
+    "Private key": "Privater Schlüssel",
+    "Instead of a password (OpenSSH format, without passphrase).": "Statt eines Passworts (OpenSSH-Format, ohne Passphrase).",
+    "DLNA media server": "DLNA-Medienserver",
   };
   const t = (s, ...a) => {
     let r = (DE && GERMAN[s]) || s;
@@ -499,6 +548,7 @@
   const PAGES = [
     ["overview", "Overview", "◎"],
     ["library", "Library", "♫"],
+    ["sources", "Music sources", "☁"],
     ["users", "Accounts", "☺"],
     ["links", "Shared links", "⇗"],
     ["speech", "Song texts", "✎"],
@@ -557,7 +607,7 @@
     clearInterval(timer);
     const page = PAGES.find((p) => p[0] === id);
     put(main, h("h2", {}, t(page[1])));
-    ({ overview, library, users, links, speech, extensions, network, security, log })[id]();
+    ({ overview, library, sources, users, links, speech, extensions, network, security, log })[id]();
   }
 
   // Overview
@@ -637,6 +687,160 @@
     main.append(h("div", { class: "actions" }, h("button", { class: "btn", onclick: async () => {
       try { await api("POST", "rescan"); toast(t("Rescan started")); } catch (e) { fail(e); }
     } }, t("Rescan"))));
+  }
+
+  // Music sources
+  const KINDS = [
+    ["subsonic", "Subsonic / Navidrome", "Navidrome, Gonic, Airsonic and other Subsonic servers. The password is never sent; an API key works as \"apikey:<key>\".", "https://music.example.org"],
+    ["jellyfin", "Jellyfin", "The music libraries of a Jellyfin server.", "https://jellyfin.example.org"],
+    ["nextcloud", "Nextcloud", "A folder in Nextcloud. You log in on the Nextcloud page; the server gets an app password of its own.", "https://cloud.example.org"],
+    ["webdav", "WebDAV", "A folder on a WebDAV share (ownCloud, NAS, …). Tags are read from the files once and kept.", "https://nas.example.org/dav"],
+    ["sftp", "SFTP", "A folder on a computer reachable with SSH. Password or private key (OpenSSH format).", "sftp://nas.local"],
+    ["dlna", "DLNA media server", "A media server in the local network (MiniDLNA, Plex, Serviio, …).", "http://192.168.1.10:8200/rootDesc.xml"],
+  ];
+  // Which fields each kind asks for.
+  const KIND_FIELDS = {
+    subsonic: ["url", "user", "secret"],
+    jellyfin: ["url", "user", "secret"],
+    nextcloud: ["url", "path"],
+    webdav: ["url", "user", "secret", "path"],
+    sftp: ["url", "user", "secret", "key", "path", "pin"],
+    dlna: ["search", "url"],
+  };
+  const kindName = (k) => t((KINDS.find((x) => x[0] === k) || [k, k])[1]);
+
+  async function sources() {
+    main.append(h("p", { class: "hint" }, t("Songs on other servers and storage become part of the library: the server lists them, analyses them and plays them for the apps. The files stay where they are.")));
+    const listBox = h("div", { class: "section" });
+    const formBox = h("div", { class: "section", hidden: true });
+    main.append(listBox, formBox);
+    let polling = null;
+    const status = (s) => {
+      if (!s.enabled) return h("span", { class: "pill" }, t("Off"));
+      if (s.syncing) return h("span", { class: "pill accent" }, t("Listing… %1", fmt.format(s.found)));
+      if (s.error) return h("span", { class: "pill", style: "color:var(--danger)", title: s.error }, t("Failed: %1", s.error));
+      if (s.synced) return h("span", { class: "pill on" }, t("Listed %1", date(s.synced)));
+      return h("span", { class: "pill" }, t("Waiting"));
+    };
+    const draw = async () => {
+      let list;
+      try { list = await api("GET", "sources"); } catch (e) { return; }
+      put(listBox, h("div", { class: "spread" }, h("h3", {}, t("Sources")),
+        h("button", { class: "btn small primary", onclick: () => edit(null) }, "+ " + t("Add source"))),
+      list.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, t("Name")), h("th", {}, t("Kind")), h("th", {}, t("Status")), h("th", { class: "num" }, t("Songs")), h("th"))),
+        h("tbody", {}, list.map((s) => h("tr", {},
+          h("td", {}, h("strong", {}, s.name), h("div", { class: "hint mono" }, s.url)),
+          h("td", {}, kindName(s.kind)),
+          h("td", {}, status(s)),
+          h("td", { class: "num" }, fmt.format(s.songs)),
+          h("td", { class: "num" }, h("div", { class: "row", style: "justify-content:flex-end" },
+            h("button", { class: "btn small", disabled: !s.enabled || s.syncing, onclick: async () => {
+              try { await api("POST", "sources/" + s.id + "/sync"); draw(); } catch (e) { fail(e); }
+            } }, t("Sync now")),
+            h("button", { class: "btn small", onclick: () => edit(s) }, t("Edit")),
+            h("button", { class: "btn small danger", onclick: async () => {
+              if (!await confirmDialog(t("Remove source"), t("Remove %1? Its songs leave the library; the files stay on the source.", s.name), t("Remove"))) return;
+              try { await api("DELETE", "sources/" + s.id); toast(t("Removed")); draw(); } catch (e) { fail(e); }
+            } }, t("Remove"))))))))) : h("p", { class: "empty" }, t("No sources yet.")));
+      clearInterval(timer);
+      timer = setInterval(draw, list.some((s) => s.syncing) ? 1500 : 8000);
+    };
+    const close = () => {
+      clearInterval(polling);
+      formBox.hidden = true;
+      put(formBox);
+    };
+    const edit = (s) => {
+      clearInterval(polling);
+      formBox.hidden = false;
+      const kind = h("select", { id: "src-kind", disabled: !!s }, KINDS.map(([v, l]) => h("option", { value: v, selected: s ? s.kind === v : v === "subsonic" }, t(l))));
+      const name = h("input", { type: "text", id: "src-name", value: s ? s.name : "", maxlength: 64 });
+      const url = h("input", { type: "url", id: "src-url", value: s ? s.url : "" });
+      const user = h("input", { type: "text", id: "src-user", value: s ? s.user : "", autocomplete: "off" });
+      const secret = h("input", { type: "password", id: "src-secret", autocomplete: "new-password", placeholder: s && s.hasSecret ? t("Unchanged") : "" });
+      const key = h("textarea", { id: "src-key", rows: 4, autocomplete: "off", spellcheck: "false", class: "mono", placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----" });
+      const path = h("input", { type: "text", id: "src-path", value: s ? s.path : "", placeholder: "/" });
+      const pin = h("input", { type: "text", id: "src-pin", value: s ? s.pin : "", class: "mono", placeholder: "SHA256:…" });
+      const enabled = h("input", { type: "checkbox", id: "src-enabled", role: "switch", checked: s ? s.enabled : true });
+      const found = h("div", { class: "list-edit" });
+      const search = h("button", { class: "btn small", type: "button", id: "src-search", onclick: async () => {
+        search.disabled = true;
+        put(found, h("p", { class: "hint" }, t("Searching…")));
+        try {
+          const list = await api("GET", "sources/discover");
+          put(found, list.length ? list.map((f) => h("div", { class: "spread" }, h("span", {}, h("strong", {}, f.name), h("div", { class: "hint mono" }, f.url)),
+            h("button", { class: "btn small", type: "button", onclick: () => { url.value = f.url; if (!name.value.trim()) name.value = f.name; } }, t("Use")))) : h("p", { class: "hint" }, t("No media servers found.")));
+        } catch (e) { put(found); fail(e); }
+        search.disabled = false;
+      } }, t("Search"));
+      const kindHint = h("p", { class: "hint" });
+      const field = (key, label, control, hint) => {
+        const f = h("div", { class: "field", "data-key": key },
+          h("div", {}, h("label", { for: control.id }, t(label)), hint ? h("p", { class: "hint" }, t(hint)) : null),
+          h("div", {}, control));
+        return f;
+      };
+      const fields = {
+        search: field("search", "Media servers in the network", h("div", { id: "src-found" }, search, found)),
+        url: field("url", "Address", url),
+        user: field("user", "User name", user),
+        secret: field("secret", "Password", secret),
+        key: field("key", "Private key", key, "Instead of a password (OpenSSH format, without passphrase)."),
+        path: field("path", "Folder", path, "Only songs below this folder; empty: all."),
+        pin: field("pin", "Server key", pin, "SHA-256 fingerprint of the SSH host key. Empty: the key seen at the first connection is kept."),
+      };
+      const save = h("button", { class: "btn primary", type: "button" }, t("Connect"));
+      const waitBox = h("div");
+      const update = () => {
+        const k = kind.value;
+        const def = KINDS.find((x) => x[0] === k);
+        kindHint.textContent = t(def[2]);
+        url.placeholder = def[3];
+        for (const [key, el] of Object.entries(fields)) el.hidden = !KIND_FIELDS[k].includes(key);
+        save.textContent = k === "nextcloud" ? t("Log in with Nextcloud") : t("Connect");
+      };
+      kind.addEventListener("change", update);
+      save.addEventListener("click", async () => {
+        const k = kind.value;
+        save.disabled = true;
+        const label = save.textContent;
+        save.textContent = t("Connecting…");
+        try {
+          if (k === "nextcloud") {
+            const r = await api("POST", "sources/nextcloud", { url: url.value.trim(), name: name.value.trim(), path: path.value.trim() });
+            const link = h("a", { class: "btn primary", href: r.loginUrl, target: "_blank", rel: "noopener noreferrer" }, t("Open Nextcloud"));
+            put(waitBox, h("div", { class: "banner" }, h("span", {}, t("Open the Nextcloud page and allow access. This page notices when you are done.")), link),
+              h("p", { class: "hint" }, t("Waiting for Nextcloud…")));
+            polling = setInterval(async () => {
+              try {
+                const p = await api("POST", "sources/nextcloud/" + r.id);
+                if (p.done) { close(); toast(t("Added")); draw(); }
+              } catch (e) { clearInterval(polling); put(waitBox); fail(e); }
+            }, 2000);
+          } else {
+            const body = { kind: k, name: name.value.trim(), url: url.value.trim(), user: user.value.trim(), secret: k === "sftp" && key.value.trim() ? key.value.trim() + "\n" : secret.value, path: path.value.trim(), pin: pin.value.trim(), enabled: enabled.checked };
+            if (s) await api("PUT", "sources/" + s.id, body); else await api("POST", "sources", body);
+            close();
+            toast(t(s ? "Saved" : "Added"));
+            draw();
+          }
+        } catch (e) { fail(e); }
+        save.disabled = false;
+        save.textContent = label;
+      });
+      put(formBox, h("h3", {}, t(s ? "Edit source" : "Add source")), kindHint,
+        field("kind", "Kind", kind),
+        field("name", "Name", name),
+        ...Object.values(fields),
+        h("div", { class: "field" }, h("div", {}, h("label", { for: "src-enabled" }, t("Turned on"))), h("div", {}, h("label", { class: "switch" }, enabled))),
+        waitBox,
+        h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: close }, t("Cancel")), save));
+      update();
+      formBox.scrollIntoView({ behavior: "smooth", block: "start" });
+      name.focus();
+    };
+    await draw();
   }
 
   async function users() {

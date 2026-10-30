@@ -465,6 +465,12 @@ fn load_pepper(file: Option<&Path>, default: &Path) -> Result<Vec<u8>, String> {
 }
 
 impl Vault {
+    /// A key for server data derived from the pepper (kept apart from the
+    /// data with `--vault-pepper-file`).
+    pub fn server_key(&self, label: &str) -> bl_vault::Secret {
+        bl_vault::derive(&self.pepper, label)
+    }
+
     pub fn open(
         data: &Path,
         pepper_file: Option<&Path>,
