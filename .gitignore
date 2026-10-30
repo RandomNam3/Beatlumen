@@ -9,3 +9,6 @@
 /container/.env
 /container/password.txt
 /container/pepper.bin
+
+# Working copies of local agent tools
+.claude/worktrees/
