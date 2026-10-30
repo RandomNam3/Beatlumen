@@ -7,6 +7,9 @@ import Beatlumen.Core
 QtObject {
     id: theme
 
+    // The song text editor takes Space, arrows and undo for itself.
+    property bool lyricsEditing: false
+
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
 
@@ -443,6 +446,19 @@ QtObject {
         "songs left": "Songs übrig",
         "Computed on the graphics card: %1": "Berechnet auf der Grafikkarte: %1",
         "Translate song texts": "Songtexte übersetzen",
+        "Time the song text": "Songtext timen",
+        "List": "Liste",
+        "Tap along": "Mittippen",
+        "Close without saving": "Schließen ohne zu speichern",
+        "Paste the song text, one sung line per line. Then tap along while the song plays.": "Füge den Songtext ein, eine gesungene Zeile pro Zeile. Dann tippst du beim Abspielen mit.",
+        "Song text": "Songtext",
+        "Continue": "Weiter",
+        "Now": "Jetzt",
+        "Remove line": "Zeile entfernen",
+        "Add a line here": "Hier eine Zeile einfügen",
+        "Tap: line starts": "Tippen: Zeile beginnt",
+        "All lines timed": "Alle Zeilen getimt",
+        "Paste text and tap along…": "Text einfügen und mittippen …",
         "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.": "Zeigt jede Zeile eines Songtexts zusätzlich in der Sprache dieser App. Das Übersetzungsmodell für die Sprache des Songs (etwa 300 MB) wird beim ersten Bedarf geladen; Übersetzungen bleiben auf diesem Gerät.",
         "Translation models": "Übersetzungsmodelle",
         "Translate song text": "Songtext übersetzen",

@@ -70,15 +70,23 @@ Item {
     }
 
     LyricsView {
+        id: lyricsView
         anchors.left: info.left
         anchors.right: info.right
         anchors.top: parent.top
         anchors.bottom: info.top
         anchors.topMargin: np.compact ? 64 : 72
         anchors.bottomMargin: np.compact ? 16 : 28
-        visible: np.showLyrics && np.cur !== null
+        visible: np.showLyrics && np.cur !== null && !editor.visible
         controlsVisible: np.controlsVisible
         onAddLyrics: np.addLyrics()
+        onEditTiming: (tap) => editor.open(lyricsView.info, tap)
+    }
+
+    LyricsEditor {
+        id: editor
+        anchors.fill: parent
+        z: 50
     }
 
     function updateOverlay() {

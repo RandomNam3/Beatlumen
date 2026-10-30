@@ -10,6 +10,8 @@ Item {
     id: lv
     property bool controlsVisible: true
     signal addLyrics()
+    // Timing by hand (tap: tap along line by line).
+    signal editTiming(bool tap)
 
     property var info: ({ status: "none" })
     readonly property string curId: Core.state.current ? Core.state.current.id : ""
@@ -246,6 +248,12 @@ Item {
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
+            text: Theme.tr("Paste text and tap along…")
+            icon.source: Theme.icon("edit")
+            onClicked: lv.editTiming(true)
+        }
+        Button {
+            Layout.alignment: Qt.AlignHCenter
             visible: lv.canSync || lv.canLocal
             text: Theme.tr("Recognize song text")
             icon.source: Theme.icon("auto_awesome")
@@ -351,8 +359,19 @@ Item {
     }
 
     IconButton {
-        id: translateButton
+        id: editButton
         anchors.right: removeButton.visible ? removeButton.left : parent.right
+        anchors.bottom: parent.bottom
+        visible: lv.ready && lv.controlsVisible && !lv.sync
+        iconName: "edit"
+        iconColor: "white"
+        tip: Theme.tr("Time the song text")
+        onClicked: lv.editTiming(!lv.synced)
+    }
+
+    IconButton {
+        id: translateButton
+        anchors.right: editButton.visible ? editButton.left : removeButton.visible ? removeButton.left : parent.right
         anchors.bottom: parent.bottom
         visible: lv.canTranslate && lv.controlsVisible
         iconName: "translate"
