@@ -93,13 +93,14 @@ the apps or encrypted in the server data). Sources can be added in the app
 (app-only use) or in the admin interface (the server indexes and analyses
 them and the apps play through it).
 
-- [ ] M3U/M3U8/PLS/XSPF playlists: import, export, playlists inside
+- [x] M3U/M3U8/PLS/XSPF playlists: import, export, playlists inside
   library folders; entries resolve only inside the library or the
   playlist's own source.
-- [ ] Web sources: links to audio files and directory listings (no
+- [x] Web sources: links to audio files and directory listings (no
   scripts, same host only, size and depth limits).
-- [ ] Internet radio: Icecast/Shoutcast (MP3, AAC, Ogg, Opus) and HLS,
-  station files, favourites, ICY titles, adjustable delay for look-ahead.
+- [x] Internet radio: Icecast/Shoutcast (MP3, AAC, Ogg, Opus) and HLS,
+  station files, favourites, ICY titles (the adjustable delay for
+  look-ahead follows with the live beat prediction in phase 6).
 - [x] Subsonic/OpenSubsonic (Navidrome, Gonic, …): token auth, original
   files, scrobbling.
 - [x] Jellyfin: login, artists/albums/playlists, original files, playback

@@ -407,7 +407,9 @@ impl Core {
             "lyrics.remove" => self.lyrics_remove(host),
             "lyrics.sync" => self.lyrics_sync(host),
             n if n.starts_with("devices.") => self.devices_command(host, n, c),
-            n if n.starts_with("sources.") => self.sources_command(host, n, c),
+            n if n.starts_with("sources.") || n.starts_with("radio.") => {
+                self.sources_command(host, n, c)
+            }
             "offline.save" => self.offline_save(host, strs(c.get("ids"))),
             "offline.remove" => {
                 let ids = if c.bool_or("all", false) {
@@ -584,6 +586,7 @@ impl Core {
                 }
                 ok()
             }
+            "playlist.export" => self.export_playlist(&s("id"), &s("folder")),
             "playlist.delete" => {
                 self.delete_playlist(host, &s("id"));
                 ok()
@@ -1356,7 +1359,7 @@ impl Core {
             .with("tracks", Value::Array(tracks))
     }
 
-    fn find_playlist(&self, id: &str) -> Option<&Playlist> {
+    pub(crate) fn find_playlist(&self, id: &str) -> Option<&Playlist> {
         self.local_playlists
             .iter()
             .chain(self.server_playlists.iter())

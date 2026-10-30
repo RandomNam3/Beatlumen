@@ -131,6 +131,8 @@ pub struct State {
     pub devices: devices::Devices,
     /// Remote music sources (their songs are part of the library).
     pub sources: Arc<sources::Sources>,
+    /// Playlist files in the music folders (read-only playlists).
+    pub folder_playlists: RwLock<Vec<bl_net::api::Playlist>>,
     /// Absolute music folder paths (index = root index in track ids).
     pub roots: Vec<PathBuf>,
     pub data: DataPaths,
@@ -324,6 +326,11 @@ impl State {
         drop(old);
         entries.extend(self.sources.entries());
         self.publish(entries);
+        let lists = library::folder_playlists(&stats.playlists, &self.library());
+        *self
+            .folder_playlists
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = lists;
         self.save_cache();
         let idx = self.library();
         info!(
@@ -656,6 +663,7 @@ pub fn start(config: Config) -> Result<Server, String> {
             sources.clone(),
         ),
         sources,
+        folder_playlists: RwLock::new(Vec::new()),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
         library: RwLock::new(Arc::new(index)),
         cache_dirty: AtomicBool::new(false),

@@ -12,6 +12,17 @@ pub fn tr<'a>(lang: &str, s: &'a str) -> &'a str {
 fn de(s: &str) -> Option<&'static str> {
     Some(match s {
         "(copy)" => "(Kopie)",
+        "Playlist" => "Playlist",
+        "songs" => "Songs",
+        "Cannot read the playlist" => "Die Playlist kann nicht gelesen werden",
+        "Playlist imported" => "Playlist importiert",
+        "Saved" => "Gespeichert",
+        "Cannot save the playlist" => "Die Playlist kann nicht gespeichert werden",
+        "radio stations added" => "Radiosender hinzugefügt",
+        "The playlist has no songs that can be found here" => "Die Playlist enthält keine Songs, die hier zu finden sind",
+        "The song's source is not available" => "Die Quelle des Songs ist nicht erreichbar",
+        "Please try again in a moment" => "Bitte versuche es gleich noch einmal",
+        "The address must start with https:// or http://" => "Die Adresse muss mit https:// oder http:// beginnen",
         "Signed in. You can close this window and return to Beatlumen." => "Angemeldet. Du kannst dieses Fenster schließen und zu Beatlumen zurückkehren.",
         "Could not open the browser" => "Der Browser konnte nicht geöffnet werden",
         "Waiting for the password manager…" => "Warte auf den Passwortmanager …",

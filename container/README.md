@@ -244,7 +244,9 @@ Songs on other servers and storage join the library (admin interface,
 *Music sources*): Subsonic/OpenSubsonic servers (Navidrome, Gonic,
 Airsonic, …), Jellyfin, Nextcloud (log in on the Nextcloud page; the
 server gets an app password of its own), WebDAV shares and DLNA media
-servers in the network. The server lists their songs in the background (at
+servers in the network, SFTP folders (own SSH client; the server key is
+confirmed on first use) and web folders (plain directory listings; only
+links below the given address are followed). The server lists their songs in the background (at
 start, after a change and with every rescan), analyses them and plays them
 for the apps with seeking; the files stay where they are. Plays are
 reported back to Subsonic and Jellyfin.
@@ -253,7 +255,9 @@ The logins are kept in `/data/sources.json`, encrypted with a key derived
 from the vault pepper: with `BEATLUMEN_VAULT_PEPPER_FILE` outside the data
 folder, a backup of `/data` alone does not reveal them. Listings are
 cached in `/data/sources/`, so the library is complete right after a
-restart. DLNA discovery needs the container in the host network (or
+restart. Playlist files (M3U, M3U8, PLS, XSPF) in the music folders show
+up as read-only playlists; their entries resolve only to songs of the
+library. DLNA discovery needs the container in the host network (or
 enter the server's description address by hand).
 
 ## Song texts (speech recognition)

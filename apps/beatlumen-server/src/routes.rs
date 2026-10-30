@@ -327,7 +327,17 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             }
         }
         ["playlists"] => match m {
-            "GET" | "HEAD" => json(200, &playlists.list_json()),
+            "GET" | "HEAD" => {
+                let mut list = playlists.list_json();
+                if let Value::Array(a) = &mut list {
+                    let folder = state
+                        .folder_playlists
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner());
+                    a.extend(folder.iter().map(|p| p.to_json().with("folder", true)));
+                }
+                json(200, &list)
+            }
             "POST" => match playlists.create(&req.body) {
                 Ok(p) => json(201, &p.to_json()),
                 Err(e) => fail(e),
@@ -337,6 +347,22 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["playlists", id] => {
             if !util::is_id(id) {
                 return Response::error(404, "playlist not found");
+            }
+            let folder = state
+                .folder_playlists
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .find(|p| p.id == *id)
+                .cloned();
+            if let Some(p) = folder {
+                return match m {
+                    "GET" | "HEAD" => json(200, &p.to_json().with("folder", true)),
+                    _ => Response::error(
+                        403,
+                        "this playlist is a file in a music folder; change it there",
+                    ),
+                };
             }
             match m {
                 "GET" | "HEAD" => match playlists.get(id) {

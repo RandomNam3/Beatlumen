@@ -253,6 +253,8 @@
     "Unknown server key": "Unbekannter Server-Schlüssel",
     "Instead of a password (OpenSSH format, without passphrase).": "Statt eines Passworts (OpenSSH-Format, ohne Passphrase).",
     "DLNA media server": "DLNA-Medienserver",
+    "Web folder": "Web-Ordner",
+    "A folder on a web server with a directory listing, or a link to one audio file. Only links below this address are followed.": "Ein Ordner auf einem Webserver mit Verzeichnisliste oder ein Link auf eine Audiodatei. Nur Links unterhalb dieser Adresse werden verfolgt.",
   };
   const t = (s, ...a) => {
     let r = (DE && GERMAN[s]) || s;
@@ -698,6 +700,7 @@
     ["nextcloud", "Nextcloud", "A folder in Nextcloud. You log in on the Nextcloud page; the server gets an app password of its own.", "https://cloud.example.org"],
     ["webdav", "WebDAV", "A folder on a WebDAV share (ownCloud, NAS, …). Tags are read from the files once and kept.", "https://nas.example.org/dav"],
     ["sftp", "SFTP", "A folder on a computer reachable with SSH. Password or private key (OpenSSH format).", "sftp://nas.local"],
+    ["web", "Web folder", "A folder on a web server with a directory listing, or a link to one audio file. Only links below this address are followed.", "https://example.org/music/"],
     ["dlna", "DLNA media server", "A media server in the local network (MiniDLNA, Plex, Serviio, …).", "http://192.168.1.10:8200/rootDesc.xml"],
   ];
   // Which fields each kind asks for.
@@ -708,6 +711,7 @@
     webdav: ["url", "user", "secret", "path"],
     sftp: ["url", "user", "secret", "key", "path", "pin"],
     dlna: ["search", "url"],
+    web: ["url", "user", "secret"],
   };
   const kindName = (k) => t((KINDS.find((x) => x[0] === k) || [k, k])[1]);
 

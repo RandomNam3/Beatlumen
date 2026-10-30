@@ -6,6 +6,8 @@
 //! cargo test -p bl-sources --test sftp -- --ignored
 //! ```
 
+#![cfg(unix)]
+
 #[path = "../../bl-ssh/tests/common/mod.rs"]
 mod common;
 

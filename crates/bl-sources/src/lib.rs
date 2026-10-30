@@ -16,6 +16,7 @@ pub mod radio;
 pub mod sftp;
 pub mod subsonic;
 pub mod tags;
+pub mod web;
 pub mod webdav;
 
 use bl_json::Value;
@@ -125,6 +126,7 @@ pub fn connect(cfg: &SourceConfig) -> Result<Box<dyn MusicSource>, String> {
         "webdav" => Ok(Box::new(webdav::WebDav::connect(cfg)?)),
         "dlna" => Ok(Box::new(dlna::Dlna::connect(cfg)?)),
         "sftp" => Ok(Box::new(sftp::SftpSource::connect(cfg)?)),
+        "web" => Ok(Box::new(web::Web::connect(cfg)?)),
         other => Err(format!("unknown source kind \"{other}\"")),
     }
 }

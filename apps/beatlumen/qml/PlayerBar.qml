@@ -85,7 +85,7 @@ Item {
             Layout.topMargin: -10
             Label { textFormat: Text.PlainText; text: Theme.fmtTime(seek.pressed ? seek.value : Core.position); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
             Item { Layout.fillWidth: true }
-            Label { textFormat: Text.PlainText; text: Theme.fmtTime(bar.duration); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
+            Label { textFormat: Text.PlainText; text: bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"); color: bar.fgDim; font.pixelSize: 12; font.features: { "tnum": 1 } }
         }
     }
 
@@ -222,7 +222,7 @@ Item {
             }
             Label {
                 textFormat: Text.PlainText
-                text: Theme.fmtTime(Core.position) + " / " + Theme.fmtTime(bar.duration)
+                text: Theme.fmtTime(Core.position) + " / " + (bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"))
                 color: Theme.textDim
                 font.pixelSize: 12
                 font.features: { "tnum": 1 }

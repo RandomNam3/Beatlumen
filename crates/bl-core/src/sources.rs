@@ -27,7 +27,7 @@ const LIST_KEY: &str = "sources.json";
 const SECRET_KEY: &str = "sources";
 const SECRET_FILE: &str = "sources-logins.json";
 const MAX_SOURCES: usize = 16;
-const KINDS: [&str; 5] = ["subsonic", "jellyfin", "webdav", "sftp", "dlna"];
+const KINDS: [&str; 6] = ["subsonic", "jellyfin", "webdav", "sftp", "dlna", "web"];
 
 #[derive(Clone)]
 pub(crate) struct AppSource {
@@ -62,7 +62,16 @@ pub(crate) struct SourcesState {
     found_box: Mailbox<Vec<(String, String)>>,
     searching: bool,
     pub(crate) rev: u64,
+    /// Internet radio stations: (name, url).
+    stations: Vec<(String, String)>,
+    /// The playing station's title updates (set on the player's thread).
+    radio_titles: Arc<Mutex<Option<bl_sources::radio::Titles>>>,
+    radio_title: Option<String>,
 }
+
+pub(crate) const RADIO_PREFIX: &str = "radio:";
+const STATIONS_KEY: &str = "radio.json";
+const MAX_STATIONS: usize = 500;
 
 fn track_json(t: &RemoteTrack) -> Value {
     Value::object()
@@ -130,7 +139,7 @@ fn library_track(s: &AppSource, t: &RemoteTrack) -> Track {
     } else {
         t.album_artist.clone()
     };
-    let path = if matches!(s.cfg.kind.as_str(), "webdav" | "sftp") {
+    let path = if matches!(s.cfg.kind.as_str(), "webdav" | "sftp" | "web") {
         format!("{}/{}", s.name, t.key)
     } else {
         format!(
@@ -198,6 +207,18 @@ impl Core {
             return;
         }
         self.sources.loaded = true;
+        self.sources.stations = host
+            .storage_read(STATIONS_KEY)
+            .and_then(|d| bl_json::parse_bytes(&d).ok())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| {
+                let url = v.get("url").as_str()?.to_string();
+                Some((v.str_or("name", &url).to_string(), url))
+            })
+            .take(MAX_STATIONS)
+            .collect();
         let list: Vec<AppSource> = host
             .storage_read(LIST_KEY)
             .and_then(|d| bl_json::parse_bytes(&d).ok())
@@ -386,11 +407,102 @@ impl Core {
         if changed {
             self.publish_sources();
         }
+        self.poll_radio_title();
         if let Some(found) = self.sources.found_box.take().pop() {
             self.sources.found = Some(found);
             self.sources.searching = false;
             self.sources.rev += 1;
         }
+    }
+
+    /// A station as a track (title: its name until the stream says more).
+    pub(crate) fn radio_track(&self, id: &str) -> Option<Track> {
+        let url = id.strip_prefix(RADIO_PREFIX)?;
+        let name = self
+            .sources
+            .stations
+            .iter()
+            .find(|(_, u)| u == url)
+            .map_or_else(|| url.to_string(), |(n, _)| n.clone());
+        Some(Track {
+            id: id.to_string(),
+            title: name.clone(),
+            album: name,
+            path: url.to_string(),
+            codec: "radio".into(),
+            ..Default::default()
+        })
+    }
+
+    /// Plays a station live (the decoder runs on the player's thread).
+    pub(crate) fn play_radio(&mut self, host: &mut dyn Host, id: &str, autoplay: bool) {
+        let Some(url) = id.strip_prefix(RADIO_PREFIX).map(str::to_string) else {
+            return;
+        };
+        let slot = self.sources.radio_titles.clone();
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.sources.radio_title = None;
+        self.player.set_gain(Some(1.0), true);
+        self.player.load_decoder(
+            host,
+            Box::new(move || {
+                let stream = bl_sources::radio::open_stream(&url)?;
+                *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream.titles.clone());
+                bl_sources::radio::open_decoder(stream)
+            }),
+            autoplay,
+        );
+    }
+
+    /// Shows the station's current song ("Artist - Title").
+    fn poll_radio_title(&mut self) {
+        let Some(cur) = self
+            .current
+            .as_ref()
+            .filter(|t| t.id.starts_with(RADIO_PREFIX))
+        else {
+            return;
+        };
+        let title = self
+            .sources
+            .radio_titles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|t| t.lock().unwrap_or_else(|e| e.into_inner()).clone())
+            .filter(|t| !t.trim().is_empty());
+        if title == self.sources.radio_title {
+            return;
+        }
+        self.sources.radio_title = title.clone();
+        let mut t = self.radio_track(&cur.id).unwrap_or_else(|| cur.clone());
+        if let Some(text) = title {
+            match bl_sources::playlist::split_artist_title(&text) {
+                (Some(artist), Some(title)) if !title.is_empty() => {
+                    t.artists = vec![artist];
+                    t.title = title;
+                }
+                _ => t.title = text,
+            }
+        }
+        self.current = Some(t);
+        self.revs.queue += 1;
+    }
+
+    fn save_stations(&mut self, host: &mut dyn Host) {
+        let v = Value::Array(
+            self.sources
+                .stations
+                .iter()
+                .map(|(n, u)| {
+                    Value::object()
+                        .with("name", n.as_str())
+                        .with("url", u.as_str())
+                })
+                .collect(),
+        );
+        host.storage_write(STATIONS_KEY, v.to_json().as_bytes());
+        self.sources.rev += 1;
     }
 
     /// Streams a source's song (on the player's thread).
@@ -530,9 +642,21 @@ impl Core {
                     .with("url", url.as_str())
             })
             .collect();
+        let stations: Vec<Value> = self
+            .sources
+            .stations
+            .iter()
+            .map(|(n, u)| {
+                Value::object()
+                    .with("name", n.as_str())
+                    .with("url", u.as_str())
+                    .with("id", format!("{RADIO_PREFIX}{u}"))
+            })
+            .collect();
         Value::object()
             .with("rev", self.sources.rev)
             .with("available", true)
+            .with("stations", stations)
             .with("list", list)
             .with("searching", self.sources.searching)
             .with("found", found)
@@ -637,6 +761,29 @@ impl Core {
                 self.sync_source(host, &id);
                 Value::object().with("ok", true)
             }
+            "radio.add" => {
+                let url = c.str_or("url", "").trim().to_string();
+                if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() > 2048
+                {
+                    return err(self.tr("The address must start with https:// or http://"));
+                }
+                let name: String = c.str_or("name", "").trim().chars().take(100).collect();
+                let name = if name.is_empty() { url.clone() } else { name };
+                let full = self.sources.stations.len() >= MAX_STATIONS;
+                match self.sources.stations.iter_mut().find(|(_, u)| *u == url) {
+                    Some(s) => s.0 = name,
+                    None if full => return err("too many stations"),
+                    None => self.sources.stations.push((name, url.clone())),
+                }
+                self.save_stations(host);
+                Value::object().with("id", format!("{RADIO_PREFIX}{url}"))
+            }
+            "radio.remove" => {
+                let url = c.str_or("url", "").to_string();
+                self.sources.stations.retain(|(_, u)| *u != url);
+                self.save_stations(host);
+                Value::object().with("ok", true)
+            }
             "sources.sync" => {
                 self.sync_source(host, &id);
                 Value::object().with("ok", true)
@@ -658,6 +805,173 @@ impl Core {
                 Value::object().with("ok", true)
             }
             _ => err("unknown command"),
+        }
+    }
+
+    /// Opens a playlist file (M3U/M3U8, PLS, XSPF): its songs become a
+    /// playlist, plain stream addresses become radio stations. Entries
+    /// resolve only inside the music folders or the playlist's own folder,
+    /// or to library songs with the same path.
+    pub(crate) fn import_playlist_file(&mut self, host: &mut dyn Host, path: &str, play: bool) {
+        use bl_sources::playlist::{self, Location};
+        let ext = path.rsplit('.').next().map(str::to_ascii_lowercase);
+        let entries = match host
+            .fs_read(path)
+            .and_then(|d| playlist::parse(&d, ext.as_deref()))
+        {
+            Ok(e) => e,
+            Err(e) => {
+                let msg = format!("{}: {e}", self.tr("Cannot read the playlist"));
+                self.toast(msg, true);
+                return;
+            }
+        };
+        let file = std::path::Path::new(path);
+        let dir = file
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let name = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.tr("Playlist").to_string());
+        let mut roots: Vec<std::path::PathBuf> = self
+            .settings
+            .library_folders
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        roots.push(dir.clone());
+        // Library songs by their path (lower case, '/' separated).
+        let by_path: HashMap<String, String> = self
+            .library
+            .tracks
+            .iter()
+            .filter(|t| !t.path.is_empty())
+            .map(|t| (t.path.replace('\\', "/").to_lowercase(), t.id.clone()))
+            .collect();
+        let mut ids = Vec::new();
+        let mut streams = Vec::new();
+        for e in &entries {
+            match playlist::resolve(&e.location, &dir) {
+                Some(Location::Url(u)) if u.starts_with("http://") || u.starts_with("https://") => {
+                    streams.push((e.title.clone().unwrap_or_else(|| u.clone()), u));
+                }
+                Some(Location::Path(p)) => {
+                    let s = p.to_string_lossy().to_string();
+                    if playlist::within(&p, &roots) && host.fs_metadata(&s).is_some() {
+                        ids.push(format!("{}{s}", crate::library::LOCAL_PREFIX));
+                        continue;
+                    }
+                    // The same song in the library (e.g. on the server):
+                    // the longest matching end of the path.
+                    let norm = e.location.replace('\\', "/").to_lowercase();
+                    let found = norm
+                        .match_indices('/')
+                        .map(|(i, _)| &norm[i + 1..])
+                        .chain(std::iter::once(norm.as_str()))
+                        .filter(|tail| tail.contains('/'))
+                        .find_map(|tail| {
+                            by_path
+                                .iter()
+                                .find(|(k, _)| k.ends_with(tail))
+                                .map(|(_, id)| id.clone())
+                        });
+                    ids.extend(found);
+                }
+                _ => {}
+            }
+        }
+        if !ids.is_empty() {
+            let n = ids.len();
+            self.create_playlist(
+                host,
+                &name,
+                bl_net::api::PlaylistKind::Track,
+                ids.clone(),
+                false,
+            );
+            let msg = format!(
+                "{} \"{name}\": {n} {}",
+                self.tr("Playlist imported"),
+                self.tr("songs")
+            );
+            self.toast(msg, false);
+            if play {
+                self.play_tracks(host, ids, 0);
+            }
+        } else if !streams.is_empty() {
+            let first = format!("{RADIO_PREFIX}{}", streams[0].1);
+            let n = streams.len();
+            for (title, url) in streams {
+                if self.sources.stations.len() < MAX_STATIONS
+                    && !self.sources.stations.iter().any(|(_, u)| *u == url)
+                {
+                    let title: String = title.chars().take(100).collect();
+                    self.sources.stations.push((title, url));
+                }
+            }
+            self.save_stations(host);
+            let msg = format!("{n} {}", self.tr("radio stations added"));
+            self.toast(msg, false);
+            if play {
+                self.play_tracks(host, vec![first], 0);
+            }
+        } else {
+            let msg = self
+                .tr("The playlist has no songs that can be found here")
+                .to_string();
+            self.toast(msg, true);
+        }
+    }
+
+    /// Writes a playlist as `<folder>/<name>.m3u8`: local songs with their
+    /// paths, other library songs with their library path.
+    pub(crate) fn export_playlist(&mut self, id: &str, folder: &str) -> Value {
+        let Some(p) = self.find_playlist(id).cloned() else {
+            return Value::object().with("error", "unknown playlist");
+        };
+        let entries: Vec<bl_sources::playlist::Entry> = p
+            .items
+            .iter()
+            .map(|item| {
+                let t = self.track_for(item);
+                let location = crate::library::local_path(item)
+                    .map(str::to_string)
+                    .or_else(|| item.strip_prefix(RADIO_PREFIX).map(str::to_string))
+                    .unwrap_or_else(|| t.path.clone());
+                bl_sources::playlist::Entry {
+                    location,
+                    title: Some(t.title.clone()),
+                    artist: t.artists.first().cloned(),
+                    duration_secs: (t.duration_ms > 0).then(|| t.duration_ms as f64 / 1000.0),
+                }
+            })
+            .filter(|e| !e.location.is_empty())
+            .collect();
+        let safe: String = p
+            .name
+            .chars()
+            .map(|c| {
+                if "/\\:*?\"<>|".contains(c) || c.is_control() {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let file = std::path::Path::new(folder).join(format!("{}.m3u8", safe.trim()));
+        match std::fs::write(&file, bl_sources::playlist::write_m3u8(&entries)) {
+            Ok(()) => {
+                let msg = format!("{}: {}", self.tr("Saved"), file.display());
+                self.toast(msg, false);
+                Value::object().with("path", file.to_string_lossy().to_string())
+            }
+            Err(e) => {
+                let msg = format!("{}: {e}", self.tr("Cannot save the playlist"));
+                self.toast(msg, true);
+                Value::object().with("error", e.to_string())
+            }
         }
     }
 }

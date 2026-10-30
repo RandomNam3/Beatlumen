@@ -401,3 +401,59 @@ fn webdav() {
         .count();
     assert_eq!(before, after);
 }
+
+#[test]
+fn web_folder() {
+    let a = Arc::new(wav("Erstes"));
+    let b = Arc::new(wav("Zweites"));
+    let (fa, fb) = (a.clone(), b.clone());
+    let (base, log) = serve(move |r| {
+        let html = |s: &str| (200, "text/html", s.as_bytes().to_vec());
+        let body = |d: &Vec<u8>| {
+            if r.method == "HEAD" {
+                Vec::new()
+            } else {
+                d.clone()
+            }
+        };
+        match r.target.as_str() {
+            "/music/" => html(
+                r#"<a href="../">Parent</a> <a href="?C=N;O=D">Name</a>
+                <a href="Rock/">Rock/</a> <a href="a%20song.wav">a song.wav</a>
+                <a href="/other/c.wav">c</a> <a href="http://elsewhere.example/x.wav">x</a>
+                <a href="notes.txt">notes</a>"#,
+            ),
+            "/music/Rock/" => html(r#"<a href="b.wav">b.wav</a> <a href="/music/">up</a>"#),
+            "/music/a%20song.wav" => (200, "audio/wav", body(&fa)),
+            "/music/Rock/b.wav" => (200, "audio/wav", body(&fb)),
+            _ => (404, "text/plain", Vec::new()),
+        }
+    });
+    let src = connect(&SourceConfig {
+        kind: "web".into(),
+        url: format!("{base}/music"),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut list = src.list(&no_known, &mut |_| true).unwrap();
+    list.sort_by(|x, y| x.key.cmp(&y.key));
+    let keys: Vec<&str> = list.iter().map(|t| t.key.as_str()).collect();
+    assert_eq!(keys, ["Rock/b.wav", "a song.wav"]);
+    assert_eq!(list[0].title, "Zweites");
+    assert_eq!(list[1].title, "Erstes");
+    check_stream(src.as_ref(), "a song.wav", &a);
+    assert!(src.open("../other/c.wav").is_err());
+    // Nothing outside the folder was requested.
+    let seen = log.lock().unwrap().clone();
+    assert!(seen.iter().all(|l| l.contains(" /music")), "{seen:?}");
+    // A single file.
+    let one = connect(&SourceConfig {
+        kind: "web".into(),
+        url: format!("{base}/music/Rock/b.wav"),
+        ..Default::default()
+    })
+    .unwrap();
+    let l = one.list(&no_known, &mut |_| true).unwrap();
+    assert_eq!(l.len(), 1);
+    check_stream(one.as_ref(), &l[0].key, &b);
+}

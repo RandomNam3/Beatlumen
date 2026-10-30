@@ -243,6 +243,7 @@ ApplicationWindow {
                 sourceComponent: LibraryPage {
                     onAddFolder: win.addFolder()
                     onOpenFiles: dialogs.openAudio()
+                    onExportPlaylist: (id) => dialogs.exportPlaylist(id)
                     onConnectServer: win.page = 3
                     onUploadVault: dialogs.openUpload()
                 }

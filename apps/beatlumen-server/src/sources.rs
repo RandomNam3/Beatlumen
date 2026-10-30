@@ -123,7 +123,7 @@ fn aad(id: &str) -> Vec<u8> {
 /// The song's path as the apps show it: file sources keep their folders,
 /// media servers are sorted by artist and album.
 fn display_path(source: &SourceRec, t: &RemoteTrack) -> String {
-    if matches!(source.cfg.kind.as_str(), "webdav" | "sftp") {
+    if matches!(source.cfg.kind.as_str(), "webdav" | "sftp" | "web") {
         return format!("{}/{}", source.name, t.key);
     }
     let clean = |s: &str, fallback: &str| -> String {
@@ -367,7 +367,7 @@ impl Sources {
                 cfg.secret = e.cfg.secret.clone();
             }
         }
-        if !["subsonic", "jellyfin", "webdav", "sftp", "dlna"].contains(&cfg.kind.as_str()) {
+        if !["subsonic", "jellyfin", "webdav", "sftp", "dlna", "web"].contains(&cfg.kind.as_str()) {
             return Err((400, format!("unknown kind \"{}\"", cfg.kind)));
         }
         if cfg.url.is_empty() {

@@ -30,6 +30,24 @@ if(NOT BL_RUST_TARGET)
     endif()
 endif()
 set(BL_CARGO_ENV "")
+if(ANDROID AND BL_RUST_TARGET)
+    # C code in Rust crates (ring, used by the SSH client) is built with
+    # the NDK's compiler for the same target and API level.
+    string(REPLACE "-" "_" BL_TARGET_ENV ${BL_RUST_TARGET})
+    set(BL_CC_TARGET ${BL_RUST_TARGET})
+    if(BL_RUST_TARGET STREQUAL "armv7-linux-androideabi")
+        set(BL_CC_TARGET armv7a-linux-androideabi)
+    endif()
+    if(ANDROID_PLATFORM_LEVEL)
+        set(BL_API ${ANDROID_PLATFORM_LEVEL})
+    else()
+        set(BL_API 24)
+    endif()
+    set(BL_CARGO_ENV
+        "CC_${BL_TARGET_ENV}=${CMAKE_C_COMPILER}"
+        "CFLAGS_${BL_TARGET_ENV}=--target=${BL_CC_TARGET}${BL_API}"
+        "AR_${BL_TARGET_ENV}=${CMAKE_AR}")
+endif()
 if(EMSCRIPTEN)
     # Qt for WebAssembly uses JavaScript exceptions; Rust panics must not unwind.
     set(BL_CARGO_ENV "CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_RUSTFLAGS=-C panic=abort")

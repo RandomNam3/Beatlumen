@@ -1191,6 +1191,9 @@ impl Core {
         if let Some(p) = library::local_path(id) {
             return library::local_track(p, 0, 0, None);
         }
+        if let Some(t) = self.radio_track(id) {
+            return t;
+        }
         if let Some(name) = id.strip_prefix("mem:") {
             return library::local_track(name, 0, 0, None);
         }
@@ -1269,6 +1272,8 @@ impl Core {
         self.player.set_gain(gain, load);
         if !load {
             // Already playing (gapless advance).
+        } else if id.starts_with(crate::sources::RADIO_PREFIX) {
+            self.play_radio(host, &id, autoplay);
         } else if let Some(opener) = self.opener_for(host, &id) {
             self.player.load(host, opener, autoplay);
         } else if let Some(path) = library::local_path(&id) {
@@ -1427,7 +1432,10 @@ impl Core {
     /// Normalization gain of a track: 1 when normalization is off, None
     /// while its loudness is being measured (the measurement is started).
     fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
-        if !self.settings.normalize || id.starts_with(crate::extensions::ID_PREFIX) {
+        if !self.settings.normalize
+            || id.starts_with(crate::extensions::ID_PREFIX)
+            || id.starts_with(crate::sources::RADIO_PREFIX)
+        {
             return Some(1.0);
         }
         match self.loudness.get(id) {
@@ -1499,6 +1507,13 @@ impl Core {
             } else {
                 mailbox.post((key, measure(Box::new(std::io::Cursor::new(data)), ext)));
             }
+        } else if id.starts_with(crate::sources::ID_PREFIX) {
+            let Some(opener) = self.source_opener(id) else {
+                return;
+            };
+            host.spawn(Box::new(move || {
+                mailbox.post((key, opener().and_then(|(src, ext)| measure(src, ext))))
+            }));
         } else if id.starts_with(crate::vault::ID_PREFIX) {
             let Some(opener) = self.vault_opener(host, id) else {
                 return;
@@ -1768,6 +1783,7 @@ impl Core {
             || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
             || track.id.starts_with(crate::capture::ID_PREFIX)
             || track.id.starts_with(crate::extensions::ID_PREFIX)
+            || track.id.starts_with(crate::sources::RADIO_PREFIX)
         {
             // Live or foreign stream: the visuals follow the audio as it plays.
             return;
@@ -2316,6 +2332,8 @@ impl Core {
                 audio.push(format!("{LOCAL_PREFIX}{p}"));
             } else if library::is_image_extension(&ext) {
                 images.push(format!("{LOCAL_PREFIX}{p}"));
+            } else if matches!(ext.as_str(), "m3u" | "m3u8" | "pls" | "xspf") {
+                self.import_playlist_file(host, &p, play);
             } else if ext == "hfx" {
                 if let Ok(d) = host.fs_read(&p) {
                     let name = std::path::Path::new(&p)

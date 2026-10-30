@@ -14,6 +14,7 @@ AppDialog {
         { id: "jellyfin", name: "Jellyfin", hint: "The music libraries of a Jellyfin server.", url: "https://jellyfin.example.org" },
         { id: "webdav", name: "WebDAV / Nextcloud", hint: "A folder on a WebDAV share. Nextcloud: use an app password.", url: "https://cloud.example.org/remote.php/dav/files/NAME" },
         { id: "sftp", name: "SFTP", hint: "A folder on a computer reachable with SSH (password login).", url: "sftp://nas.local" },
+        { id: "web", name: Theme.tr("Web folder"), hint: "A folder on a web server with a directory listing, or a link to one audio file.", url: "https://example.org/music/" },
         { id: "dlna", name: Theme.tr("DLNA media server"), hint: "A media server in the local network.", url: "http://192.168.1.10:8200/rootDesc.xml" }
     ]
     readonly property var kind: kinds[kindBox.currentIndex]
