@@ -1022,6 +1022,10 @@ impl Core {
                 self.visible = b("visible");
                 ok()
             }
+            "net.metered" => {
+                self.metered = b("metered");
+                ok()
+            }
             "save" => {
                 self.save_settings(host);
                 ok()

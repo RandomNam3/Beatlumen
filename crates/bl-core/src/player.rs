@@ -28,7 +28,7 @@ pub type SourceOpener =
 pub type DecoderOpener = Box<dyn FnOnce() -> Result<Box<dyn Decoder>, String> + Send>;
 
 /// What the decoder thread opens.
-enum Opener {
+pub enum Opener {
     Source(SourceOpener),
     Decoder(DecoderOpener),
 }
@@ -508,7 +508,7 @@ enum Command {
     /// Seek within the track with the given index (number of advances).
     Seek(f64, u64),
     /// Track to continue with after the current one (None cancels).
-    Next(Option<SourceOpener>),
+    Next(Option<Opener>),
     Stop,
 }
 
@@ -793,7 +793,7 @@ impl Player {
     /// Hands the track to continue with seamlessly after the current one to
     /// the decoder (None cancels). Returns false when gapless playback is
     /// not available (push audio, nothing loaded).
-    pub fn preload(&mut self, opener: Option<SourceOpener>) -> bool {
+    pub fn preload(&mut self, opener: Option<Opener>) -> bool {
         match &self.native {
             Some(t) => t.commands.send(Command::Next(opener)).is_ok(),
             None => false,
@@ -804,6 +804,11 @@ impl Player {
     /// thread on native platforms).
     pub fn load(&mut self, host: &mut dyn Host, opener: SourceOpener, autoplay: bool) {
         self.load_with(host, Opener::Source(opener), autoplay);
+    }
+
+    /// Loads a track from either kind of opener.
+    pub fn load_opener(&mut self, host: &mut dyn Host, opener: Opener, autoplay: bool) {
+        self.load_with(host, opener, autoplay);
     }
 
     /// Plays a ready decoder (a live stream: no preloading of a next track).
@@ -1174,7 +1179,7 @@ fn decoder_thread(
     let max_queue = out_rate as usize; // one second
     let mut buf = Vec::with_capacity(8192);
     let mut eof_sent = false;
-    let mut next: Option<SourceOpener> = None;
+    let mut next: Option<Opener> = None;
     // Number of tracks advanced to (seeks name the track they are meant for).
     let mut index = 0u64;
     let mut wait = false;
@@ -1234,7 +1239,7 @@ fn decoder_thread(
                 let opener = next.take().expect("checked");
                 // On failure the track ends normally; loading the next one
                 // again reports the error.
-                if let Ok(mut b) = open_pipeline(Opener::Source(opener), out_rate) {
+                if let Ok(mut b) = open_pipeline(opener, out_rate) {
                     if silent_end {
                         output.trim_tail(silent_run);
                     }

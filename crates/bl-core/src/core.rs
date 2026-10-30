@@ -6,7 +6,7 @@
 use crate::host::{Host, HttpResponse};
 use crate::jobs::{decode_mono, extension, Mailbox};
 use crate::library::{self, LibraryState, LOCAL_PREFIX};
-use crate::player::{PlayState, Player, PlayerEvent, SourceOpener};
+use crate::player::{Opener, PlayState, Player, PlayerEvent, SourceOpener};
 use crate::queue::Queue;
 use crate::server::{ServerClient, ServerState};
 use crate::settings::{BackgroundMode, Repeat, Settings, VisualizerKind};
@@ -233,6 +233,9 @@ pub struct Core {
     /// another app in front) no visuals are drawn, so the track analysis
     /// they need is put off until the app is visible again.
     pub(crate) visible: bool,
+    /// The device is on a metered network (mobile data), as the platform
+    /// reports it.
+    pub(crate) metered: bool,
     pub(crate) live: RealtimeAnalyzer,
     /// Tempo and phase of the music as it plays (live sources: effects on
     /// the predicted beats).
@@ -427,6 +430,7 @@ impl Core {
             analysis_box: Mailbox::default(),
             analysis_requested: false,
             visible: true,
+            metered: false,
             live: RealtimeAnalyzer::new(48000, &analysis_cfg),
             beats: bl_analysis::beat::BeatTracker::new(48000.0 / 1024.0),
             sync_taps: Vec::new(),
@@ -619,6 +623,7 @@ impl Core {
             .unwrap_or(Value::Null);
         Value::object()
             .with("platform", host.platform())
+            .with("metered", self.metered)
             .with("play", play)
             .with(
                 "duration",
@@ -1290,8 +1295,8 @@ impl Core {
             // Already playing (gapless advance).
         } else if id.starts_with(crate::sources::RADIO_PREFIX) {
             self.play_radio(host, &id, autoplay);
-        } else if let Some(opener) = self.opener_for(host, &id) {
-            self.player.load(host, opener, autoplay);
+        } else if let Some(opener) = self.track_opener(host, &id) {
+            self.player.load_opener(host, opener, autoplay);
         } else if let Some(path) = library::local_path(&id) {
             match host.fs_read(path) {
                 Ok(data) => {
@@ -1343,6 +1348,48 @@ impl Core {
             self.show_cover_background(host);
         }
         self.settings_changed();
+    }
+
+    /// Bitrate (kbit/s) the server converts its songs to on the current
+    /// network (0: the original files).
+    pub(crate) fn stream_kbps(&self) -> u32 {
+        if self.metered {
+            self.settings.stream_kbps_metered
+        } else {
+            self.settings.stream_kbps
+        }
+    }
+
+    /// Opener for a track: a server track converted to Opus when the
+    /// setting for the current network asks for it, otherwise the file.
+    fn track_opener(&self, host: &dyn Host, id: &str) -> Option<Opener> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let kbps = self.stream_kbps();
+            let server_track = !id.contains(':') && library::local_path(id).is_none();
+            if kbps > 0
+                && server_track
+                && host.has_threads()
+                && !host.audio_is_push()
+                && self.offline_opener(id).is_none()
+            {
+                let url = self.server.media_url(&format!(
+                    "{}?format=opus&bitrate={kbps}",
+                    bl_net::api::paths::track_stream(id)
+                ));
+                let (headers, track) = (self.server.headers(), self.track_for(id));
+                return Some(Opener::Decoder(Box::new(move || {
+                    crate::transcoded::Transcoded::open(
+                        url,
+                        headers,
+                        track.duration_ms,
+                        track.codec,
+                    )
+                    .map(|d| Box::new(d) as Box<dyn bl_media::Decoder>)
+                })));
+            }
+        }
+        self.opener_for(host, id).map(Opener::Source)
     }
 
     /// Opener streaming a track (None when it must be read or downloaded
@@ -1420,7 +1467,7 @@ impl Core {
         if self.preloaded.0 == serial && self.preloaded.1 == want {
             return;
         }
-        let opener = want.as_deref().and_then(|id| self.opener_for(host, id));
+        let opener = want.as_deref().and_then(|id| self.track_opener(host, id));
         let want = if opener.is_some() { want } else { None };
         if self.player.preload(opener) {
             let gain = match &want {

@@ -138,6 +138,10 @@ pub struct Settings {
     pub beat_prediction: bool,
     /// Most space offline copies may take (MB, 0 = no limit).
     pub offline_limit_mb: u64,
+    /// Server songs converted to Opus at this bitrate (kbit/s, 0 = the
+    /// original files), on Wi-Fi/cable and on mobile data.
+    pub stream_kbps: u32,
+    pub stream_kbps_metered: u32,
     /// Speech model for timing song texts on the device ("" = none).
     pub speech_model: String,
     /// Adapt effects automatically to the energy and sections of the track.
@@ -223,6 +227,8 @@ impl Default for Settings {
             sync_offset_ms: 0.0,
             beat_prediction: true,
             offline_limit_mb: 0,
+            stream_kbps: 0,
+            stream_kbps_metered: 0,
             speech_model: String::new(),
             adaptive: true,
             normalize: false,
@@ -305,6 +311,8 @@ impl Settings {
                 .clamp(-500.0, 500.0),
             beat_prediction: v.bool_or("beatPrediction", d.beat_prediction),
             offline_limit_mb: v.get("offlineLimitMb").as_u64().unwrap_or(0).min(1 << 24),
+            stream_kbps: stream_kbps(v.get("streamKbps").as_u64()),
+            stream_kbps_metered: stream_kbps(v.get("streamKbpsMetered").as_u64()),
             speech_model: v.str_or("speechModel", "").chars().take(64).collect(),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
@@ -381,6 +389,8 @@ impl Settings {
             .with("syncOffsetMs", self.sync_offset_ms)
             .with("beatPrediction", self.beat_prediction)
             .with("offlineLimitMb", self.offline_limit_mb)
+            .with("streamKbps", self.stream_kbps)
+            .with("streamKbpsMetered", self.stream_kbps_metered)
             .with("speechModel", self.speech_model.as_str())
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
@@ -404,6 +414,14 @@ impl Settings {
             .with("syncUser", self.sync_user.as_str())
             .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
+    }
+}
+
+/// A stream bitrate: 0 (original files) or 24..=256 kbit/s.
+fn stream_kbps(v: Option<u64>) -> u32 {
+    match v.unwrap_or(0) {
+        0 => 0,
+        k => k.clamp(24, 256) as u32,
     }
 }
 

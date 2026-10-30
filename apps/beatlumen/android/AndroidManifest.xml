@@ -10,6 +10,8 @@
 
     <!-- Music server configured by the user (plain HTTP on the LAN). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Mobile data or Wi-Fi: the stream quality setting per network. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Local music library and background images. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

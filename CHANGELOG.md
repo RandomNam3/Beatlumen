@@ -22,6 +22,8 @@ and the server is managed in the browser.
 - Playlist files (M3U, PLS, XSPF) in the music folders are read-only
   playlists. A hung network mount no longer stalls the scan.
 - Song texts timed by speech recognition get word times (enhanced LRC).
+- **Smaller streams**: on request the server converts songs to Opus while
+  sending them (own encoder, 24–256 kbit/s); seeking starts a new stream.
 - Devices: the apps of one account see, control and take over each
   other's playback; settings follow the account (end-to-end encrypted).
 
@@ -40,6 +42,8 @@ and the server is managed in the browser.
   links: play now, queue or keep in the encrypted files.
 - **Playlists**: import M3U/M3U8/PLS/XSPF, export as M3U8.
 - **Offline**: whole albums and playlists, a storage limit and an overview.
+- **Streaming quality** per network: e.g. the originals on Wi-Fi and Opus
+  at 96 kbit/s on mobile data.
 - **Speech recognition on the device**: models downloaded in the app; plain
   song texts timed word by word, missing ones written down.
 - **Interface**: settings in categories with search, a "More" entry on

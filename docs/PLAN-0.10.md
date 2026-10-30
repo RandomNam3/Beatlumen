@@ -156,7 +156,7 @@ them and the apps play through it).
 
 ## Phase 8: offloading
 
-- [ ] Smaller streams for mobile data: an own Opus encoder (CELT mode) on
+- [x] Smaller streams for mobile data: an own Opus encoder (CELT mode) on
   the server, used when the app asks for it (setting per network type).
 - [x] Remote sources indexed and analysed on the server (from phase 4).
 

@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
+#include <QNetworkInformation>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QPalette>
@@ -404,6 +405,22 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     });
 #if defined(BEATLUMEN_MPRIS) || defined(BEATLUMEN_SMTC)
     m_desktopMedia = new DesktopMedia(this);
+#endif
+#ifndef Q_OS_WASM
+    // Mobile data or not: picks the stream quality setting for the network.
+    if (QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Metered)
+        || QNetworkInformation::loadDefaultBackend()) {
+        if (auto *net = QNetworkInformation::instance()) {
+            auto report = [this, net]() {
+                const bool metered = net->isMetered()
+                    || net->transportMedium() == QNetworkInformation::TransportMedium::Cellular;
+                call(QStringLiteral("net.metered"), {{QStringLiteral("metered"), metered}});
+            };
+            connect(net, &QNetworkInformation::isMeteredChanged, this, report);
+            connect(net, &QNetworkInformation::transportMediumChanged, this, report);
+            report();
+        }
+    }
 #endif
 #ifdef Q_OS_ANDROID
     // Background playback: media session, notification, foreground service.

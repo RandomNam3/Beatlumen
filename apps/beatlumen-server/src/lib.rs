@@ -60,6 +60,8 @@ use std::time::{Duration, Instant};
 
 /// Concurrent thumbnail generations (bounds decoder memory use).
 const MAX_THUMBNAILS: usize = 2;
+/// Songs converted to Opus at the same time (for mobile data).
+pub(crate) const MAX_TRANSCODES: usize = 16;
 
 /// Locations inside the data folder.
 pub struct DataPaths {
@@ -149,6 +151,8 @@ pub struct State {
     pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
+    /// Opus conversions running now.
+    pub transcodes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub web: web::WebClient,
     pub vault: vault::Vault,
     pub extensions: extensions::Extensions,
@@ -674,6 +678,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         sources,
         folder_playlists: RwLock::new(Vec::new()),
         thumbs: util::Semaphore::new(MAX_THUMBNAILS),
+        transcodes: Default::default(),
         library: RwLock::new(Arc::new(index)),
         cache_dirty: AtomicBool::new(false),
         scan: Mutex::new(ScanFlags {

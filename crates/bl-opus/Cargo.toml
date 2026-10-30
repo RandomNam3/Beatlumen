@@ -1,9 +1,10 @@
 [package]
 name = "bl-opus"
-description = "Opus (RFC 6716) audio decoder"
+description = "Opus (RFC 6716) audio decoder and CELT-only encoder"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 

@@ -76,6 +76,7 @@ dependencies = [
  "bl-media",
  "bl-net",
  "bl-offline",
+ "bl-opus-enc",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -213,6 +214,15 @@ name = "bl-opus"
 version = "0.10.0"
 dependencies = [
  "bl-ogg",
+]
+
+[[package]]
+name = "bl-opus-enc"
+version = "0.10.0"
+dependencies = [
+ "bl-media",
+ "bl-ogg",
+ "bl-opus",
 ]
 
 [[package]]

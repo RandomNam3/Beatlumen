@@ -1,0 +1,12 @@
+[package]
+name = "bl-opus-enc"
+description = "Ogg Opus encoding: CELT-only Opus streams from decoded audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-opus = { path = "../bl-opus" }
+bl-ogg = { path = "../bl-ogg" }
+bl-media = { path = "../bl-media" }

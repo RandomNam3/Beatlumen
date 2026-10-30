@@ -45,6 +45,8 @@ mod speech;
 mod speech;
 pub mod strings;
 mod tempo;
+#[cfg(not(target_arch = "wasm32"))]
+mod transcoded;
 mod vault;
 mod visual;
 mod webcheck;

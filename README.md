@@ -145,7 +145,8 @@ crates/bl-fx            effect engine (triggers, camera, particles, transitions)
 crates/bl-render        OpenGL / OpenGL ES / WebGL 2 renderer
 crates/bl-analysis      FFT, beat and section analysis
 crates/bl-media         containers, tags, resampling; codecs in bl-mp3, bl-aac,
-                        bl-opus, bl-vorbis, bl-flac, bl-ogg
+                        bl-opus, bl-vorbis, bl-flac, bl-ogg; Ogg Opus encoding
+                        for streaming in bl-opus-enc
 crates/bl-gl            OpenGL bindings (loaded at run time)
 crates/bl-net, bl-json, bl-image   HTTP, JSON and image codecs
 crates/bl-vault         end-to-end encryption of the user's files (+ bl-vault-wasm)

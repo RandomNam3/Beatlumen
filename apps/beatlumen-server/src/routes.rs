@@ -478,6 +478,9 @@ fn library(state: &State, req: &Request) -> Response {
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
+    if req.query("format") == Some("opus") {
+        return transcoded(state, req, e);
+    }
     if let Some((src, key)) = &e.remote {
         let range = req.header("range");
         return match state.sources.open(src, key) {
@@ -501,6 +504,101 @@ fn stream(state: &State, req: &Request, e: &Entry) -> Response {
         return Response::error(404, "track file not found");
     }
     resp.with_header("Cache-Control", "private, max-age=3600")
+}
+
+/// The song converted to Ogg Opus while it is sent (smaller streams for
+/// mobile data): `bitrate` in kbit/s, `start` in milliseconds (seeking
+/// opens a new stream there). The length is not known up front, so byte
+/// ranges are ignored.
+fn transcoded(state: &State, req: &Request, e: &Entry) -> Response {
+    use std::sync::atomic::Ordering;
+    let bitrate = req
+        .query("bitrate")
+        .and_then(|b| b.parse::<u32>().ok())
+        .unwrap_or(128)
+        .clamp(24, 256);
+    let start_ms = req
+        .query("start")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let running = state.transcodes.fetch_add(1, Ordering::SeqCst);
+    let slot = TranscodeSlot(state.transcodes.clone());
+    if running >= crate::MAX_TRANSCODES {
+        return Response::error(503, "too many songs are converted right now")
+            .with_header("Retry-After", "5");
+    }
+    let src: Box<dyn bl_media::Source> = match &e.remote {
+        Some((src, key)) => match state.sources.open(src, key) {
+            Ok(s) => {
+                if start_ms == 0 {
+                    state.sources.played(src, key);
+                }
+                s
+            }
+            Err(err) => {
+                crate::warn!("cannot open {}: {err}", e.track.path);
+                return Response::error(502, "cannot read the song from its source");
+            }
+        },
+        None => match std::fs::File::open(&e.abs) {
+            Ok(f) => Box::new(std::io::BufReader::with_capacity(64 * 1024, f)),
+            Err(_) => {
+                crate::warn!("track file vanished: {}", e.abs.display());
+                state.file_missing();
+                return Response::error(404, "track file not found");
+            }
+        },
+    };
+    let mut decoder = match bl_media::open(src, Some(&e.ext())) {
+        Ok(d) => d,
+        Err(err) => {
+            crate::debug!("cannot decode {}: {err}", e.rel);
+            return Response::error(415, "cannot decode the song");
+        }
+    };
+    if start_ms > 0 {
+        let frame = start_ms * decoder.spec().sample_rate as u64 / 1000;
+        if let Err(err) = decoder.seek(frame) {
+            crate::debug!("cannot seek in {}: {err}", e.rel);
+            return Response::error(416, "cannot start the song there");
+        }
+    }
+    let mut opts = bl_opus_enc::TranscodeOptions::new(bitrate * 1000);
+    // The same bytes when the client reconnects (it reads the start again
+    // while finding out the format).
+    opts.serial = Some(e.track.id.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ b as u32).wrapping_mul(0x0100_0193)
+    }));
+    match bl_opus_enc::Transcoder::with_options(decoder, &opts) {
+        Ok(t) => {
+            let mut r = Response::new(200);
+            r.body = bl_net::server::Body::Stream(Box::new(Slotted(t, slot)));
+            r.with_header("Content-Type", "audio/ogg")
+                .with_header("Cache-Control", "no-store")
+                .with_header("X-Beatlumen-Transcoded", "opus")
+        }
+        Err(err) => {
+            crate::debug!("cannot convert {}: {err}", e.rel);
+            Response::error(415, "cannot convert the song")
+        }
+    }
+}
+
+/// Counts a running conversion until the response is sent (or dropped).
+struct TranscodeSlot(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for TranscodeSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+struct Slotted<R>(R, #[allow(dead_code)] TranscodeSlot);
+
+impl<R: std::io::Read> std::io::Read for Slotted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
 }
 
 /// Serves a cover thumbnail of a track (cached per size and source stamp).

@@ -586,6 +586,45 @@ Item {
                     onSwitched: (on) => Core.call("settings.set", { key: "remoteControl", value: on })
                 }
             }
+            // ---- stream quality (the server converts to Opus) ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                visible: page.server === "connected" && Core.platform !== "web"
+                         && page.shows("server", ["Streaming quality", "Original", "On Wi-Fi", "On mobile data", "Smaller streams save data: the server converts songs to Opus while sending them. Offline copies stay originals.", "Now on mobile data"])
+                SectionLabel { text: Theme.tr("Streaming quality") }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    text: Theme.tr("Smaller streams save data: the server converts songs to Opus while sending them. Offline copies stay originals.")
+                          + (Core.state.metered ? " " + Theme.tr("Now on mobile data") + "." : "")
+                }
+                Repeater {
+                    model: [
+                        { key: "streamKbps", label: Theme.tr("On Wi-Fi") },
+                        { key: "streamKbpsMetered", label: Theme.tr("On mobile data") }
+                    ]
+                    RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.label; color: Theme.text }
+                        ComboBox {
+                            readonly property var rates: [0, 256, 160, 128, 96, 64, 48]
+                            model: rates.map(r => r === 0 ? Theme.tr("Original") : r + " kbit/s")
+                            currentIndex: Math.max(0, rates.indexOf(page.settings[modelData.key] || 0))
+                            onActivated: (i) => Core.call("settings.set", { key: modelData.key, value: rates[i] })
+                            Accessible.name: Theme.tr("Streaming quality") + " " + modelData.label
+                        }
+                    }
+                }
+            }
             // ---- account ----
             ColumnLayout {
                 objectName: "section"
