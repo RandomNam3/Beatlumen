@@ -68,7 +68,11 @@ jobs:
             -alias "${ANDROID_KEY_ALIAS:-androiddebugkey}" | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr A-F a-f)
           rm -f "$RUNNER_TEMP/ks"
           signer=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
-          got=$("$signer" verify --print-certs apk/beatlumen.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d '[:space:]' | tr A-F a-f)
+          certs=$("$signer" verify --print-certs apk/beatlumen.apk 2>&1)
+          echo "$certs" | grep -iE "signer|digest|verif" || true
+          # The first signer's SHA-256 digest (the wording differs between
+          # apksigner versions).
+          got=$(echo "$certs" | grep -iE "sha-?256 digest" | head -n 1 | grep -oE "[0-9a-fA-F]{64}" | tr A-F a-f || true)
           want=$(echo "$want" | tr -d '[:space:]')
           # (Certificate fingerprints, not secrets.)
           echo "project key: $want"
