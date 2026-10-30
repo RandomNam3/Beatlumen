@@ -23,12 +23,29 @@ fn main() {
         let text = a.get(4).map(|p| std::fs::read_to_string(p).unwrap());
         // TITLE in the environment: the song's title.
         let title = std::env::var("TITLE").ok();
+        // ALIGN_DIR in the environment: word times from the alignment
+        // models in that folder.
+        // VOCALS: a 16 kHz WAV of the singing alone, for the alignment.
+        let aligner = std::env::var("ALIGN_DIR").ok().map(|d| {
+            let mut a = bl_align::Aligners::new(d);
+            a.set_vocals(std::env::var("VOCALS").ok().map(|p| {
+                let raw = std::fs::read(p).unwrap();
+                raw[44..]
+                    .chunks_exact(2)
+                    .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                    .collect()
+            }));
+            a
+        });
         match bl_asr::sync::time_song(
             &m,
             "test",
             &samples,
             text.as_deref(),
             title.as_deref(),
+            aligner
+                .as_ref()
+                .map(|a| a as &dyn bl_asr::transcribe::WordAligner),
             &mut |_| true,
         ) {
             Ok(t) => print!("{}", t.lrc),

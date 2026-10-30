@@ -12,8 +12,14 @@ gpu = ["dep:bl-gpu"]
 
 [dependencies]
 bl-json = { path = "../bl-json" }
+# Syllables of sung words.
+bl-hyph = { path = "../bl-hyph" }
 bl-gpu = { path = "../bl-gpu", optional = true }
 
 # Model downloads (not in the browser).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bl-net = { path = "../bl-net" }
+
+[dev-dependencies]
+# The examples time words with an alignment model too.
+bl-align = { path = "../bl-align" }

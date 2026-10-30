@@ -412,6 +412,7 @@ fn recognize(
         &samples,
         text.as_deref(),
         Some(title),
+        None,
         &mut cb,
     )
     .map(|t| t.lrc)

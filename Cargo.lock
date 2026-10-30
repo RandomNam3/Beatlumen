@@ -104,6 +104,7 @@ name = "bl-align"
 version = "0.11.0"
 dependencies = [
  "bl-asr",
+ "bl-hyph",
  "bl-json",
  "bl-mt",
 ]
@@ -116,7 +117,9 @@ version = "0.11.0"
 name = "bl-asr"
 version = "0.11.0"
 dependencies = [
+ "bl-align",
  "bl-gpu",
+ "bl-hyph",
  "bl-json",
  "bl-net",
 ]

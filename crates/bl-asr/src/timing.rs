@@ -265,8 +265,73 @@ pub fn word_spans(pieces: &[&[u8]]) -> Vec<(usize, usize)> {
     out
 }
 
+/// A word's pieces as its syllables (hyphenation patterns of `lang`): each
+/// syllable starts where its first letter falls in the word's timed pieces
+/// (by its share of letters within the piece). Empty for a word of one
+/// syllable or a language without patterns.
+pub fn syllable_pieces(w: &Word, lang: &str) -> Vec<(f64, String)> {
+    let parts = bl_hyph::syllables(&w.text, lang);
+    if parts.len() < 2 {
+        return Vec::new();
+    }
+    // (first character, start) of each timed piece, then the word's end.
+    let mut marks: Vec<(usize, f64)> = Vec::new();
+    let mut pos = 0usize;
+    for (t, p) in &w.pieces {
+        marks.push((pos, *t));
+        pos += p.chars().count();
+    }
+    if marks.is_empty() || pos != w.text.chars().count() {
+        marks = vec![(0, w.start)];
+    }
+    marks.push((w.text.chars().count(), w.end.max(w.start)));
+    let at = |c: usize| {
+        let k = marks.iter().rposition(|m| m.0 <= c).unwrap_or(0);
+        let (c0, t0) = marks[k];
+        let (c1, t1) = marks.get(k + 1).copied().unwrap_or((c0 + 1, t0));
+        t0 + (t1 - t0) * (c - c0) as f64 / (c1 - c0).max(1) as f64
+    };
+    let mut out = Vec::with_capacity(parts.len());
+    let mut c = 0usize;
+    let mut last = w.start;
+    for p in parts {
+        let t = if out.is_empty() {
+            w.start
+        } else {
+            at(c).max(last)
+        };
+        c += p.chars().count();
+        last = t;
+        out.push((t, p));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pieces_become_syllables() {
+        // Tokens "togeth" + "er": syllables "to" + "gether", the second
+        // starting two letters into the first token.
+        let w = Word {
+            text: "together".into(),
+            start: 1.0,
+            end: 2.0,
+            pieces: vec![(1.0, "togeth".into()), (1.6, "er".into())],
+        };
+        let p = syllable_pieces(&w, "en");
+        assert_eq!(
+            p.iter().map(|x| x.1.as_str()).collect::<Vec<_>>(),
+            ["to", "gether"]
+        );
+        assert!((p[1].0 - 1.2).abs() < 1e-9, "{p:?}");
+        let one = Word {
+            text: "you".into(),
+            ..w
+        };
+        assert!(syllable_pieces(&one, "en").is_empty());
+    }
     use super::*;
 
     #[test]

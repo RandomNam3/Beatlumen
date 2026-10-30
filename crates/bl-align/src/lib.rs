@@ -26,6 +26,7 @@
 pub mod config;
 pub mod ctc;
 pub mod models;
+pub mod set;
 pub mod text;
 pub mod wav2vec2;
 pub mod weights;
@@ -33,6 +34,7 @@ pub mod weights;
 pub use bl_mt::torch::Keep;
 pub use config::{Config, SAMPLE_RATE};
 pub use ctc::LogProbs;
+pub use set::Aligners;
 use std::path::Path;
 use text::Vocab;
 use wav2vec2::Model;

@@ -7,5 +7,6 @@ license.workspace = true
 
 [dependencies]
 bl-asr = { path = "../bl-asr" }
+bl-hyph = { path = "../bl-hyph" }
 bl-json = { path = "../bl-json" }
 bl-mt = { path = "../bl-mt" }

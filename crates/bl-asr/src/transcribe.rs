@@ -27,10 +27,6 @@ const MIN_LOGPROB: f32 = -1.0;
 /// no singing.
 const NO_SPEECH: f32 = 0.6;
 
-/// Text tokens in a row after which a timestamp gets favoured (about a
-/// sung line).
-const LONG_RUN: usize = 12;
-
 /// Special tokens (their ids depend on the vocabulary size).
 #[derive(Debug, Clone, Copy)]
 pub struct Specials {
@@ -130,6 +126,20 @@ pub struct Transcriber<'a> {
     pub sp: Specials,
     index: HashMap<Vec<u8>, u32>,
     max_token_len: usize,
+    /// Word times of known texts from another model, when there is one.
+    aligner: Option<&'a dyn WordAligner>,
+}
+
+/// Word times of a known text from a model made for it (a CTC aligner),
+/// used instead of Whisper's attention when it has one for the language.
+pub trait WordAligner: Sync {
+    /// The words of `text` (split at whitespace, in order, one each) with
+    /// times in seconds from the start of `audio` (16 kHz mono), and their
+    /// pieces (syllables) when the word has several; `None` when it has no
+    /// model for `lang` (ISO 639-1) or the text does not fit the audio.
+    /// `at`: where `audio` starts in the song (seconds), for an aligner
+    /// that listens to its own track of the song (the singing alone).
+    fn align(&self, lang: &str, audio: &[f32], at: f64, text: &str) -> Option<Vec<Word>>;
 }
 
 fn log_softmax(x: &[f32]) -> Vec<f32> {
@@ -150,11 +160,18 @@ impl<'a> Transcriber<'a> {
             }
         }
         Transcriber {
+            aligner: None,
             m,
             sp,
             index,
             max_token_len,
         }
+    }
+
+    /// Known texts get their word times from `aligner` where it can.
+    pub fn with_aligner(mut self, aligner: Option<&'a dyn WordAligner>) -> Transcriber<'a> {
+        self.aligner = aligner;
+        self
     }
 
     /// Text to tokens by greedy longest match over the vocabulary (the
@@ -436,14 +453,62 @@ impl<'a> Transcriber<'a> {
             if seek >= content_frames {
                 break;
             }
-            let window = mel.window(seek);
-            let audio = encode(self.m, &window)?;
-            let mut dec = Decoder::new(self.m, &audio)?;
+            let from = seek * HOP;
+            let audio = &samples[from..(from + WINDOW_FRAMES * HOP).min(samples.len())];
+            // The window's language (from the first window when not given).
+            let mut dec = None;
             if lang.is_none() && self.m.multilingual() {
-                dec.reset();
-                let logits = dec.step(&[self.sp.sot])?;
+                let window = mel.window(seek);
+                let mut d = Decoder::new(self.m, &encode(self.m, &window)?)?;
+                d.reset();
+                let logits = d.step(&[self.sp.sot])?;
                 lang = Some(self.best_language(&logits));
+                dec = Some(d);
             }
+            let code = lang
+                .and_then(|l| LANGUAGES.get((l - self.sp.lang0) as usize))
+                .copied()
+                .unwrap_or("en");
+            // A model made for word timing, when there is one.
+            let texts: Vec<&str> = group.iter().map(|&li| lines[li].text.trim()).collect();
+            let counts: Vec<usize> = texts.iter().map(|t| t.split_whitespace().count()).collect();
+            // Only the stretch of these lines: later in the window other
+            // lines are sung, choruses with the same words.
+            let until = group.iter().map(|&li| lines[li].end).fold(begin, f64::max) + 0.5;
+            let span = ((until - begin).max(0.5) * SAMPLE_RATE as f64) as usize;
+            let aligned = self
+                .aligner
+                .and_then(|a| {
+                    a.align(
+                        code,
+                        &audio[..span.min(audio.len())],
+                        from as f64 / SAMPLE_RATE as f64,
+                        &texts.join(" "),
+                    )
+                })
+                .filter(|w| w.len() == counts.iter().sum::<usize>());
+            if let Some(words) = aligned {
+                let mut it = words.into_iter();
+                for (&li, &n) in group.iter().zip(&counts) {
+                    let l = &lines[li];
+                    for w in it.by_ref().take(n) {
+                        let words = &mut out[li];
+                        let floor = words
+                            .last()
+                            .map_or(l.start.max(begin) - 0.3, |x: &Word| x.start);
+                        let start = (begin + w.start).clamp(floor.max(0.0), l.end.max(l.start));
+                        let end = (begin + w.end).clamp(start, l.end.max(start));
+                        after = after.max(end);
+                        words.push(shifted(w, begin, start, end));
+                    }
+                }
+                k += group.len();
+                continue;
+            }
+            let mut dec = match dec {
+                Some(d) => d,
+                None => Decoder::new(self.m, &encode(self.m, &mel.window(seek))?)?,
+            };
             let mut all: Vec<u32> = Vec::new();
             let mut owner: Vec<usize> = Vec::new();
             for &li in &group {
@@ -452,8 +517,6 @@ impl<'a> Transcriber<'a> {
                 owner.extend(std::iter::repeat(li).take(t.len()));
             }
             let frames = ((content_frames - seek).min(WINDOW_FRAMES) / 2).max(1);
-            let from = seek * HOP;
-            let audio = &samples[from..(from + WINDOW_FRAMES * HOP).min(samples.len())];
             let words = self.word_times(&mut dec, lang, &all, frames, audio)?;
             for (w, first) in words {
                 let li = owner[first];
@@ -465,7 +528,10 @@ impl<'a> Transcriber<'a> {
                 let start = (begin + w.start).clamp(floor.max(0.0), l.end.max(l.start));
                 let end = (begin + w.end).clamp(start, l.end.max(start));
                 after = after.max(end);
-                words.push(shifted(w, begin, start, end));
+                let mut w = shifted(w, begin, start, end);
+                // Pieces by syllable, not by the model's tokens.
+                w.pieces = crate::timing::syllable_pieces(&w, code);
+                words.push(w);
             }
             k += group.len();
         }
@@ -670,27 +736,7 @@ impl<'a> Transcriber<'a> {
                 .iter()
                 .copied()
                 .fold(f32::MIN, f32::max);
-            // Some models (large v3 turbo) write long stretches without
-            // timestamps (whole verses in one segment, no line breaks): the
-            // longer the stretch, the more a timestamp is favoured where a
-            // new word would start.
-            let run = tokens.iter().rev().take_while(|&&t| t < sp.eot).count();
-            let bias = if run >= LONG_RUN {
-                let next_word = lp[..sp.eot as usize]
-                    .iter()
-                    .enumerate()
-                    .max_by(|a, b| a.1.total_cmp(b.1))
-                    .and_then(|(t, _)| self.m.vocab.get(t))
-                    .is_some_and(|v| v.first() == Some(&b' '));
-                if next_word {
-                    (1.0 + 0.25 * (run - LONG_RUN) as f32).min(4.0)
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-            let range = if ts_mass + bias > max_text {
+            let range = if ts_mass > max_text {
                 sp.ts_begin as usize..n_vocab
             } else {
                 0..n_vocab

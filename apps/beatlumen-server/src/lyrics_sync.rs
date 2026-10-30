@@ -385,6 +385,7 @@ impl LyricsSync {
             &samples,
             text.as_deref(),
             Some(&e.track.title),
+            None,
             &mut progress,
         )?;
         let path = if timed.written_down {

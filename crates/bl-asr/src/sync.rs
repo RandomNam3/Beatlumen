@@ -65,7 +65,8 @@ pub struct Timed {
 
 /// Times `text` (or writes down what is sung) for `samples` (mono,
 /// 16 kHz) with `model` (`model_id` is written into the result). `title`:
-/// the song's title, for spelled-out words of it.
+/// the song's title, for spelled-out words of it. `aligner`: a model for
+/// word times (else Whisper's attention gives them).
 /// `progress` gets 0..1 and cancels with false.
 pub fn time_song(
     model: &Model,
@@ -73,9 +74,10 @@ pub fn time_song(
     samples: &[f32],
     text: Option<&str>,
     title: Option<&str>,
+    aligner: Option<&dyn crate::transcribe::WordAligner>,
     progress: &mut dyn FnMut(f32) -> bool,
 ) -> Result<Timed, String> {
-    let t = Transcriber::new(model);
+    let t = Transcriber::new(model).with_aligner(aligner);
     let song_end = samples.len() as f64 / crate::mel::SAMPLE_RATE as f64;
     let text = text.map(str::trim).filter(|t| !t.is_empty());
     if let Some(lrc) = text.and_then(lrc_lines) {
