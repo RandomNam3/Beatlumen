@@ -36,9 +36,12 @@ fn kicks(bpm: f64, seconds: u32) -> Vec<u8> {
 }
 
 /// Plays on like a sound card, analysing as it goes; the position after.
+/// Paced so the decoder keeps up (gaps of silence would shift the heard
+/// beats against the position, as on a slow test machine).
 fn play_for(app: &mut App, seconds: f64) -> f64 {
     let start = app.core.position(&app.host);
     loop {
+        std::thread::sleep(std::time::Duration::from_millis(2));
         app.state();
         if let Some(src) = app.host.audio.lock().unwrap().clone() {
             let mut buf = vec![0f32; 1024];
@@ -65,6 +68,8 @@ fn tempo_and_tap_sync() {
             .with("play", true),
     );
     app.wait("playing", |s| s.str_or("play", "") == "playing");
+    // The decoder fills its buffer first.
+    std::thread::sleep(std::time::Duration::from_millis(300));
     play_for(&mut app, 8.0);
     let s = app.state();
     let bpm = s.get("tempo").get("bpm").as_f64().expect("a tempo");
@@ -81,6 +86,11 @@ fn tempo_and_tap_sync() {
         assert!(r.get("error").is_null(), "{r:?}");
     }
     let s = app.state();
+    assert_eq!(
+        s.get("underruns").as_u64(),
+        Some(0),
+        "the decoder fell behind"
+    );
     let measured = s.get("tempo").get("measuredMs").as_f64().unwrap();
     assert!((measured - 120.0).abs() < 40.0, "{measured}");
     let r = app.cmd(Value::object().with("cmd", "sync.apply"));
