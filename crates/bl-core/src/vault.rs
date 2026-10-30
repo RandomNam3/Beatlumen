@@ -432,10 +432,15 @@ impl Core {
         self.vault.rev += 1;
     }
 
+    /// A server to talk to (also while it is being connected again, e.g.
+    /// after an account opened its library; an unreachable one fails the
+    /// request itself).
     pub(crate) fn vault_ready(&self) -> bool {
         matches!(
             self.server.state,
-            crate::server::ServerState::Connected(_) | crate::server::ServerState::NeedsLogin(_)
+            crate::server::ServerState::Connected(_)
+                | crate::server::ServerState::NeedsLogin(_)
+                | crate::server::ServerState::Connecting
         )
     }
 
