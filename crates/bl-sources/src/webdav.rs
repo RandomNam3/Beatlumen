@@ -279,6 +279,16 @@ pub fn nextcloud_start(server: &str) -> Result<NextcloudLogin, String> {
     if login.login_url.is_empty() || login.poll_endpoint.is_empty() || login.token.is_empty() {
         return Err("not a Nextcloud server".into());
     }
+    // The answer is only asked for at the server itself.
+    let (Ok(own), Ok(poll)) = (
+        client::Url::parse(server),
+        client::Url::parse(&login.poll_endpoint),
+    ) else {
+        return Err("invalid address".into());
+    };
+    if poll.scheme != own.scheme || !poll.host.eq_ignore_ascii_case(&own.host) {
+        return Err("the server's login address is on another host".into());
+    }
     Ok(login)
 }
 

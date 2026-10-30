@@ -623,3 +623,26 @@ fn web_folder_limits() {
     assert!(!log.iter().any(|l| l.contains("xxxxx")));
     assert!(log.iter().any(|l| l.ends_with("/music/d0/")));
 }
+
+/// The Nextcloud login flow only asks the server itself for the result.
+#[test]
+fn nextcloud_login_stays_on_the_server() {
+    let poll = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let endpoint = poll.clone();
+    let (base, _log) = serve(move |r| match (r.method.as_str(), r.target.as_str()) {
+        ("POST", "/index.php/login/v2") => {
+            let e = endpoint.lock().unwrap().clone();
+            let body =
+                format!(r#"{{"poll":{{"token":"t","endpoint":"{e}"}},"login":"http://x/login"}}"#);
+            (200, "application/json", body.into_bytes())
+        }
+        _ => (404, "text/plain", Vec::new()),
+    });
+    *poll.lock().unwrap() = base.replace("127.0.0.1", "localhost") + "/poll";
+    let e = bl_sources::webdav::nextcloud_start(&base)
+        .err()
+        .expect("refused");
+    assert!(e.contains("another host"), "{e}");
+    *poll.lock().unwrap() = format!("{base}/index.php/login/v2/poll");
+    assert!(bl_sources::webdav::nextcloud_start(&base).is_ok());
+}
