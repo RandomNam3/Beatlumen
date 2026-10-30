@@ -140,15 +140,26 @@ fn strip_annotations(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The segments with speech (sounds removed).
+/// The segments with speech (sounds removed). A short segment that only
+/// repeats the end of the one before is dropped (models echo the last
+/// words into the silence after them).
 fn speech_segments(segments: &[Segment]) -> Vec<Segment> {
-    segments
-        .iter()
-        .filter_map(|s| {
-            let text = strip_annotations(&s.text);
-            (!text.is_empty()).then(|| Segment { text, ..s.clone() })
-        })
-        .collect()
+    let mut out: Vec<Segment> = Vec::new();
+    for s in segments {
+        let text = strip_annotations(&s.text);
+        if text.is_empty() {
+            continue;
+        }
+        let words: Vec<String> = text.split_whitespace().map(norm).collect();
+        let echo = out.last().is_some_and(|p| {
+            let prev: Vec<String> = p.text.split_whitespace().map(norm).collect();
+            words.len() <= 3 && prev.len() > words.len() && prev.ends_with(&words)
+        });
+        if !echo {
+            out.push(Segment { text, ..s.clone() });
+        }
+    }
+    out
 }
 
 /// A segment's text as lines of readable length, each with its estimated
@@ -357,6 +368,15 @@ mod tests {
         );
         assert_eq!(lrc, "[00:00.00]Hello there\n");
         assert_eq!(matched, 1.0);
+    }
+
+    #[test]
+    fn echoed_endings_are_dropped() {
+        let lrc = segments_to_lrc(&[
+            seg(0.0, 10.0, "ask what you can do for your country."),
+            seg(10.0, 12.0, " country."),
+        ]);
+        assert_eq!(lrc, "[00:00.00]ask what you can do for your country.\n");
     }
 
     #[test]
