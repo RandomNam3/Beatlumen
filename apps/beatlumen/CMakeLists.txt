@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(beatlumen VERSION 0.1.0 LANGUAGES C CXX)
+project(beatlumen VERSION 0.10.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -184,7 +184,7 @@ elseif(ANDROID)
             imageformats Qt6::QJpegPlugin Qt6::QWebpPlugin Qt6::QGifPlugin Qt6::QSvgPlugin
         EXCLUDE Qt6::QOffscreenIntegrationPlugin
         EXCLUDE_BY_TYPE qmltooling tls networkinformation multimedia)
-    set(BL_ANDROID_VERSION_CODE 3 CACHE STRING "android:versionCode")
+    set(BL_ANDROID_VERSION_CODE 100 CACHE STRING "android:versionCode")
     # Compressed native libraries: the APK is sideloaded, so its download
     # size matters more than the extraction at install time.
     option(BL_ANDROID_COMPRESS_LIBS "Store the native libraries compressed in the APK" ON)
