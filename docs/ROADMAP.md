@@ -6,6 +6,9 @@ stays in force: remote sources are accessed through the Beatlumen server
 whenever one is connected, and directly from the app only when the user
 explicitly sets them up for app-only use.
 
+The order in which the open items are built, and the 0.10.0 beta after
+them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
+
 ## Lyrics
 - Done: song texts over the visuals from embedded tags (ID3 USLT/SYLT,
   Vorbis comments, MP4, APE, Matroska) or an `.lrc`/`.txt` file next to the
