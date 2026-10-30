@@ -69,6 +69,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Added by you, saved on this device" => "Von dir hinzugefügt, gespeichert auf diesem Gerät",
         "speech model" => "Sprachmodell",
         "All songs on this device are done" => "Alle Songs auf diesem Gerät sind fertig",
+        "The song text's language was not recognised" => "Die Sprache des Songtexts wurde nicht erkannt",
+        "No translation model for this language" => "Kein Übersetzungsmodell für diese Sprache",
         "Not connected to a server" => "Nicht mit einem Server verbunden",
         "Use a password of at least 10 characters" => "Verwende ein Passwort mit mindestens 10 Zeichen",
         "The recovery code is not valid (check for typing errors)" => "Der Wiederherstellungscode ist ungültig (Tippfehler prüfen)",

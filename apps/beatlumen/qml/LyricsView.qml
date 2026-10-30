@@ -27,6 +27,9 @@ Item {
     readonly property bool canLocal: !canSync && local.ready === true && !wordTimed && !local.running
     readonly property var sync: info.sync || (localRun ? { state: "running", progress: localRun.progress, local: true } : null)
     function startSync() { Core.call(canSync ? "lyrics.sync" : "speech.run") }
+    // Translation into the app's language, under each line (on the device).
+    readonly property var translation: info.translation || ({})
+    readonly property bool canTranslate: ready && translation.available !== false && translation.on !== undefined
     // Small lead: a line lights up as it starts being sung.
     readonly property real lead: 0.15
     property int currentLine: -1
@@ -115,6 +118,7 @@ Item {
             readonly property bool past: lv.synced && index < lv.currentLine
             width: ListView.view.width
             height: Math.max(lineText.implicitHeight, words.implicitHeight)
+                + (trText.visible ? trText.implicitHeight + 2 : 0)
             opacity: !lv.synced ? 0.95 : isCurrent ? 1 : past ? 0.4 : 0.6
             Behavior on opacity { NumberAnimation { duration: 250 } }
 
@@ -190,6 +194,21 @@ Item {
                         }
                     }
                 }
+            }
+            // The translation, smaller and dimmer under the line.
+            Label {
+                id: trText
+                visible: !!row.modelData.tr
+                y: Math.max(lineText.implicitHeight, words.implicitHeight) + 2
+                width: parent.width
+                textFormat: Text.PlainText
+                text: row.modelData.tr || ""
+                wrapMode: Text.WordWrap
+                color: Qt.rgba(1, 1, 1, 0.7)
+                font.pixelSize: lineText.font.pixelSize * 0.62
+                font.italic: true
+                style: Text.Raised
+                styleColor: Qt.rgba(0, 0, 0, 0.4)
             }
             // Takes the tap, so it does not also toggle the controls.
             MouseArea {
@@ -278,6 +297,7 @@ Item {
 
     // Where the text comes from and where it is kept.
     Rectangle {
+        id: originPill
         x: 8
         y: 8
         width: Math.min(originLabel.implicitWidth + 20, parent.width - 176)
@@ -297,6 +317,48 @@ Item {
             color: Qt.rgba(1, 1, 1, 0.8)
             font.pixelSize: 12
         }
+    }
+
+    // Translating: the model download, the progress or why not.
+    Rectangle {
+        x: 8
+        y: 8 + (originPill.visible ? originPill.height + 6 : 0)
+        width: Math.min(trState.implicitWidth + 20, parent.width - 176)
+        height: trState.implicitHeight + 8
+        radius: height / 2
+        color: Qt.rgba(0, 0, 0, 0.5)
+        visible: lv.ready && lv.translation.on === true && !!lv.translation.state
+            && (lv.controlsVisible || lv.translation.state !== "failed")
+        Label {
+            id: trState
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: Qt.rgba(1, 1, 1, 0.8)
+            font.pixelSize: 12
+            readonly property int pct: Math.round((lv.translation.progress || 0) * 100)
+            text: lv.translation.state === "downloading"
+                ? Theme.tr("Loading the translation model…") + " " + pct + " %"
+                : lv.translation.state === "running"
+                    ? Theme.tr("Translating…") + " " + pct + " %"
+                    : lv.translation.state === "failed"
+                        ? Theme.tr("No translation:") + " " + (lv.translation.error || "")
+                        : ""
+        }
+    }
+
+    IconButton {
+        id: translateButton
+        anchors.right: removeButton.visible ? removeButton.left : parent.right
+        anchors.bottom: parent.bottom
+        visible: lv.canTranslate && lv.controlsVisible
+        iconName: "translate"
+        iconColor: lv.translation.on === true ? Theme.accent : "white"
+        tip: lv.translation.on === true ? Theme.tr("Hide translation") : Theme.tr("Translate song text")
+        onClicked: Core.call("translate.set", { on: lv.translation.on !== true })
     }
 
     IconButton {

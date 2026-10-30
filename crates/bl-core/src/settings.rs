@@ -144,6 +144,8 @@ pub struct Settings {
     pub stream_kbps_metered: u32,
     /// Speech model for timing song texts on the device ("" = none).
     pub speech_model: String,
+    /// Translate song texts into the app's language (on the device).
+    pub translate: bool,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
@@ -230,6 +232,7 @@ impl Default for Settings {
             stream_kbps: 0,
             stream_kbps_metered: 0,
             speech_model: String::new(),
+            translate: false,
             adaptive: true,
             normalize: false,
             crossfade: 0.0,
@@ -314,6 +317,7 @@ impl Settings {
             stream_kbps: stream_kbps(v.get("streamKbps").as_u64()),
             stream_kbps_metered: stream_kbps(v.get("streamKbpsMetered").as_u64()),
             speech_model: v.str_or("speechModel", "").chars().take(64).collect(),
+            translate: v.bool_or("translate", false),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
@@ -392,6 +396,7 @@ impl Settings {
             .with("streamKbps", self.stream_kbps)
             .with("streamKbpsMetered", self.stream_kbps_metered)
             .with("speechModel", self.speech_model.as_str())
+            .with("translate", self.translate)
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)

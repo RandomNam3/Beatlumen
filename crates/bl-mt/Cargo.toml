@@ -1,0 +1,10 @@
+[package]
+name = "bl-mt"
+description = "Offline translation of song texts (OPUS-MT / MarianMT models)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-asr = { path = "../bl-asr" }
+bl-json = { path = "../bl-json" }

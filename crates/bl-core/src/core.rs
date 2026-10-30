@@ -282,6 +282,7 @@ pub struct Core {
     pub(crate) sources: crate::sources::SourcesState,
     pub(crate) share: crate::share::ShareState,
     pub(crate) speech: crate::speech::SpeechState,
+    pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -471,6 +472,7 @@ impl Core {
             sources: Default::default(),
             share: Default::default(),
             speech: Default::default(),
+            translate: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -1352,6 +1354,7 @@ impl Core {
 
     /// Bitrate (kbit/s) the server converts its songs to on the current
     /// network (0: the original files).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn stream_kbps(&self) -> u32 {
         if self.metered {
             self.settings.stream_kbps_metered
@@ -2570,6 +2573,7 @@ impl Core {
         self.poll_scan(host);
         self.poll_sources(host);
         self.poll_speech(host);
+        self.poll_translate(host);
         self.poll_covers();
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);

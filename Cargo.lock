@@ -131,6 +131,7 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-mt",
  "bl-net",
  "bl-offline",
  "bl-render",
@@ -190,6 +191,14 @@ dependencies = [
 [[package]]
 name = "bl-mp3"
 version = "0.10.0"
+
+[[package]]
+name = "bl-mt"
+version = "0.10.0"
+dependencies = [
+ "bl-asr",
+ "bl-json",
+]
 
 [[package]]
 name = "bl-net"

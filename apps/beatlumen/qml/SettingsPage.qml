@@ -472,6 +472,73 @@ Item {
                     }
                 }
             }
+            // ---- translating song texts on this device ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.", "Translation models", "Delete"])
+                SectionLabel { text: Theme.tr("Translation models") }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Translate song texts")
+                    detail: Theme.tr("Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.")
+                    on: page.settings.translate === true
+                    onSwitched: (on) => Core.call("translate.set", { on: on })
+                }
+                Repeater {
+                    id: trModels
+                    property int tick: 0
+                    // Only the ones on this device (or coming).
+                    model: {
+                        tick; page.settings.translate
+                        const all = page.visible && page.speechLocal.available === true ? (Core.call("translate.list") || []) : []
+                        return Array.isArray(all) ? all.filter(m => m.downloaded || m.state) : []
+                    }
+                    delegate: ItemDelegate {
+                        Layout.fillWidth: true
+                        height: Theme.row
+                        contentItem: RowLayout {
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: Theme.text
+                                    text: Theme.tr(Theme.languageName(modelData.from)) + " → " + Theme.tr(Theme.languageName(modelData.to))
+                                }
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    font.pixelSize: 12
+                                    color: Theme.textDim
+                                    text: Math.round(modelData.size / 1e6) + " MB"
+                                }
+                                ProgressBar {
+                                    visible: modelData.state === "downloading"
+                                    Layout.fillWidth: true
+                                    value: modelData.total ? modelData.done / modelData.total : 0
+                                }
+                            }
+                            IconButton {
+                                visible: modelData.downloaded === true
+                                iconName: "delete"
+                                tip: Theme.tr("Delete")
+                                onClicked: { Core.call("translate.delete", { id: modelData.id }); trModels.tick++ }
+                            }
+                        }
+                    }
+                }
+                Timer {
+                    // Download progress.
+                    interval: 1000
+                    repeat: true
+                    running: page.visible && page.settings.translate === true
+                    onTriggered: trModels.tick++
+                }
+            }
             // ---- server ----
             ColumnLayout {
                 objectName: "section"

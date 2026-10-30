@@ -488,6 +488,19 @@ pub(crate) struct SyncState {
 /// Seconds between status requests of a running `lyrics.sync`.
 const SYNC_POLL_SECS: f64 = 2.0;
 
+/// The speech timing's version and model from an LRC's creator
+/// (`Beatlumen speech timing 2, model base`, as `bl_asr::sync` writes it;
+/// read here too because the browser build has no speech recognition).
+fn speech_creator(c: &str) -> Option<(u32, String)> {
+    let rest = c
+        .trim()
+        .strip_prefix("Beatlumen speech timing")?
+        .trim_start();
+    let (version, model) = rest.split_once(',')?;
+    let model = model.trim().strip_prefix("model")?.trim();
+    Some((version.trim().parse().ok()?, model.to_string()))
+}
+
 /// Storage key of an imported song text for a track of this device.
 pub(crate) fn import_key(id: &str) -> String {
     format!("lyrics/{:016x}.lrc", library::fnv(id))
@@ -528,7 +541,24 @@ impl Core {
                 .found
                 .as_ref()
                 .is_some_and(|(lyrics, _)| lyrics.word_timed());
-        let v = v.with("canSync", can_sync);
+        let mut v = v
+            .with("canSync", can_sync)
+            .with("translation", self.translate_json());
+        // The translation under each line.
+        if let Some((lyrics, _)) = l.found.as_ref().filter(|_| !l.loading) {
+            if let (Some(tr), Some(lines)) = (
+                self.translated_lines(&id, lyrics.lines.len()),
+                v.as_object_mut()
+                    .and_then(|o| o.get_mut("lines"))
+                    .and_then(Value::as_array_mut),
+            ) {
+                for (line, t) in lines.iter_mut().zip(tr) {
+                    if !t.is_empty() && t.trim() != line.get("text").as_str().unwrap_or("").trim() {
+                        line.set("tr", t.as_str());
+                    }
+                }
+            }
+        }
         match &l.sync {
             Some(s) => v.with(
                 "sync",
@@ -543,10 +573,7 @@ impl Core {
     /// Where a song text comes from and where it is kept, for the user.
     fn lyrics_origin(&self, id: &str, lyrics: &Lyrics, source: &str) -> String {
         let on_server = library::is_server_id(id);
-        let speech = lyrics
-            .creator
-            .as_deref()
-            .and_then(|c| bl_asr::sync::made_with(&format!("[re:{c}]")));
+        let speech = lyrics.creator.as_deref().and_then(speech_creator);
         let what = match (source, &speech) {
             ("lrc", _) => self.tr("From the song's LRC file"),
             ("embedded", _) => self.tr("From the music file"),
