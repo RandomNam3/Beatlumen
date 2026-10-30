@@ -287,6 +287,7 @@ impl Core {
         );
         let file = crate::library::local_path(&id).map(PathBuf::from);
         let model_id = self.settings.speech_model.clone();
+        let title = title.to_string();
         host.spawn(Box::new(move || {
             let text = text.or_else(|| {
                 file.as_deref()
@@ -307,6 +308,7 @@ impl Core {
                     &model_id,
                     opener,
                     text,
+                    &title,
                     &progress,
                     &cancel,
                 )
@@ -369,6 +371,7 @@ fn recognize(
     model_id: &str,
     opener: SourceOpener,
     text: Option<String>,
+    title: &str,
     progress: &AtomicU32,
     cancel: &AtomicBool,
 ) -> Result<String, String> {
@@ -403,5 +406,13 @@ fn recognize(
         progress.store((p.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
         !cancel.load(Ordering::Relaxed)
     };
-    bl_asr::sync::time_song(&model, model_id, &samples, text.as_deref(), &mut cb).map(|t| t.lrc)
+    bl_asr::sync::time_song(
+        &model,
+        model_id,
+        &samples,
+        text.as_deref(),
+        Some(title),
+        &mut cb,
+    )
+    .map(|t| t.lrc)
 }

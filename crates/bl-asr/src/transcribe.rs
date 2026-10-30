@@ -27,6 +27,10 @@ const MIN_LOGPROB: f32 = -1.0;
 /// no singing.
 const NO_SPEECH: f32 = 0.6;
 
+/// Text tokens in a row after which a timestamp gets favoured (about a
+/// sung line).
+const LONG_RUN: usize = 12;
+
 /// Special tokens (their ids depend on the vocabulary size).
 #[derive(Debug, Clone, Copy)]
 pub struct Specials {
@@ -666,7 +670,27 @@ impl<'a> Transcriber<'a> {
                 .iter()
                 .copied()
                 .fold(f32::MIN, f32::max);
-            let range = if ts_mass > max_text {
+            // Some models (large v3 turbo) write long stretches without
+            // timestamps (whole verses in one segment, no line breaks): the
+            // longer the stretch, the more a timestamp is favoured where a
+            // new word would start.
+            let run = tokens.iter().rev().take_while(|&&t| t < sp.eot).count();
+            let bias = if run >= LONG_RUN {
+                let next_word = lp[..sp.eot as usize]
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .and_then(|(t, _)| self.m.vocab.get(t))
+                    .is_some_and(|v| v.first() == Some(&b' '));
+                if next_word {
+                    (1.0 + 0.25 * (run - LONG_RUN) as f32).min(4.0)
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            let range = if ts_mass + bias > max_text {
                 sp.ts_begin as usize..n_vocab
             } else {
                 0..n_vocab

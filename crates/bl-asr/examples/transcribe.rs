@@ -21,7 +21,16 @@ fn main() {
     let t1 = std::time::Instant::now();
     if a.get(3).map(String::as_str) == Some("--lrc") {
         let text = a.get(4).map(|p| std::fs::read_to_string(p).unwrap());
-        match bl_asr::sync::time_song(&m, "test", &samples, text.as_deref(), &mut |_| true) {
+        // TITLE in the environment: the song's title.
+        let title = std::env::var("TITLE").ok();
+        match bl_asr::sync::time_song(
+            &m,
+            "test",
+            &samples,
+            text.as_deref(),
+            title.as_deref(),
+            &mut |_| true,
+        ) {
             Ok(t) => print!("{}", t.lrc),
             Err(e) => println!("error: {e}"),
         }
