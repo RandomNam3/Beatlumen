@@ -115,6 +115,12 @@ impl Devices {
             .with("state", d.state.clone())
     }
 
+    /// Tells the devices of a scope about a change (e.g. synced settings).
+    pub fn notify(&self, scope: &str, body: Value) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        self.push(&mut inner, scope, None, body);
+    }
+
     /// Devices in a scope (for the admin overview: all of them).
     pub fn count_online(&self) -> usize {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());

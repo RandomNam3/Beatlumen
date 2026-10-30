@@ -10,7 +10,7 @@
 //! control off (`remoteControl`).
 
 use crate::core::{Core, Req};
-use crate::host::Host;
+use crate::host::{Host, HttpRequest};
 use crate::player::PlayState;
 use crate::server::ServerState;
 use bl_json::Value;
@@ -42,6 +42,11 @@ pub(crate) struct DevicesState {
     pub play_at: Option<(f64, f64)>,
     /// The position announced last and the local time it was taken.
     pub reported_position: (f64, f64),
+    /// The login the device requests use (an unlocked account's session
+    /// keeps its devices among themselves); a change starts over.
+    pub login: String,
+    /// Answers to listening requests of an earlier login are ignored.
+    pub generation: u64,
 }
 
 /// A server song id (16 hex digits): the only songs remote commands play.
@@ -63,6 +68,52 @@ fn err(msg: &str) -> Value {
 impl Core {
     fn connected(&self) -> bool {
         matches!(self.server.state, ServerState::Connected(_))
+    }
+
+    /// The login of device requests: the unlocked account, else the server
+    /// login.
+    fn device_login(&self) -> String {
+        match self.vault.session_token() {
+            "" => self.server.token.clone(),
+            t => t.to_string(),
+        }
+    }
+
+    /// A request to the server as this device's login.
+    pub(crate) fn device_request(
+        &mut self,
+        host: &mut dyn Host,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> u64 {
+        let login = self.device_login();
+        self.device_request_as(host, &login, method, path, body, content_type)
+    }
+
+    fn device_request_as(
+        &mut self,
+        host: &mut dyn Host,
+        login: &str,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+        content_type: Option<&str>,
+    ) -> u64 {
+        let mut headers = Vec::new();
+        if !login.is_empty() {
+            headers.push(("Authorization".to_string(), format!("Bearer {login}")));
+        }
+        if let Some(t) = content_type {
+            headers.push(("Content-Type".to_string(), t.to_string()));
+        }
+        host.http_request(HttpRequest {
+            method: method.into(),
+            url: self.server.url(path),
+            headers,
+            body,
+        })
     }
 
     /// This device's id (made on first use).
@@ -168,6 +219,30 @@ impl Core {
             return;
         }
         let now = host.now();
+        // Another login (an account unlocked or locked): start over.
+        let login = self.device_login();
+        if login != self.devices.login {
+            // Leave the devices of the previous login.
+            if self.devices.announced_at > 0.0 {
+                let old = self.devices.login.clone();
+                let id = self.device_id();
+                self.device_request_as(
+                    host,
+                    &old,
+                    "DELETE",
+                    &format!("/api/devices/{id}"),
+                    Vec::new(),
+                    None,
+                );
+            }
+            let generation = self.devices.generation + 1;
+            self.devices = DevicesState {
+                login,
+                generation,
+                ..Default::default()
+            };
+            self.revs.devices += 1;
+        }
         // A group start that is due.
         if let Some((at, pos)) = self.devices.play_at {
             let late = self.server_now_ms(host) - at;
@@ -205,14 +280,15 @@ impl Core {
                     .with("kind", Self::device_kind(host))
                     .with("remote", self.settings.remote_control)
                     .with("state", state);
-                let rid = self.server.send(
+                let rid = self.device_request(
                     host,
                     "PUT",
                     &format!("/api/devices/{id}"),
                     body.to_json().into_bytes(),
-                    "application/json",
+                    Some("application/json"),
                 );
-                self.requests.insert(rid, Req::DeviceAnnounce);
+                self.requests
+                    .insert(rid, Req::DeviceAnnounce(self.devices.generation));
                 self.devices.announcing = true;
                 self.devices.announced = signature;
                 self.devices.announced_at = now;
@@ -224,8 +300,9 @@ impl Core {
                 Some(s) => format!("/api/events?device={id}&since={s}"),
                 None => format!("/api/events?device={id}"),
             };
-            let rid = self.server.get(host, &path);
-            self.requests.insert(rid, Req::DeviceEvents);
+            let rid = self.device_request(host, "GET", &path, Vec::new(), None);
+            self.requests
+                .insert(rid, Req::DeviceEvents(self.devices.generation));
             self.devices.listening = true;
             if self.devices.since.is_none() {
                 self.refresh_devices(host);
@@ -237,8 +314,9 @@ impl Core {
         if self.devices.refreshing || !self.connected() {
             return;
         }
-        let rid = self.server.get(host, "/api/devices");
-        self.requests.insert(rid, Req::DeviceList);
+        let rid = self.device_request(host, "GET", "/api/devices", Vec::new(), None);
+        self.requests
+            .insert(rid, Req::DeviceList(self.devices.generation));
         self.devices.refreshing = true;
     }
 
@@ -264,21 +342,27 @@ impl Core {
             Ok(r) if (200..300).contains(&r.status) => bl_json::parse_bytes(&r.body).ok(),
             _ => None,
         };
+        // Answers for an earlier login.
+        if let Req::DeviceAnnounce(g) | Req::DeviceList(g) | Req::DeviceEvents(g) = req {
+            if g != self.devices.generation {
+                return;
+            }
+        }
         match req {
-            Req::DeviceAnnounce => {
+            Req::DeviceAnnounce(_) => {
                 self.devices.announcing = false;
                 if let Some(v) = &json {
                     self.take_clock(host, v);
                 }
             }
-            Req::DeviceList => {
+            Req::DeviceList(_) => {
                 self.devices.refreshing = false;
                 if let Some(Value::Array(list)) = json {
                     self.devices.list = list;
                     self.revs.devices += 1;
                 }
             }
-            Req::DeviceEvents => {
+            Req::DeviceEvents(_) => {
                 self.devices.listening = false;
                 let Some(v) = json else {
                     self.devices.retry_at = host.now() + RETRY;
@@ -292,6 +376,9 @@ impl Core {
                     match e.str_or("type", "") {
                         "devices" => refresh = true,
                         "command" => self.run_remote_command(host, e),
+                        "settings" if e.str_or("from", "") != self.settings.device_id => {
+                            self.account_sync.fetched = false;
+                        }
                         _ => {}
                     }
                 }
@@ -423,12 +510,12 @@ impl Core {
         }
         let from = self.device_id();
         let body = Value::object().with("from", from).with("command", command);
-        let rid = self.server.send(
+        let rid = self.device_request(
             host,
             "POST",
             &format!("/api/devices/{target}/command"),
             body.to_json().into_bytes(),
-            "application/json",
+            Some("application/json"),
         );
         self.requests.insert(rid, Req::DeviceCommand);
         ok()

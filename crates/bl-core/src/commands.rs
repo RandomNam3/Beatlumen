@@ -1020,7 +1020,7 @@ impl Core {
         }
     }
 
-    fn set_setting(&mut self, host: &mut dyn Host, key: &str, value: Value) {
+    pub(crate) fn set_setting(&mut self, host: &mut dyn Host, key: &str, value: Value) {
         if let Some(sub) = key.strip_prefix("ui.") {
             self.settings.ui.set(sub, value);
             self.settings_changed();

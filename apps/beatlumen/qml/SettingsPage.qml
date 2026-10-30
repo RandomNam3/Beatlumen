@@ -358,6 +358,15 @@ Item {
                     text: parent.v.state === "ready" ? Theme.tr("Unlocked as") + " " + parent.v.user
                         : Theme.tr("With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them.")
                 }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    visible: parent.v.state === "ready"
+                    wrapMode: Text.WordWrap
+                    color: Theme.textFaint
+                    font.pixelSize: 12
+                    text: Theme.tr("Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).")
+                }
                 Button {
                     text: parent.v.state === "ready" ? Theme.tr("Encrypted files") : Theme.tr("Unlock or create account")
                     icon.source: Theme.icon(parent.v.state === "ready" ? "lock" : "lock_open")

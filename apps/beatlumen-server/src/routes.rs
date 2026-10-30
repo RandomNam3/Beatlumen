@@ -134,6 +134,46 @@ fn route(state: &std::sync::Arc<State>, req: &Request) -> Response {
     }
 }
 
+/// Largest settings document of an account (encrypted, bytes).
+const MAX_ACCOUNT_SETTINGS: usize = 256 * 1024;
+
+/// `GET/PUT /api/vault/settings`: an account's settings as the apps
+/// encrypted them (the server cannot read them). A change is announced to
+/// the account's other devices.
+fn account_settings(state: &State, req: &Request) -> Response {
+    let Some(user) = state.vault.session_user(req) else {
+        return Response::error(401, "authentication required");
+    };
+    let path = state.vault.user_data_dir(&user).join("settings.bin");
+    match req.method.as_str() {
+        "GET" | "HEAD" => match std::fs::read(&path) {
+            Ok(d) => Response::bytes(200, "application/octet-stream", d),
+            Err(_) => Response::error(404, "no settings yet"),
+        },
+        "PUT" => {
+            if req.body.is_empty() || req.body.len() > MAX_ACCOUNT_SETTINGS {
+                return Response::error(413, "settings too large");
+            }
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = util::write_atomic(&path, &req.body) {
+                crate::warn!("cannot store settings of {user}: {e}");
+                return Response::error(500, "cannot store");
+            }
+            util::make_private(&path);
+            state.devices.notify(
+                &format!("user:{user}"),
+                Value::object()
+                    .with("type", "settings")
+                    .with("from", req.query("device").unwrap_or("")),
+            );
+            Response::new(204)
+        }
+        _ => not_allowed("GET, HEAD, PUT"),
+    }
+}
+
 fn not_allowed(allow: &str) -> Response {
     Response::error(405, "method not allowed").with_header("Allow", allow)
 }
@@ -172,6 +212,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 not_allowed("POST")
             }
         }
+        // Settings that follow an account (encrypted by the apps).
+        ["vault", "settings"] => return account_settings(state, req),
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         // Public links to encrypted files: no account needed.
         ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),

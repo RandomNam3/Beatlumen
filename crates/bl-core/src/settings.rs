@@ -168,6 +168,10 @@ pub struct Settings {
     pub device_name: String,
     /// Other devices may control this one.
     pub remote_control: bool,
+    /// Settings that follow the account: {key: {value, t}} as last
+    /// synced, and the account they belong to.
+    pub sync_items: Value,
+    pub sync_user: String,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -223,6 +227,8 @@ impl Default for Settings {
             device_id: String::new(),
             device_name: String::new(),
             remote_control: true,
+            sync_items: Value::object(),
+            sync_user: String::new(),
             ui: Value::object(),
         }
     }
@@ -306,6 +312,11 @@ impl Settings {
                 .collect(),
             device_name: v.str_or("deviceName", "").trim().chars().take(48).collect(),
             remote_control: v.bool_or("remoteControl", true),
+            sync_items: match v.get("syncItems") {
+                o @ Value::Object(_) => o.clone(),
+                _ => Value::object(),
+            },
+            sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -363,6 +374,8 @@ impl Settings {
             .with("deviceId", self.device_id.as_str())
             .with("deviceName", self.device_name.as_str())
             .with("remoteControl", self.remote_control)
+            .with("syncItems", self.sync_items.clone())
+            .with("syncUser", self.sync_user.as_str())
             .with("airplayId", self.airplay_id.as_str())
             .with("ui", self.ui.clone())
     }

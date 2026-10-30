@@ -153,6 +153,7 @@ QtObject {
         "This device": "Dieses Gerät",
         "Device name": "Gerätename",
         "Allow remote control": "Fernsteuerung erlauben",
+        "Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).": "Darstellung, Stile und Wiedergabe-Optionen folgen deinem Konto auf deine anderen Geräte (Ende-zu-Ende verschlüsselt).",
         "Your other devices on this server may control the playback here and move music to this device.": "Deine anderen Geräte an diesem Server dürfen die Wiedergabe hier steuern und Musik auf dieses Gerät verschieben.",
         "Sync automatically": "Automatisch synchronisieren",
         "Timing the song text…": "Songtext wird synchronisiert …",

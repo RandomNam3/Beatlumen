@@ -299,6 +299,18 @@ fn recovery_json(c: &RecoveryChange) -> Value {
 }
 
 impl Vault {
+    /// The account's session token ("" while locked).
+    pub(crate) fn session_token(&self) -> &str {
+        &self.token
+    }
+
+    /// The key of the account's synced settings (None while locked).
+    pub(crate) fn settings_key(&self) -> Option<bl_vault::Secret> {
+        self.account
+            .as_ref()
+            .map(|a| bl_vault::derive(a.master().as_bytes(), "beatlumen settings v1"))
+    }
+
     pub fn file(&self, id: &str) -> Option<&VaultFile> {
         let id = id.strip_prefix(ID_PREFIX).unwrap_or(id);
         self.files.iter().find(|f| f.id == id)

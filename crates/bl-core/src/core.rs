@@ -72,10 +72,12 @@ pub(crate) enum Req {
     Loudness(String),
     Lyrics(String),
     LyricsSync(String),
-    DeviceAnnounce,
-    DeviceList,
-    DeviceEvents,
+    DeviceAnnounce(u64),
+    DeviceList(u64),
+    DeviceEvents(u64),
     DeviceCommand,
+    AccountSettingsGet(String),
+    AccountSettingsPut(String),
     LyricsSaved,
     TrackDownload {
         track_id: String,
@@ -218,6 +220,7 @@ pub struct Core {
     /// Offline copies of server songs.
     pub(crate) offline: crate::offline::OfflineState,
     pub(crate) devices: crate::devices::DevicesState,
+    pub(crate) account_sync: crate::account_sync::SyncState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
     pub(crate) library: LibraryState,
@@ -406,6 +409,7 @@ impl Core {
             lyrics_box: Mailbox::default(),
             offline: Default::default(),
             devices: Default::default(),
+            account_sync: Default::default(),
             queue,
             bg_queue,
             library,
@@ -879,10 +883,12 @@ impl Core {
             }
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
-            r
-            @ (Req::DeviceAnnounce | Req::DeviceList | Req::DeviceEvents | Req::DeviceCommand) => {
-                self.devices_response(host, r, &res)
-            }
+            r @ (Req::DeviceAnnounce(_)
+            | Req::DeviceList(_)
+            | Req::DeviceEvents(_)
+            | Req::DeviceCommand) => self.devices_response(host, r, &res),
+            Req::AccountSettingsGet(user) => self.account_settings_fetched(host, &user, &res),
+            Req::AccountSettingsPut(user) => self.account_settings_saved(host, &user, &res),
             Req::LyricsSaved => {
                 if !matches!(&res, Ok(r) if (200..300).contains(&r.status)) {
                     self.toast(self.tr("Saving the song text failed"), true);
@@ -2390,6 +2396,7 @@ impl Core {
         self.poll_lyrics();
         self.poll_lyrics_sync(host);
         self.poll_devices(host);
+        self.poll_account_sync(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_covers();

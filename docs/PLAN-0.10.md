@@ -80,7 +80,7 @@ server runs, and a web interface to manage them.
 
 ## Phase 3: settings follow the account
 
-- [ ] App settings (appearance, effects, styles, player options) are
+- [x] App settings (appearance, effects, styles, player options) are
   stored with the user account (end-to-end encrypted like the files) and
   merged per setting (newest wins); device-specific settings (audio output,
   receivers, folders) stay on the device.

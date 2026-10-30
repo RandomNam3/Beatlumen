@@ -42,7 +42,9 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
 - Done: playlists and presets per user account (signing in with the
   server password keeps the shared ones); personal backgrounds through the
   encrypted images.
-- Settings that follow a user account across devices.
+- Done: settings that follow a user account across devices (appearance,
+  styles and effects, playback options; end-to-end encrypted, newest change
+  wins per setting).
 - Done: public links to encrypted files (expiry, optional password, the key
   stays in the link; see `docs/ENCRYPTION.md`).
 - Done: admin interface at `/admin/` (settings kept in the data folder,

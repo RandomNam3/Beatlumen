@@ -266,6 +266,24 @@ app (`crates/bl-vault/src/link.rs`):
   or offers the file for download. Like the web client, the page is only as
   trustworthy as the server that delivers it.
 
+## Settings that follow the account
+
+Appearance, styles and effects and playback options are kept with the
+account so they follow it to the user's other devices. The app encrypts
+the document (`{"items": {key: {value, t}}}`, `t` = time of the change)
+with AES-256-GCM under `HKDF(master key, "beatlumen settings v1")`, the
+associated data being `"beatlumen settings v1\0" || user`, and stores it
+with `PUT /api/vault/settings`; the server keeps only this ciphertext
+(`userdata/<hash>/settings.bin`, at most 256 KB) and tells the account's
+other devices through the event channel that it changed. Each device
+merges per setting: the newer change wins; values a device never changed
+are older than the account's. Device-specific settings (audio, receivers,
+folders, the server connection, the device name) are never synced.
+
+While an account is unlocked, the app's device requests (device list,
+remote control, events) use the account's session: an account's devices
+see and control only each other.
+
 ## Playing on network speakers
 
 Decrypted audio leaves the app when it plays on a speaker in the network:
