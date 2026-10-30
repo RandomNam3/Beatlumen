@@ -271,6 +271,7 @@ pub struct Core {
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) ext: crate::extensions::ExtState,
+    pub(crate) sources: crate::sources::SourcesState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -454,6 +455,7 @@ impl Core {
             dlna: Default::default(),
             capture: Default::default(),
             ext: Default::default(),
+            sources: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -661,6 +663,7 @@ impl Core {
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
             .with("extensions", self.extensions_json())
+            .with("sources", self.sources_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -687,6 +690,7 @@ impl Core {
             .with("track", t.track)
             .with("year", t.year)
             .with("local", library::is_local(&t.id))
+            .with("source", t.id.starts_with(crate::sources::ID_PREFIX))
             .with("offline", self.is_offline(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
@@ -1281,6 +1285,10 @@ impl Core {
                 }
                 Err(e) => self.toast(e, true),
             }
+        } else if id.starts_with(crate::sources::ID_PREFIX) {
+            let msg = self.tr("The song's source is not available").to_string();
+            self.player.stop(host);
+            self.toast(msg, true);
         } else if id.starts_with(crate::vault::ID_PREFIX) {
             // Encrypted file without streaming: downloaded first.
             self.player.stop(host);
@@ -1306,6 +1314,9 @@ impl Core {
             );
             self.download_progress = Some(track.title.clone());
         }
+        if load && id.starts_with(crate::sources::ID_PREFIX) {
+            self.source_played(host, &id);
+        }
         self.request_analysis_for_current_with(host);
         if self.settings.cover_fallback && self.bg_queue.is_empty() {
             self.show_cover_background(host);
@@ -1316,6 +1327,9 @@ impl Core {
     /// Opener streaming a track (None when it must be read or downloaded
     /// up front because the platform has no threads).
     fn opener_for(&self, host: &dyn Host, id: &str) -> Option<SourceOpener> {
+        if id.starts_with(crate::sources::ID_PREFIX) {
+            return self.source_opener(id);
+        }
         if let Some(path) = library::local_path(id).map(str::to_string) {
             if !host.has_threads() {
                 return None;
@@ -1812,6 +1826,14 @@ impl Core {
                 let res = analyze(Box::new(std::io::Cursor::new(data)), extension(name), cfg);
                 self.analysis_box.post((key, res));
             }
+        } else if track.id.starts_with(crate::sources::ID_PREFIX) {
+            if let Some(opener) = self.source_opener(&track.id) {
+                let mailbox = self.analysis_box.clone();
+                host.spawn(Box::new(move || {
+                    let res = opener().and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                }));
+            }
         } else if track.id.starts_with(crate::vault::ID_PREFIX) {
             // Encrypted: only this device can analyse it. Without streaming
             // the file is analysed once it has been downloaded.
@@ -1887,7 +1909,7 @@ impl Core {
             self.capture.cover_url().to_string()
         } else if t.id.starts_with(crate::extensions::ID_PREFIX) {
             self.ext_cover_url(&t.id)
-        } else if library::is_local(&t.id) {
+        } else if library::is_local(&t.id) || t.id.starts_with(crate::sources::ID_PREFIX) {
             match self.covers.get(&t.id) {
                 Some(Some(path)) => file_url(path),
                 _ => String::new(),
@@ -1907,6 +1929,14 @@ impl Core {
     /// Starts extracting the covers of local tracks (embedded picture or a
     /// cover file next to it) into the cache; emits `cover` events.
     pub(crate) fn request_covers(&mut self, host: &mut dyn Host, ids: Vec<String>) {
+        let (from_sources, ids): (Vec<String>, Vec<String>) = ids
+            .into_iter()
+            .partition(|id| id.starts_with(crate::sources::ID_PREFIX));
+        let from_sources = from_sources
+            .into_iter()
+            .filter(|id| !self.covers.contains_key(id))
+            .collect();
+        self.request_source_covers(host, from_sources);
         let mut jobs = Vec::new();
         for id in ids {
             if self.covers.contains_key(&id) || !library::is_local(&id) {
@@ -2352,6 +2382,7 @@ impl Core {
         self.time = host.now();
         if !self.started {
             self.started = true;
+            self.load_sources(host);
             let files = std::mem::take(&mut self.launch.files);
             if !files.is_empty() {
                 let paths = files.iter().map(|f| absolute(f)).collect();
@@ -2399,6 +2430,7 @@ impl Core {
         self.poll_account_sync(host);
         self.poll_offline(host);
         self.poll_scan(host);
+        self.poll_sources(host);
         self.poll_covers();
         if self.analysis_requested {
             self.request_analysis_for_current_with(host);

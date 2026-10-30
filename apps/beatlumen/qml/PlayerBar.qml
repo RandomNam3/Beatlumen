@@ -96,7 +96,7 @@ Item {
             Layout.preferredWidth: parent.coverSize
             Layout.preferredHeight: parent.coverSize
             source: bar.cur ? Covers.url(bar.cur.id, bar.cur.cover) : ""
-            Component.onCompleted: if (bar.cur && bar.cur.local) Covers.request(bar.cur.id)
+            Component.onCompleted: if (bar.cur && (bar.cur.local || bar.cur.source)) Covers.request(bar.cur.id)
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -124,7 +124,7 @@ Item {
     Connections {
         target: Core
         function onStateChanged() {
-            if (bar.cur && bar.cur.local && !bar.cur.cover)
+            if (bar.cur && (bar.cur.local || bar.cur.source) && !bar.cur.cover)
                 Covers.request(bar.cur.id)
         }
     }

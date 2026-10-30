@@ -52,7 +52,10 @@ pub enum Body {
     /// reader ends.
     Stream(Box<dyn Read + Send>),
     /// Read while it is sent, of a known length (a remote file).
-    Sized { reader: Box<dyn Read + Send>, len: u64 },
+    Sized {
+        reader: Box<dyn Read + Send>,
+        len: u64,
+    },
 }
 
 pub struct Response {

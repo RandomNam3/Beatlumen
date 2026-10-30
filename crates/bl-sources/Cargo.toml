@@ -7,7 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bl-aac = { path = "../bl-aac" }
 bl-json = { path = "../bl-json" }
 bl-media = { path = "../bl-media" }
+bl-mp3 = { path = "../bl-mp3" }
 bl-net = { path = "../bl-net" }
 bl-upnp = { path = "../bl-upnp" }
+bl-ssh = { path = "../bl-ssh" }

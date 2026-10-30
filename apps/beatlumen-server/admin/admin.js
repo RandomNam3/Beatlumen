@@ -249,6 +249,8 @@
     "A folder on a computer reachable with SSH. Password or private key (OpenSSH format).": "Ein Ordner auf einem per SSH erreichbaren Rechner. Passwort oder privater Schlüssel (OpenSSH-Format).",
     "A media server in the local network (MiniDLNA, Plex, Serviio, …).": "Ein Medienserver im lokalen Netzwerk (MiniDLNA, Plex, Serviio, …).",
     "Private key": "Privater Schlüssel",
+    "Compare this key with the server's (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub), then connect again to trust it:": "Vergleiche diesen Schlüssel mit dem des Servers (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) und verbinde dann erneut, um ihm zu vertrauen:",
+    "Unknown server key": "Unbekannter Server-Schlüssel",
     "Instead of a password (OpenSSH format, without passphrase).": "Statt eines Passworts (OpenSSH-Format, ohne Passphrase).",
     "DLNA media server": "DLNA-Medienserver",
   };
@@ -820,7 +822,18 @@
             }, 2000);
           } else {
             const body = { kind: k, name: name.value.trim(), url: url.value.trim(), user: user.value.trim(), secret: k === "sftp" && key.value.trim() ? key.value.trim() + "\n" : secret.value, path: path.value.trim(), pin: pin.value.trim(), enabled: enabled.checked };
-            if (s) await api("PUT", "sources/" + s.id, body); else await api("POST", "sources", body);
+            try {
+              if (s) await api("PUT", "sources/" + s.id, body); else await api("POST", "sources", body);
+            } catch (e) {
+              // SFTP: a server key seen for the first time is shown to be trusted.
+              const fp = k === "sftp" && !pin.value.trim() && /SHA256:[A-Za-z0-9+\/]+/.exec(e.message || "");
+              if (fp) {
+                pin.value = fp[0];
+                put(waitBox, h("div", { class: "banner warn" }, h("span", {}, t("Compare this key with the server's (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub), then connect again to trust it:"), " ", h("code", {}, fp[0]))));
+                throw new Error(t("Unknown server key"));
+              }
+              throw e;
+            }
             close();
             toast(t(s ? "Saved" : "Added"));
             draw();

@@ -1,0 +1,20 @@
+[package]
+name = "bl-ssh"
+description = "A small SSH 2 client (curve25519 key exchange, AEAD ciphers, password and Ed25519 key login) with SFTP version 3 for reading files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Cryptography pinned exactly, the same versions bl-vault and the server
+# use; updates are deliberate. ring verifies the RSA and ECDSA host keys.
+[dependencies]
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes"] }
+chacha20 = { version = "=0.9.1", default-features = false, features = ["zeroize"] }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
+getrandom = { version = "=0.2.17", features = ["std"] }
+poly1305 = { version = "=0.8.0", default-features = false }
+ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
+sha2 = { version = "=0.10.9", default-features = false }
+x25519-dalek = { version = "=2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+zeroize = { version = "=1.9.1", default-features = false, features = ["alloc"] }

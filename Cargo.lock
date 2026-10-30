@@ -127,6 +127,7 @@ dependencies = [
  "bl-net",
  "bl-offline",
  "bl-render",
+ "bl-sources",
  "bl-upnp",
  "bl-vault",
 ]
@@ -220,10 +221,28 @@ dependencies = [
 name = "bl-sources"
 version = "0.1.0"
 dependencies = [
+ "bl-aac",
  "bl-json",
  "bl-media",
+ "bl-mp3",
  "bl-net",
+ "bl-ssh",
  "bl-upnp",
+]
+
+[[package]]
+name = "bl-ssh"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "chacha20",
+ "ed25519-dalek",
+ "getrandom",
+ "poly1305",
+ "ring",
+ "sha2",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

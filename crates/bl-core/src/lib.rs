@@ -32,6 +32,11 @@ mod push;
 pub mod queue;
 pub mod server;
 pub mod settings;
+#[cfg(not(target_arch = "wasm32"))]
+mod sources;
+#[cfg(target_arch = "wasm32")]
+#[path = "sources_web.rs"]
+mod sources;
 pub mod strings;
 mod vault;
 mod visual;

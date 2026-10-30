@@ -3,6 +3,7 @@
 
 pub mod authenticator;
 pub mod fake_extension;
+pub mod fake_subsonic;
 
 use bl_core::host::{AudioDeviceInfo, AudioSource, DirEntry, Host, HttpRequest, HttpResponse};
 use bl_core::native::NativeServices;

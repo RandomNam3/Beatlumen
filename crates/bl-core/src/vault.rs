@@ -1826,6 +1826,7 @@ impl Core {
             "vault.browserResult" => self.vault_browser_result(host, &s("url")),
             "vault.manageInBrowser" => self.vault_manage_in_browser(host),
             "vault.nativeSignIn" => self.vault_native_sign_in(host),
+            "vault.secret" if s("key") == "sources" => self.sources_secret(host, &s("value")),
             "vault.secret" => self.vault_secret(host, &s("key"), &s("value")),
             "vault.remember" => self.vault_set_remember(host, c.bool_or("value", true)),
             "vault.addPasskey" => self.vault_add_passkey(host, &s("password"), &s("name")),

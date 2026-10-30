@@ -11,6 +11,9 @@
 pub mod dlna;
 pub mod jellyfin;
 pub mod md5;
+pub mod playlist;
+pub mod radio;
+pub mod sftp;
 pub mod subsonic;
 pub mod tags;
 pub mod webdav;
@@ -121,6 +124,7 @@ pub fn connect(cfg: &SourceConfig) -> Result<Box<dyn MusicSource>, String> {
         "jellyfin" => Ok(Box::new(jellyfin::Jellyfin::connect(cfg)?)),
         "webdav" => Ok(Box::new(webdav::WebDav::connect(cfg)?)),
         "dlna" => Ok(Box::new(dlna::Dlna::connect(cfg)?)),
+        "sftp" => Ok(Box::new(sftp::SftpSource::connect(cfg)?)),
         other => Err(format!("unknown source kind \"{other}\"")),
     }
 }
@@ -160,7 +164,9 @@ pub fn decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            // Bytes, not `&s[..]`: a multi-byte character may follow '%'.
+            let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok();
+            if let Some(v) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 out.push(v);
                 i += 3;
                 continue;
@@ -184,5 +190,6 @@ mod tests {
         assert_eq!(encode_path("/Musik/a b"), "/Musik/a%20b");
         assert_eq!(decode("a%20b%2F%C3%A4"), "a b/ä");
         assert_eq!(decode("100%"), "100%");
+        assert_eq!(decode("%aä%ä"), "%aä%ä");
     }
 }

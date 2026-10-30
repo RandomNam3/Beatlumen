@@ -106,7 +106,7 @@ them and the apps play through it).
   reports.
 - [x] WebDAV/Nextcloud: folders on WebDAV, Nextcloud login flow v2 with an
   app password, also backgrounds and styles.
-- [ ] SFTP: own SSH client (curve25519 key exchange, Ed25519/ECDSA/RSA host
+- [x] SFTP: own SSH client (curve25519 key exchange, Ed25519/ECDSA/RSA host
   keys with trust on first use, ChaCha20-Poly1305/AES-GCM, key or password
   login) and SFTP v3.
 - [x] DLNA/UPnP media servers: browse and play (discovery only while
@@ -116,7 +116,8 @@ them and the apps play through it).
 - [x] Admin interface: *Music sources* page (add, test the login, list in
   the background, sync now, turn off, remove), Nextcloud login flow, DLNA
   search; logins encrypted with a key derived from the vault pepper.
-- [ ] App-only use: the same sources in the apps without a server.
+- [x] App-only use: the same sources in the apps without a server
+  (Settings, *Music sources*; logins in the platform's protected store).
 
 ## Phase 5: receiving and sharing
 

@@ -243,7 +243,11 @@ impl Sources {
                 .collect();
             tracks.insert(s.id.clone(), cached);
         }
-        let wanted = list.iter().filter(|s| s.enabled).map(|s| s.id.clone()).collect();
+        let wanted = list
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.clone())
+            .collect();
         let sources = Sources {
             path,
             key,
@@ -306,7 +310,13 @@ impl Sources {
         let tracks = self.tracks.read().unwrap_or_else(|e| e.into_inner());
         list.iter()
             .filter(|s| s.enabled)
-            .flat_map(|s| tracks.get(&s.id).into_iter().flatten().map(move |t| entry(s, t)))
+            .flat_map(|s| {
+                tracks
+                    .get(&s.id)
+                    .into_iter()
+                    .flatten()
+                    .map(move |t| entry(s, t))
+            })
             .collect()
     }
 
@@ -372,7 +382,9 @@ impl Sources {
         let rec = SourceRec {
             id: match &existing {
                 Some(e) => e.id.clone(),
-                None => crate::random::hex(8).map_err(|e| (500, format!("no random source: {e}")))?,
+                None => {
+                    crate::random::hex(8).map_err(|e| (500, format!("no random source: {e}")))?
+                }
             },
             name: if name.trim().is_empty() {
                 cfg.kind.clone()
@@ -415,8 +427,14 @@ impl Sources {
         };
         if removed {
             let _ = self.save();
-            self.tracks.write().unwrap_or_else(|e| e.into_inner()).remove(id);
-            self.conns.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+            self.tracks
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id);
+            self.conns
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id);
             let _ = std::fs::remove_file(self.cache_dir.join(format!("{id}.json")));
         }
         removed
@@ -467,7 +485,10 @@ impl Sources {
         match self.connection(id)?.open(key) {
             Ok(s) => Ok(s),
             Err(_) => {
-                self.conns.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+                self.conns
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(id);
                 self.connection(id)?.open(key)
             }
         }
@@ -499,7 +520,10 @@ impl Sources {
         {
             let mut recent = self.played.lock().unwrap_or_else(|e| e.into_inner());
             recent.retain(|_, t| t.elapsed() < Duration::from_secs(60));
-            if recent.insert(format!("{id}/{key}"), Instant::now()).is_some() {
+            if recent
+                .insert(format!("{id}/{key}"), Instant::now())
+                .is_some()
+            {
                 return;
             }
         }
@@ -519,7 +543,10 @@ impl Sources {
     ) -> Result<(String, String), (u16, String)> {
         let server = server.trim().trim_end_matches('/');
         if !(server.starts_with("https://") || server.starts_with("http://")) {
-            return Err((400, "the address must start with https:// or http://".into()));
+            return Err((
+                400,
+                "the address must start with https:// or http://".into(),
+            ));
         }
         let login = bl_sources::webdav::nextcloud_start(server).map_err(|e| (400, e))?;
         if !(login.login_url.starts_with("https://") || login.login_url.starts_with("http://")) {
@@ -579,7 +606,11 @@ impl Sources {
             path,
             pin: String::new(),
         };
-        let name = if name.trim().is_empty() { "Nextcloud" } else { &name };
+        let name = if name.trim().is_empty() {
+            "Nextcloud"
+        } else {
+            &name
+        };
         self.put(None, name, true, cfg).map(Some)
     }
 
@@ -588,11 +619,7 @@ impl Sources {
         Value::Array(
             bl_sources::dlna::discover(Duration::from_secs(2))
                 .into_iter()
-                .map(|f| {
-                    Value::object()
-                        .with("name", f.name)
-                        .with("url", f.location)
-                })
+                .map(|f| Value::object().with("name", f.name).with("url", f.location))
                 .collect(),
         )
     }
@@ -680,7 +707,10 @@ impl Sources {
             }
             Err(e) => {
                 crate::warn!("source {}: {e}", rec.name);
-                self.conns.lock().unwrap_or_else(|e| e.into_inner()).remove(&rec.id);
+                self.conns
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&rec.id);
                 self.set_status(&rec.id, |s| {
                     s.syncing = false;
                     s.error = e;

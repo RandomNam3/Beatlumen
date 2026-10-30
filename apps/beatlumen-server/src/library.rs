@@ -451,7 +451,14 @@ fn walk_watched(
                 dirs: Vec::new(),
                 visited: seen,
             };
-            w.present = walk(root_idx, &path, &mut w.files, &mut w.dirs, &mut w.visited, &counter);
+            w.present = walk(
+                root_idx,
+                &path,
+                &mut w.files,
+                &mut w.dirs,
+                &mut w.visited,
+                &counter,
+            );
             let _ = tx.send(w);
         });
     if spawned.is_err() {

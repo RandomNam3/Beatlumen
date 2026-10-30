@@ -674,7 +674,9 @@ pub fn handle(state: &Arc<State>, req: &Request, segs: &[&str]) -> Response {
                 v.str_or("path", ""),
             )
         }) {
-            Ok((id, url)) => Response::json(200, &Value::object().with("id", id).with("loginUrl", url)),
+            Ok((id, url)) => {
+                Response::json(200, &Value::object().with("id", id).with("loginUrl", url))
+            }
             Err(e) => fail(e),
         },
         ("POST", ["sources", "nextcloud", id]) => match state.sources.nextcloud_poll(id) {
@@ -701,12 +703,9 @@ pub fn handle(state: &Arc<State>, req: &Request, segs: &[&str]) -> Response {
 fn put_source(state: &State, id: Option<&str>, v: &Value) -> Result<String, (u16, String)> {
     let mut cfg = bl_sources::SourceConfig::from_json(v);
     cfg.kind = cfg.kind.trim().to_ascii_lowercase();
-    let r = state.sources.put(
-        id,
-        v.str_or("name", ""),
-        v.bool_or("enabled", true),
-        cfg,
-    )?;
+    let r = state
+        .sources
+        .put(id, v.str_or("name", ""), v.bool_or("enabled", true), cfg)?;
     crate::info!(
         "admin {} a music source",
         if id.is_some() { "changed" } else { "added" }

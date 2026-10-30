@@ -12,6 +12,9 @@ Item {
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
     readonly property string server: Core.state.server || "disabled"
+    readonly property var sources: Core.state.sources || ({})
+
+    SourceDialog { id: sourceDialog }
 
     // Plain HTTP is fine at home; elsewhere the password and the login
     // would travel unencrypted.
@@ -189,6 +192,67 @@ Item {
                     flat: true
                     onClicked: Core.requestMediaPermission()
                 }
+            }
+
+            // ---- music sources (without a server) ---------------------------
+            SectionLabel { text: Theme.tr("Music sources"); visible: page.sources.available === true }
+            Label {
+                visible: page.sources.available === true && (page.sources.list || []).length === 0
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                wrapMode: Text.Wrap
+                color: Theme.textDim
+                font.pixelSize: 13
+                text: Theme.tr("Play the music of a Subsonic, Navidrome or Jellyfin server, a WebDAV or Nextcloud folder or a DLNA media server directly on this device.")
+            }
+            Repeater {
+                model: page.sources.available === true ? (page.sources.list || []) : []
+                delegate: ItemDelegate {
+                    id: srcRow
+                    Layout.fillWidth: true
+                    height: Theme.row
+                    onClicked: sourceDialog.openFor(modelData)
+                    contentItem: RowLayout {
+                        Icon { name: modelData.kind === "dlna" ? "storage" : "cloud"; color: modelData.error ? Theme.danger : Theme.accent }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight; color: Theme.text }
+                            Label {
+                                textFormat: Text.PlainText
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                                color: modelData.error ? Theme.danger : Theme.textDim
+                                text: !modelData.enabled ? Theme.tr("Off")
+                                    : modelData.syncing ? Theme.tr("Listing songs…")
+                                    : modelData.untrustedKey ? Theme.tr("New server key %1: compare it with the server's before trusting it").arg(modelData.untrustedKey)
+                                    : modelData.error ? modelData.error
+                                    : Theme.tr("%1 songs").arg(modelData.songs)
+                            }
+                        }
+                        BusyIndicator { running: modelData.syncing; visible: running; implicitWidth: 28; implicitHeight: 28 }
+                        Button {
+                            visible: !!modelData.untrustedKey
+                            text: Theme.tr("Trust key")
+                            flat: true
+                            ToolTip.visible: hovered
+                            ToolTip.text: modelData.untrustedKey
+                            onClicked: Core.call("sources.trust", { id: modelData.id })
+                        }
+                        IconButton { iconName: "refresh"; tip: Theme.tr("Sync now"); enabled: !modelData.syncing && modelData.enabled; onClicked: Core.call("sources.sync", { id: modelData.id }) }
+                        IconButton { iconName: "close"; tip: Theme.tr("Remove"); onClicked: Core.call("sources.remove", { id: modelData.id }) }
+                    }
+                }
+            }
+            Flow {
+                visible: page.sources.available === true
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Button { text: Theme.tr("Add music source"); icon.source: Theme.icon("add"); onClicked: sourceDialog.openFor(null) }
             }
 
             // ---- server -----------------------------------------------------

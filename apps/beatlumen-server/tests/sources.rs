@@ -8,11 +8,8 @@ mod common;
 use beatlumen_server::Config;
 use bl_json::Value;
 use bl_net::client;
-use bl_net::server::{Request, Response};
-use std::io::Cursor;
-use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn temp(name: &str) -> PathBuf {
@@ -35,84 +32,6 @@ fn wait<T>(what: &str, secs: u64, mut f: impl FnMut() -> Option<T>) -> T {
         assert!(t0.elapsed() < Duration::from_secs(secs), "timeout: {what}");
         std::thread::sleep(Duration::from_millis(50));
     }
-}
-
-/// A Subsonic answer with the field `key` (none when empty).
-fn ok(key: &str, v: Value) -> Response {
-    let mut inner = Value::object()
-        .with("status", "ok")
-        .with("version", "1.16.1");
-    if !key.is_empty() {
-        inner = inner.with(key, v);
-    }
-    Response::json(200, &Value::object().with("subsonic-response", inner))
-}
-
-/// A Subsonic server with one song; records the methods called.
-fn fake_subsonic(song: Arc<Vec<u8>>, cover: Arc<Vec<u8>>) -> (String, Arc<Mutex<Vec<String>>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let seen = calls.clone();
-    let handler: Arc<bl_net::server::Handler> = Arc::new(move |req: Request| {
-        let method = req
-            .path
-            .strip_prefix("/rest/")
-            .and_then(|m| m.strip_suffix(".view"))
-            .unwrap_or("")
-            .to_string();
-        seen.lock().unwrap().push(method.clone());
-        // The login: a token made from the password and a salt.
-        let salt = req.query("s").unwrap_or("");
-        let token = bl_sources::md5::md5_hex(format!("geheim{salt}").as_bytes());
-        if req.query("u") != Some("anna") || req.query("t") != Some(token.as_str()) {
-            let error = Value::object().with("code", 40u64).with("message", "Wrong");
-            return Response::json(
-                200,
-                &Value::object().with(
-                    "subsonic-response",
-                    Value::object().with("status", "failed").with("error", error),
-                ),
-            );
-        }
-        match method.as_str() {
-            "ping" | "scrobble" => ok("", Value::Null),
-            "search3" => {
-                let songs = if req.query("songOffset") == Some("0") {
-                    vec![Value::object()
-                        .with("id", "s1")
-                        .with("title", "Remote One")
-                        .with("artist", "Far Artist")
-                        .with("album", "Far Album")
-                        .with("track", 3u64)
-                        .with("year", 2020u64)
-                        .with("duration", 2u64)
-                        .with("size", song.len() as u64)
-                        .with("suffix", "wav")
-                        .with("coverArt", "al-1")]
-                } else {
-                    Vec::new()
-                };
-                ok(
-                    "searchResult3",
-                    Value::object().with("song", Value::Array(songs)),
-                )
-            }
-            "stream" if req.query("id") == Some("s1") => Response::seekable(
-                Cursor::new(song.as_ref().clone()),
-                "audio/wav",
-                req.header("range"),
-            ),
-            "getCoverArt" if req.query("id") == Some("al-1") => {
-                Response::bytes(200, "image/jpeg", cover.as_ref().clone())
-            }
-            _ => Response::error(404, "not found"),
-        }
-    });
-    std::thread::spawn(move || {
-        bl_net::server::serve(listener, handler, Default::default())
-    });
-    (base, calls)
 }
 
 struct Admin {
@@ -160,7 +79,10 @@ impl Admin {
             &client::Options::default(),
         )
         .unwrap();
-        (r.status, bl_json::parse_bytes(&r.body).unwrap_or(Value::Null))
+        (
+            r.status,
+            bl_json::parse_bytes(&r.body).unwrap_or(Value::Null),
+        )
     }
 }
 
@@ -197,7 +119,7 @@ fn subsonic_songs_join_the_library() {
         p.copy_from_slice(&[200, 40, 90, 255]);
     }
     let cover = Arc::new(bl_image::encode_jpeg(&img, 90));
-    let (url, calls) = fake_subsonic(song.clone(), cover);
+    let (url, calls) = common::fake_subsonic::fake_subsonic(song.clone(), cover);
 
     let root = temp("main");
     let data = root.join("data");
@@ -232,7 +154,15 @@ fn subsonic_songs_join_the_library() {
     );
     assert_eq!(status, 400, "{v:?}");
     assert!(v.str_or("error", "").contains("password"), "{v:?}");
-    assert_eq!(admin.json("GET", "sources", None).1.as_array().unwrap().len(), 0);
+    assert_eq!(
+        admin
+            .json("GET", "sources", None)
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 
     let (status, v) = admin.json(
         "POST",
@@ -251,7 +181,10 @@ fn subsonic_songs_join_the_library() {
 
     // The song appears next to the local one.
     let t = wait("remote song listed", 20, || remote_track(server.addr));
-    assert_eq!(t.str_or("path", ""), "Navi/Far Artist/Far Album/Remote One.wav");
+    assert_eq!(
+        t.str_or("path", ""),
+        "Navi/Far Artist/Far Album/Remote One.wav"
+    );
     assert_eq!(t.str_or("album", ""), "Far Album");
     assert!(t.bool_or("hasCover", false));
     let id = t.str_or("id", "").to_string();
@@ -281,7 +214,10 @@ fn subsonic_songs_join_the_library() {
     }
     // The password is stored encrypted.
     let stored = std::fs::read_to_string(data.join("sources.json")).unwrap();
-    assert!(stored.contains("\"sealed\"") && !stored.contains("geheim"), "{stored}");
+    assert!(
+        stored.contains("\"sealed\"") && !stored.contains("geheim"),
+        "{stored}"
+    );
 
     // Played through the server, whole and from an offset.
     let base = format!("http://{}/api/tracks/{id}", server.addr);
@@ -310,7 +246,12 @@ fn subsonic_songs_join_the_library() {
     let _ = get(&format!("{base}/stream"), &[]);
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(
-        calls.lock().unwrap().iter().filter(|c| *c == "scrobble").count(),
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| *c == "scrobble")
+            .count(),
         1
     );
 
@@ -320,10 +261,7 @@ fn subsonic_songs_join_the_library() {
     assert!(bl_analysis::decode(&r.body).is_some());
     let r = get(&format!("{base}/cover?size=64"), &[]);
     assert_eq!(r.status, 200);
-    assert_eq!(
-        r.headers.get("content-type"),
-        Some("image/jpeg")
-    );
+    assert_eq!(r.headers.get("content-type"), Some("image/jpeg"));
 
     // After a restart the song is there from the start (cached listing).
     let again = start();
@@ -365,11 +303,17 @@ fn subsonic_songs_join_the_library() {
     );
     assert_eq!(status, 200, "{v:?}");
     wait("listed again", 20, || remote_track(server.addr));
-    assert_eq!(admin.json("DELETE", &format!("sources/{source}"), None).0, 204);
+    assert_eq!(
+        admin.json("DELETE", &format!("sources/{source}"), None).0,
+        204
+    );
     wait("songs of a removed source leave", 10, || {
         remote_track(server.addr).is_none().then_some(())
     });
-    assert_eq!(admin.json("DELETE", &format!("sources/{source}"), None).0, 404);
+    assert_eq!(
+        admin.json("DELETE", &format!("sources/{source}"), None).0,
+        404
+    );
     assert!(!data.join("sources").join(format!("{source}.json")).exists());
     let _ = std::fs::remove_dir_all(&root);
 }
