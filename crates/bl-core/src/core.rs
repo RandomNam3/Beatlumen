@@ -234,6 +234,11 @@ pub struct Core {
     /// they need is put off until the app is visible again.
     pub(crate) visible: bool,
     pub(crate) live: RealtimeAnalyzer,
+    /// Tempo and phase of the music as it plays (live sources: effects on
+    /// the predicted beats).
+    pub(crate) beats: bl_analysis::beat::BeatTracker,
+    /// Taps of the sync measurement (heard beat minus predicted beat, s).
+    pub(crate) sync_taps: Vec<f64>,
     live_buf: Vec<f32>,
     last_live_pos: f64,
     pub(crate) spectrum: Vec<f32>,
@@ -422,6 +427,8 @@ impl Core {
             analysis_requested: false,
             visible: true,
             live: RealtimeAnalyzer::new(48000, &analysis_cfg),
+            beats: bl_analysis::beat::BeatTracker::new(48000.0 / 1024.0),
+            sync_taps: Vec::new(),
             live_buf: vec![0.0; 2048],
             last_live_pos: 0.0,
             spectrum: Vec::new(),
@@ -667,6 +674,7 @@ impl Core {
             .with("extensions", self.extensions_json())
             .with("sources", self.sources_json())
             .with("share", self.share_json())
+            .with("tempo", self.tempo_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -1033,6 +1041,7 @@ impl Core {
                 self.player.device_rate().max(8000),
                 &self.preset.analysis_config(),
             );
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
             self.request_analysis_for_current();
         }
     }
@@ -1046,6 +1055,7 @@ impl Core {
                 self.player.device_rate().max(8000),
                 &self.preset.analysis_config(),
             );
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
             self.request_analysis_for_current();
         }
     }
@@ -2416,6 +2426,43 @@ impl Core {
 
     // ---- tick and render ----------------------------------------------------------
 
+    /// Live analysis of the samples played since the last call: novelty
+    /// per band (the lows on the predicted beats when the beat is steady).
+    pub fn update_live(&mut self, host: &mut dyn Host) -> [f32; 3] {
+        let playing = self.player.state() == PlayState::Playing;
+        let position = self.player.position(host);
+        // Live analysis from the samples played since the last frame.
+        if playing {
+            let rate = self.player.device_rate().max(1) as f64;
+            let new = (((position - self.last_live_pos) * rate) as usize).min(self.live_buf.len());
+            if new > 0 && position > self.last_live_pos {
+                let mut tmp = vec![0.0f32; self.live_buf.len()];
+                self.player.recent_samples(&mut tmp);
+                self.live.push(&tmp[tmp.len() - new..]);
+            }
+            // Onsets with the stream time their frame ends at.
+            let onsets = self.live.take_onsets();
+            let step = 1.0 / self.live.frame_rate();
+            let end = position - self.live.pending() as f64 / rate;
+            for (j, v) in onsets.iter().enumerate() {
+                self.beats
+                    .push(*v, end - (onsets.len() - 1 - j) as f64 * step);
+            }
+        }
+        self.last_live_pos = position;
+        let mut live = [0.0f32; 3];
+        for (i, v) in self.live.novelty().iter().take(3).enumerate() {
+            live[i] = *v;
+        }
+        // Live sources: with a steady beat, the lows pulse on the predicted
+        // beats as they are heard instead of after the analysis caught them.
+        if self.settings.beat_prediction && self.beats.confidence() > 0.35 {
+            let heard = position + self.settings.sync_offset_ms as f64 / 1000.0;
+            live[0] = (live[0] * 0.4).max(self.beats.pulse(heard));
+        }
+        live
+    }
+
     /// Advances everything that does not need GL: network, background jobs,
     /// playback, live analysis, settings persistence. Call regularly (every
     /// frame, and from a timer while the window is hidden).
@@ -2505,6 +2552,7 @@ impl Core {
                             self.player.device_rate(),
                             &self.preset.analysis_config(),
                         );
+                        self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
                     }
                 }
             }
@@ -2566,21 +2614,7 @@ impl Core {
         self.poll_images(host, gl);
         let playing = self.player.state() == PlayState::Playing;
         let position = self.player.position(host);
-        // Live analysis from the samples played since the last frame.
-        if playing {
-            let rate = self.player.device_rate().max(1) as f64;
-            let new = (((position - self.last_live_pos) * rate) as usize).min(self.live_buf.len());
-            if new > 0 && position > self.last_live_pos {
-                let mut tmp = vec![0.0f32; self.live_buf.len()];
-                self.player.recent_samples(&mut tmp);
-                self.live.push(&tmp[tmp.len() - new..]);
-            }
-        }
-        self.last_live_pos = position;
-        let mut live = [0.0f32; 3];
-        for (i, v) in self.live.novelty().iter().take(3).enumerate() {
-            live[i] = *v;
-        }
+        let live = self.update_live(host);
         let k = 1.0 - (-12.0 * dt as f32).exp();
         self.menu_blur += (self.blur_target - self.menu_blur) * k;
         if (self.menu_blur - self.blur_target).abs() < 0.01 {

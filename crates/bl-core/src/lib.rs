@@ -39,6 +39,7 @@ mod sources;
 #[path = "sources_web.rs"]
 mod sources;
 pub mod strings;
+mod tempo;
 mod vault;
 mod visual;
 mod webcheck;

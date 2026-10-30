@@ -136,9 +136,10 @@ them and the apps play through it).
 
 ## Phase 6: live audio
 
-- [ ] Beat prediction for live input (other apps, AirPlay, DLNA): tempo
-  and phase tracking so effects anticipate beats; output latency setting
-  (e.g. Bluetooth) with a measurement aid.
+- [x] Beat prediction for live input (other apps, AirPlay, DLNA, radio):
+  tempo from the autocorrelation of the onset envelope, phase from a
+  comb; effects land on the predicted beats; sync offset measured by
+  tapping along (e.g. Bluetooth latency).
 
 ## Phase 7: offline and song texts
 

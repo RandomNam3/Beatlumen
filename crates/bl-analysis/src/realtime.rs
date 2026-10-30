@@ -24,6 +24,8 @@ pub struct RealtimeAnalyzer {
     history: Vec<Vec<f32>>,
     novelty: Vec<f32>,
     energy: f32,
+    /// Onset strength per analysed frame since the last `take_onsets`.
+    onsets: Vec<f32>,
 }
 
 const HISTORY: usize = 11;
@@ -49,6 +51,7 @@ impl RealtimeAnalyzer {
             history: vec![vec![0.0; HISTORY]; config.novelty.len()],
             novelty: vec![0.0; config.novelty.len()],
             energy: 0.0,
+            onsets: Vec::new(),
         }
     }
 
@@ -67,6 +70,24 @@ impl RealtimeAnalyzer {
         self.novelty.fill(0.0);
         self.energy = 0.0;
         self.since_hop = 0;
+        self.onsets.clear();
+    }
+
+    /// Analysed frames per second.
+    pub fn frame_rate(&self) -> f64 {
+        self.sample_rate as f64 / self.hop as f64
+    }
+
+    /// The onset strength of each frame analysed since the last call
+    /// (lows count fully, mids half), for [`crate::beat::BeatTracker`].
+    pub fn take_onsets(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.onsets)
+    }
+
+    /// Samples pushed but not analysed yet (the newest frame ends this
+    /// many samples before the newest sample).
+    pub fn pending(&self) -> usize {
+        self.since_hop
     }
 
     /// Feeds mono samples (in playback order).
@@ -124,6 +145,10 @@ impl RealtimeAnalyzer {
             };
             self.novelty[bi] = ((flux - avg) / norm).max(0.0);
         }
+        if self.onsets.len() < 4096 {
+            let at = |i: usize| self.novelty.get(i).copied().unwrap_or(0.0);
+            self.onsets.push(at(0) + 0.5 * at(1));
+        }
     }
 
     /// Latest novelty value per configured band.
@@ -177,5 +202,37 @@ mod tests {
         assert!(max_low > 0.0);
         let mut bands = [0.0; 16];
         a.log_bands(&mut bands);
+    }
+
+    #[test]
+    fn kicks_give_the_tempo() {
+        let sr = 44100;
+        let mut a = RealtimeAnalyzer::new(sr, &AnalysisConfig::default());
+        let mut t = crate::beat::BeatTracker::new(a.frame_rate());
+        let period = 60.0 / 126.0;
+        let block = 512;
+        let total = sr as usize * 10;
+        let mut i = 0;
+        while i < total {
+            let samples: Vec<f32> = (i..(i + block).min(total))
+                .map(|k| {
+                    let time = k as f32 / sr as f32;
+                    let since = time % period as f32;
+                    let kick = (std::f32::consts::TAU * 55.0 * time).sin() * (-since * 25.0).exp();
+                    let hat = ((k * 7919) % 97) as f32 / 97.0 - 0.5;
+                    0.8 * kick + 0.05 * hat
+                })
+                .collect();
+            a.push(&samples);
+            i += samples.len();
+            let onsets = a.take_onsets();
+            let end = (i - a.pending()) as f64 / sr as f64;
+            let step = 1.0 / a.frame_rate();
+            for (j, v) in onsets.iter().enumerate() {
+                t.push(*v, end - (onsets.len() - 1 - j) as f64 * step);
+            }
+        }
+        let bpm = t.bpm().expect("a tempo");
+        assert!((bpm - 126.0).abs() < 3.0, "{bpm}");
     }
 }

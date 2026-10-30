@@ -134,6 +134,8 @@ pub struct Settings {
     /// Shifts the effects against the audio in milliseconds (positive =
     /// earlier), for outputs with unreported latency (e.g. Bluetooth).
     pub sync_offset_ms: f32,
+    /// Live sources: effects on the predicted beats.
+    pub beat_prediction: bool,
     /// Adapt effects automatically to the energy and sections of the track.
     pub adaptive: bool,
     /// Play all tracks at a similar loudness (EBU R128 measurement).
@@ -213,6 +215,7 @@ impl Default for Settings {
             waveform_thickness: 0.3,
             intensity: 1.0,
             sync_offset_ms: 0.0,
+            beat_prediction: true,
             adaptive: true,
             normalize: false,
             crossfade: 0.0,
@@ -291,6 +294,7 @@ impl Settings {
             sync_offset_ms: v
                 .f32_or("syncOffsetMs", d.sync_offset_ms)
                 .clamp(-500.0, 500.0),
+            beat_prediction: v.bool_or("beatPrediction", d.beat_prediction),
             adaptive: v.bool_or("adaptive", d.adaptive),
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
@@ -363,6 +367,7 @@ impl Settings {
             .with("waveformThickness", self.waveform_thickness)
             .with("intensity", self.intensity)
             .with("syncOffsetMs", self.sync_offset_ms)
+            .with("beatPrediction", self.beat_prediction)
             .with("adaptive", self.adaptive)
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
