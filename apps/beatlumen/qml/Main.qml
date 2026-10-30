@@ -33,6 +33,7 @@ ApplicationWindow {
     Component.onCompleted: {
         if (startFullscreen)
             showFullScreen()
+        welcomeTimer.start()
         if (Core.platform === "android" && !(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.askedPermission)) {
             Core.call("settings.set", { key: "ui.askedPermission", value: true })
             Core.requestMediaPermission()
@@ -261,6 +262,7 @@ ApplicationWindow {
                 }
             }
             Loader {
+                id: settingsLoader
                 active: win.page === 3 || item !== null
                 sourceComponent: SettingsPage {
                     onAddFolder: win.addFolder()
@@ -360,6 +362,91 @@ ApplicationWindow {
     }
     // Visualising other apps without access to their media sessions: the
     // title, cover and full control need it; offered once per start.
+    // First start: where the music comes from.
+    Timer {
+        id: welcomeTimer
+        interval: 1500
+        onTriggered: {
+            const s = Core.state.settings || {}
+            const nothing = (Core.state.libraryTracks || 0) === 0 && (s.libraryFolders || []).length === 0
+                && (Core.state.server || "disabled") === "disabled"
+            if (!(s.ui && s.ui.welcomed) && nothing && Core.platform !== "web")
+                welcome.open()
+        }
+    }
+    AppDialog {
+        id: welcome
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(480, win.width - 32)
+        title: Theme.tr("Welcome to Beatlumen")
+        standardButtons: Dialog.NoButton
+        onClosed: Core.call("settings.set", { key: "ui.welcomed", value: true })
+        function openSettings(category) {
+            welcome.close()
+            win.page = 3
+            Qt.callLater(() => { if (settingsLoader.item) settingsLoader.item.category = category })
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 6
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: Theme.tr("Where does your music come from? You can change and add everything later in the settings.")
+            }
+            component Choice: ItemDelegate {
+                property string iconName
+                property string detail
+                Layout.fillWidth: true
+                contentItem: RowLayout {
+                    spacing: 14
+                    Icon { name: parent.parent.iconName; color: Theme.accent }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.text; color: Theme.text; wrapMode: Text.WordWrap }
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.detail; color: Theme.textDim; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    }
+                }
+            }
+            Choice {
+                visible: Core.platform !== "web"
+                iconName: "create_new_folder"
+                text: Theme.tr("Music on this device")
+                detail: Theme.tr("Add a folder with your songs.")
+                onClicked: { welcome.close(); win.addFolder() }
+            }
+            Choice {
+                iconName: "cloud"
+                text: Theme.tr("A Beatlumen server")
+                detail: Theme.tr("Your library at home, analysed for the visuals, with accounts and encrypted files.")
+                onClicked: welcome.openSettings("server")
+            }
+            Choice {
+                visible: (Core.state.sources || {}).available === true
+                iconName: "storage"
+                text: Theme.tr("Navidrome, Jellyfin, Nextcloud, a NAS …")
+                detail: Theme.tr("Play the music of other servers and storage directly.")
+                onClicked: welcome.openSettings("library")
+            }
+            Choice {
+                visible: Core.platform !== "web"
+                iconName: "speaker"
+                text: Theme.tr("Use this device as a speaker")
+                detail: Theme.tr("iPhones, Macs, Windows and DLNA apps play here (AirPlay, DLNA) with visuals.")
+                onClicked: welcome.openSettings("receive")
+            }
+            Button {
+                Layout.alignment: Qt.AlignRight
+                text: Theme.tr("Later")
+                flat: true
+                onClicked: welcome.close()
+            }
+        }
+    }
+
     // Songs or a link shared with the app by another app.
     AppDialog {
         id: shareAsk

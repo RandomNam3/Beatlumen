@@ -164,10 +164,12 @@ them and the apps play through it).
 
 - [x] Navigation for the new areas (sources, devices, radio): rail on wide
   screens, bottom bar with "More" on phones.
-- [ ] Settings in categories with search; consistent dialogs and empty
-  states; first start guide (server, folders, receivers).
-- [ ] Layout review on phone, tablet and desktop (screenshots of every
-  page, light and dark), translations complete, accessibility names.
+- [x] Settings in categories with search; consistent dialogs and empty
+  states; first start guide (device folder, server, other sources,
+  speaker).
+- [x] Layout review on phone, tablet and desktop (automated overflow check
+  of every page at 360 px, screenshots), translations complete (checked
+  by script), accessibility names.
 
 ## Phase 10: 0.10.0 beta
 

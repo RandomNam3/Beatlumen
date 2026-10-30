@@ -16,6 +16,7 @@ fn de(s: &str) -> Option<&'static str> {
         "songs" => "Songs",
         "Cannot read the playlist" => "Die Playlist kann nicht gelesen werden",
         "Playlist imported" => "Playlist importiert",
+        "Loading…" => "Wird geladen …",
         "Already working on a song" => "Es wird schon ein Song bearbeitet",
         "Pick a speech model first" => "Wähle zuerst ein Sprachmodell",
         "This song cannot be read on this device" => "Dieser Song kann auf diesem Gerät nicht gelesen werden",
