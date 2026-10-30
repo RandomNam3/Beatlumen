@@ -30,6 +30,12 @@ is sung, who sings is shown, and the text can be translated.
   interface). Timed files name
   the speech model (`[re:Beatlumen speech timing 2, model …]`), so songs
   are done again only with a better model.
+- **Fewer, better speech models**: all models were compared on real songs
+  (writing the singing down without a text, timing a known text). tiny,
+  small-q5_1 and medium-q5_0 did worse than others of their size or
+  speed and are no longer offered (a downloaded one keeps working).
+  Recommended: small; large v3 turbo is best (and slow without a graphics
+  card), base-q5_1 is the small and fast one.
 - **Translation** (apps on Linux, Windows and Android): each line in the
   app's language under the original (German or English, from English,
   German, Spanish, French, Italian, Dutch, Turkish and Russian). Own

@@ -28,9 +28,15 @@ pub struct ModelInfo {
     /// Quality and speed in a few words (English; the admin page
     /// translates by id).
     pub note: &'static str,
+    /// No longer offered for download (it did worse than the others in the
+    /// comparison with real songs); a downloaded copy keeps working.
+    pub retired: bool,
 }
 
-/// The models offered (multilingual; quantised ones need less memory).
+/// The models (multilingual; quantised ones need less memory), from the
+/// smallest to the best. Compared on real songs (writing the singing down,
+/// timing a known text): tiny, small-q5_1 and medium-q5_0 did worse than
+/// the others of their size or speed and are retired.
 pub const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "tiny",
@@ -38,7 +44,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 77_691_713,
         sha256: "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
         memory_mb: 150,
-        note: "fastest, rough",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "base-q5_1",
@@ -47,6 +54,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
         memory_mb: 200,
         note: "fast, small",
+        retired: false,
     },
     ModelInfo {
         id: "base",
@@ -55,6 +63,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         memory_mb: 300,
         note: "fast",
+        retired: false,
     },
     ModelInfo {
         id: "small-q5_1",
@@ -62,7 +71,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 190_085_487,
         sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
         memory_mb: 450,
-        note: "good for songs, recommended",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "small",
@@ -70,7 +80,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 487_601_967,
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
         memory_mb: 800,
-        note: "good for songs",
+        note: "good for songs, recommended",
+        retired: false,
     },
     ModelInfo {
         id: "medium-q5_0",
@@ -78,7 +89,8 @@ pub const CATALOG: &[ModelInfo] = &[
         size: 539_212_467,
         sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
         memory_mb: 1_000,
-        note: "better, slow",
+        note: "not recommended any more",
+        retired: true,
     },
     ModelInfo {
         id: "large-v3-turbo-q5_0",
@@ -87,6 +99,7 @@ pub const CATALOG: &[ModelInfo] = &[
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
         memory_mb: 1_100,
         note: "best, slow",
+        retired: false,
     },
 ];
 
@@ -180,6 +193,8 @@ impl Models {
         Value::Array(
             CATALOG
                 .iter()
+                // Retired models only while one is on the disk.
+                .filter(|m| !m.retired || self.path(m).is_file() || downloads.contains_key(m.id))
                 .map(|m| {
                     let path = self.path(m);
                     let mut v = Value::object()
@@ -242,6 +257,16 @@ impl Models {
         let path = self.path(m);
         if path.is_file() {
             done(path);
+            return;
+        }
+        if m.retired {
+            self.downloads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    m.id.to_string(),
+                    Download::Failed("this model is not offered any more".into()),
+                );
             return;
         }
         {
