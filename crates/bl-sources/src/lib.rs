@@ -131,6 +131,19 @@ pub fn connect(cfg: &SourceConfig) -> Result<Box<dyn MusicSource>, String> {
     }
 }
 
+/// Largest cover image read.
+pub(crate) const MAX_COVER: usize = 16 << 20;
+/// Largest small answer read (logins, device descriptions, short JSON).
+pub(crate) const MAX_SMALL: usize = 1 << 20;
+
+/// Request options that read at most `max_body` bytes.
+pub(crate) fn opts(max_body: usize) -> bl_net::client::Options {
+    bl_net::client::Options {
+        max_body,
+        ..Default::default()
+    }
+}
+
 /// Lowercase extension of a path or URL (without query), "" if none.
 pub fn ext_of(path: &str) -> String {
     let name = path.split(['?', '#']).next().unwrap_or(path);

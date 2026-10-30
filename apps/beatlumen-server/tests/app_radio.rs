@@ -1,6 +1,7 @@
 //! Internet radio in the app: a station is saved, plays live from a fake
 //! Icecast server (MP3 with ICY titles) and shows the current song.
-//! Needs ffmpeg for the MP3 (skipped without it).
+//! Needs ffmpeg for the MP3 (skipped without it). A station on the local
+//! network from a playlist file is not contacted until the user adds it.
 
 mod common;
 
@@ -8,6 +9,8 @@ use bl_json::Value;
 use common::App;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// An MP3 tone made with ffmpeg.
@@ -32,11 +35,15 @@ fn mp3(dir: &std::path::Path) -> Option<Vec<u8>> {
 }
 
 /// An Icecast-like server: the MP3 in a loop with a title every 8 KiB.
-fn station(audio: Vec<u8>) -> String {
+/// The station's address and how many connections it got.
+fn station(audio: Vec<u8>) -> (String, Arc<AtomicUsize>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/live", l.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let counter = count.clone();
     std::thread::spawn(move || {
         for s in l.incoming().flatten() {
+            counter.fetch_add(1, Ordering::SeqCst);
             let audio = audio.clone();
             std::thread::spawn(move || {
                 let mut s = s;
@@ -59,7 +66,7 @@ fn station(audio: Vec<u8>) -> String {
             });
         }
     });
-    url
+    (url, count)
 }
 
 fn position(app: &mut App) -> f64 {
@@ -79,8 +86,34 @@ fn radio_station_plays_live() {
         eprintln!("ffmpeg missing: skipped");
         return;
     };
-    let url = station(audio);
+    let (url, connections) = station(audio);
     app.state();
+
+    // From a playlist file: a local address is not reached.
+    let pls = app.dir.join("Local.pls");
+    std::fs::write(
+        &pls,
+        format!("[playlist]\nFile1={url}\nTitle1=Lokal\nNumberOfEntries=1\n"),
+    )
+    .unwrap();
+    app.cmd(
+        Value::object()
+            .with("cmd", "open")
+            .with("paths", vec![pls.to_string_lossy().to_string()])
+            .with("play", true),
+    );
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(2) {
+        position(&mut app);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        connections.load(Ordering::SeqCst),
+        0,
+        "local station reached"
+    );
+
+    // Added by the user: plays.
     let r = app.cmd(
         Value::object()
             .with("cmd", "radio.add")

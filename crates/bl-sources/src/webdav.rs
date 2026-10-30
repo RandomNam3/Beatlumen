@@ -237,7 +237,7 @@ impl MusicSource for WebDav {
                 &self.url_of(&path),
                 &self.auth,
                 &[],
-                &Options::default(),
+                &crate::opts(crate::MAX_COVER),
             ) {
                 if r.status == 200 && !r.body.is_empty() {
                     return Some(r.body);
@@ -265,7 +265,7 @@ pub fn nextcloud_start(server: &str) -> Result<NextcloudLogin, String> {
         &format!("{server}/index.php/login/v2"),
         &[("User-Agent".into(), "Beatlumen".into())],
         &[],
-        &Options::default(),
+        &crate::opts(crate::MAX_SMALL),
     )?;
     if r.status != 200 {
         return Err(format!("HTTP {}", r.status));
@@ -294,7 +294,7 @@ pub fn nextcloud_poll(login: &NextcloudLogin) -> Result<Option<(String, String, 
             "application/x-www-form-urlencoded".into(),
         )],
         body.as_bytes(),
-        &Options::default(),
+        &crate::opts(crate::MAX_SMALL),
     )?;
     match r.status {
         404 => Ok(None),

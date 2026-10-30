@@ -29,6 +29,8 @@ impl Core {
         None
     }
 
+    pub(crate) fn mark_public_only(&mut self, _url: &str) {}
+
     pub(crate) fn play_radio(&mut self, host: &mut dyn Host, _id: &str, _autoplay: bool) {
         self.player.stop(host);
     }

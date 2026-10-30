@@ -17,6 +17,11 @@ const CLIENT: &str = "Beatlumen";
 const PAGE: usize = 500;
 /// Upper bound of songs taken from one server.
 const MAX_SONGS: usize = 500_000;
+/// Upper bound of pages asked for in one listing (also when the pages
+/// hold nothing usable).
+const MAX_PAGES: usize = MAX_SONGS / PAGE + 1;
+/// Upper bound of albums looked at in a listing album by album.
+const MAX_ALBUMS: usize = 100_000;
 
 pub struct Subsonic {
     base: String,
@@ -146,7 +151,9 @@ impl Subsonic {
         progress: &mut dyn FnMut(usize) -> bool,
     ) -> Result<Vec<RemoteTrack>, String> {
         let mut out = Vec::new();
-        loop {
+        // The offset counts the server's entries, usable or not.
+        let mut offset = 0usize;
+        for _ in 0..MAX_PAGES {
             let r = self.call(
                 "search3",
                 &[
@@ -154,7 +161,7 @@ impl Subsonic {
                     ("artistCount", "0".into()),
                     ("albumCount", "0".into()),
                     ("songCount", PAGE.to_string()),
-                    ("songOffset", out.len().to_string()),
+                    ("songOffset", offset.to_string()),
                 ],
             )?;
             let songs = r
@@ -168,7 +175,9 @@ impl Subsonic {
             if n < PAGE || out.len() >= MAX_SONGS || !progress(out.len()) {
                 return Ok(out);
             }
+            offset += n;
         }
+        Ok(out)
     }
 
     /// All songs album by album (servers whose search needs a query).
@@ -178,7 +187,8 @@ impl Subsonic {
     ) -> Result<Vec<RemoteTrack>, String> {
         let mut out = Vec::new();
         let mut offset = 0;
-        loop {
+        // A server that keeps sending full pages ends here too.
+        while offset < MAX_ALBUMS {
             let r = self.call(
                 "getAlbumList2",
                 &[
@@ -216,6 +226,7 @@ impl Subsonic {
             }
             offset += PAGE;
         }
+        Ok(out)
     }
 }
 
@@ -249,7 +260,7 @@ impl MusicSource for Subsonic {
             .cloned()
             .unwrap_or_else(|| key.to_string());
         let url = self.url("getCoverArt", &[("id", id), ("size", size.to_string())]);
-        let r = client::request("GET", &url, &[], &[], &Options::default()).ok()?;
+        let r = client::request("GET", &url, &[], &[], &crate::opts(crate::MAX_COVER)).ok()?;
         let image = r
             .headers
             .get("content-type")

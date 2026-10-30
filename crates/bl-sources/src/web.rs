@@ -16,6 +16,14 @@ const MAX_PAGES: usize = 2000;
 const MAX_FILES: usize = 50_000;
 /// Largest listing page read.
 const MAX_PAGE: usize = 4 << 20;
+/// Longest path followed (decoded, bytes).
+const MAX_PATH: usize = 4096;
+/// Links read from one page.
+const MAX_LINKS: usize = 10_000;
+/// Paths remembered while crawling (folders and files).
+const MAX_SEEN: usize = MAX_PAGES + MAX_FILES;
+/// Bytes of the paths remembered while crawling.
+const MAX_SEEN_BYTES: usize = 32 << 20;
 const COVER_NAMES: &[&str] = &[
     "cover.jpg",
     "folder.jpg",
@@ -122,13 +130,17 @@ fn same_origin(a: &str, b: &str) -> bool {
     matches!((canon(a), canon(b)), (Some(x), Some(y)) if x == y)
 }
 
-/// The `href` values of a page (attribute quoted with `"` or `'`, or bare).
+/// The `href` values of a page (attribute quoted with `"` or `'`, or
+/// bare), at most 10 000.
 pub fn hrefs(html: &str) -> Vec<String> {
     let lower = html.to_ascii_lowercase();
     let b = html.as_bytes();
     let mut out = Vec::new();
     let mut at = 0;
-    while let Some(i) = lower[at..].find("href") {
+    while out.len() < MAX_LINKS {
+        let Some(i) = lower[at..].find("href") else {
+            break;
+        };
         let mut j = at + i + 4;
         at = j;
         // Only the attribute (preceded by whitespace), not e.g. "data-href".
@@ -273,6 +285,8 @@ impl Web {
         let mut seen = std::collections::HashSet::new();
         let mut queue = std::collections::VecDeque::from([(self.root.clone(), 0usize)]);
         seen.insert(self.root.clone());
+        // Bytes of the paths in `seen`.
+        let mut kept = self.root.len();
         let mut pages = 0;
         while let Some((page, depth)) = queue.pop_front() {
             pages += 1;
@@ -288,19 +302,34 @@ impl Web {
             };
             let html = String::from_utf8_lossy(&r.body);
             for href in hrefs(&html) {
+                // Percent-encoded, a path of MAX_PATH bytes is at most
+                // three times as long.
+                if href.len() > 3 * MAX_PATH {
+                    continue;
+                }
                 let Some(path) = link_path(&self.origin, &page, &href) else {
                     continue;
                 };
                 // Only below the starting folder, never upwards or aside.
-                if !path.starts_with(&self.root) || path == page || !seen.insert(path.clone()) {
+                if path.len() > MAX_PATH
+                    || !path.starts_with(&self.root)
+                    || path == page
+                    || seen.contains(&path)
+                {
                     continue;
                 }
+                kept += path.len();
+                if seen.len() >= MAX_SEEN || kept > MAX_SEEN_BYTES {
+                    return Ok(files);
+                }
+                seen.insert(path.clone());
                 let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
                 if name.starts_with('.') {
                     continue;
                 }
                 if path.ends_with('/') {
-                    if depth < MAX_DEPTH {
+                    // Folders beyond the page limit are never read.
+                    if depth < MAX_DEPTH && pages + queue.len() < MAX_PAGES {
                         queue.push_back((path, depth + 1));
                     }
                 } else if bl_media::is_supported_extension(&crate::ext_of(&path)) {
@@ -402,5 +431,7 @@ mod tests {
             hrefs(html),
             ["Song%201.mp3", "Sub/", "bare.flac", "a&b.ogg"]
         );
+        let many = r#"<a href="x">x</a> "#.repeat(MAX_LINKS + 5);
+        assert_eq!(hrefs(&many).len(), MAX_LINKS);
     }
 }

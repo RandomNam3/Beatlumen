@@ -72,6 +72,7 @@ impl Core {
                 let paths = std::mem::take(&mut self.share.paths);
                 if let Some(url) = self.share.link.take() {
                     // A stream, a file or a station file: played live.
+                    self.mark_public_only(&url);
                     let id = format!("{}{url}", crate::sources::RADIO_PREFIX);
                     if play {
                         self.play_tracks(host, vec![id], 0);

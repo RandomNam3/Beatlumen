@@ -27,8 +27,10 @@
 //! playlists may lead to other hosts (radio streams often do), but a
 //! station on the internet cannot send the server to an address in the
 //! local network (loopback, private, link-local); one configured with a
-//! local address may. For HTTPS the address is checked before the TLS
-//! connector resolves the name again.
+//! local address may, unless the caller asks for [`Reach::PUBLIC`]
+//! ([`open_stream_public`]: stations from imported or shared playlists).
+//! For HTTPS the address is checked before the TLS connector resolves the
+//! name again.
 
 mod decode;
 mod hls;
@@ -65,15 +67,19 @@ fn set_title(titles: &Titles, title: Option<String>) {
 }
 
 /// Which addresses the requests for a station may reach.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Reach {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reach {
     /// Addresses in the local network are allowed.
     local: bool,
 }
 
 impl Reach {
+    /// Only addresses on the internet, whatever the station's own address
+    /// is (stations from imported or shared playlist files).
+    pub const PUBLIC: Reach = Reach { local: false };
+
     /// The station's own address decides: a local one allows local ones.
-    pub(crate) fn of(url: &str) -> Reach {
+    pub fn of(url: &str) -> Reach {
         let local = Url::parse(url)
             .ok()
             .and_then(|u| (u.host.as_str(), u.port).to_socket_addrs().ok())
@@ -83,6 +89,8 @@ impl Reach {
 }
 
 /// An address on the internet (not loopback, private, link-local, …).
+/// IPv6 addresses that carry an IPv4 address (mapped, compatible, NAT64,
+/// 6to4) are judged by that address.
 fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => {
@@ -92,20 +100,34 @@ fn is_public(ip: IpAddr) -> bool {
                 || a.is_link_local()
                 || a.is_unspecified()
                 || a.is_broadcast()
+                || a.is_multicast()
                 || o[0] == 0
                 || (o[0] == 100 && o[1] & 0xc0 == 64) // shared address space
                 || o[0] >= 240)
         }
         IpAddr::V6(a) => {
-            if let Some(v4) = a.to_ipv4_mapped() {
-                return is_public(IpAddr::V4(v4));
-            }
             let s = a.segments();
-            !(a.is_loopback()
-                || a.is_unspecified()
+            let v4 = |hi: u16, lo: u16| {
+                IpAddr::V4(std::net::Ipv4Addr::from(
+                    (u32::from(hi) << 16) | u32::from(lo),
+                ))
+            };
+            // ::ffff:a.b.c.d (mapped), ::a.b.c.d (compatible; also :: and
+            // ::1), 64:ff9b::a.b.c.d (NAT64).
+            if (s[..5] == [0; 5] && matches!(s[5], 0 | 0xffff))
+                || s[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+            {
+                return is_public(v4(s[6], s[7]));
+            }
+            // 2002:a.b.c.d::/48 (6to4).
+            if s[0] == 0x2002 {
+                return is_public(v4(s[1], s[2]));
+            }
+            !((s[0] == 0x64 && s[1] == 0xff9b) // NAT64 for local use
                 || s[0] & 0xfe00 == 0xfc00 // unique local
                 || s[0] & 0xffc0 == 0xfe80 // link-local
-                || s[0] & 0xffc0 == 0xfec0) // site-local
+                || s[0] & 0xffc0 == 0xfec0 // site-local
+                || s[0] & 0xff00 == 0xff00) // multicast
         }
     }
 }
@@ -500,6 +522,12 @@ fn fetch_station(url: &str, reach: Reach) -> Result<Fetched, String> {
 /// What a station URL leads to: the streams of a station file, or the URL
 /// itself (an HLS playlist or a stream; then the title is its `icy-name`).
 pub fn resolve_station(url: &str) -> Result<Vec<StationStream>, String> {
+    resolve_station_with(url, Reach::of(url))
+}
+
+/// [`resolve_station`] with the addresses it may reach given by the caller
+/// ([`Reach::PUBLIC`] for stations from imported or shared playlists).
+pub fn resolve_station_with(url: &str, reach: Reach) -> Result<Vec<StationStream>, String> {
     let own = |title: Option<String>, hls: bool| {
         vec![StationStream {
             url: url.trim().to_string(),
@@ -507,7 +535,7 @@ pub fn resolve_station(url: &str) -> Result<Vec<StationStream>, String> {
             hls,
         }]
     };
-    Ok(match fetch_station(url, Reach::of(url))? {
+    Ok(match fetch_station(url, reach)? {
         Fetched::List(list) => list,
         Fetched::Hls { .. } => own(None, true),
         Fetched::Audio(r) => own(header_text(&r.headers, "icy-name"), false),
@@ -684,6 +712,17 @@ pub struct RadioStream {
 /// plain HTTP streams.
 pub fn open_stream(url: &str) -> Result<RadioStream, String> {
     open_with(url, Reach::of(url), 0)
+}
+
+/// [`open_stream`] with the addresses it may reach given by the caller.
+pub fn open_stream_with(url: &str, reach: Reach) -> Result<RadioStream, String> {
+    open_with(url, reach, 0)
+}
+
+/// [`open_stream`] for a station that must stay on the internet even when
+/// its own address is local (stations from imported or shared playlists).
+pub fn open_stream_public(url: &str) -> Result<RadioStream, String> {
+    open_with(url, Reach::PUBLIC, 0)
 }
 
 fn open_with(url: &str, reach: Reach, depth: usize) -> Result<RadioStream, String> {
@@ -942,10 +981,30 @@ mod tests {
             "fd00::1",
             "fe80::1",
             "::ffff:10.0.0.1",
+            "::",
+            // An IPv4 address inside: NAT64, 6to4, IPv4-compatible.
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::192.168.0.1",
+            "64:ff9b:1::808:808",
+            "2002:7f00:1::1",
+            "2002:c0a8:101::",
+            "2002:a9fe:a9fe:1:2:3:4:5",
+            "::127.0.0.1",
+            "::10.0.0.1",
+            "ff02::1",
+            "224.0.0.1",
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["8.8.8.8", "2001:4860:4860::8888", "::ffff:1.1.1.1"] {
+        for ip in [
+            "8.8.8.8",
+            "2001:4860:4860::8888",
+            "::ffff:1.1.1.1",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::8.8.8.8",
+        ] {
             assert!(is_public(ip.parse().unwrap()), "{ip}");
         }
     }
@@ -953,9 +1012,18 @@ mod tests {
     #[test]
     fn internet_stations_cannot_reach_the_local_network() {
         let base = serve(|_, _, _| ok("audio/mpeg", b"x"));
-        let e = get(&base, Reach { local: false }, true).err().unwrap();
+        let e = get(&base, Reach::PUBLIC, true).err().unwrap();
         assert!(e.contains("local network"), "{e}");
         assert!(get(&base, Reach::of(&base), true).is_ok());
+        // Public only, although the station itself is local.
+        let e = open_stream_public(&base).err().unwrap();
+        assert!(e.contains("local network"), "{e}");
+        let e = resolve_station_with(&base, Reach::PUBLIC).unwrap_err();
+        assert!(e.contains("local network"), "{e}");
+        let e = open_stream_with(&base, Reach::PUBLIC).err().unwrap();
+        assert!(e.contains("local network"), "{e}");
+        assert!(open_stream(&base).is_ok());
+        assert!(open_stream_with(&base, Reach::of(&base)).is_ok());
     }
 
     /// A station: a .pls (first entry dead), a redirect to it, an M3U

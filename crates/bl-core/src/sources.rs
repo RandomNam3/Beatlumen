@@ -64,6 +64,10 @@ pub(crate) struct SourcesState {
     pub(crate) rev: u64,
     /// Internet radio stations: (name, url).
     stations: Vec<(String, String)>,
+    /// Station addresses from playlist files or shared links (not typed in
+    /// by the user): they may only reach the internet, so a crafted file
+    /// cannot make the app send requests into the local network.
+    pub(crate) public_only: std::collections::HashSet<String>,
     /// The playing station's title updates (set on the player's thread).
     radio_titles: Arc<Mutex<Option<bl_sources::radio::Titles>>>,
     radio_title: Option<String>,
@@ -215,9 +219,19 @@ impl Core {
             .iter()
             .filter_map(|v| {
                 let url = v.get("url").as_str()?.to_string();
-                Some((v.str_or("name", &url).to_string(), url))
+                Some((
+                    v.str_or("name", &url).to_string(),
+                    url,
+                    v.bool_or("public", false),
+                ))
             })
             .take(MAX_STATIONS)
+            .map(|(name, url, public)| {
+                if public {
+                    self.sources.public_only.insert(url.clone());
+                }
+                (name, url)
+            })
             .collect();
         let list: Vec<AppSource> = host
             .storage_read(LIST_KEY)
@@ -434,6 +448,14 @@ impl Core {
         })
     }
 
+    /// A station address that came from a file or link, not from the user:
+    /// it may only reach the internet (unless the user added it).
+    pub(crate) fn mark_public_only(&mut self, url: &str) {
+        if !self.sources.stations.iter().any(|(_, u)| u == url) {
+            self.sources.public_only.insert(url.to_string());
+        }
+    }
+
     /// Plays a station live (the decoder runs on the player's thread).
     pub(crate) fn play_radio(&mut self, host: &mut dyn Host, id: &str, autoplay: bool) {
         let Some(url) = id.strip_prefix(RADIO_PREFIX).map(str::to_string) else {
@@ -443,10 +465,15 @@ impl Core {
         *slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.sources.radio_title = None;
         self.player.set_gain(Some(1.0), true);
+        let public = self.sources.public_only.contains(&url);
         self.player.load_decoder(
             host,
             Box::new(move || {
-                let stream = bl_sources::radio::open_stream(&url)?;
+                let stream = if public {
+                    bl_sources::radio::open_stream_public(&url)?
+                } else {
+                    bl_sources::radio::open_stream(&url)?
+                };
                 *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream.titles.clone());
                 bl_sources::radio::open_decoder(stream)
             }),
@@ -498,6 +525,7 @@ impl Core {
                     Value::object()
                         .with("name", n.as_str())
                         .with("url", u.as_str())
+                        .with("public", self.sources.public_only.contains(u))
                 })
                 .collect(),
         );
@@ -777,6 +805,8 @@ impl Core {
                 let name: String = c.str_or("name", "").trim().chars().take(100).collect();
                 let name = if name.is_empty() { url.clone() } else { name };
                 let full = self.sources.stations.len() >= MAX_STATIONS;
+                // Typed in (or confirmed) by the user: local addresses too.
+                self.sources.public_only.remove(&url);
                 match self.sources.stations.iter_mut().find(|(_, u)| *u == url) {
                     Some(s) => s.0 = name,
                     None if full => return err("too many stations"),
@@ -915,6 +945,7 @@ impl Core {
                     && !self.sources.stations.iter().any(|(_, u)| *u == url)
                 {
                     let title: String = title.chars().take(100).collect();
+                    self.sources.public_only.insert(url.clone());
                     self.sources.stations.push((title, url));
                 }
             }

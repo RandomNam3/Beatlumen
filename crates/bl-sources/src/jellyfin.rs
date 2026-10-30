@@ -12,6 +12,9 @@ use std::sync::Mutex;
 
 const PAGE: usize = 500;
 const MAX_SONGS: usize = 500_000;
+/// Upper bound of pages asked for in one listing (also when the pages
+/// hold nothing usable).
+const MAX_PAGES: usize = MAX_SONGS / PAGE + 1;
 
 pub struct Jellyfin {
     base: String,
@@ -52,7 +55,7 @@ impl Jellyfin {
                 ("Content-Type".into(), "application/json".into()),
             ],
             body.to_json().as_bytes(),
-            &Options::default(),
+            &crate::opts(crate::MAX_SMALL),
         )?;
         match r.status {
             200 => {}
@@ -156,18 +159,21 @@ impl MusicSource for Jellyfin {
         progress: &mut dyn FnMut(usize) -> bool,
     ) -> Result<Vec<RemoteTrack>, String> {
         let mut out = Vec::new();
-        loop {
+        // The start counts the server's items, usable or not.
+        let mut start = 0usize;
+        for _ in 0..MAX_PAGES {
             let v = self.get(&format!(
-                "/Users/{}/Items?IncludeItemTypes=Audio&Recursive=true&Fields=MediaSources,Genres&SortBy=SortName&StartIndex={}&Limit={PAGE}",
+                "/Users/{}/Items?IncludeItemTypes=Audio&Recursive=true&Fields=MediaSources,Genres&SortBy=SortName&StartIndex={start}&Limit={PAGE}",
                 self.user_id,
-                out.len()
             ))?;
             let items = v.get("Items").as_array().cloned().unwrap_or_default();
             out.extend(items.iter().filter_map(|i| self.song(i)));
             if items.len() < PAGE || out.len() >= MAX_SONGS || !progress(out.len()) {
                 return Ok(out);
             }
+            start += items.len();
         }
+        Ok(out)
     }
 
     fn open(&self, key: &str) -> Result<Box<dyn bl_media::Source>, String> {
@@ -192,7 +198,8 @@ impl MusicSource for Jellyfin {
                 self.base,
                 crate::encode(&id)
             );
-            if let Ok(r) = client::request("GET", &url, &self.headers(), &[], &Options::default()) {
+            let opts = crate::opts(crate::MAX_COVER);
+            if let Ok(r) = client::request("GET", &url, &self.headers(), &[], &opts) {
                 let image = r
                     .headers
                     .get("content-type")
@@ -216,7 +223,7 @@ impl MusicSource for Jellyfin {
             ),
             &self.headers(),
             &[],
-            &Options::default(),
+            &crate::opts(crate::MAX_SMALL),
         );
     }
 

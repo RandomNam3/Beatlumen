@@ -457,3 +457,169 @@ fn web_folder() {
     assert_eq!(l.len(), 1);
     check_stream(one.as_ref(), &l[0].key, &b);
 }
+
+/// A DLNA media server whose listing points at another host: those items
+/// and that album art are left out, and the other server is never
+/// contacted. (Other ports on the media server's own host are allowed.)
+#[test]
+fn dlna_stays_on_the_server() {
+    let song = Arc::new(wav("Tone"));
+    let file = song.clone();
+    let (other, other_log) = serve(|_| (200, "audio/wav", b"secret".to_vec()));
+    // The same machine under another name: another host for the rules.
+    let elsewhere = other.replace("127.0.0.1", "localhost");
+    let (base, _log) = serve(move |r| {
+        let didl = format!(
+            r#"<DIDL-Lite><item id="own"><dc:title>Own</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><upnp:albumArtURI>{elsewhere}/art.jpg</upnp:albumArtURI><res protocolInfo="http-get:*:audio/wav:*">/media/own.wav</res></item><item id="ssrf"><dc:title>Elsewhere</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/wav:*">{elsewhere}/secret</res></item></DIDL-Lite>"#
+        );
+        match (r.method.as_str(), r.target.as_str()) {
+            ("GET", "/desc.xml") => (
+                200,
+                "text/xml",
+                format!(
+                    "<root><URLBase>{elsewhere}/</URLBase><device><friendlyName>NAS</friendlyName><serviceList><service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><controlURL>/ctl</controlURL></service></serviceList></device></root>"
+                )
+                .into_bytes(),
+            ),
+            ("GET", "/bad-control.xml") => (
+                200,
+                "text/xml",
+                format!(
+                    "<root><service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><controlURL>{elsewhere}/ctl</controlURL></service></root>"
+                )
+                .into_bytes(),
+            ),
+            ("GET", "/huge.xml") => (200, "text/xml", vec![b' '; 2 << 20]),
+            ("POST", "/ctl") => (
+                200,
+                "text/xml",
+                format!(
+                    "<s:Envelope><s:Body><u:BrowseResponse><Result>{}</Result><NumberReturned>2</NumberReturned><TotalMatches>2</TotalMatches></u:BrowseResponse></s:Body></s:Envelope>",
+                    bl_upnp::xml::escape(&didl)
+                )
+                .into_bytes(),
+            ),
+            ("GET", "/media/own.wav") => (200, "audio/wav", file.to_vec()),
+            _ => (404, "text/plain", Vec::new()),
+        }
+    });
+    let cfg = |path: &str| SourceConfig {
+        kind: "dlna".into(),
+        url: format!("{base}{path}"),
+        ..Default::default()
+    };
+    let e = connect(&cfg("/bad-control.xml"))
+        .err()
+        .expect("control elsewhere");
+    assert!(e.contains("another host"), "{e}");
+    let e = connect(&cfg("/huge.xml"))
+        .err()
+        .expect("description too large");
+    assert!(e.contains("too large"), "{e}");
+    let src = connect(&cfg("/desc.xml")).unwrap();
+    let list = src.list(&no_known, &mut |_| true).unwrap();
+    let keys: Vec<&str> = list.iter().map(|t| t.key.as_str()).collect();
+    assert_eq!(keys, ["own"]);
+    assert!(!list[0].has_cover);
+    check_stream(src.as_ref(), "own", &song);
+    assert!(src.open("ssrf").is_err());
+    assert_eq!(src.cover("own", 300), None);
+    assert!(other_log.lock().unwrap().is_empty(), "{other_log:?}");
+}
+
+/// A Subsonic server that keeps sending full pages of entries without
+/// ids: the listing still ends.
+#[test]
+fn subsonic_endless_pages() {
+    let (base, log) = serve(|r| {
+        let t = &r.target;
+        let ok = |inner: &str| {
+            format!(r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1"{inner}}}}}"#)
+                .into_bytes()
+        };
+        let empty = vec!["{}"; 500].join(",");
+        if t.starts_with("/rest/ping.view") {
+            (200, "application/json", ok(""))
+        } else if t.starts_with("/rest/search3.view") {
+            let page = format!(r#","searchResult3":{{"song":[{empty}]}}"#);
+            (200, "application/json", ok(&page))
+        } else if t.starts_with("/rest/getAlbumList2.view") {
+            let page = format!(r#","albumList2":{{"album":[{empty}]}}"#);
+            (200, "application/json", ok(&page))
+        } else if t.starts_with("/rest/getCoverArt.view") {
+            (200, "image/jpeg", vec![0; 17 << 20])
+        } else {
+            (404, "text/plain", Vec::new())
+        }
+    });
+    let src = connect(&SourceConfig {
+        kind: "subsonic".into(),
+        url: base,
+        user: "anna".into(),
+        secret: "geheim".into(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(src.list(&no_known, &mut |_| true).unwrap().is_empty());
+    let log = log.lock().unwrap();
+    let count = |m: &str| log.iter().filter(|l| l.contains(m)).count();
+    assert!(count("search3") <= 1001, "{}", count("search3"));
+    assert!(count("getAlbumList2") <= 200, "{}", count("getAlbumList2"));
+    // The offset moves on although nothing was usable.
+    assert!(log.iter().any(|l| l.ends_with("songOffset=500")));
+    drop(log);
+    assert_eq!(src.cover("x", 300), None, "a cover over 16 MiB");
+}
+
+#[test]
+fn jellyfin_login_answer_is_bounded() {
+    let (base, _log) = serve(|_| (200, "application/json", vec![b' '; 2 << 20]));
+    let e = connect(&SourceConfig {
+        kind: "jellyfin".into(),
+        url: base,
+        user: "anna".into(),
+        secret: "geheim".into(),
+        ..Default::default()
+    })
+    .err()
+    .expect("answer too large");
+    assert!(e.contains("too large"), "{e}");
+}
+
+/// A listing with very many links, very long names and more folders than
+/// are ever read: the crawl stays within its limits.
+#[test]
+fn web_folder_limits() {
+    let long = "x".repeat(5000);
+    let page = {
+        let mut p = String::new();
+        p.push_str(&format!(
+            r#"<a href="{long}/">long</a> <a href="{long}.wav">l</a>"#
+        ));
+        for i in 0..3000 {
+            p.push_str(&format!(r#"<a href="d{i}/">d</a> "#));
+        }
+        // Past the links read from one page.
+        for _ in 0..10_000 {
+            p.push_str(r#"<a href="?C=N">x</a> "#);
+        }
+        p.push_str(r#"<a href="late.wav">late</a>"#);
+        p
+    };
+    let (base, log) = serve(move |r| match r.target.as_str() {
+        "/music/" => (200, "text/html", page.as_bytes().to_vec()),
+        _ => (404, "text/plain", Vec::new()),
+    });
+    let src = connect(&SourceConfig {
+        kind: "web".into(),
+        url: format!("{base}/music"),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(src.list(&no_known, &mut |_| true).unwrap().is_empty());
+    let log = log.lock().unwrap();
+    assert!(log.len() <= 2001, "{}", log.len());
+    assert!(!log.iter().any(|l| l.contains("late.wav")));
+    assert!(!log.iter().any(|l| l.contains("xxxxx")));
+    assert!(log.iter().any(|l| l.ends_with("/music/d0/")));
+}
