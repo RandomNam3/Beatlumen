@@ -1,0 +1,58 @@
+#version 450
+// Layer norm of each row of x (n rows of d values) into y:
+// (x - mean) / sqrt(variance + 1e-5) * weight + bias. One workgroup per
+// row; mean and variance in two passes, like the CPU kernel.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform Params {
+    uint n;
+    uint d;
+} p;
+
+layout(std430, set = 0, binding = 0) readonly buffer X { float x[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Weight { float weight[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Bias { float bias[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer Y { float y[]; };
+
+shared float part[256];
+
+// Sum of v over the workgroup.
+float total(float v) {
+    uint t = gl_LocalInvocationID.x;
+    part[t] = v;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1) {
+        if (t < s) {
+            part[t] += part[t + s];
+        }
+        barrier();
+    }
+    float r = part[0];
+    barrier();
+    return r;
+}
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    // The same for the whole workgroup, so no barrier is skipped.
+    if (row >= p.n) {
+        return;
+    }
+    uint base = row * p.d;
+    float s = 0.0;
+    for (uint c = t; c < p.d; c += 256u) {
+        s += x[base + c];
+    }
+    float mean = total(s) / float(p.d);
+    s = 0.0;
+    for (uint c = t; c < p.d; c += 256u) {
+        float dv = x[base + c] - mean;
+        s += dv * dv;
+    }
+    float inv = 1.0 / sqrt(total(s) / float(p.d) + 1e-5);
+    for (uint c = t; c < p.d; c += 256u) {
+        y[base + c] = (x[base + c] - mean) * inv * weight[c] + bias[c];
+    }
+}

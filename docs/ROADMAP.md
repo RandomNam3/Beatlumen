@@ -28,9 +28,38 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   backing vocals, the speech model named in the file.
 - Done: translation of song texts on the device (`crates/bl-mt`, own
   reader and decoder for the OPUS-MT models).
-- Next: speech recognition on the GPU (Vulkan compute); voices told apart
-  by the sound when the text does not name them; translation for the web
-  app through the server.
+- Done: the speech model's audio encoder on the GPU (`crates/bl-gpu`, own
+  Vulkan compute layer loaded at run time, shaders in `crates/bl-gpu/
+  shaders`); the first window is checked against the CPU and the GPU is
+  only kept when it agrees and is faster.
+- Next: the decoder's cross-attention on the GPU too; voices told apart by
+  the sound when the text does not name them; translation for the web app
+  through the server.
+- Idea: **singing separated from the music before recognition.** Most
+  recognition errors come from dense music (choruses over drops, chants:
+  the model hears "(upbeat music)" or makes words up). A small separation
+  network (U-Net/Open-Unmix-like on the spectrogram, own implementation
+  like the Whisper one, weights converted once) gives the vocals track;
+  recognition and word timing then run on it. Rough plan: pick a model
+  with open weights and licence, own reader and inference (STFT, mask,
+  inverse STFT; GPU kernels reuse `bl-gpu`), an option per device and on
+  the server, measured with the evaluation songs (word error rate, line
+  timing) against the plain audio; cost: about one more encoder pass.
+- Idea: **a "Beatlumen Lyrics" speech model**: Whisper (small or large v3
+  turbo) fine-tuned on singing. Rough plan:
+  - Data: only songs that may be used, e.g. Creative Commons music
+    (Jamendo and similar) with checked, timed song texts (made with the
+    word timing here and corrected by hand), several languages; plus
+    augmentation (mixing levels, tempo, reverb). No commercial songs.
+  - Training: LoRA or a short full fine-tune on a rented GPU (PyTorch
+    scripts in a separate tool folder, not part of the apps); held-out
+    songs never seen in training.
+  - Conversion to the ggml format the apps already read; published with
+    its training recipe, data list and licence; added to the model list
+    with size and SHA-256 like the others.
+  - Only kept when it beats the stock models in the evaluation (word
+    error rate without a text, line and word timing with one) by a clear
+    margin.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),

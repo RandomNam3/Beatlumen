@@ -1,0 +1,213 @@
+#version 450
+// Matrix product y = x Wᵀ + b: x has n rows of k values, W m rows of k
+// values (stored as f32, f16 or ggml's quantised blocks, chosen by one of
+// the defines W_F32, W_F16, W_Q8_0, W_Q5_0, W_Q5_1, W_Q4_0, W_Q4_1), y n
+// rows of m values. Optionally GELU (tanh form) and adding to y.
+//
+// Each workgroup computes a 64 x 64 tile of y, each invocation 4 x 4
+// values of it (rows ty + 16 i, columns tx + 16 j), going through k in
+// steps of 32 (one quantised block) with both tiles in shared memory.
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant) uniform Params {
+    uint n;
+    uint k;
+    uint m;
+    // 1: add the bias, 2: GELU, 4: add the result to y.
+    uint flags;
+} p;
+
+layout(std430, set = 0, binding = 0) readonly buffer X { float x[]; };
+#ifdef W_F32
+layout(std430, set = 0, binding = 1) readonly buffer W { float w[]; };
+#else
+layout(std430, set = 0, binding = 1) readonly buffer W { uint w[]; };
+#endif
+layout(std430, set = 0, binding = 2) readonly buffer Bias { float bias[]; };
+layout(std430, set = 0, binding = 3) buffer Y { float y[]; };
+
+const uint TILE = 64u;
+const uint TK = 32u;
+
+// Transposed tiles (k index first), so the inner loop reads consecutive
+// values across the invocations.
+shared float xs[TK * TILE];
+shared float ws[TK * TILE];
+
+#if !defined(W_F32)
+uint byte_at(uint o) {
+    return (w[o >> 2] >> ((o & 3u) * 8u)) & 0xffu;
+}
+
+// Half float at an even byte offset.
+float half_at(uint o) {
+    return unpackHalf2x16(w[o >> 2] >> ((o & 2u) * 8u)).x;
+}
+#endif
+
+#if defined(W_Q5_0) || defined(W_Q5_1)
+// 32-bit little-endian value at an even byte offset.
+uint word_at(uint o) {
+    uint i = o >> 2;
+    return (o & 2u) == 0u ? w[i] : (w[i] >> 16) | (w[i + 1u] << 16);
+}
+#endif
+
+#if defined(W_Q8_0)
+const uint BLOCK = 34u;
+#elif defined(W_Q4_0)
+const uint BLOCK = 18u;
+#elif defined(W_Q4_1)
+const uint BLOCK = 20u;
+#elif defined(W_Q5_0)
+const uint BLOCK = 22u;
+#elif defined(W_Q5_1)
+const uint BLOCK = 24u;
+#endif
+
+// Loads columns k0..k0+32 of rows m0..m0+64 of W into ws.
+void load_w(uint m0, uint k0, uint t) {
+#if defined(W_F32) || defined(W_F16)
+    for (uint e = 0u; e < 8u; e++) {
+        uint idx = t + 256u * e;
+        uint r = idx >> 5;
+        uint c = idx & 31u;
+        uint gr = m0 + r;
+        uint gc = k0 + c;
+        float v = 0.0;
+        if (gr < p.m && gc < p.k) {
+            uint i = gr * p.k + gc;
+#ifdef W_F32
+            v = w[i];
+#else
+            v = unpackHalf2x16(w[i >> 1] >> ((i & 1u) * 16u)).x;
+#endif
+        }
+        ws[c * TILE + r] = v;
+    }
+#else
+    // One block per row (k0 is a multiple of 32); four invocations per
+    // row, eight values each. The formulas follow QType::dequantize.
+    uint r = t >> 2;
+    uint part = t & 3u;
+    uint gr = m0 + r;
+    if (gr >= p.m) {
+        for (uint v = 0u; v < 8u; v++) {
+            ws[(part * 8u + v) * TILE + r] = 0.0;
+        }
+        return;
+    }
+    uint bo = (gr * (p.k / 32u) + k0 / 32u) * BLOCK;
+    float d = half_at(bo);
+#if defined(W_Q8_0)
+    for (uint v = 0u; v < 8u; v++) {
+        uint j = part * 8u + v;
+        int q = int(byte_at(bo + 2u + j) << 24) >> 24;
+        ws[j * TILE + r] = float(q) * d;
+    }
+#elif defined(W_Q4_0) || defined(W_Q4_1)
+#ifdef W_Q4_0
+    float mn = -8.0 * d;
+    uint qs = bo + 2u;
+#else
+    float mn = half_at(bo + 2u);
+    uint qs = bo + 4u;
+#endif
+    for (uint v = 0u; v < 8u; v++) {
+        uint j = part * 8u + v;
+        uint q = byte_at(qs + (j & 15u));
+        uint nib = j < 16u ? (q & 15u) : (q >> 4);
+        ws[j * TILE + r] = float(nib) * d + mn;
+    }
+#else
+#ifdef W_Q5_0
+    float mn = -16.0 * d;
+    uint qh = word_at(bo + 2u);
+    uint qs = bo + 6u;
+#else
+    float mn = half_at(bo + 2u);
+    uint qh = word_at(bo + 4u);
+    uint qs = bo + 8u;
+#endif
+    for (uint v = 0u; v < 8u; v++) {
+        uint j = part * 8u + v;
+        uint q = byte_at(qs + (j & 15u));
+        uint nib = j < 16u ? (q & 15u) : (q >> 4);
+        uint hi = ((qh >> j) & 1u) << 4;
+        ws[j * TILE + r] = float(nib | hi) * d + mn;
+    }
+#endif
+#endif
+}
+
+// GELU, tanh form, as u / (1 + e^(-2z)) like the CPU kernel.
+float gelu(float u) {
+    const float C = 0.7978846;
+    float z = C * (u + 0.044715 * u * u * u);
+    return u / (1.0 + exp(clamp(-2.0 * z, -88.0, 88.0)));
+}
+
+void main() {
+    uint tx = gl_LocalInvocationID.x;
+    uint ty = gl_LocalInvocationID.y;
+    uint t = ty * 16u + tx;
+    uint m0 = gl_WorkGroupID.x * TILE;
+    uint n0 = gl_WorkGroupID.y * TILE;
+    float acc[4][4];
+    for (uint i = 0u; i < 4u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            acc[i][j] = 0.0;
+        }
+    }
+    for (uint k0 = 0u; k0 < p.k; k0 += TK) {
+        for (uint e = 0u; e < 8u; e++) {
+            uint idx = t + 256u * e;
+            uint r = idx >> 5;
+            uint c = idx & 31u;
+            uint gr = n0 + r;
+            uint gc = k0 + c;
+            xs[c * TILE + r] = (gr < p.n && gc < p.k) ? x[gr * p.k + gc] : 0.0;
+        }
+        load_w(m0, k0, t);
+        barrier();
+        for (uint kk = 0u; kk < TK; kk++) {
+            float a[4];
+            float b[4];
+            for (uint i = 0u; i < 4u; i++) {
+                a[i] = xs[kk * TILE + ty + 16u * i];
+                b[i] = ws[kk * TILE + tx + 16u * i];
+            }
+            for (uint i = 0u; i < 4u; i++) {
+                for (uint j = 0u; j < 4u; j++) {
+                    acc[i][j] = fma(a[i], b[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+    for (uint i = 0u; i < 4u; i++) {
+        uint row = n0 + ty + 16u * i;
+        if (row >= p.n) {
+            continue;
+        }
+        for (uint j = 0u; j < 4u; j++) {
+            uint col = m0 + tx + 16u * j;
+            if (col >= p.m) {
+                continue;
+            }
+            float v = acc[i][j];
+            if ((p.flags & 1u) != 0u) {
+                v += bias[col];
+            }
+            if ((p.flags & 2u) != 0u) {
+                v = gelu(v);
+            }
+            uint o = row * p.m + col;
+            if ((p.flags & 4u) != 0u) {
+                v += y[o];
+            }
+            y[o] = v;
+        }
+    }
+}

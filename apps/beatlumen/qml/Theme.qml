@@ -442,6 +442,7 @@ QtObject {
         "Time all songs on this device": "Alle Songs auf diesem Gerät timen",
         "Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.": "Songs mit Text bekommen Wortzeiten, bei den anderen wird der Gesang aufgeschrieben. Fertige Songs werden übersprungen, außer das Sprachmodell ist besser.",
         "songs left": "Songs übrig",
+        "Computed on the graphics card: %1": "Berechnet auf der Grafikkarte: %1",
         "Translate song texts": "Songtexte übersetzen",
         "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.": "Zeigt jede Zeile eines Songtexts zusätzlich in der Sprache dieser App. Das Übersetzungsmodell für die Sprache des Songs (etwa 300 MB) wird beim ersten Bedarf geladen; Übersetzungen bleiben auf diesem Gerät.",
         "Translation models": "Übersetzungsmodelle",

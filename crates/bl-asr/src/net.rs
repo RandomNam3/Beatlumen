@@ -209,8 +209,37 @@ fn conv3(
 }
 
 /// Encodes a 30-second mel window (`n_mels` x 3000, row major): the
-/// audio features (`n_audio_ctx` rows of `n_audio_state`).
+/// audio features (`n_audio_ctx` rows of `n_audio_state`). On the GPU
+/// when built with the `gpu` feature and one is there (see [`set_gpu`]),
+/// else on the CPU.
 pub fn encode(m: &Model, mel: &[f32]) -> io::Result<Vec<f32>> {
+    #[cfg(feature = "gpu")]
+    if let Some(x) = crate::gpu::encode(m, mel) {
+        return Ok(x);
+    }
+    encode_cpu(m, mel)
+}
+
+/// Turns the GPU encoder on or off (builds with the `gpu` feature; on
+/// unless the environment sets `BL_ASR_GPU=0`). Off frees its GPU
+/// memory; on again retries a GPU that failed.
+pub fn set_gpu(on: bool) {
+    #[cfg(feature = "gpu")]
+    crate::gpu::set_wanted(on);
+    #[cfg(not(feature = "gpu"))]
+    let _ = on;
+}
+
+/// The name of the GPU the encoder runs on, once it has run there.
+pub fn gpu_device() -> Option<String> {
+    #[cfg(feature = "gpu")]
+    return crate::gpu::device();
+    #[cfg(not(feature = "gpu"))]
+    None
+}
+
+/// [`encode`] on the CPU.
+pub fn encode_cpu(m: &Model, mel: &[f32]) -> io::Result<Vec<f32>> {
     let p = m.params;
     let frames = mel.len() / p.n_mels;
     // Time-major input.

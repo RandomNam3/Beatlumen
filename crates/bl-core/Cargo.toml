@@ -25,6 +25,6 @@ bl-cast = { path = "../bl-cast" }
 # Music sources the app uses without a server.
 bl-sources = { path = "../bl-sources" }
 # Speech recognition on the device (song text timing).
-bl-asr = { path = "../bl-asr" }
+bl-asr = { path = "../bl-asr", features = ["gpu"] }
 # Translating song texts on the device.
 bl-mt = { path = "../bl-mt" }

@@ -4,6 +4,8 @@
 //! Used to time song texts (see `align`).
 
 pub mod align;
+#[cfg(feature = "gpu")]
+mod gpu;
 pub mod mel;
 pub mod model;
 #[cfg(not(target_arch = "wasm32"))]

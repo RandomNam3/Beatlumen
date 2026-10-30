@@ -13,6 +13,10 @@ is sung, who sings is shown, and the text can be translated.
   fills each word or piece from left to right while it is sung.
 - **Existing LRC files** with line times can now be timed word by word
   ("Time word by word"); the line times are kept as anchors.
+- **Plain texts are timed more exactly**: lines are found by whole
+  phrases, lines that were not heard are searched for between the found
+  ones, and backing vocals do not mislead the matching (test song:
+  77 % of the lines within 0.5 s, before 45 %).
 - **More reliable recognition**: no-speech detection, the previous text
   as context, and passages that come out unreliable (repetition loops,
   unlikely words) are decoded again with more randomness.
@@ -36,6 +40,11 @@ is sung, who sings is shown, and the text can be translated.
 
 - Speech recognition uses AVX2/FMA (x86) and NEON (ARM) when the processor
   has them; the attention works in blocks.
+- **GPU**: the audio encoder of the speech model runs on the graphics card
+  (Vulkan; Linux, Windows, Android) when there is one. The first window
+  is also computed on the processor: the graphics card is only used when
+  it gives the same result and is faster. Settings and the admin
+  interface show where it runs. `BL_ASR_GPU=0` turns it off.
 
 ## 0.10.0 (beta)
 

@@ -107,6 +107,7 @@ version = "0.10.0"
 name = "bl-asr"
 version = "0.10.0"
 dependencies = [
+ "bl-gpu",
  "bl-json",
  "bl-net",
 ]
@@ -166,6 +167,10 @@ dependencies = [
 
 [[package]]
 name = "bl-gl"
+version = "0.10.0"
+
+[[package]]
+name = "bl-gpu"
 version = "0.10.0"
 
 [[package]]

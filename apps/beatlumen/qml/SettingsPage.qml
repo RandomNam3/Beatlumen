@@ -425,6 +425,18 @@ Item {
                     Layout.leftMargin: 8
                     Button { text: Theme.tr("Turn off"); flat: true; onClicked: Core.call("speech.pick", { id: "" }) }
                 }
+                Label {
+                    // Once a song was done on the graphics card.
+                    visible: page.speechLocal.ready === true && !!page.speechLocal.gpu
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.Wrap
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: Theme.tr("Computed on the graphics card: %1").arg(page.speechLocal.gpu || "")
+                }
                 // All songs of this device, one after the other.
                 Label {
                     visible: page.speechLocal.ready === true

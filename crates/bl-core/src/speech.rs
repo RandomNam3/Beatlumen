@@ -93,6 +93,7 @@ impl Core {
             .with("running", running)
             .with("all", batch)
             .with("error", self.speech.error.clone())
+            .with("gpu", bl_asr::net::gpu_device())
             .with("rev", self.speech.rev)
     }
 
