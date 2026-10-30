@@ -1,0 +1,11 @@
+[package]
+name = "bl-align"
+description = "Word times for a known text (CTC forced alignment with wav2vec2 models)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-asr = { path = "../bl-asr" }
+bl-json = { path = "../bl-json" }
+bl-mt = { path = "../bl-mt" }

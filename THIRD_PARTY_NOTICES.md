@@ -20,6 +20,7 @@ contain the ported code and carries the full license text where required.
 | RFC 6386 code components | VP8 tables (`bl-image`) | BSD (IETF Trust) |
 | [Inter](https://github.com/rsms/inter) typeface | embedded UI font (`apps/beatlumen/assets`) | SIL OFL 1.1 |
 | [Open-Unmix](https://github.com/sigsep/open-unmix-pytorch) | vocal separation network and Wiener filter (`bl-sep`); UMX-HQ weights downloaded on use | MIT |
+| [wav2vec2](https://huggingface.co/facebook/wav2vec2-base-960h) models (facebook/wav2vec2-base-960h, jonatasgrosman/wav2vec2-large-xlsr-53-*) | word alignment (`bl-align`); weights downloaded on use, not shipped | Apache-2.0 |
 | [TeX hyphenation patterns](https://github.com/hyphenation/tex-hyphen) (hyph-utf8) | embedded patterns for English, German, French, Spanish, Italian, Dutch, Portuguese (`bl-hyph`) | MIT, BSD-3-Clause, permissive (per language) |
 
 Full texts: `crates/bl-opus/NOTICE`, `crates/bl-vorbis/NOTICE`,

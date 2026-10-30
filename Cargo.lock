@@ -100,6 +100,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bl-align"
+version = "0.11.0"
+dependencies = [
+ "bl-asr",
+ "bl-json",
+ "bl-mt",
+]
+
+[[package]]
 name = "bl-analysis"
 version = "0.11.0"
 
