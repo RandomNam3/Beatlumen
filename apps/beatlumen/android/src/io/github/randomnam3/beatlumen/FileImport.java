@@ -52,6 +52,41 @@ public final class FileImport {
     }
 
     /**
+     * Documents handed over by "Share" (one or several streams) or "Open
+     * with" (the intent's data); empty for other intents.
+     */
+    @SuppressWarnings("deprecation")
+    public static String[] shared(Intent intent) {
+        ArrayList<String> out = new ArrayList<>();
+        if (intent == null || intent.getAction() == null)
+            return new String[0];
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Object u = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u instanceof Uri)
+                out.add(u.toString());
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (list != null)
+                for (Uri u : list)
+                    if (u != null && out.size() < 200)
+                        out.add(u.toString());
+        } else if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null
+                && "content".equals(intent.getData().getScheme())) {
+            out.add(intent.getData().toString());
+        }
+        return out.toArray(new String[0]);
+    }
+
+    /** The text of a shared link ("Share" with text/plain), or null. */
+    public static String sharedText(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction()))
+            return null;
+        CharSequence t = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        return t == null ? null : t.toString();
+    }
+
+    /**
      * Copies each URI into {@code destDir} and returns the paths of the
      * copies. Files larger than {@code maxBytes} are skipped.
      */

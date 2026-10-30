@@ -16,6 +16,7 @@ fn de(s: &str) -> Option<&'static str> {
         "songs" => "Songs",
         "Cannot read the playlist" => "Die Playlist kann nicht gelesen werden",
         "Playlist imported" => "Playlist importiert",
+        "Nothing to play was shared" => "Es wurde nichts Abspielbares geteilt",
         "Saved" => "Gespeichert",
         "Cannot save the playlist" => "Die Playlist kann nicht gespeichert werden",
         "radio stations added" => "Radiosender hinzugefügt",

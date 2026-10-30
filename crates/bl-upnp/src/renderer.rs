@@ -82,6 +82,14 @@ impl Meta {
     }
 }
 
+/// The control point a command came from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Client {
+    pub ip: std::net::IpAddr,
+    /// Its `User-Agent` (often the app's name), shortened.
+    pub agent: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// A new stream (`next`: to play after the current one).
@@ -153,7 +161,7 @@ struct Shared {
     port: u16,
     media: Mutex<Media>,
     status: Mutex<Status>,
-    commands: Mutex<Vec<Command>>,
+    commands: Mutex<Vec<(Command, Client)>>,
     subs: Mutex<Vec<Subscription>>,
     /// Events to send: service whose state changed.
     pending: Mutex<Vec<&'static str>>,
@@ -256,6 +264,11 @@ impl Renderer {
 
     /// Commands from control points since the last call.
     pub fn poll(&self) -> Vec<Command> {
+        self.poll_from().into_iter().map(|(c, _)| c).collect()
+    }
+
+    /// Commands since the last call with the control point that sent each.
+    pub fn poll_from(&self) -> Vec<(Command, Client)> {
         std::mem::take(
             &mut *self
                 .shared
@@ -494,7 +507,17 @@ fn handle(s: &Shared, conn: TcpStream, peer: SocketAddr) -> std::io::Result<()> 
                         .map(str::to_string)
                 })
                 .unwrap_or_default();
-            match control(s, service, &action, &body) {
+            let client = Client {
+                ip: peer.ip(),
+                agent: headers
+                    .get("User-Agent")
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(80)
+                    .collect(),
+            };
+            match control(s, service, &action, &body, &client) {
                 Ok(args) => {
                     let mut out = format!(
                         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action}Response xmlns:u=\"{service}\">"
@@ -891,9 +914,15 @@ fn control(
     service: &str,
     action: &str,
     body: &str,
+    client: &Client,
 ) -> Result<Vec<(&'static str, String)>, Fault> {
     let arg = |name: &str| xml::text(body, name).unwrap_or_default();
-    let push = |c: Command| s.commands.lock().unwrap_or_else(|e| e.into_inner()).push(c);
+    let push = |c: Command| {
+        s.commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((c, client.clone()))
+    };
     let st = s.status.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if service != CMS && arg("InstanceID").trim() != "0" {
         return Err((718, "Invalid InstanceID"));

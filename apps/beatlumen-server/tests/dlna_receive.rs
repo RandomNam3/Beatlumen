@@ -188,6 +188,12 @@ fn control_point_plays_on_the_app() {
     assert_eq!(s.get("current").str_or("artist", ""), "Testband");
     tick(&mut app, Duration::from_millis(1500));
     assert_eq!(r.transport_state().unwrap(), "PLAYING");
+    // The file was read ahead and analysed as a whole.
+    let s = app.wait("analysis", |s| {
+        let a = s.str_or("analysis", "");
+        a == "ready" || a == "failed" || a == "error"
+    });
+    assert_eq!(s.str_or("analysis", ""), "ready");
     let pos = r.position().unwrap().unwrap_or(0.0);
     assert!(pos >= 1.0, "position {pos}");
 
@@ -243,4 +249,60 @@ fn control_point_plays_on_the_app() {
     );
     app.state();
     assert!(bl_upnp::Renderer::fetch(&location).is_err());
+}
+
+/// A non-loopback address of this machine (None without a network).
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?;
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+}
+
+#[test]
+fn new_control_points_are_asked_first() {
+    let Some(ip) = lan_ip() else {
+        eprintln!("no network address: skipped");
+        return;
+    };
+    let media = media_server();
+    let mut app = App::new("dlna-ask");
+    app.cmd(
+        Value::object()
+            .with("cmd", "settings.set")
+            .with("key", "dlnaReceiver")
+            .with("value", true),
+    );
+    let s = app.wait("renderer", |s| {
+        s.get("dlnaReceiver").bool_or("running", false)
+    });
+    let port = s.get("dlnaReceiver").get("port").as_u64().unwrap();
+    // Reached over the network address: not loopback, so a new one.
+    let r = bl_upnp::Renderer::fetch(&format!("http://{ip}:{port}/description.xml")).unwrap();
+    r.set_uri(&format!("{media}/long.wav"), "").unwrap();
+    r.play().unwrap();
+    let s = app.wait("asked", |s| !s.get("dlnaReceiver").get("asking").is_null());
+    assert_eq!(
+        s.get("dlnaReceiver").get("asking").str_or("ip", ""),
+        ip.to_string()
+    );
+    tick(&mut app, Duration::from_millis(300));
+    assert_ne!(app.state().str_or("play", ""), "playing");
+    // Allowed (for good): what it sent meanwhile plays.
+    app.cmd(
+        Value::object()
+            .with("cmd", "dlna.answer")
+            .with("allow", true)
+            .with("always", true),
+    );
+    app.wait("playing", |s| s.str_or("play", "") == "playing");
+    let s = app.state();
+    assert!(s.get("dlnaReceiver").get("asking").is_null());
+    assert_eq!(
+        s.get("settings").get("dlnaAllowed").at(0).as_str(),
+        Some(ip.to_string().as_str())
+    );
+    // Known now: commands act at once.
+    r.pause().unwrap();
+    app.wait("paused", |s| s.str_or("play", "") == "paused");
 }

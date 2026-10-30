@@ -407,6 +407,16 @@ impl Core {
             "lyrics.remove" => self.lyrics_remove(host),
             "lyrics.sync" => self.lyrics_sync(host),
             n if n.starts_with("devices.") => self.devices_command(host, n, c),
+            n if n.starts_with("share.") => self.share_command(host, n, c),
+            "dlna.answer" => {
+                self.dlna_answer(host, b("allow"), b("always"));
+                ok()
+            }
+            "dlna.forget" => {
+                self.settings.dlna_allowed.clear();
+                self.settings_changed();
+                ok()
+            }
             n if n.starts_with("sources.") || n.starts_with("radio.") => {
                 self.sources_command(host, n, c)
             }

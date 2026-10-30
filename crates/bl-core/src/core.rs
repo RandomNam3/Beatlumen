@@ -272,6 +272,7 @@ pub struct Core {
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) ext: crate::extensions::ExtState,
     pub(crate) sources: crate::sources::SourcesState,
+    pub(crate) share: crate::share::ShareState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -456,6 +457,7 @@ impl Core {
             capture: Default::default(),
             ext: Default::default(),
             sources: Default::default(),
+            share: Default::default(),
             vault: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -664,6 +666,7 @@ impl Core {
             .with("capture", self.capture_json(host))
             .with("extensions", self.extensions_json())
             .with("sources", self.sources_json())
+            .with("share", self.share_json())
             .with("vault", self.vault_json(host))
             .with("webCheck", self.webcheck_json())
             .with(
@@ -1780,7 +1783,6 @@ impl Core {
             return;
         };
         if track.id.starts_with(crate::airplay::ID_PREFIX)
-            || track.id.starts_with(crate::dlna_receiver::ID_PREFIX)
             || track.id.starts_with(crate::capture::ID_PREFIX)
             || track.id.starts_with(crate::extensions::ID_PREFIX)
             || track.id.starts_with(crate::sources::RADIO_PREFIX)
@@ -1841,6 +1843,27 @@ impl Core {
             if let Some(data) = self.memory_files.get(name).cloned() {
                 let res = analyze(Box::new(std::io::Cursor::new(data)), extension(name), cfg);
                 self.analysis_box.post((key, res));
+            }
+        } else if track.id.starts_with(crate::dlna_receiver::ID_PREFIX) {
+            // A control point's file: read ahead over a second connection
+            // and analysed as a whole. Live streams (no length) and very
+            // long ones are left to the live analysis as they play.
+            if let (Some(opener), true) = (self.dlna_opener(), self.dlna_analysable(host)) {
+                let mailbox = self.analysis_box.clone();
+                host.spawn(Box::new(move || {
+                    use std::io::{Seek, SeekFrom};
+                    let res = opener()
+                        .and_then(|(mut src, ext)| {
+                            match src.seek(SeekFrom::End(0)) {
+                                Ok(n) if n > 0 && n <= 300 << 20 => {}
+                                _ => return Err("a live stream".to_string()),
+                            }
+                            src.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+                            Ok((src, ext))
+                        })
+                        .and_then(|(src, ext)| analyze(src, ext, cfg));
+                    mailbox.post((key, res));
+                }));
             }
         } else if track.id.starts_with(crate::sources::ID_PREFIX) {
             if let Some(opener) = self.source_opener(&track.id) {

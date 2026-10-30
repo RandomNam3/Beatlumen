@@ -498,6 +498,26 @@ Item {
                     color: parent.dl.error ? Theme.danger : Theme.textDim
                     wrapMode: Text.WordWrap
                 }
+                RowLayout {
+                    visible: parent.dlnaOn
+                    Layout.fillWidth: true
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textDim
+                        font.pixelSize: 13
+                        text: (parent.parent.dl.allowed || []).length > 0
+                              ? Theme.tr("Allowed devices: %1").arg(parent.parent.dl.allowed.join(", "))
+                              : Theme.tr("New devices are asked for before they play here.")
+                    }
+                    Button {
+                        visible: (parent.parent.dl.allowed || []).length > 0
+                        text: Theme.tr("Forget")
+                        flat: true
+                        onClicked: Core.call("dlna.forget")
+                    }
+                }
                 Label {
                     textFormat: Text.PlainText
                     Layout.fillWidth: true

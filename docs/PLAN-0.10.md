@@ -122,12 +122,15 @@ them and the apps play through it).
 
 ## Phase 5: receiving and sharing
 
-- [ ] DLNA renderer: look-ahead analysis of the received stream; PIN
-  confirmation for new control points.
+- [x] DLNA renderer: look-ahead analysis of the received stream (files are
+  read ahead over a second connection and analysed whole; live streams
+  follow the audio); new control points must be allowed in the app
+  (once or always) before they play.
 - [ ] AirPlay receiver: look-ahead analysis with the audio the sender
   sends ahead.
-- [ ] Share target: "Share" on Android and "Open with" on desktops send
-  files and links to this device or another one (through the server).
+- [x] Share target: "Share" on Android and "Open with" (songs, playlist
+  files, links) ask to play now, queue, or keep the files in the
+  encrypted storage (and so on every device of the account).
 - [ ] AirPlay 2 receiver (basic): pairing (SRP, Ed25519, X25519,
   ChaCha20-Poly1305), buffered audio; senders keep AirPlay 1 as fallback.
 

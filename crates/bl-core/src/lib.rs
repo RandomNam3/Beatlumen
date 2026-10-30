@@ -32,6 +32,7 @@ mod push;
 pub mod queue;
 pub mod server;
 pub mod settings;
+mod share;
 #[cfg(not(target_arch = "wasm32"))]
 mod sources;
 #[cfg(target_arch = "wasm32")]

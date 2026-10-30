@@ -432,7 +432,7 @@ impl Core {
         self.vault.rev += 1;
     }
 
-    fn vault_ready(&self) -> bool {
+    pub(crate) fn vault_ready(&self) -> bool {
         matches!(
             self.server.state,
             crate::server::ServerState::Connected(_) | crate::server::ServerState::NeedsLogin(_)

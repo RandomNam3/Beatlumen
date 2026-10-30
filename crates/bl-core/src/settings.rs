@@ -146,6 +146,9 @@ pub struct Settings {
     pub airplay: bool,
     /// Reachable as a DLNA/UPnP speaker (media renderer).
     pub dlna_receiver: bool,
+    /// Control points allowed to play here (addresses); others are asked
+    /// for first.
+    pub dlna_allowed: Vec<String>,
     /// Where songs from server extensions go: "" (ask), "library", "vault".
     pub extension_target: String,
     /// The renderer's stable UPnP device id.
@@ -216,6 +219,7 @@ impl Default for Settings {
             skip_silence: true,
             airplay: false,
             dlna_receiver: false,
+            dlna_allowed: Vec::new(),
             extension_target: String::new(),
             dlna_uuid: String::new(),
             airplay_name: String::new(),
@@ -293,6 +297,7 @@ impl Settings {
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
+            dlna_allowed: strs(v.get("dlnaAllowed")).into_iter().take(64).collect(),
             extension_target: match v.str_or("extensionTarget", "") {
                 t @ ("library" | "vault") => t.to_string(),
                 _ => String::new(),
@@ -364,6 +369,7 @@ impl Settings {
             .with("skipSilence", self.skip_silence)
             .with("airplay", self.airplay)
             .with("dlnaReceiver", self.dlna_receiver)
+            .with("dlnaAllowed", self.dlna_allowed.clone())
             .with("extensionTarget", self.extension_target.as_str())
             .with("dlnaUuid", self.dlna_uuid.as_str())
             .with("airplayName", self.airplay_name.as_str())

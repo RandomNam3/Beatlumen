@@ -25,9 +25,13 @@ impl Core {
     pub(crate) fn update_dlna(&mut self, _host: &mut dyn Host) {}
     pub(crate) fn dlna_track_ended(&mut self, _host: &mut dyn Host) {}
     pub(crate) fn end_dlna_playback(&mut self, _host: &mut dyn Host) {}
+    pub(crate) fn dlna_analysable(&self, _host: &dyn Host) -> bool {
+        false
+    }
     pub(crate) fn dlna_opener(&self) -> Option<SourceOpener> {
         None
     }
+    pub(crate) fn dlna_answer(&mut self, _host: &mut dyn Host, _allow: bool, _always: bool) {}
     pub(crate) fn dlna_json(&self) -> Value {
         Value::object().with("running", false)
     }

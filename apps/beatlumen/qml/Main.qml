@@ -360,6 +360,78 @@ ApplicationWindow {
     }
     // Visualising other apps without access to their media sessions: the
     // title, cover and full control need it; offered once per start.
+    // Songs or a link shared with the app by another app.
+    AppDialog {
+        id: shareAsk
+        readonly property var share: Core.state.share || null
+        onShareChanged: share ? open() : close()
+        onRejected: Core.call("share.dismiss")
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, win.width - 32)
+        title: Theme.tr("Shared with Beatlumen")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 4
+                elide: Text.ElideRight
+                color: Theme.textDim
+                text: !shareAsk.share ? ""
+                      : shareAsk.share.link ? shareAsk.share.link
+                      : shareAsk.share.files.join(", ")
+            }
+            Flow {
+                Layout.fillWidth: true
+                layoutDirection: Qt.RightToLeft
+                spacing: 4
+                AccentButton { text: Theme.tr("Play now"); highlighted: true; onClicked: Core.call("share.play") }
+                Button { text: Theme.tr("Add to queue"); flat: true; onClicked: Core.call("share.queue") }
+                Button {
+                    visible: shareAsk.share && shareAsk.share.canKeep === true
+                    text: Theme.tr("Keep in my files")
+                    flat: true
+                    onClicked: Core.call("share.keep")
+                }
+                Button { text: Theme.tr("Cancel"); flat: true; onClicked: Core.call("share.dismiss") }
+            }
+        }
+    }
+    // A new DLNA control point wants to play here.
+    AppDialog {
+        id: dlnaAsk
+        readonly property var asking: (Core.state.dlnaReceiver || {}).asking || null
+        onAskingChanged: asking ? open() : close()
+        closePolicy: Popup.NoAutoClose
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, win.width - 32)
+        title: Theme.tr("Allow this device to play here?")
+        standardButtons: Dialog.NoButton
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textDim
+                text: dlnaAsk.asking
+                      ? Theme.tr("%1 at %2 wants to play music on this device (DLNA).").arg(dlnaAsk.asking.agent || Theme.tr("A device")).arg(dlnaAsk.asking.ip)
+                      : ""
+            }
+            Flow {
+                Layout.fillWidth: true
+                layoutDirection: Qt.RightToLeft
+                spacing: 4
+                AccentButton { text: Theme.tr("Always allow"); highlighted: true; onClicked: Core.call("dlna.answer", { allow: true, always: true }) }
+                Button { text: Theme.tr("Allow once"); flat: true; onClicked: Core.call("dlna.answer", { allow: true, always: false }) }
+                Button { text: Theme.tr("Refuse"); flat: true; onClicked: Core.call("dlna.answer", { allow: false }) }
+            }
+        }
+    }
     AppDialog {
         id: captureAccess
         property bool asked: false
