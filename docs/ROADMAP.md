@@ -32,38 +32,80 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   Vulkan compute layer loaded at run time, shaders in `crates/bl-gpu/
   shaders`); the first window is checked against the CPU and the GPU is
   only kept when it agrees and is faster.
-- Next: the decoder's cross-attention on the GPU too; voices told apart by
-  the sound when the text does not name them; translation for the web app
-  through the server.
+- Done: **manual timing tools** for songs no model gets right: tap along
+  line by line while the song plays, and a line editor (move, edit, undo).
+- Built, not used by default: **singing separated from the music**
+  (`crates/bl-sep`, Open-Unmix UMX-HQ) and **CTC word alignment**
+  (`crates/bl-align`, wav2vec2). Both measured worse than the plain audio
+  and Whisper's attention on the test songs; the separation is still the
+  input for voices and the karaoke melody below.
+- Next: the decoder's cross-attention on the GPU too; translation for the
+  web app through the server.
 - Findings from the tests (what failed, what helped, what an own model
-  needs): [SPEECH-NOTES.md](SPEECH-NOTES.md).
-- Idea: **manual timing tools** for songs no model gets right: tap along
-  line by line while the song plays, and a line editor (move, trim, undo).
-- Idea: **singing separated from the music before recognition.** Most
-  recognition errors come from dense music (choruses over drops, chants:
-  the model hears "(upbeat music)" or makes words up). A small separation
-  network (U-Net/Open-Unmix-like on the spectrogram, own implementation
-  like the Whisper one, weights converted once) gives the vocals track;
-  recognition and word timing then run on it. Rough plan: pick a model
-  with open weights and licence, own reader and inference (STFT, mask,
-  inverse STFT; GPU kernels reuse `bl-gpu`), an option per device and on
-  the server, measured with the evaluation songs (word error rate, line
-  timing) against the plain audio; cost: about one more encoder pass.
-- Idea: **a "Beatlumen Lyrics" speech model**: Whisper (small or large v3
-  turbo) fine-tuned on singing. Rough plan:
-  - Data: only songs that may be used, e.g. Creative Commons music
-    (Jamendo and similar) with checked, timed song texts (made with the
-    word timing here and corrected by hand), several languages; plus
-    augmentation (mixing levels, tempo, reverb). No commercial songs.
-  - Training: LoRA or a short full fine-tune on a rented GPU (PyTorch
-    scripts in a separate tool folder, not part of the apps); held-out
-    songs never seen in training.
-  - Conversion to the ggml format the apps already read; published with
-    its training recipe, data list and licence; added to the model list
-    with size and SHA-256 like the others.
-  - Only kept when it beats the stock models in the evaluation (word
-    error rate without a text, line and word timing with one) by a clear
-    margin.
+  needs): [SPEECH-NOTES.md](SPEECH-NOTES.md). The order of the next steps
+  is in [`PLAN-0.12.md`](PLAN-0.12.md).
+- Goal for the timing: **lines within 0.5 s** of where they are sung (at
+  least 90 % of the lines on every test song), words within about 0.15 s.
+- Next: **own speech models.** Whisper fine-tuned on singing (lines as
+  segments, lyrics punctuation, backing vocals in parentheses, no sound
+  notes, nothing written for instrumental parts), and a CTC aligner
+  fine-tuned on singing for the word and line times. They keep Whisper's
+  architecture and vocabulary, so `bl-asr` and `bl-align` read them
+  without code changes.
+  - The training tools (PyTorch) are not part of Beatlumen; they run on
+    the user's own GPU and data.
+  - Beatlumen gets **own model sources**: a server lists the models in its
+    model folder (with size and SHA-256) and the apps download them
+    through the server connection, next to the public catalog. A model
+    trained on a private music collection stays on the user's own server.
+  - The public catalog only lists models whose weights and training data
+    may be passed on (e.g. Creative Commons music), published with their
+    training recipe, data list and licence.
+  - A model is only used by default when it beats the stock models in the
+    evaluation (word error rate without a text, line and word timing with
+    one) on songs it never saw, and does not get worse at plain speech.
+  - Sizes by device: a small model for phones and computers without a GPU,
+    a large one (large v3 turbo class) for computers with a GPU and the
+    server; chosen from the device's memory and the GPU check.
+- Next: **voices told apart by the sound** when the text does not name
+  them: a speaker-embedding network (ECAPA-TDNN class, own
+  implementation, weights with an open licence) on the separated singing,
+  one embedding per timed line, clustered into voices. The result fills
+  the existing voice marks (`[v:N]`, names), and the line editor can set
+  and name voices by hand.
+- Languages: German, English and the other European languages, Japanese
+  and Chinese. Japanese and Chinese need matching by characters instead
+  of spaces and their own syllable (mora) rules.
+
+## Karaoke
+Singing along with the song text and getting points for the text and the
+pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
+
+- **Song data:** the melody of the singing (pitch of the separated vocals,
+  own pYIN tracker), one note per syllable from the syllable times, voices
+  per line, key and tempo. Kept like song texts (on the server per song,
+  offline in the song's container), computed on the server in the
+  background or on the device. Import and export as UltraStar text files.
+- **Microphones:**
+  - Several inputs on a computer (USB microphones, headsets, channels of
+    an audio interface), one singer each.
+  - One microphone on a phone that plays the song itself.
+  - Phones as wireless microphones for the device that plays: the phone
+    records and sends the singing through the Beatlumen server with
+    timestamps on the common server time, so network delay does not
+    affect the points. No device opens a port for this.
+  - Microphones are only open while the karaoke mode uses them; the
+    recordings are not stored or sent anywhere else.
+  - Latency calibration per microphone (clap or sing a test note).
+- **Points:**
+  - Pitch: the live pitch of each microphone against the song's notes,
+    octave ignored, tolerance by difficulty.
+  - Text: each sung line scored against the known line with the CTC
+    aligner (how well the sung sounds fit the text), cheap enough for
+    phones.
+- **Playback:** the singing can be turned down with the separation.
+- **Screen:** its own page: pick a song, assign microphones to singers or
+  voices, the text with note bars and each singer's live pitch, results.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),

@@ -50,6 +50,18 @@ timing a known text.
   than small at writing down, and on dense music worse than base.
 - **Speed:** a 2.5-minute song on 4 CPU cores took about 1 min with base and
   about 6 min with large v3 turbo. The GPU encoder helps the big models most.
+- **GPU check (Radeon RX 9070 XT, RADV):** all models and songs gave the
+  same results as on the CPU (one song's word error rate 0.1 points apart)
+  and ran 3 to 10 times faster: FRIENDS took 40 s instead of 406 s with
+  large v3 turbo, 30 s instead of 181 s with small.
+
+## Goal for the next models
+
+Lines within 0.5 s, not 1 s: at least 90 % of the lines on every test song
+(see [PLAN-0.12.md](PLAN-0.12.md)). The share within 0.5 s is the main
+measure from now on. The stock models reach 37–77 % on the test songs
+today, so this needs a model trained on singing and better word times
+(the CTC aligner below).
 
 ## What went wrong, and what helped
 
@@ -212,7 +224,9 @@ What the findings above ask of a model trained for songs:
   - Spelled-out words, ad-libs and backing vocals.
   - Several languages, German included.
   - Long instrumental parts, labelled as silence, never as text.
-  - Only material that may be used (see the roadmap).
+  - Only material that may be used: for a model that is passed on, music
+    and texts whose licence allows it; a model kept on the user's own
+    server may use the user's own collection (see the roadmap).
 - **Output conventions** to train for:
   - A timestamp at every sung line's start and end, so segments are lines.
   - Capitals and punctuation as in lyrics.
