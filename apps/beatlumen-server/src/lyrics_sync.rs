@@ -379,8 +379,15 @@ impl LyricsSync {
         // The song's own text (plain or with line times); a text with word
         // times is timed again from its lines.
         let text = state.lyrics.source_text(e).map(|(t, _)| t);
-        let timed =
-            bl_asr::sync::time_song(model, model_id, &samples, text.as_deref(), &mut progress)?;
+        let timed = bl_asr::sync::time_song(
+            model,
+            model_id,
+            &samples,
+            text.as_deref(),
+            Some(&e.track.title),
+            None,
+            &mut progress,
+        )?;
         let path = if timed.written_down {
             self.recognized_path(&id)
         } else {

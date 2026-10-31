@@ -223,6 +223,10 @@ fn convert(raw: &[u8], dtype: DType, keep: Keep) -> Store {
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     };
     let bf16 = |h: u16| f32::from_bits((h as u32) << 16);
+    let i64s = || {
+        raw.chunks_exact(8)
+            .map(|b| i64::from_le_bytes(b.try_into().expect("8 bytes")) as f32)
+    };
     match (dtype, keep) {
         (DType::F32, Keep::F32) => Store::F32(f32s().collect()),
         (DType::F32, Keep::F16) => Store::F16(f32s().map(f32_to_f16).collect()),
@@ -230,6 +234,8 @@ fn convert(raw: &[u8], dtype: DType, keep: Keep) -> Store {
         (DType::F16, Keep::F16) => Store::F16(u16s().collect()),
         (DType::BF16, Keep::F32) => Store::F32(u16s().map(bf16).collect()),
         (DType::BF16, Keep::F16) => Store::F16(u16s().map(|h| f32_to_f16(bf16(h))).collect()),
+        (DType::I64, Keep::F32) => Store::F32(i64s().collect()),
+        (DType::I64, Keep::F16) => Store::F16(i64s().map(f32_to_f16).collect()),
     }
 }
 
@@ -510,18 +516,29 @@ mod tests {
     /// The pickle of a state dict with one 2x2 f32 tensor `w` in storage
     /// "0" and a 3-value f16 tensor `b` (from element 1) in storage "1".
     fn dict_pickle() -> Vec<u8> {
+        dict_of(&[
+            ("w", "FloatStorage", "0", 4, 0, &[2, 2]),
+            ("b", "HalfStorage", "1", 4, 1, &[3]),
+        ])
+    }
+
+    /// The pickle of a state dict of contiguous tensors: name, storage
+    /// type, storage key, storage size, offset and shape.
+    #[allow(clippy::type_complexity)]
+    fn dict_of(tensors: &[(&str, &str, &str, u8, u8, &[u8])]) -> Vec<u8> {
         let mut p = b"\x80\x02ccollections\nOrderedDict\n)R(".to_vec();
         let s = |p: &mut Vec<u8>, s: &str| {
             p.push(b'X');
             p.extend_from_slice(&(s.len() as u32).to_le_bytes());
             p.extend_from_slice(s.as_bytes());
         };
-        let tensor = |p: &mut Vec<u8>, ty: &str, key: &str, count: u8, off: u8, size: &[u8]| {
+        for &(name, ty, key, count, off, size) in tensors {
+            s(&mut p, name);
             p.extend_from_slice(b"ctorch._utils\n_rebuild_tensor_v2\n((");
-            s(p, "storage");
+            s(&mut p, "storage");
             p.extend_from_slice(format!("ctorch\n{ty}\n").as_bytes());
-            s(p, key);
-            s(p, "cpu");
+            s(&mut p, key);
+            s(&mut p, "cpu");
             p.extend_from_slice(&[b'K', count, b'N', b't', b'Q', b'K', off, b'(']);
             for &d in size {
                 p.extend_from_slice(&[b'K', d]);
@@ -538,11 +555,7 @@ mod tests {
                 p.extend_from_slice(&[b'K', st]);
             }
             p.extend_from_slice(b"t\x89ccollections\nOrderedDict\n)RtR");
-        };
-        s(&mut p, "w");
-        tensor(&mut p, "FloatStorage", "0", 4, 0, &[2, 2]);
-        s(&mut p, "b");
-        tensor(&mut p, "HalfStorage", "1", 4, 1, &[3]);
+        }
         p.extend_from_slice(b"u.");
         p
     }
@@ -611,6 +624,34 @@ mod tests {
             .unwrap()
             .load(&[("b", Keep::F32)])
             .is_err());
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn reads_integer_tensors() {
+        // A 64-bit counter before an f32 vector (BatchNorm keeps one).
+        let mut f = vec![0x80, 2, 0x8a, 10];
+        f.extend_from_slice(&LEGACY_MAGIC);
+        f.extend_from_slice(b".\x80\x02M\xe9\x03.");
+        f.extend_from_slice(b"\x80\x02}(X\x0d\x00\x00\x00little_endian\x88u.");
+        f.extend_from_slice(&dict_of(&[
+            ("n", "LongStorage", "0", 1, 0, &[]),
+            ("v", "FloatStorage", "1", 2, 0, &[2]),
+        ]));
+        f.extend_from_slice(b"\x80\x02](X\x01\x00\x00\x000X\x01\x00\x00\x001e.");
+        f.extend_from_slice(&1u64.to_le_bytes());
+        f.extend_from_slice(&(-7i64).to_le_bytes());
+        f.extend_from_slice(&2u64.to_le_bytes());
+        f.extend_from_slice(&1.5f32.to_le_bytes());
+        f.extend_from_slice(&(-2f32).to_le_bytes());
+        let p = temp("long.bin", &f);
+        let c = Checkpoint::open(&p).unwrap();
+        assert_eq!(c.get("n").unwrap().storage.dtype, DType::I64);
+        // The counter's storage is skipped with its own element size.
+        let t = c.load(&[("v", Keep::F32)]).unwrap();
+        assert_eq!(t["v"].values(), &[1.5, -2.0]);
+        let t = c.load(&[("n", Keep::F32)]).unwrap();
+        assert_eq!(t["n"].values(), &[-7.0]);
         std::fs::remove_file(&p).unwrap();
     }
 

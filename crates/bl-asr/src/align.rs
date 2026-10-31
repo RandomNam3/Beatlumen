@@ -219,20 +219,36 @@ const LINE_CHARS: usize = 32;
 /// A pause between words of at least this long (seconds) ends a line.
 const LINE_PAUSE: f64 = 0.45;
 
-/// Text without what the model writes for sounds (`[applause]`,
-/// `(music)`, `♪`, `[BLANK_AUDIO]`).
-fn strip_annotations(text: &str) -> String {
-    let mut out = String::new();
-    let mut depth = 0usize;
-    for c in text.chars() {
-        match c {
-            '[' | '(' => depth += 1,
-            ']' | ')' => depth = depth.saturating_sub(1),
-            '♪' | '♫' | '*' => {}
-            c if depth == 0 => out.push(c),
-            _ => {}
+/// Where a text is inside what the model writes for sounds (`[applause]`,
+/// `(music)`, `*upbeat music*`), carried from word to word.
+#[derive(Default)]
+struct Annotation {
+    depth: usize,
+    star: bool,
+}
+
+impl Annotation {
+    /// The characters of `text` outside annotations.
+    fn strip(&mut self, text: &str) -> String {
+        let mut out = String::new();
+        for c in text.chars() {
+            match c {
+                '[' | '(' => self.depth += 1,
+                ']' | ')' => self.depth = self.depth.saturating_sub(1),
+                '*' => self.star = !self.star,
+                '♪' | '♫' => {}
+                c if self.depth == 0 && !self.star => out.push(c),
+                _ => {}
+            }
         }
+        out
     }
+}
+
+/// Text without what the model writes for sounds (`[applause]`,
+/// `(music)`, `*upbeat music*`, `♪`, `[BLANK_AUDIO]`).
+fn strip_annotations(text: &str) -> String {
+    let out = Annotation::default().strip(text);
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -252,10 +268,11 @@ fn speech_segments(segments: &[Segment]) -> Vec<Segment> {
             words.len() <= 3 && prev.len() > words.len() && prev.ends_with(&words)
         });
         if !echo {
+            let mut inside = Annotation::default();
             let words = s
                 .words
                 .iter()
-                .filter(|w| !strip_annotations(&w.text).is_empty())
+                .filter(|w| !inside.strip(&w.text).trim().is_empty())
                 .cloned()
                 .collect();
             out.push(Segment {
@@ -332,7 +349,183 @@ fn split_lines(s: &Segment) -> Vec<Vec<Word>> {
     if !line.is_empty() {
         lines.push(line);
     }
+    // Without punctuation and capitals (some models write so) the rules
+    // above find few breaks: long lines are split where the singer
+    // breathes, and the lines get capitals.
+    let lower = !s.text.chars().any(char::is_uppercase);
     lines
+        .into_iter()
+        .flat_map(split_long)
+        .map(|l| if lower { capitalized(l) } else { l })
+        .collect()
+}
+
+/// Longest line before it is split at its best break.
+const LONG_LINE: usize = 48;
+
+fn line_len(words: &[Word]) -> usize {
+    words
+        .iter()
+        .map(|w| w.text.chars().count() + 1)
+        .sum::<usize>()
+        .saturating_sub(1)
+}
+
+/// A line longer than [`LONG_LINE`] split (again and again) at the break
+/// with the longest pause, preferring punctuation and the middle, so that
+/// both parts keep a few words.
+fn split_long(words: Vec<Word>) -> Vec<Vec<Word>> {
+    if line_len(&words) <= LONG_LINE || words.len() < 4 {
+        return vec![words];
+    }
+    let total = line_len(&words);
+    let mut best: Option<(f64, usize)> = None;
+    let mut left = 0usize;
+    for i in 0..words.len() - 1 {
+        left += words[i].text.chars().count() + usize::from(i > 0);
+        let right = total - left - 1;
+        if left < LINE_CHARS / 2 || right < LINE_CHARS / 4 || left > LONG_LINE {
+            continue;
+        }
+        let (w, n) = (&words[i], &words[i + 1]);
+        let mut score = (n.start - w.end).max(0.0);
+        if w.text.ends_with([',', '.', '!', '?', ';', ':']) {
+            score += 0.5;
+        }
+        // Balanced lines read better.
+        score -= (left as f64 - total as f64 / 2.0).abs() / total as f64 * 0.2;
+        if best.map_or(true, |(b, _)| score > b) {
+            best = Some((score, i + 1));
+        }
+    }
+    let Some((_, at)) = best else {
+        return vec![words];
+    };
+    let mut words = words;
+    let rest = words.split_off(at);
+    let mut out = split_long(words);
+    out.extend(split_long(rest));
+    out
+}
+
+/// A line of a text written without capitals: the first word and "I"
+/// (with "I'm", "I'll", …) capitalised, spelled words ("f-r-i-e-n-d-s")
+/// in capitals.
+fn capitalized(mut words: Vec<Word>) -> Vec<Word> {
+    for (k, w) in words.iter_mut().enumerate() {
+        let lower = w.text.to_lowercase();
+        let spelled = is_spelled(&w.text);
+        let first_person = lower == "i" || lower.starts_with("i'");
+        let text = if spelled {
+            w.text.to_uppercase()
+        } else if k == 0 || first_person {
+            let mut c = w.text.chars();
+            c.next()
+                .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+        } else {
+            continue;
+        };
+        set_text(w, text);
+    }
+    words
+}
+
+/// A word written letter by letter ("F-R-I-E-N-D-S", punctuation around it
+/// allowed).
+fn is_spelled(word: &str) -> bool {
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let parts: Vec<&str> = core.split('-').collect();
+    parts.len() >= 3
+        && parts
+            .iter()
+            .all(|p| p.chars().count() == 1 && p.chars().all(char::is_alphanumeric))
+}
+
+/// A word's text changed: its pieces follow when they still add up, else
+/// the word becomes one piece.
+fn set_text(w: &mut Word, text: String) {
+    let joined: String = w.pieces.iter().map(|(_, p)| p.as_str()).collect();
+    if !w.pieces.is_empty() && joined.to_lowercase() == text.to_lowercase() {
+        let mut rest = text.as_str();
+        for (_, p) in &mut w.pieces {
+            let n = p.len().min(rest.len());
+            let (head, tail) = rest.split_at(n);
+            *p = head.to_string();
+            rest = tail;
+        }
+    } else if joined != text {
+        w.pieces.clear();
+    }
+    w.text = text;
+}
+
+/// Spelled words that are a near miss of a word of the song's title (the
+/// model heard "F-R-I-N-D-S" for "F-R-I-E-N-D-S") are written like the
+/// title. Returns how many were changed.
+pub fn spell_like_title(segments: &mut [Segment], title: &str) -> usize {
+    let names: Vec<String> = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .map(str::to_uppercase)
+        .collect();
+    let fix = |word: &str| -> Option<String> {
+        if !is_spelled(word) {
+            return None;
+        }
+        let letters: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_uppercase();
+        // Only a near miss: letters missing or misheard, not added (a
+        // longer word, "L-O-V-E-D" for a title "Love", is another word),
+        // one letter off for short title words, two for long ones.
+        let name = names.iter().find(|n| {
+            let len = n.chars().count();
+            let allowed = if len >= 7 { 2 } else { 1 };
+            let edits = ((1.0 - similarity(n, &letters)) * len.max(letters.chars().count()) as f32)
+                .round() as usize;
+            len >= 4 && *n != &letters && letters.chars().count() <= len && edits <= allowed
+        })?;
+        let spelled = name.chars().map(String::from).collect::<Vec<_>>().join("-");
+        let lead: String = word.chars().take_while(|c| !c.is_alphanumeric()).collect();
+        let trail: String = word
+            .chars()
+            .rev()
+            .take_while(|c| !c.is_alphanumeric())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let lower = word.chars().any(char::is_lowercase);
+        Some(format!(
+            "{lead}{}{trail}",
+            if lower {
+                spelled.to_lowercase()
+            } else {
+                spelled
+            }
+        ))
+    };
+    let mut changed = 0;
+    for s in segments.iter_mut() {
+        let text: Vec<String> = s
+            .text
+            .split(' ')
+            .map(|w| {
+                fix(w)
+                    .inspect(|_| changed += 1)
+                    .unwrap_or_else(|| w.to_string())
+            })
+            .collect();
+        s.text = text.join(" ");
+        for w in &mut s.words {
+            if let Some(t) = fix(&w.text) {
+                set_text(w, t);
+            }
+        }
+    }
+    changed
 }
 
 fn word_tag(t: f64) -> String {
@@ -655,6 +848,49 @@ fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn spelled_title_words_are_mended_only_when_near() {
+        let mut segs = vec![seg(1.0, 5.0, "F-R-I-N-D-S, f-r-i-n-e-s L-O-V-E-D A-B-C")];
+        assert_eq!(spell_like_title(&mut segs, "FRIENDS (Love)"), 2);
+        assert_eq!(segs[0].text, "F-R-I-E-N-D-S, f-r-i-e-n-d-s L-O-V-E-D A-B-C");
+        // Lines without capitals get them; long ones are split.
+        let w = |t: &str, a: f64, b: f64| Word {
+            text: t.into(),
+            start: a,
+            end: b,
+            pieces: Vec::new(),
+        };
+        let line = vec![
+            w("i", 0.0, 0.2),
+            w("know", 0.2, 0.5),
+            w("you", 0.5, 0.7),
+            w("since", 0.7, 1.0),
+            w("we", 1.0, 1.2),
+            w("were", 1.2, 1.4),
+            w("like", 1.4, 1.6),
+            w("ten", 1.6, 1.9),
+            w("yeah", 2.6, 2.9),
+            w("don't", 2.9, 3.1),
+            w("mess", 3.1, 3.3),
+            w("it", 3.3, 3.4),
+            w("up", 3.4, 3.6),
+        ];
+        let lines: Vec<String> = split_long(line)
+            .into_iter()
+            .map(capitalized)
+            .map(|l| {
+                l.iter()
+                    .map(|w| w.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            ["I know you since we were like ten", "Yeah don't mess it up"]
+        );
+    }
+
     fn seg(start: f64, end: f64, text: &str) -> Segment {
         Segment {
             start,
@@ -703,14 +939,20 @@ mod tests {
             seg(40.5, 61.0, " [BLANK_AUDIO]"),
         ]);
         let lines: Vec<&str> = lrc.lines().collect();
-        assert_eq!(lines.len(), 3, "{lrc}");
+        // Long lines are split near their middle (or at a comma), the
+        // words keep their order.
+        assert!(lines.iter().all(|l| l.len() <= 10 + LONG_LINE), "{lrc}");
+        let text: Vec<&str> = lines
+            .iter()
+            .map(|l| &l[10..])
+            .filter(|l| !l.is_empty())
+            .collect();
         assert_eq!(
-            lines[0],
-            "[00:00.00]And so my fellow Americans ask not what your country can do for you,"
+            text.join(" "),
+            "And so my fellow Americans ask not what your country can do for you, ask what you can do for your country.",
         );
-        assert!(lines[1].ends_with("]ask what you can do for your country."));
-        assert!(lines[1] > "[00:05" && lines[1] < "[00:08", "{lrc}");
-        assert_eq!(lines[2], "[00:10.00]");
+        assert!(lines.iter().any(|l| l.ends_with("for you,")), "{lrc}");
+        assert_eq!(lines.last(), Some(&"[00:10.00]"));
         assert!(!lrc.contains("applause") && !lrc.contains("BLANK"));
         // Sounds do not count as words of the text.
         let (lrc, matched) = align_text(
@@ -727,13 +969,13 @@ mod tests {
             seg(0.0, 10.0, "ask what you can do for your country."),
             seg(10.0, 12.0, " country."),
         ]);
-        assert_eq!(lrc, "[00:00.00]ask what you can do for your country.\n");
+        assert_eq!(lrc, "[00:00.00]Ask what you can do for your country.\n");
     }
 
     #[test]
     fn segments_only() {
         let lrc = segments_to_lrc(&[seg(1.0, 3.0, " Hi there"), seg(20.0, 22.0, "again")]);
-        assert_eq!(lrc, "[00:01.00]Hi there\n[00:03.00]\n[00:20.00]again\n");
+        assert_eq!(lrc, "[00:01.00]Hi there\n[00:03.00]\n[00:20.00]Again\n");
     }
 
     #[test]
@@ -758,6 +1000,7 @@ mod tests {
         assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
         assert!(*times.last().unwrap() < 14.0);
         let lrc = segments_to_lrc_words(&[seg(1.0, 3.0, "one two three")]);
-        assert!(lrc.starts_with("[00:01.00]<00:01.00>one <00:01."), "{lrc}");
+        // (A line without capitals gets one.)
+        assert!(lrc.starts_with("[00:01.00]<00:01.00>One <00:01."), "{lrc}");
     }
 }

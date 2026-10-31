@@ -393,6 +393,7 @@ impl Core {
             "library.folder" => self.folder_view(&s("path")),
             "lyrics.get" => self.lyrics_get(host),
             "lyrics.import" => self.lyrics_import(host, &s("text")),
+            "lyrics.edit" => self.lyrics_edit(host, c),
             "lyrics.importFile" => match host.fs_read(&s("path")) {
                 Ok(d) => {
                     self.lyrics_import_bytes(host, &d);

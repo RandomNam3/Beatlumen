@@ -64,22 +64,38 @@ pub struct Timed {
 }
 
 /// Times `text` (or writes down what is sung) for `samples` (mono,
-/// 16 kHz) with `model` (`model_id` is written into the result).
+/// 16 kHz) with `model` (`model_id` is written into the result). `title`:
+/// the song's title, for spelled-out words of it. `aligner`: a model for
+/// word times (else Whisper's attention gives them).
 /// `progress` gets 0..1 and cancels with false.
 pub fn time_song(
     model: &Model,
     model_id: &str,
     samples: &[f32],
     text: Option<&str>,
+    title: Option<&str>,
+    aligner: Option<&dyn crate::transcribe::WordAligner>,
     progress: &mut dyn FnMut(f32) -> bool,
 ) -> Result<Timed, String> {
-    let t = Transcriber::new(model);
+    let t = Transcriber::new(model).with_aligner(aligner);
     let song_end = samples.len() as f64 / crate::mel::SAMPLE_RATE as f64;
     let text = text.map(str::trim).filter(|t| !t.is_empty());
     if let Some(lrc) = text.and_then(lrc_lines) {
         let lrc_text = text.unwrap_or_default();
         let head = creator_tag(model_id) + &header(lrc_text);
-        return time_lines(&t, samples, &lrc, head, song_end, progress).map(|lrc| Timed {
+        // Line times made for another release of the song (a longer
+        // intro, another edit) are moved to where the lines are sung.
+        let share = 0.25;
+        let mut first = |p: f32| progress(p * share);
+        let lrc = match lrc_offset(&t, samples, &lrc, &mut first)? {
+            Some(shift) => lrc
+                .into_iter()
+                .map(|(time, l)| ((time + shift).max(0.0), l))
+                .collect(),
+            None => lrc,
+        };
+        let mut rest = |p: f32| progress(share + p * (1.0 - share));
+        return time_lines(&t, samples, &lrc, head, song_end, &mut rest).map(|lrc| Timed {
             lrc,
             written_down: false,
         });
@@ -126,6 +142,10 @@ pub fn time_song(
             }
             // The written-down lines are timed like a given text (word
             // times and voices).
+            let mut segments = segments;
+            if let Some(title) = title {
+                crate::align::spell_like_title(&mut segments, title);
+            }
             let lines = lrc_lines(&segments_to_lrc_words(&segments)).unwrap_or_default();
             let mut rest = |p: f32| progress(share + p * (1.0 - share));
             time_lines(
@@ -224,6 +244,85 @@ fn time_anchors(
         lrc.push('\n');
     }
     Ok(lrc)
+}
+
+/// Line times usually come a little before the singing (seconds).
+const LRC_LEAD: f64 = 0.25;
+/// Line times off by less than this are kept (the word timing copes).
+const MIN_SHIFT: f64 = 1.0;
+
+/// How far an LRC's line times are off the audio (seconds to add), when
+/// they clearly are: a few stretches of the song are recognised, their
+/// words matched to the lines timed around them, and the differences
+/// must agree.
+fn lrc_offset(
+    t: &Transcriber,
+    samples: &[f32],
+    lrc: &[(f64, String)],
+    progress: &mut dyn FnMut(f32) -> bool,
+) -> Result<Option<f64>, String> {
+    let rate = crate::mel::SAMPLE_RATE as f64;
+    let song = samples.len() as f64 / rate;
+    let sung: Vec<&(f64, String)> = lrc
+        .iter()
+        .filter(|(_, l)| l.chars().any(char::is_alphanumeric))
+        .collect();
+    if sung.len() < 6 || song < 40.0 {
+        return Ok(None);
+    }
+    const STRETCH: f64 = 30.0;
+    // Lines this far around a stretch may be the ones sung in it.
+    const AROUND: f64 = 20.0;
+    let mut diffs = Vec::new();
+    let starts: Vec<f64> = [0.3, 0.55, 0.8]
+        .iter()
+        .map(|f| (song * f - STRETCH / 2.0).clamp(0.0, (song - STRETCH).max(0.0)))
+        .collect();
+    for (k, &from) in starts.iter().enumerate() {
+        let a = (from * rate) as usize;
+        let b = ((from + STRETCH) * rate).min(samples.len() as f64) as usize;
+        let mut part = |p: f32| progress((k as f32 + p) / starts.len() as f32);
+        let mut segments = t
+            .transcribe(
+                &samples[a..b],
+                Options {
+                    language: None,
+                    prompt: None,
+                    progress: &mut part,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        for s in &mut segments {
+            s.start += from;
+            s.end += from;
+            for w in &mut s.words {
+                w.start += from;
+                w.end += from;
+            }
+        }
+        let near: Vec<&&(f64, String)> = sung
+            .iter()
+            .filter(|(time, _)| *time >= from - AROUND && *time <= from + STRETCH + AROUND)
+            .collect();
+        if near.len() < 2 || segments.is_empty() {
+            continue;
+        }
+        let text: Vec<&str> = near.iter().map(|(_, l)| l.as_str()).collect();
+        let (anchors, _) = anchor_lines(&text.join("\n"), &segments);
+        for (a, (time, l)) in anchors.iter().zip(&near) {
+            // Only lines found within the stretch say something.
+            if a.matched && a.text == l.trim() && a.time >= from && a.time < from + STRETCH {
+                diffs.push(a.time - time - LRC_LEAD);
+            }
+        }
+    }
+    if diffs.len() < 5 {
+        return Ok(None);
+    }
+    diffs.sort_by(f64::total_cmp);
+    let q = |f: f64| diffs[((diffs.len() - 1) as f64 * f).round() as usize];
+    let (median, spread) = (q(0.5), q(0.75) - q(0.25));
+    Ok((median.abs() >= MIN_SHIFT && spread <= 1.0).then_some(median))
 }
 
 /// Times the words of LRC lines and writes them back (line times kept).

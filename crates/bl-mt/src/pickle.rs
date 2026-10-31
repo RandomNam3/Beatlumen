@@ -44,12 +44,15 @@ pub enum DType {
     F32,
     F16,
     BF16,
+    /// 64-bit integers (counters and sizes kept with the weights).
+    I64,
 }
 
 impl DType {
     /// Bytes per element.
     pub fn size(self) -> usize {
         match self {
+            DType::I64 => 8,
             DType::F32 => 4,
             DType::F16 | DType::BF16 => 2,
         }
@@ -63,7 +66,8 @@ pub enum Global {
     OrderedDict,
     /// `torch._utils._rebuild_tensor_v2`
     RebuildTensor,
-    /// `torch.FloatStorage`, `torch.HalfStorage`, `torch.BFloat16Storage`
+    /// `torch.FloatStorage`, `torch.HalfStorage`, `torch.BFloat16Storage`,
+    /// `torch.LongStorage`
     Storage(DType),
 }
 
@@ -75,6 +79,7 @@ impl Global {
             ("torch", "FloatStorage") => Global::Storage(DType::F32),
             ("torch", "HalfStorage") => Global::Storage(DType::F16),
             ("torch", "BFloat16Storage") => Global::Storage(DType::BF16),
+            ("torch", "LongStorage") => Global::Storage(DType::I64),
             _ => return None,
         })
     }

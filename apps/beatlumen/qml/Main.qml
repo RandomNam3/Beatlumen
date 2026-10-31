@@ -28,7 +28,7 @@ ApplicationWindow {
     property int page: -1
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
-    readonly property bool chromeVisible: page >= 0 || !idle || !playing
+    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing
 
     Component.onCompleted: {
         if (startFullscreen)
@@ -105,19 +105,19 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: "Space"; onActivated: Core.call("toggle") }
+    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Space"; onActivated: Core.call("toggle") }
     Shortcut { sequences: ["Media Play", "Toggle Media Play/Pause"]; onActivated: Core.call("toggle") }
     Shortcut { sequences: ["Ctrl+Right", "Media Next"]; onActivated: Core.call("next") }
     Shortcut { sequences: ["Ctrl+Left", "Media Previous"]; onActivated: Core.call("prev") }
-    Shortcut { sequence: "Right"; onActivated: Core.call("seekBy", { delta: 5 }) }
-    Shortcut { sequence: "Left"; onActivated: Core.call("seekBy", { delta: -5 }) }
+    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Right"; onActivated: Core.call("seekBy", { delta: 5 }) }
+    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Left"; onActivated: Core.call("seekBy", { delta: -5 }) }
     Shortcut { sequence: "Ctrl+Up"; onActivated: Core.call("volume", { value: Math.min(1, (Core.state.volume || 0) + 0.05) }) }
     Shortcut { sequence: "Ctrl+Down"; onActivated: Core.call("volume", { value: Math.max(0, (Core.state.volume || 0) - 0.05) }) }
     Shortcut { sequences: ["F11", "Alt+Return"]; onActivated: win.toggleFullscreen() }
     Shortcut { sequence: "Escape"; onActivated: if (!win.goBack() && win.visibility === Window.FullScreen) win.showNormal() }
     Shortcut { sequence: "Ctrl+F"; onActivated: win.page = 0 }
-    Shortcut { sequence: "Ctrl+Z"; onActivated: Core.call("preset.undo") }
-    Shortcut { sequence: "Ctrl+Shift+Z"; onActivated: Core.call("preset.redo") }
+    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Z"; onActivated: Core.call("preset.undo") }
+    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Shift+Z"; onActivated: Core.call("preset.redo") }
     Shortcut { sequence: "Ctrl+Alt+Right"; onActivated: Core.call("backgrounds.next") }
     Shortcut { sequence: "Ctrl+Alt+Left"; onActivated: Core.call("backgrounds.prev") }
 

@@ -1,0 +1,9 @@
+[package]
+name = "bl-hyph"
+description = "Syllables of words by hyphenation patterns (Liang's algorithm, the TeX patterns)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

@@ -11,7 +11,7 @@ use bl_json::Value;
 /// At most this many lines are kept.
 const MAX_LINES: usize = 5000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Line {
     /// Start in milliseconds (synced text only).
     pub time_ms: Option<i64>,
@@ -411,6 +411,46 @@ impl Lyrics {
             .collect()
     }
 
+    /// The text as enhanced LRC with what it holds now: line and word
+    /// times (word end times where a pause follows), singers' names before
+    /// their lines and `[v:N]` for voices without a name.
+    pub fn to_enhanced_lrc(&self) -> String {
+        fn time(ms: i64) -> String {
+            let cs = ms.max(0) / 10;
+            format!("{:02}:{:02}.{:02}", cs / 6000, cs / 100 % 60, cs % 100)
+        }
+        let mut out = String::new();
+        if let Some(c) = &self.creator {
+            out += &format!("[re:{c}]\n");
+        }
+        let mut voice = 0u8;
+        for l in &self.lines {
+            if l.who.is_empty() && l.voice != voice && l.voice > 0 {
+                out += &format!("[v:{}]\n", l.voice);
+            }
+            voice = l.voice;
+            if let (Some(t), true) = (l.time_ms, self.synced) {
+                out += &format!("[{}]", time(t));
+            }
+            if !l.who.is_empty() {
+                out += &format!("{}: ", l.who);
+            }
+            if l.words.is_empty() || !self.synced {
+                out += &l.text;
+            } else {
+                for (i, p) in l.words.iter().enumerate() {
+                    out += &format!("<{}>{}", time(p.t), p.w);
+                    let next = l.words.get(i + 1).map(|n| n.t);
+                    if next.map_or(true, |n| p.end < n) && p.end > p.t {
+                        out += &format!("<{}>", time(p.end));
+                    }
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn to_json(&self) -> Value {
         Value::object().with("synced", self.synced).with(
             "lines",
@@ -717,6 +757,90 @@ impl Core {
         }
     }
 
+    /// `lyrics.edit`: the current song text changed by hand, then stored
+    /// like an import. `lines`: `[{t, text, from}]`, `t` the start in
+    /// seconds (none for a plain text), `from` the index of the line it was
+    /// (-1 for a new one). A line keeps its words' times, moved with it,
+    /// while its text is unchanged.
+    pub(crate) fn lyrics_edit(&mut self, host: &mut dyn Host, c: &Value) -> Value {
+        let err = |m: &str| Value::object().with("error", m);
+        let Some(id) = self.queue.current().cloned() else {
+            return err("nothing playing");
+        };
+        let Some(lines) = c.get("lines").as_array().filter(|l| l.len() <= 4000) else {
+            return err("no lines");
+        };
+        let old = (self.lyrics.id == id)
+            .then(|| self.lyrics.found.as_ref().map(|(l, _)| l.clone()))
+            .flatten()
+            .unwrap_or_default();
+        let mut out = Lyrics {
+            synced: false,
+            lines: Vec::with_capacity(lines.len()),
+            creator: None,
+        };
+        let mut words_kept = true;
+        for v in lines {
+            let text: String = v
+                .str_or("text", "")
+                .chars()
+                .filter(|c| *c != '\n' && *c != '\r')
+                .take(1000)
+                .collect();
+            let t = v
+                .get("t")
+                .as_f64()
+                .filter(|t| t.is_finite() && *t >= 0.0 && *t < 24.0 * 3600.0);
+            let time_ms = t.map(|t| (t * 1000.0).round() as i64);
+            out.synced |= time_ms.is_some();
+            let from = v.get("from").as_i64().and_then(|i| usize::try_from(i).ok());
+            let line = match from.and_then(|i| old.lines.get(i)) {
+                Some(o) if o.text == text => {
+                    let shift = match (time_ms, o.time_ms) {
+                        (Some(a), Some(b)) => a - b,
+                        _ => 0,
+                    };
+                    let words = o
+                        .words
+                        .iter()
+                        .map(|p| Piece {
+                            t: p.t + shift,
+                            end: p.end + shift,
+                            w: p.w.clone(),
+                        })
+                        .collect();
+                    Line {
+                        time_ms,
+                        words,
+                        ..o.clone()
+                    }
+                }
+                Some(o) => {
+                    words_kept &= o.words.is_empty();
+                    Line {
+                        time_ms,
+                        text,
+                        words: Vec::new(),
+                        voice: o.voice,
+                        who: o.who.clone(),
+                    }
+                }
+                None => Line {
+                    time_ms,
+                    text,
+                    ..Default::default()
+                },
+            };
+            out.lines.push(line);
+        }
+        // Times by speech recognition stay named only while all its word
+        // times are kept.
+        if words_kept && out.lines.iter().any(|l| !l.words.is_empty()) {
+            out.creator = old.creator.clone();
+        }
+        self.lyrics_import(host, &out.to_enhanced_lrc())
+    }
+
     /// `lyrics.import`: a song text for the current track (`text`), stored
     /// on the server for its tracks, else on this device.
     pub(crate) fn lyrics_import(&mut self, host: &mut dyn Host, text: &str) -> Value {
@@ -881,6 +1005,20 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn edited_texts_are_written_back_unchanged() {
+        let text = "[re:Beatlumen speech timing 2, model base]\n\
+            [00:01.00]Anne-Marie: <00:01.00>You <00:01.40>say<00:02.00>\n\
+            [00:03.00]Marshmello: <00:03.00>Hey\n\
+            [00:05.00]Anne-Marie: <00:05.00>Fri<00:05.30>ends <00:06.00>(oh)<00:06.50>\n\
+            [v:2]\n[00:08.00]Plain line\n";
+        let l = parse(text);
+        let back = parse(&l.to_enhanced_lrc());
+        assert_eq!(back, l, "{}", l.to_enhanced_lrc());
+        assert_eq!(back.lines[0].who, "Anne-Marie");
+        assert_eq!(back.lines[2].words.len(), 3);
+    }
     use super::*;
 
     fn times(l: &Lyrics) -> Vec<(Option<i64>, &str)> {

@@ -10,6 +10,8 @@ Item {
     id: lv
     property bool controlsVisible: true
     signal addLyrics()
+    // Timing by hand (tap: tap along line by line).
+    signal editTiming(bool tap)
 
     property var info: ({ status: "none" })
     readonly property string curId: Core.state.current ? Core.state.current.id : ""
@@ -246,6 +248,12 @@ Item {
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
+            text: Theme.tr("Paste text and tap along…")
+            icon.source: Theme.icon("edit")
+            onClicked: lv.editTiming(true)
+        }
+        Button {
+            Layout.alignment: Qt.AlignHCenter
             visible: lv.canSync || lv.canLocal
             text: Theme.tr("Recognize song text")
             icon.source: Theme.icon("auto_awesome")
@@ -258,7 +266,8 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 8
-        visible: (lv.sync !== null || (lv.ready && (lv.canSync || lv.canLocal))) && (lv.controlsVisible || lv.sync !== null)
+        // Plain text: the main action is timing it; word timing is in the menu.
+        visible: (lv.sync !== null || (lv.ready && !lv.synced && (lv.canSync || lv.canLocal))) && (lv.controlsVisible || lv.sync !== null)
         padding: lv.sync ? 12 : 0
         Material.elevation: 2
         background: Rectangle {
@@ -269,8 +278,7 @@ Item {
             spacing: 10
             Button {
                 visible: !lv.sync
-                // Line times already: words get theirs.
-                text: lv.synced ? Theme.tr("Time word by word") : Theme.tr("Sync automatically")
+                text: Theme.tr("Sync automatically")
                 icon.source: Theme.icon("auto_awesome")
                 onClicked: lv.startSync()
             }
@@ -350,25 +358,61 @@ Item {
         }
     }
 
-    IconButton {
-        id: translateButton
-        anchors.right: removeButton.visible ? removeButton.left : parent.right
-        anchors.bottom: parent.bottom
-        visible: lv.canTranslate && lv.controlsVisible
-        iconName: "translate"
-        iconColor: lv.translation.on === true ? Theme.accent : "white"
-        tip: lv.translation.on === true ? Theme.tr("Hide translation") : Theme.tr("Translate song text")
-        onClicked: Core.call("translate.set", { on: lv.translation.on !== true })
-    }
-
-    IconButton {
-        id: removeButton
+    // Song text actions: translating (often switched) and the rest in a menu.
+    Row {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        visible: lv.ready && lv.info.canRemove === true && lv.controlsVisible
-        iconName: "delete"
-        iconColor: "white"
-        tip: Theme.tr("Remove added song text")
-        onClicked: Core.call("lyrics.remove")
+        visible: lv.controlsVisible && lv.curId !== "" && !lv.sync
+        IconButton {
+            visible: lv.canTranslate
+            iconName: "translate"
+            iconColor: lv.translation.on === true ? Theme.accent : "white"
+            tip: lv.translation.on === true ? Theme.tr("Hide translation") : Theme.tr("Translate song text")
+            onClicked: Core.call("translate.set", { on: lv.translation.on !== true })
+        }
+        IconButton {
+            id: menuButton
+            visible: lv.ready
+            iconName: "more_vert"
+            iconColor: "white"
+            tip: Theme.tr("Song text")
+            // Opens above the button, right-aligned with it.
+            onClicked: textMenu.popup(menuButton, menuButton.width - textMenu.width, -textMenu.implicitHeight)
+        }
+    }
+    Menu {
+        id: textMenu
+        width: 320
+        MenuItem {
+            visible: lv.synced && !lv.wordTimed && (lv.canSync || lv.canLocal)
+            height: visible ? implicitHeight : 0
+            text: Theme.tr("Time word by word")
+            icon.source: Theme.icon("auto_awesome")
+            onTriggered: lv.startSync()
+        }
+        MenuItem {
+            visible: !lv.synced && (lv.canSync || lv.canLocal)
+            height: visible ? implicitHeight : 0
+            text: Theme.tr("Sync automatically")
+            icon.source: Theme.icon("auto_awesome")
+            onTriggered: lv.startSync()
+        }
+        MenuItem {
+            text: lv.synced ? Theme.tr("Correct the timing by hand") : Theme.tr("Tap along")
+            icon.source: Theme.icon("edit")
+            onTriggered: lv.editTiming(!lv.synced)
+        }
+        MenuItem {
+            text: Theme.tr("Add song text…")
+            icon.source: Theme.icon("add")
+            onTriggered: lv.addLyrics()
+        }
+        MenuItem {
+            visible: lv.info.canRemove === true
+            height: visible ? implicitHeight : 0
+            text: Theme.tr("Remove added song text")
+            icon.source: Theme.icon("delete")
+            onTriggered: Core.call("lyrics.remove")
+        }
     }
 }

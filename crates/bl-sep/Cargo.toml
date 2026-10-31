@@ -1,0 +1,12 @@
+[package]
+name = "bl-sep"
+description = "Separating the singing from the music (Open-Unmix UMX-HQ vocals model)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-asr = { path = "../bl-asr" }
+bl-media = { path = "../bl-media" }
+bl-mt = { path = "../bl-mt" }

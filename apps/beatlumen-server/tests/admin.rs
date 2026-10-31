@@ -600,7 +600,10 @@ fn model_download_switches_the_model() {
         .iter()
         .map(|m| m.str_or("id", ""))
         .collect();
-    assert!(ids.contains(&"base-q5_1") && !ids.contains(&"tiny"), "{ids:?}");
+    assert!(
+        ids.contains(&"base-q5_1") && !ids.contains(&"tiny"),
+        "{ids:?}"
+    );
     assert_eq!(
         http.json(
             "POST",

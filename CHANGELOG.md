@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.11.1 (beta)
+
+Song texts are timed more reliably, and can be timed and corrected by hand.
+
+### Song texts
+
+- **Tap along and correct by hand:** in the song text menu. Paste a text
+  and tap where each line starts while the song plays (Space or the big
+  button, Backspace goes back a line), or move single lines by a tenth of
+  a second, set them to the current position and edit their text. Undo,
+  and saved like an added song text (on the server for its songs); word
+  times move with their line.
+- **Existing LRC files are checked against the song:** an LRC made for
+  another release (a longer intro) is moved to where the lines are sung
+  before its words are timed (it was 3 s off for one test song, and every
+  word ended up squeezed at its line's end).
+- **Plain texts are matched more reliably:** lines are anchored by phrases,
+  not single common words; backing vocals and repeated choruses no longer
+  pull lines to the wrong place; lines that were not heard are searched for
+  between the found ones. The song text is no longer given to the model as
+  context (it made the model copy the text and skip verses).
+- **Syllables:** long words fill syllable by syllable (hyphenation patterns
+  for English, German, French, Spanish, Italian, Dutch and Portuguese).
+- **Written-down texts:** long lines are split where the singer breathes,
+  get capitals, and spelled-out words of the title are spelled like it
+  ("F-R-I-N-D-S" becomes "F-R-I-E-N-D-S"). `*...*` sound notes are dropped.
+- **Tidier song text view:** translation and one menu with the other
+  actions instead of loose buttons.
+
+### Other
+
+- Release workflow: the APK signature check works with the newer
+  `apksigner` on the build machines.
+- Built natively but not used by default, because they measured worse on
+  the test songs (see `docs/SPEECH-NOTES.md`): separating the singing from
+  the music (`bl-sep`) and word alignment with wav2vec2 models
+  (`bl-align`).
+
 ## 0.11.0 (beta)
 
 The first published beta. Song texts to sing along with: every word (and
