@@ -23,6 +23,7 @@ pub mod icon;
 pub mod jobs;
 pub mod library;
 pub mod lyrics;
+pub mod mic;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod offline;

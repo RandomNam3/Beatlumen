@@ -30,6 +30,8 @@ pub struct TestHost {
     pub secret_reads: Arc<Mutex<Vec<String>>>,
     /// Requests for other apps' playback (Android): (kind, JSON).
     pub capture: Arc<Mutex<Vec<(String, String)>>>,
+    /// Microphone requests: (kind, JSON); None: the platform has none.
+    pub mic: Option<Arc<Mutex<Vec<(String, String)>>>>,
 }
 
 impl Host for TestHost {
@@ -126,6 +128,18 @@ impl Host for TestHost {
         }
         self.android
     }
+    fn has_mic(&self) -> bool {
+        self.mic.is_some()
+    }
+    fn mic_request(&mut self, kind: &str, json: &str) -> bool {
+        match &self.mic {
+            Some(m) => {
+                m.lock().unwrap().push((kind.to_string(), json.to_string()));
+                true
+            }
+            None => false,
+        }
+    }
     fn has_secret_store(&self) -> bool {
         self.secrets.is_some()
     }
@@ -186,6 +200,7 @@ impl App {
             secrets: None,
             secret_reads: Default::default(),
             capture: Default::default(),
+            mic: None,
         };
         let core = Core::new(&mut host, LaunchArgs::default(), "en");
         App { core, host, dir }

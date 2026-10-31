@@ -278,6 +278,7 @@ pub struct Core {
     pub(crate) outputs: crate::outputs::Outputs,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
+    pub(crate) mic: crate::mic::MicState,
     pub(crate) ext: crate::extensions::ExtState,
     pub(crate) sources: crate::sources::SourcesState,
     pub(crate) share: crate::share::ShareState,
@@ -468,6 +469,7 @@ impl Core {
             outputs: Default::default(),
             dlna: Default::default(),
             capture: Default::default(),
+            mic: Default::default(),
             ext: Default::default(),
             sources: Default::default(),
             share: Default::default(),
@@ -680,6 +682,12 @@ impl Core {
             .with("outputs", self.outputs_json())
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
+            .with(
+                "mic",
+                Value::object()
+                    .with("available", host.has_mic())
+                    .with("open", self.mic_open_count()),
+            )
             .with("extensions", self.extensions_json())
             .with("sources", self.sources_json())
             .with("share", self.share_json())
@@ -2613,6 +2621,7 @@ impl Core {
             }
         }
         self.sync_preload(host);
+        self.mic_tick(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
             self.position_saved_at = self.time;
@@ -2736,6 +2745,7 @@ impl Core {
     pub fn shutdown(&mut self, host: &mut dyn Host) {
         self.save_settings(host);
         self.player.stop(host);
+        self.close_mics(host);
     }
 }
 

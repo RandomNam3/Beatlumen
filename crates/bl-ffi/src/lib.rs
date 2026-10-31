@@ -110,6 +110,12 @@ pub struct BlCallbacks {
     pub capture_request: Option<
         unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
     >,
+    /// Microphones (see `Host::mic_request`): "list", "open", "close";
+    /// non-zero when the request was taken. Null where the platform has
+    /// none. The audio comes back through [`bl_mic_push`].
+    pub mic_request: Option<
+        unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
+    >,
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -667,6 +673,20 @@ impl Host for UiHost {
         unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
     }
 
+    fn has_mic(&self) -> bool {
+        self.cb.mic_request.is_some()
+    }
+
+    fn mic_request(&mut self, kind: &str, json: &str) -> bool {
+        let Some(f) = self.cb.mic_request else {
+            return false;
+        };
+        let c = |s: &str| CString::new(s.replace('\0', "")).unwrap_or_default();
+        let (k, j) = (c(kind), c(json));
+        // SAFETY: UI callback contract.
+        unsafe { f(self.cb.user, k.as_ptr(), j.as_ptr()) != 0 }
+    }
+
     fn credential_request(&mut self, kind: &str, json: &str) -> bool {
         let Some(f) = self.cb.credential_request else {
             return false;
@@ -815,6 +835,34 @@ pub unsafe extern "C" fn bl_capture_push(pcm: *const i16, frames: usize, channel
     // SAFETY: the caller passes `frames * channels` samples.
     let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
     bl_core::capture::push_pcm(s, channels, rate);
+}
+
+/// Recorded audio of microphone stream `stream` (interleaved 16-bit PCM,
+/// `frames` frames of `channels` channels at `rate` Hz). `capture_time_us`
+/// is when the first frame was recorded, on [`bl_clock_us`] (0: unknown,
+/// it arrived just now). From any thread.
+#[no_mangle]
+pub unsafe extern "C" fn bl_mic_push(
+    stream: u32,
+    pcm: *const i16,
+    frames: usize,
+    channels: u32,
+    rate: u32,
+    capture_time_us: i64,
+) {
+    if pcm.is_null() || frames == 0 || channels == 0 || channels > 64 || frames > 1 << 20 {
+        return;
+    }
+    // SAFETY: the caller passes `frames * channels` samples.
+    let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
+    bl_core::mic::push_pcm(stream, s, channels, rate, capture_time_us);
+}
+
+/// The core's monotonic clock in microseconds (process wide; never 0 or
+/// less), for stamping recorded audio. From any thread.
+#[no_mangle]
+pub extern "C" fn bl_clock_us() -> i64 {
+    bl_core::mic::clock_us()
 }
 
 /// Loads GL with `get_proc` (a context must be current). `flavor`: 0 =

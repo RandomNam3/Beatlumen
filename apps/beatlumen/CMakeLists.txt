@@ -151,7 +151,15 @@ if(WIN32)
     target_sources(beatlumen PRIVATE src/desktop_capture_win.cpp src/desktop_capture.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DESKTOP_CAPTURE)
     target_link_libraries(beatlumen PRIVATE ole32)
+    # Microphones (karaoke): WASAPI capture endpoints.
+    target_sources(beatlumen PRIVATE src/mic_input_win.cpp src/mic_input.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
 elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
+    # Microphones (karaoke): PulseAudio / PipeWire sources (libpulse,
+    # loaded at run time).
+    target_sources(beatlumen PRIVATE src/mic_input_pulse.cpp src/mic_input.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
+    target_link_libraries(beatlumen PRIVATE ${CMAKE_DL_LIBS})
     find_package(Qt6 QUIET COMPONENTS DBus)
     if(TARGET Qt6::DBus)
         target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
@@ -177,6 +185,9 @@ elseif(ANDROID)
     # Background playback (MediaSession, foreground service): the Java side
     # lives in android/src.
     target_sources(beatlumen PRIVATE src/android_media.cpp src/android_media.h src/android_capture.cpp src/android_capture.h)
+    # Microphones (karaoke): AudioRecord (android/src/.../MicRecorder.java).
+    target_sources(beatlumen PRIVATE src/android_mic.cpp src/mic_input.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
     # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
     # through AAudio), no QML debugging, TLS or network information.
     qt_import_plugins(beatlumen

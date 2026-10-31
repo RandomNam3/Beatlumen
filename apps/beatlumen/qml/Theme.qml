@@ -89,6 +89,12 @@ QtObject {
 
     readonly property var de: ({
         "Now playing": "Wiedergabe",
+        "Microphone test": "Mikrofontest",
+        "Microphones": "Mikrofone",
+        "Opens inputs to check their levels. The sound stays on this device and is not saved; the inputs close when you leave this check.": "Öffnet Eingänge, um ihre Pegel zu prüfen. Der Ton bleibt auf diesem Gerät und wird nicht gespeichert; die Eingänge schließen sich, wenn du diese Prüfung verlässt.",
+        "No microphones found": "Keine Mikrofone gefunden",
+        "peak": "Spitze",
+        "default": "Standard",
         "Sign in with a passkey": "Mit Passkey anmelden",
         "Opens the sign-in page in the browser, where passkeys, password managers and browser extensions can be used.": "Öffnet die Anmeldeseite im Browser, wo Passkeys, Passwortmanager und Browser-Erweiterungen genutzt werden können.",
         "Continue in the browser. It must show this code:": "Fahre im Browser fort. Er muss diesen Code zeigen:",

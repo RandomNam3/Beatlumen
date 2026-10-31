@@ -50,6 +50,12 @@ typedef struct BlCallbacks {
     // other app's media session as "capture.session". Null where the
     // platform cannot record other apps.
     int32_t (*capture_request)(void *user, const char *kind, const char *json);
+    // Microphones: kind "list" (the inputs come back as "mic.devices"
+    // {devices: [{id, name, channels, rate, default}]}), "open" {stream,
+    // device} (records it into bl_mic_push; the state comes back as
+    // "mic.state" {stream, running, error}), "close" {stream}. Non-zero when
+    // taken; null where the platform has no microphones.
+    int32_t (*mic_request)(void *user, const char *kind, const char *json);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);
@@ -67,6 +73,12 @@ void bl_core_save(BlCore *c);
 void bl_audio_render(float *out, size_t frames, uint32_t latency_frames);
 // Recorded audio of other apps (interleaved 16-bit PCM); from any thread.
 void bl_capture_push(const int16_t *pcm, size_t frames, uint32_t channels, uint32_t rate);
+// Recorded audio of microphone stream `stream` (interleaved 16-bit PCM);
+// capture_time_us: when the first frame was recorded, on bl_clock_us()
+// (0: unknown, now). From any thread.
+void bl_mic_push(uint32_t stream, const int16_t *pcm, size_t frames, uint32_t channels, uint32_t rate, int64_t capture_time_us);
+// The core's monotonic clock in microseconds (never 0 or less).
+int64_t bl_clock_us(void);
 void bl_string_free(char *s);
 // Fetches a URL with the core's HTTP client (TLS included), from any
 // thread; returns the body or null. Free with bl_bytes_free.

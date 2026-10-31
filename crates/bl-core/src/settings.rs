@@ -189,6 +189,9 @@ pub struct Settings {
     /// synced, and the account they belong to.
     pub sync_items: Value,
     pub sync_user: String,
+    /// Latency of microphones (karaoke) by input id, in milliseconds
+    /// (positive: their audio arrives later than the platform reports).
+    pub mic_offsets: Vec<(String, f32)>,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -254,6 +257,7 @@ impl Default for Settings {
             remote_control: true,
             sync_items: Value::object(),
             sync_user: String::new(),
+            mic_offsets: Vec::new(),
             ui: Value::object(),
         }
     }
@@ -350,6 +354,21 @@ impl Settings {
                 _ => Value::object(),
             },
             sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
+            mic_offsets: v
+                .get("micOffsetsMs")
+                .as_object()
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, ms)| {
+                            let ms = ms
+                                .as_f32()?
+                                .clamp(-crate::mic::MAX_OFFSET_MS, crate::mic::MAX_OFFSET_MS);
+                            (ms != 0.0 && !k.is_empty()).then(|| (k.to_string(), ms))
+                        })
+                        .take(64)
+                        .collect()
+                })
+                .unwrap_or_default(),
             ui: if v.get("ui").as_object().is_some() {
                 v.get("ui").clone()
             } else {
@@ -418,6 +437,13 @@ impl Settings {
             .with("syncItems", self.sync_items.clone())
             .with("syncUser", self.sync_user.as_str())
             .with("airplayId", self.airplay_id.as_str())
+            .with(
+                "micOffsetsMs",
+                self.mic_offsets
+                    .iter()
+                    .map(|(k, ms)| (k.clone(), Value::from(*ms)))
+                    .collect::<bl_json::Map>(),
+            )
             .with("ui", self.ui.clone())
     }
 }
@@ -441,6 +467,7 @@ mod tests {
         s.audio_index = Some(1);
         s.repeat = Repeat::Item;
         s.background_mode = BackgroundMode::Manual;
+        s.mic_offsets = vec![("alsa_input.usb".into(), 35.0)];
         let back = Settings::from_json(&bl_json::parse(&s.to_json().to_json()).unwrap());
         assert_eq!(s, back);
     }
