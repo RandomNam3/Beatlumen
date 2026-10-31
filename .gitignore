@@ -12,3 +12,6 @@
 
 # Working copies of local agent tools
 .claude/worktrees/
+
+# Speech evaluation outputs (tools/speech-eval)
+/speech-eval-out

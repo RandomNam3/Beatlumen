@@ -36,9 +36,10 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   the sound when the text does not name them; translation for the web app
   through the server.
 - Findings from the tests (what failed, what helped, what an own model
-  needs): [SPEECH-NOTES.md](SPEECH-NOTES.md).
-- Idea: **manual timing tools** for songs no model gets right: tap along
-  line by line while the song plays, and a line editor (move, trim, undo).
+  needs): [SPEECH-NOTES.md](SPEECH-NOTES.md); how to continue locally:
+  [HANDOFF.md](HANDOFF.md).
+- Done: **manual timing tools** for songs no model gets right: tap along
+  line by line while the song plays, and a line editor (move, edit, undo).
 - Idea: **singing separated from the music before recognition.** Most
   recognition errors come from dense music (choruses over drops, chants:
   the model hears "(upbeat music)" or makes words up). A small separation

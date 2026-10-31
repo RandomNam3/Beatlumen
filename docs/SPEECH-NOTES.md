@@ -18,7 +18,7 @@ timing and for a possible own model ("Beatlumen Lyrics", see
   - Timing a known text: line start error against reference LRC times. The
     measures are the median error and the share of lines within 0.5 s and
     within 1 s.
-- **Tools:** written for the tests and kept outside the repository:
+- **Tools:** in [`tools/speech-eval`](../tools/speech-eval/README.md):
   - `eval.py` runs every model on every song.
   - `cmp_text.py` pairs lines by their text, not by their position, so
     references with another line count can be compared.
