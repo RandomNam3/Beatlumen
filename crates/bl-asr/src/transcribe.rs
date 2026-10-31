@@ -496,8 +496,7 @@ impl<'a> Transcriber<'a> {
                         let floor = words
                             .last()
                             .map_or(l.start.max(begin) - 0.3, |x: &Word| x.start);
-                        let start = (begin + w.start).clamp(floor.max(0.0), l.end.max(l.start));
-                        let end = (begin + w.end).clamp(start, l.end.max(start));
+                        let (start, end) = word_span(begin + w.start, begin + w.end, floor, l);
                         after = after.max(end);
                         words.push(shifted(w, begin, start, end));
                     }
@@ -525,8 +524,7 @@ impl<'a> Transcriber<'a> {
                 let floor = words
                     .last()
                     .map_or(l.start.max(begin) - 0.3, |x: &Word| x.start);
-                let start = (begin + w.start).clamp(floor.max(0.0), l.end.max(l.start));
-                let end = (begin + w.end).clamp(start, l.end.max(start));
+                let (start, end) = word_span(begin + w.start, begin + w.end, floor, l);
                 after = after.max(end);
                 let mut w = shifted(w, begin, start, end);
                 // Pieces by syllable, not by the model's tokens.
@@ -790,6 +788,16 @@ impl<'a> Transcriber<'a> {
     }
 }
 
+/// A word's start and end in the song's time, limited to its line: from
+/// `floor` (a little before the line, or the previous word's start) to the
+/// line's end. When `floor` already lies past the line's end (a line out of
+/// order, ending before the window begins), the word starts at `floor`.
+fn word_span(start: f64, end: f64, floor: f64, line: &Line) -> (f64, f64) {
+    let lo = floor.max(0.0);
+    let start = start.clamp(lo, line.end.max(line.start).max(lo));
+    (start, end.clamp(start, line.end.max(start)))
+}
+
 /// A word of a window moved to the song's time (`offset`), with its start
 /// and end limited to `start`..`end` (pieces kept within them, in order).
 fn shifted(w: Word, offset: f64, start: f64, end: f64) -> Word {
@@ -948,6 +956,22 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_span_stays_in_order() {
+        let line = |start, end| Line {
+            start,
+            end,
+            text: String::new(),
+        };
+        assert_eq!(word_span(10.4, 10.9, 9.7, &line(10.0, 12.0)), (10.4, 10.9));
+        assert_eq!(word_span(13.0, 14.0, 9.7, &line(10.0, 12.0)), (12.0, 12.0));
+        // A line ending before the window begins (here 29.38 s) must not
+        // panic: the word sits at the floor.
+        for (s, e) in [(29.5, 29.9), (20.0, 20.5)] {
+            assert_eq!(word_span(s, e, 29.38, &line(11.0, 12.0)), (29.38, 29.38));
+        }
+    }
 
     #[test]
     fn repetition_is_found() {
