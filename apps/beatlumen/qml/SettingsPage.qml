@@ -1112,6 +1112,143 @@ Item {
                     Label { textFormat: Text.PlainText; text: Math.round((page.settings.renderScale || 1) * 100) + " %"; color: Theme.textDim }
                 }
             }
+            // ---- microphone test (a developer check, only found through the search) ----
+            ColumnLayout {
+                id: micTest
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                readonly property var mic: Core.state.mic || ({})
+                visible: mic.available === true && settingsSearch.text.trim().length >= 3
+                         && page.shows("", ["Microphone test", "Microphones"])
+                property var devices: []
+                property var streams: []
+                // Streams this check opened (closed again when it hides).
+                property var opened: []
+                function refresh() {
+                    const r = Core.call("mic.list") || {}
+                    devices = r.devices || []
+                    streams = r.streams || []
+                }
+                function streamOf(id) {
+                    return streams.find(s => s.device === id && opened.indexOf(s.stream) >= 0)
+                }
+                function toggle(id) {
+                    const s = streamOf(id)
+                    if (s) {
+                        Core.call("mic.close", { stream: s.stream })
+                        opened = opened.filter(x => x !== s.stream)
+                    } else {
+                        const r = Core.call("mic.open", { device: id }) || {}
+                        if (r.stream)
+                            opened = opened.concat([r.stream])
+                    }
+                    refresh()
+                }
+                function shown() {
+                    if (visible) {
+                        refresh()
+                        micListAgain.restart()
+                    } else {
+                        for (const s of opened)
+                            Core.call("mic.close", { stream: s })
+                        opened = []
+                    }
+                }
+                onVisibleChanged: shown()
+                Component.onCompleted: if (visible) shown()
+                Component.onDestruction: { for (const s of opened) Core.call("mic.close", { stream: s }) }
+                // The platform lists its inputs in the background.
+                Timer { id: micListAgain; interval: 600; onTriggered: micTest.refresh() }
+                Timer {
+                    interval: 50
+                    repeat: true
+                    running: micTest.visible && micTest.opened.length > 0
+                    onTriggered: micTest.streams = (Core.call("mic.levels") || {}).streams || []
+                }
+                SectionLabel { text: Theme.tr("Microphone test") }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textFaint
+                    font.pixelSize: 13
+                    text: Theme.tr("Opens inputs to check their levels. The sound stays on this device and is not saved; the inputs close when you leave this check.")
+                }
+                Repeater {
+                    model: micTest.devices
+                    ColumnLayout {
+                        id: micRow
+                        required property var modelData
+                        readonly property var stream: micTest.streamOf(modelData.id)
+                        // -60..0 dB onto 0..1.
+                        function frac(db) { return Math.max(0, Math.min(1, (db + 60) / 60)) }
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        spacing: 4
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: Theme.text
+                                    text: micRow.modelData.name
+                                }
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: micRow.stream && micRow.stream.error ? Theme.danger : Theme.textDim
+                                    font.pixelSize: 12
+                                    text: micRow.stream && micRow.stream.error ? micRow.stream.error
+                                        : [micRow.modelData.channels + " ch", micRow.modelData.rate ? micRow.modelData.rate + " Hz" : "",
+                                           micRow.modelData.default ? Theme.tr("default") : "",
+                                           micRow.stream ? Math.round(micRow.stream.levelDb) + " dB · " + Theme.tr("peak") + " " + Math.round(micRow.stream.peakDb) + " dB" : ""]
+                                          .filter(x => x).join(" · ")
+                                }
+                            }
+                            Button {
+                                flat: true
+                                text: micRow.stream ? Theme.tr("Close") : Theme.tr("Open")
+                                icon.source: Theme.icon(micRow.stream ? "close" : "graphic_eq")
+                                onClicked: micTest.toggle(micRow.modelData.id)
+                            }
+                        }
+                        Item {
+                            visible: !!micRow.stream
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 8
+                            Rectangle { anchors.fill: parent; radius: 4; color: Theme.surfaceVariant }
+                            Rectangle {
+                                height: parent.height
+                                radius: 4
+                                color: micRow.stream && micRow.stream.peak > 0.98 ? Theme.danger : Theme.accent
+                                width: parent.width * micRow.frac(micRow.stream ? micRow.stream.levelDb : -100)
+                            }
+                            Rectangle {
+                                width: 2
+                                height: parent.height
+                                color: Theme.text
+                                x: (parent.width - 2) * micRow.frac(micRow.stream ? micRow.stream.peakDb : -100)
+                            }
+                        }
+                    }
+                }
+                Label {
+                    visible: micTest.devices.length === 0
+                    textFormat: Text.PlainText
+                    Layout.leftMargin: 16
+                    color: Theme.textDim
+                    text: Theme.tr("No microphones found")
+                }
+            }
             // ---- about ----
             ColumnLayout {
                 objectName: "section"

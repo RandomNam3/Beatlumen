@@ -212,6 +212,22 @@ pub trait Host {
         false
     }
 
+    /// Whether the platform can record its audio inputs (microphones).
+    fn has_mic(&self) -> bool {
+        false
+    }
+
+    /// Microphones: "list" asks for the inputs (they arrive as the
+    /// `mic.devices` command: {"devices": [{"id", "name", "channels",
+    /// "rate", "default"}]}), "open" ({"stream", "device"}) records input
+    /// `device` as stream `stream` (asking the user for permission where the
+    /// platform does; the audio arrives through [`crate::mic::push_pcm`],
+    /// the state as `mic.state` {"stream", "running", "error"}), "close"
+    /// ({"stream"}) stops it. Returns false where there are none.
+    fn mic_request(&mut self, _kind: &str, _json: &str) -> bool {
+        false
+    }
+
     /// Whether the platform keeps secrets protected for this app (Android
     /// Keystore, Windows DPAPI, the Secret Service on Linux).
     fn has_secret_store(&self) -> bool {

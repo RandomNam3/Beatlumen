@@ -1039,6 +1039,7 @@ impl Core {
                 .capture_command(host, n, c)
                 .unwrap_or_else(|| err(format!("unknown command {name}"))),
             n if n.starts_with("push.") => self.push_command(host, n, c),
+            n if n.starts_with("mic.") => self.mic_command(host, n, c),
             _ => err(format!("unknown command {name}")),
         }
     }

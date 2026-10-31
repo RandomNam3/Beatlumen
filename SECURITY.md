@@ -172,6 +172,22 @@ In short:
   media sessions, which need notification access. The listener reads no
   notifications; it only exists to make the sessions available.
 
+## Microphones (karaoke)
+
+* An input is only recorded while the user has it open; listing the
+  inputs records nothing. Android asks for the microphone permission when
+  the first one is opened (not at start), and shows its own microphone
+  indicator while recording; Windows applies its microphone privacy
+  setting. Leaving the microphone check in the settings closes the inputs
+  it opened, quitting the app closes all.
+* The audio stays on the device: the core keeps the last few seconds of
+  each input in memory (for levels and, later, scoring the singing) and
+  neither stores it nor sends it anywhere.
+* The system's sound libraries are used as they are (libpulse on Linux,
+  loaded at run time; WASAPI on Windows; AudioRecord on Android).
+* The only stored data is a latency offset per input (by its system id) in
+  the settings.
+
 ## Source extensions (server)
 
 * Separate programs the admin configures (`docs/EXTENSIONS.md`); the

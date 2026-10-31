@@ -41,6 +41,9 @@
 #if defined(BEATLUMEN_DESKTOP_CAPTURE)
 #include "desktop_capture.h"
 #endif
+#if defined(BEATLUMEN_MIC_INPUT)
+#include "mic_input.h"
+#endif
 
 #ifdef Q_OS_ANDROID
 #include "android_capture.h"
@@ -366,6 +369,9 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     secrets::configure(cb, this);
 #if defined(BEATLUMEN_DESKTOP_CAPTURE)
     desktopcapture::configure(cb, this);
+#endif
+#if defined(BEATLUMEN_MIC_INPUT)
+    micinput::configure(cb, this);
 #endif
 #ifdef Q_OS_ANDROID
     cb.service_register = serviceRegister;
