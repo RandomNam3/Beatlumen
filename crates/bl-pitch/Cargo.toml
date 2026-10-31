@@ -1,0 +1,12 @@
+[package]
+name = "bl-pitch"
+description = "Pitch of the singing voice (pYIN, live YIN), notes per syllable and karaoke tracks (UltraStar TXT)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }
+# Syllables of words whose pieces are whole words.
+bl-hyph = { path = "../bl-hyph" }
