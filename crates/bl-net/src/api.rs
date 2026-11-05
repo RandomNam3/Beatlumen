@@ -341,6 +341,7 @@ pub mod paths {
     pub const LABELS: &str = "/api/labels";
     pub const RECOMMENDATIONS: &str = "/api/recommendations";
     pub const RADIO: &str = "/api/radio";
+    pub const STATS: &str = "/api/stats";
 
     pub fn track_labels(id: &str) -> String {
         format!("/api/tracks/{id}/labels")

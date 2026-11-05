@@ -94,6 +94,17 @@ QtObject {
         return i < 0 ? "" : name.substring(0, i)
     }
 
+    // A length of time for people: "3 min", "12 h 5 min", "2 d 4 h".
+    function fmtDuration(sec) {
+        const m = Math.round((sec || 0) / 60)
+        if (m < 60)
+            return m + " min"
+        const h = Math.floor(m / 60)
+        if (h < 48)
+            return h + " h " + (m % 60) + " min"
+        return Math.floor(h / 24) + (language === "de" ? " T " : " d ") + (h % 24) + " h"
+    }
+
     function fmtTime(sec) {
         if (!(sec >= 0) || !isFinite(sec))
             sec = 0
@@ -608,6 +619,39 @@ QtObject {
         "Home folder": "Persönlicher Ordner",
         "Home": "Start",
         "Favorites": "Favoriten",
+        "Statistics": "Statistik",
+        "7 days": "7 Tage",
+        "30 days": "30 Tage",
+        "Year": "Jahr",
+        "All time": "Gesamt",
+        "This device": "Dieses Gerät",
+        "All devices": "Alle Geräte",
+        "Listening time": "Hörzeit",
+        "Songs played": "Gespielte Titel",
+        "Days with music": "Tage mit Musik",
+        "Days in a row (best: %1)": "Tage in Folge (Rekord: %1)",
+        "Songs skipped": "Übersprungene Titel",
+        "Listening time over the period": "Hörzeit im Zeitraum",
+        "By time of day": "Nach Tageszeit",
+        "By day of the week": "Nach Wochentag",
+        "Top songs": "Top-Titel",
+        "Top artists": "Top-Interpreten",
+        "Top albums": "Top-Alben",
+        "Top genres": "Top-Genres",
+        "Your library": "Deine Bibliothek",
+        "Total length": "Gesamtlänge",
+        "Show as table": "Als Tabelle",
+        "Show as chart": "Als Diagramm",
+        "%1 plays": "%1-mal gespielt",
+        "Nothing played in this period": "In diesem Zeitraum nichts gehört",
+        "Statistics fill up as you listen. They stay on this device unless you agree to keep them on your server in the settings.": "Die Statistik füllt sich beim Hören. Sie bleibt auf diesem Gerät, außer du erlaubst in den Einstellungen, sie auf deinem Server zu speichern.",
+        "Mon": "Mo",
+        "Tue": "Di",
+        "Wed": "Mi",
+        "Thu": "Do",
+        "Fri": "Fr",
+        "Sat": "Sa",
+        "Sun": "So",
         "For you": "Für dich",
         "Because you listened to %1": "Weil du %1 gehört hast",
         "New for you": "Neu für dich",

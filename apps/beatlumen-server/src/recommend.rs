@@ -220,6 +220,49 @@ pub fn radio(state: &State, login: &Login, body: &[u8]) -> Result<Value, (u16, S
     Ok(Value::object().with("items", items))
 }
 
+/// `GET /api/stats?range=week|month|year|all&utcOffset=seconds`: statistics
+/// of what the login's devices sent.
+pub fn stats(state: &State, login: &Login, range: &str, utc_offset: i64) -> Value {
+    use bl_recommend::stats::{stats, Range, StatPlay, StatSong};
+    let lib = state.library();
+    let mut songs: Vec<StatSong> = Vec::new();
+    let mut known: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let plays: Vec<StatPlay> = login
+        .history
+        .events()
+        .into_iter()
+        .map(|e| {
+            let song = known.get(&e.id).copied().or_else(|| {
+                let t = &lib.track(&e.id)?.track;
+                let i = songs.len() as u32;
+                songs.push(StatSong {
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                    artists: t.artists.clone(),
+                    album: t.album.clone(),
+                    album_id: t.album_id.clone(),
+                    genre: t.genre.clone(),
+                });
+                known.insert(e.id.clone(), i);
+                Some(i)
+            });
+            StatPlay {
+                song,
+                t: e.t,
+                ms: e.ms,
+                skip: e.skip,
+            }
+        })
+        .collect();
+    stats(
+        &songs,
+        &plays,
+        Range::parse(range),
+        util::now_secs(),
+        utc_offset.clamp(-14 * 3600, 14 * 3600),
+    )
+}
+
 /// `GET /api/labels`.
 pub fn labels(state: &State, login: &Login) -> Value {
     let c = state.recommend.catalog(state, login);

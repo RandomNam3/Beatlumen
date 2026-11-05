@@ -18,6 +18,7 @@ Rectangle {
         { icon: "library_music", label: Theme.tr("Library"), page: 0 },
         { icon: "queue_music", label: Theme.tr("Queue"), page: 1 },
         { icon: "auto_awesome", label: Theme.tr("Visuals"), page: 2 },
+        { icon: "bar_chart", label: Theme.tr("Statistics"), page: 6 },
         { icon: "devices", label: Theme.tr("Devices"), page: 4 },
         { icon: "settings", label: Theme.tr("Settings"), page: 3 }
     ].filter(i => i.page !== 4 || Core.state.server === "connected")

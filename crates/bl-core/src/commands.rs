@@ -516,6 +516,13 @@ impl Core {
                 ok()
             }
             "home.overview" => self.home_overview(host),
+            "stats.overview" => self.history_stats(host, &s("range"), n("utcOffset") as i64),
+            "stats.fetch" => {
+                self.stats_fetch(host, &s("range"), n("utcOffset") as i64);
+                ok()
+            }
+            "stats.server" => self.history.server_stats.clone(),
+            "stats.library" => self.library_stats(),
 
             // ---- radio, mixes and labels --------------------------------------
             "songs.radio" => {

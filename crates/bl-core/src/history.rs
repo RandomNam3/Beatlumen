@@ -92,6 +92,8 @@ pub(crate) struct HistoryState {
     wait_until: f64,
     dirty_at: Option<f64>,
     listening: Option<Listening>,
+    /// The server's statistics of all devices, last asked for.
+    pub server_stats: Value,
 }
 
 impl HistoryState {
@@ -450,6 +452,80 @@ impl Core {
             );
             self.requests.insert(rid, Req::HistoryCleared);
         }
+    }
+
+    /// `stats.overview`: statistics of this device.
+    pub(crate) fn history_stats(&self, host: &dyn Host, range: &str, utc_offset: i64) -> Value {
+        use bl_recommend::stats::{stats, Range, StatPlay, StatSong};
+        let songs: Vec<StatSong> = self
+            .history
+            .songs
+            .iter()
+            .map(|s| StatSong {
+                id: s.id.clone(),
+                title: s.title.clone(),
+                artists: library::split_artists(&s.artist),
+                album: s.album.clone(),
+                album_id: s.album_id.clone(),
+                genre: s.genre.clone(),
+            })
+            .collect();
+        let plays: Vec<StatPlay> = self
+            .history
+            .plays
+            .iter()
+            .map(|p| StatPlay {
+                song: Some(p.song),
+                t: p.t,
+                ms: u64::from(p.ms),
+                skip: p.skip,
+            })
+            .collect();
+        stats(
+            &songs,
+            &plays,
+            Range::parse(range),
+            host.unix_time() as u64,
+            utc_offset,
+        )
+    }
+
+    /// `stats.fetch`: asks the server for its statistics of all devices.
+    pub(crate) fn stats_fetch(&mut self, host: &mut dyn Host, range: &str, utc_offset: i64) {
+        if !self.server.is_connected() {
+            return;
+        }
+        let path = format!("{}?range={range}&utcOffset={utc_offset}", paths::STATS);
+        let rid = self.server.get(host, &path);
+        self.requests.insert(rid, Req::Stats);
+    }
+
+    pub(crate) fn stats_fetched(&mut self, res: &Result<HttpResponse, String>) {
+        self.history.server_stats = res
+            .as_ref()
+            .ok()
+            .filter(|r| r.status == 200)
+            .and_then(|r| bl_json::parse_bytes(&r.body).ok())
+            .unwrap_or_else(Value::object);
+        self.revs.stats += 1;
+    }
+
+    /// `stats.library`: the library at a glance.
+    pub(crate) fn library_stats(&self) -> Value {
+        Value::object()
+            .with("tracks", self.library.tracks.len())
+            .with("albums", self.library.albums.len())
+            .with("artists", self.library.artists.len())
+            .with(
+                "seconds",
+                self.library
+                    .tracks
+                    .iter()
+                    .map(|t| t.duration_ms)
+                    .sum::<u64>()
+                    / 1000,
+            )
+            .with("favorites", self.favorites.playlist().items.len())
     }
 
     /// Songs last played that can be played again, newest first.

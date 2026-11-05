@@ -35,6 +35,15 @@
 - **Endless playback:** when the queue runs out, similar songs follow (a
   switch on the queue page).
 
+### Statistics
+
+- **Statistics page:** listening time, songs played and skipped, days with
+  music, days in a row, top songs, artists, albums and genres, listening time
+  over the period, by time of day and by day of the week (each also as a
+  table), for 7 days, 30 days, a year or all time, and the library at a glance.
+  With the agreement to keep the history on the server also across all devices
+  (`GET /api/stats`).
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

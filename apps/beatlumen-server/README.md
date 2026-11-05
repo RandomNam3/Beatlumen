@@ -192,6 +192,7 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 | `GET /api/tracks/{id}/labels` | the labels the login gave this song |
 | `PUT /api/tracks/{id}/labels` | body `{"add"?: [...], "remove"?: [...]}` → the song's labels afterwards |
 | `GET /api/recommendations` | `{"shelves": [{"key": "for-you"\|"because"\|"new"\|"forgotten"\|"discover", "arg", "items": [{"id", "reason": {"key", "arg"}}]}], "mixes": [{"id", "key", "arg", "items": [ids]}]}`, from the login's favorites, playlists and listening history; the same for a day |
+| `GET /api/stats?range=week\|month\|year\|all&utcOffset=seconds` | listening statistics of what the login's devices sent: `plays`, `skips`, `seconds`, `activeDays`, `streak`, `longestStreak`, `since`, `topSongs`, `topArtists`, `topAlbums`, `topGenres`, `byHour`, `byWeekday` (Monday first), `timeline` |
 | `POST /api/radio` | body `{"seed": {"tracks": [...]} or {"artist"} or {"album"} or {"label"} or {"taste": true}, "recent"?: [ids to leave out], "count"?: 1..200, "random"?}` → `{"items": [ids]}` |
 | `GET /api/favorites` | `{"items": [{"id", "t"}]}`: the login's favorite songs, newest first |
 | `PUT /api/favorites/{id}` | marks a song; optional body `{"t": seconds since 1970}` → 204 |

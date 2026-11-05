@@ -195,6 +195,12 @@ fn labels_radio_and_suggestions() {
         now - 3600
     );
     assert_eq!(request(addr, "POST", "/api/history", &body).0, 200);
+    let (status, st) = request(addr, "GET", "/api/stats?range=week&utcOffset=3600", "");
+    assert_eq!(status, 200);
+    assert_eq!(st.get("plays").as_u64(), Some(1));
+    assert_eq!(st.get("seconds").as_f64(), Some(60.0));
+    assert_eq!(st.get("topSongs").at(0).str_or("title", ""), "Loud 3");
+    assert_eq!(st.get("timeline").as_array().unwrap().len(), 7);
     let (_, v) = request(addr, "GET", "/api/recommendations", "");
     let shelves = v.get("shelves").as_array().unwrap();
     let because = shelves

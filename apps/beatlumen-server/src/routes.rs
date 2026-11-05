@@ -414,6 +414,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["labels"] => not_allowed("GET, HEAD"),
         ["recommendations"] if get => json(200, &crate::recommend::recommendations(state, &login)),
         ["recommendations"] => not_allowed("GET, HEAD"),
+        ["stats"] if get => {
+            let range = req.query("range").unwrap_or("all");
+            let offset = req
+                .query("utcOffset")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            json(200, &crate::recommend::stats(state, &login, range, offset))
+        }
+        ["stats"] => not_allowed("GET, HEAD"),
         ["radio"] if m == "POST" => match crate::recommend::radio(state, &login, &req.body) {
             Ok(v) => json(200, &v),
             Err(e) => fail(e),

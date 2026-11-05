@@ -223,6 +223,19 @@ fn plays_reach_the_server_only_after_agreeing() {
     assert!(!ev[0].skip);
     assert!(ev[0].ms >= 1000);
 
+    // Both show in the device's statistics.
+    let st = app.cmd(
+        Value::object()
+            .with("cmd", "stats.overview")
+            .with("range", "week")
+            .with("utcOffset", 0u64),
+    );
+    assert_eq!(st.get("plays").as_u64(), Some(2));
+    assert_eq!(st.get("streak").as_u64(), Some(1));
+    assert_eq!(st.get("topSongs").as_array().unwrap().len(), 2);
+    let lib = app.cmd(Value::object().with("cmd", "stats.library"));
+    assert_eq!(lib.get("tracks").as_u64(), Some(2));
+
     // A song left early counts as skipped.
     let mut app = App::with_dir(app.close());
     app.connect(&url);

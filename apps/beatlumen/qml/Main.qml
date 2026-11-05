@@ -25,7 +25,7 @@ ApplicationWindow {
     readonly property bool compact: width < 760
     readonly property bool playing: Core.state.play === "playing"
     // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings,
-    // 4 devices, 5 start page
+    // 4 devices, 5 start page, 6 statistics
     property int page: -1
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
@@ -297,6 +297,10 @@ ApplicationWindow {
                         Qt.callLater(() => library.item && library.item.openFavorites())
                     }
                 }
+            }
+            Loader {
+                active: win.page === 6 || item !== null
+                sourceComponent: StatsPage { }
             }
         }
     }

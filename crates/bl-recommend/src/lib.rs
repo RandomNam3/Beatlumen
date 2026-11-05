@@ -13,6 +13,7 @@ mod labels;
 mod mixes;
 mod radio;
 mod rng;
+pub mod stats;
 mod taste;
 
 pub use catalog::{Catalog, Features, Song};

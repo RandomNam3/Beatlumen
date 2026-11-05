@@ -92,6 +92,7 @@ pub(crate) enum Req {
     /// Plays sent to the server (how many are done with that).
     HistorySent(u64),
     HistoryCleared,
+    Stats,
     Recommendations,
     Labels,
     LabelsSaved,
@@ -185,6 +186,7 @@ pub(crate) struct Revisions {
     pub favorites: u64,
     pub history: u64,
     pub labels: u64,
+    pub stats: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -706,6 +708,7 @@ impl Core {
             .with("favoritesRev", self.revs.favorites)
             .with("historyRev", self.revs.history)
             .with("labelsRev", self.revs.labels)
+            .with("statsRev", self.revs.stats)
             .with("recommendRev", self.recommend.rev)
             .with("radio", self.radio_json())
             .with("deviceName", self.device_name(host))
@@ -889,6 +892,7 @@ impl Core {
             Req::FavoriteSaved => self.favorite_saved(host, &res),
             Req::HistorySent(done) => self.history_sent(host, &res, done),
             Req::HistoryCleared => {}
+            Req::Stats => self.stats_fetched(&res),
             Req::Recommendations => self.recommendations_fetched(&res),
             Req::Labels => self.labels_fetched(&res),
             Req::LabelsSaved => self.labels_saved(&res),
