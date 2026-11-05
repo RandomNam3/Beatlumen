@@ -105,6 +105,8 @@ void TestHooks::attach(QQuickWindow *window)
     const QString path = qEnvironmentVariable("BEATLUMEN_TEST_DUMP");
     if (path.isEmpty())
         return;
+    // Controls only fill in what a screen reader needs once one is there.
+    QAccessible::setActive(true);
     // BEATLUMEN_TEST_SIZE=<w>x<h>: the size of the window from the start.
     const QStringList size = qEnvironmentVariable("BEATLUMEN_TEST_SIZE").split(QLatin1Char('x'));
     if (size.size() == 2)

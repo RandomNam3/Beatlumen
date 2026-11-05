@@ -227,7 +227,7 @@ Popup {
                         Layout.rightMargin: 16
                         visible: (wizard.settings.libraryFolders || []).length > 0 || wizard.connected
                         wrapMode: Text.WordWrap
-                        color: Theme.accent
+                        color: Theme.accentText
                         font.weight: Font.DemiBold
                         text: Theme.tr("%1 songs so far").arg(Core.state.libraryTracks || 0)
                     }

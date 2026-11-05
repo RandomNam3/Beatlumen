@@ -203,7 +203,7 @@ Item {
                             textFormat: Text.PlainText
                             Layout.fillWidth: true
                             text: Theme.tr("Continue listening")
-                            color: Theme.accent
+                            color: Theme.accentText
                             font.pixelSize: 13
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight

@@ -132,6 +132,8 @@ Item {
                     padding: 0
                     readonly property bool isCurrent: index === page.current
                     highlighted: isCurrent
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: [modelData.title, modelData.artist, isCurrent ? Theme.tr("Now playing") : ""].filter(x => x).join(", ")
                     opacity: list.dragFrom === index ? 0.4 : 1
                     onClicked: Core.call("queue.play", { pos: modelData.pos })
                     onPressAndHold: songMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])

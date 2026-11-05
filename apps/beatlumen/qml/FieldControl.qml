@@ -41,14 +41,17 @@ ColumnLayout {
         IconButton {
             visible: fc.numeric && !fc.bounded
             iconName: "keyboard_arrow_down"
+            tip: Theme.tr("Less") + ": " + (fc.field.label || "")
             onClicked: fc.changed(Math.max(fc.field.min !== null ? fc.field.min : -1e9, fc.field.value - fc.field.step))
         }
         IconButton {
             visible: fc.numeric && !fc.bounded
             iconName: "keyboard_arrow_up"
+            tip: Theme.tr("More") + ": " + (fc.field.label || "")
             onClicked: fc.changed(Math.min(fc.field.max !== null ? fc.field.max : 1e9, fc.field.value + fc.field.step))
         }
         ComboBox {
+            Accessible.name: fc.field.label || ""
             visible: fc.field.kind === "enum" || fc.field.kind === "intenum"
             Layout.preferredWidth: 180
             model: fc.field.options || []

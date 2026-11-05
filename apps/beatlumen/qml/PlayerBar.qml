@@ -29,7 +29,7 @@ Item {
 
     component Transport: RowLayout {
         property int big: 56
-        spacing: bar.mode === "expanded" ? 12 : 4
+        spacing: bar.mode === "expanded" && bar.width >= 360 ? 12 : 4
         IconButton {
             iconName: "shuffle"; tip: Theme.tr("Shuffle"); active: Core.state.shuffle === true; iconColor: bar.fg
             onClicked: Core.call("shuffle")
@@ -77,7 +77,7 @@ Item {
             value: pressed ? value : Core.position
             onMoved: if (!pressed) Core.call("seek", { position: value })
             onPressedChanged: if (!pressed) Core.call("seek", { position: value })
-            Accessible.name: "Position"
+            Accessible.name: Theme.tr("Position in the song")
         }
         RowLayout {
             visible: parent.showTimes
@@ -155,9 +155,14 @@ Item {
                 color: Theme.accent
             }
         }
-        MouseArea {
+        AbstractButton {
             anchors.fill: parent
+            focusPolicy: Qt.TabFocus
+            Accessible.role: Accessible.Button
+            Accessible.name: Theme.tr("Now playing") + (bar.cur ? ": " + bar.cur.title : "")
             onClicked: bar.openNowPlaying()
+            Keys.onReturnPressed: clicked()
+            Keys.onEnterPressed: clicked()
         }
         RowLayout {
             anchors.fill: parent
@@ -197,7 +202,7 @@ Item {
         visible: bar.mode === "expanded"
         spacing: 4
         Seek { Layout.fillWidth: true }
-        Transport { Layout.alignment: Qt.AlignHCenter; big: 72 }
+        Transport { Layout.alignment: Qt.AlignHCenter; big: bar.width >= 360 ? 72 : 56 }
         RowLayout {
             Layout.fillWidth: true
             OutputButton { fg: bar.fg }

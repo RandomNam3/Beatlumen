@@ -15,12 +15,12 @@ ToolButton {
     implicitHeight: Theme.touch
     padding: 0
     icon.source: iconName ? Theme.icon(iconName) : ""
-    icon.color: active ? Theme.accent : iconColor
+    icon.color: active ? Theme.accentText : iconColor
     icon.width: iconSize
     icon.height: iconSize
     display: AbstractButton.IconOnly
     ToolTip.text: tip
-    ToolTip.visible: tip !== "" && hovered && !Core.mobile
+    ToolTip.visible: tip !== "" && (hovered && !Core.mobile || visualFocus)
     ToolTip.delay: 600
     Accessible.name: tip
 }

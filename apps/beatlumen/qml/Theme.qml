@@ -35,10 +35,36 @@ QtObject {
     readonly property color textDim: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.9) : Qt.rgba(0, 0, 0, 0.9))
         : dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
     readonly property color textFaint: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(0, 0, 0, 0.85))
-        : dark ? Qt.rgba(1, 1, 1, 0.42) : Qt.rgba(0, 0, 0, 0.40)
+        : dark ? Qt.rgba(1, 1, 1, 0.52) : Qt.rgba(0, 0, 0, 0.58)
     readonly property color danger: "#ef5350"
     // Text/icon colour on top of the accent colour.
     readonly property color onAccent: onColor(accent)
+    // The accent colour for text and thin marks on the surfaces: chosen
+    // accents may be too light or too dark to read there (4.5:1).
+    readonly property color accentText: readable(accent)
+
+    function luminance(c) {
+        const lin = (v) => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+        return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+    }
+    function contrast(a, b) {
+        const la = luminance(a), lb = luminance(b)
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+    }
+    // `c` moved towards white (dark theme) or black (light theme) until it
+    // can be read on the surface.
+    function readable(c) {
+        const base = dark ? "#121216" : "#fafafa"
+        const end = dark ? Qt.rgba(1, 1, 1, 1) : Qt.rgba(0, 0, 0, 1)
+        let out = Qt.rgba(c.r, c.g, c.b, 1)
+        for (let i = 1; i <= 10 && contrast(out, base) < 4.5; ++i)
+            out = Qt.tint(Qt.rgba(c.r, c.g, c.b, 1), Qt.rgba(end.r, end.g, end.b, i / 10))
+        return out
+    }
+    // How long an animation of the interface takes.
+    function ms(duration) {
+        return reduceMotion ? 0 : duration
+    }
 
     // Black or white, whichever contrasts more with `c` (WCAG luminance).
     function onColor(c) {
@@ -165,7 +191,6 @@ QtObject {
         "In library": "In der Bibliothek",
         "Song": "Lied",
         "Lyric video": "Lyrics-Video",
-        "Song text": "Songtext",
         "Keep offline": "Offline verfügbar machen",
         "Remove offline copy": "Offline-Kopie entfernen",
         "Offline": "Offline",
@@ -178,10 +203,7 @@ QtObject {
         "Copy it now: the link cannot be shown again later.": "Jetzt kopieren: Der Link kann später nicht noch einmal angezeigt werden.",
         "Valid for": "Gültig für",
         "1 day": "1 Tag",
-        "7 days": "7 Tage",
-        "30 days": "30 Tage",
         "No expiry": "Unbegrenzt",
-        "Password (optional)": "Passwort (optional)",
         "Creating…": "Wird erstellt …",
         "Create link": "Link erstellen",
         "Active links": "Aktive Links",
@@ -206,7 +228,6 @@ QtObject {
         "Online": "Online",
         "Position": "Position",
         "Previous": "Zurück",
-        "Next": "Weiter",
         "Remote control is turned off on this device.": "Auf diesem Gerät ist die Fernsteuerung ausgeschaltet.",
         "Play here": "Hier abspielen",
         "Move my music there": "Meine Musik dorthin verschieben",
@@ -214,7 +235,6 @@ QtObject {
         "Refresh": "Aktualisieren",
         "Name": "Name",
         "Play on": "Abspielen auf",
-        "This device": "Dieses Gerät",
         "Device name": "Gerätename",
         "Allow remote control": "Fernsteuerung erlauben",
         "Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).": "Darstellung, Stile und Wiedergabe-Optionen folgen deinem Konto auf deine anderen Geräte (Ende-zu-Ende verschlüsselt).",
@@ -255,7 +275,6 @@ QtObject {
         "Play on…": "Wiedergabe auf …",
         "Searching for speakers…": "Suche Lautsprecher …",
         "No speakers found": "Keine Lautsprecher gefunden",
-        "Connecting…": "Verbinde …",
         "Password for": "Passwort für",
         "Stay unlocked on this device": "Auf diesem Gerät entsperrt bleiben",
         "The keys are kept in this device's protected storage, so you sign in only once here. Anyone who can use this device unlocked can then open your files.": "Die Schlüssel liegen im geschützten Speicher dieses Geräts, du meldest dich hier also nur einmal an. Wer das Gerät entsperrt benutzen kann, kann dann auch deine Dateien öffnen.",
@@ -328,7 +347,6 @@ QtObject {
         "Upload failed:": "Hochladen fehlgeschlagen:",
         "Upload files": "Dateien hochladen",
         "Upload not finished": "Hochladen nicht abgeschlossen",
-        "User name": "Benutzername",
         "Verified": "Überprüft",
         "With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them.": "Mit einem Konto speicherst du Ende-zu-Ende-verschlüsselte Dateien auf dem Server und teilst sie; der Server kann sie nicht lesen.",
         "Write this code down and keep it in a safe place. If you forget your password, it is the only way to get your files back. It is shown only once.": "Schreibe diesen Code auf und bewahre ihn sicher auf. Wenn du dein Passwort vergisst, ist er der einzige Weg zurück zu deinen Dateien. Er wird nur einmal angezeigt.",
@@ -435,7 +453,6 @@ QtObject {
         "Move down": "Nach unten",
         "Analysis": "Analyse",
         "Reset to defaults": "Standardwerte",
-        "Energy": "Energie",
         "Beats (lows · mids · highs)": "Beats (Tiefen · Mitten · Höhen)",
         "Sections": "Abschnitte",
         "No analysis yet": "Noch keine Analyse",
@@ -576,7 +593,6 @@ QtObject {
         "A folder on a computer reachable with SSH (password login).": "Ein Ordner auf einem per SSH erreichbaren Rechner (Anmeldung mit Passwort).",
         "Play the music of a Subsonic, Navidrome or Jellyfin server, a WebDAV or Nextcloud folder or a DLNA media server directly on this device.": "Spiele die Musik eines Subsonic-, Navidrome- oder Jellyfin-Servers, eines WebDAV- oder Nextcloud-Ordners oder eines DLNA-Medienservers direkt auf diesem Gerät.",
         "Listing songs…": "Songs werden gelistet …",
-        "%1 songs": "%1 Songs",
         "Sync now": "Jetzt abgleichen",
         "Add music source": "Musikquelle hinzufügen",
         "Edit source": "Quelle bearbeiten",
@@ -592,7 +608,6 @@ QtObject {
         "Password (unchanged)": "Passwort (unverändert)",
         "Folder (empty: all)": "Ordner (leer: alle)",
         "Rescan": "Neu einlesen",
-        "Server address": "Serveradresse",
         "Connect": "Verbinden",
         "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:": "Das Zertifikat des Servers ist auf diesem Gerät nicht vertrauenswürdig. Vertraue ihm nur, wenn dieser Fingerabdruck (SHA-256) mit dem Zertifikat deines Servers übereinstimmt:",
         "Trust this certificate": "Diesem Zertifikat vertrauen",
@@ -602,7 +617,6 @@ QtObject {
         "Log out": "Abmelden",
         "Password": "Passwort",
         "Connected to": "Verbunden mit",
-        "Connecting…": "Verbinde…",
         "Not connected": "Nicht verbunden",
         "Login required": "Anmeldung erforderlich",
         "Connection failed": "Verbindung fehlgeschlagen",
@@ -627,6 +641,10 @@ QtObject {
         "Home folder": "Persönlicher Ordner",
         "Home": "Start",
         "Favorites": "Favoriten",
+        "Position in the song": "Position im Titel",
+        "Less": "Weniger",
+        "Link": "Link",
+        "Song text": "Songtext",
         "Setup": "Einrichtung",
         "Tour": "Tour",
         "Step %1 of %2": "Schritt %1 von %2",
@@ -672,7 +690,6 @@ QtObject {
         "Epilepsy mode": "Epilepsie-Modus",
         "Prevents flashes and fast colour changes as far as possible: brightness changes slowly, flash effects and hard cuts are off. This lowers the risk but cannot rule it out.": "Verhindert Blitze und schnelle Farbwechsel so weit wie möglich: Die Helligkeit ändert sich langsam, Blitzeffekte und harte Schnitte sind aus. Das senkt das Risiko, kann es aber nicht ausschließen.",
         "Animation": "Animation",
-        "Pictures": "Bilder",
         "Flow": "Fluss",
         "Tunnel": "Tunnel",
         "Stars": "Sterne",

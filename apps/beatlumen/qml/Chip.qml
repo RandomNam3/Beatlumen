@@ -10,7 +10,13 @@ AbstractButton {
     rightPadding: 12
     font.pixelSize: 14
     font.weight: Font.Medium
+    Accessible.role: Accessible.Button
     Accessible.name: text
+    Accessible.checkable: true
+    Accessible.checked: checked
+    focusPolicy: Qt.TabFocus
+    Keys.onReturnPressed: clicked()
+    Keys.onEnterPressed: clicked()
     contentItem: Label {
         textFormat: Text.PlainText
         text: chip.text
@@ -23,6 +29,6 @@ AbstractButton {
         color: chip.checked ? Theme.accent : chip.down ? Theme.outline : Theme.surfaceVariant
         border.width: chip.checked ? 0 : 1
         border.color: Theme.outline
-        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on color { ColorAnimation { duration: Theme.ms(120) } }
     }
 }

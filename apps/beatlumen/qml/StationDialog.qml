@@ -27,6 +27,7 @@ AppDialog {
         anchors.fill: parent
         spacing: 8
         TextField {
+            Accessible.name: placeholderText
             id: urlField
             Layout.fillWidth: true
             enabled: !dlg.station
@@ -34,6 +35,7 @@ AppDialog {
             inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
         }
         TextField {
+            Accessible.name: placeholderText
             id: nameField
             Layout.fillWidth: true
             placeholderText: Theme.tr("Name")

@@ -80,6 +80,20 @@
 - **New options:** reduce motion, high contrast, keep the controls visible and
   the size of everything, under Settings → Display.
 
+### Accessibility, checked in the running app
+
+- **Keyboard:** Tab reaches everything, also while the controls are hidden
+  (they come back), with a clear outline around the focus; Space and the arrow
+  keys go to the control reached by keyboard instead of pausing or seeking.
+- **Screen readers:** song rows, switches, chips and the small player have
+  roles and names, the position slider is no longer named in English only, and
+  a new song is announced.
+- **Readable:** the faintest text reaches 4.5:1 in both themes, accent colours
+  are adjusted for text, the title over the visual has a scrim.
+- **Reduce motion** also ends sliding and fading in all pages.
+- **Small windows:** phones held sideways get the small player instead of big
+  controls that covered the title; the window can be made lower.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

@@ -14,6 +14,20 @@ Item {
     readonly property var cur: Core.state.current || null
     readonly property bool compact: width < 600 || height < 420
 
+    // Keeps the title readable over bright pictures.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: info.height + (np.compact ? 48 : 96)
+        visible: np.cur !== null
+        gradient: Gradient {
+            GradientStop { position: 0; color: "transparent" }
+            GradientStop { position: 0.6; color: Qt.rgba(0, 0, 0, 0.35) }
+            GradientStop { position: 1; color: Qt.rgba(0, 0, 0, 0.55) }
+        }
+    }
+
     ColumnLayout {
         id: info
         anchors.left: parent.left

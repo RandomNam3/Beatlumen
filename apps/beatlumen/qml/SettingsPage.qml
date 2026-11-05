@@ -108,6 +108,7 @@ Item {
 
             // Search and categories.
             TextField {
+                Accessible.name: placeholderText
                 id: settingsSearch
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
@@ -226,6 +227,7 @@ Item {
                     spacing: 8
                     Label { textFormat: Text.PlainText; text: Theme.tr("Language"); color: Theme.text; Layout.preferredWidth: 120 }
                     ComboBox {
+                        Accessible.name: Theme.tr("Language")
                         model: [{ v: "de", l: "Deutsch" }, { v: "en", l: "English" }]
                         textRole: "l"
                         valueRole: "v"
@@ -416,6 +418,8 @@ Item {
                     delegate: ItemDelegate {
                         Layout.fillWidth: true
                         height: Theme.row
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: modelData.name || modelData.id || ""
                         onClicked: if (!modelData.current && !modelData.state) Core.call("speech.pick", { id: modelData.id })
                         contentItem: RowLayout {
                             ColumnLayout {
@@ -623,6 +627,7 @@ Item {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     TextField {
+                        Accessible.name: placeholderText
                         id: url
                         Layout.fillWidth: true
                         placeholderText: "http://192.168.1.10:7878"
@@ -852,6 +857,7 @@ Item {
                     spacing: 8
                     Label { textFormat: Text.PlainText; text: Theme.tr("Save in"); color: Theme.text; Layout.preferredWidth: 120 }
                     ComboBox {
+                        Accessible.name: Theme.tr("Save in")
                         Layout.fillWidth: true
                         readonly property var choices: ["", "library", "vault"]
                         model: [Theme.tr("Ask"), Theme.tr("Library on the server"), Theme.tr("My encrypted files")]
@@ -944,6 +950,7 @@ Item {
                         wrapMode: Text.WordWrap
                     }
                     TextField {
+                        Accessible.name: placeholderText
                         id: airplayName
                         Layout.fillWidth: true
                         placeholderText: Theme.tr("Speaker name") + " (Beatlumen)"
@@ -952,6 +959,7 @@ Item {
                         onEditingFinished: if (text !== (page.settings.airplayName || "")) Core.call("settings.set", { key: "airplayName", value: text })
                     }
                     TextField {
+                        Accessible.name: placeholderText
                         id: airplayPassword
                         visible: parent.airplayOn
                         Layout.fillWidth: true
@@ -1078,6 +1086,7 @@ Item {
                         Layout.fillWidth: true
                         Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Storage limit"); color: Theme.text }
                         ComboBox {
+                            Accessible.name: Theme.tr("Storage limit")
                             readonly property var sizes: [0, 1024, 2048, 5120, 10240, 20480, 51200]
                             model: sizes.map(s => s === 0 ? Theme.tr("No limit") : (s / 1024) + " GB")
                             currentIndex: Math.max(0, sizes.indexOf(page.settings.offlineLimitMb || 0))
@@ -1172,7 +1181,7 @@ Item {
                             onClicked: Core.call(parent.parent.cap.running || parent.parent.cap.requested ? "capture.stop" : "capture.start")
                         }
                         Button {
-                            visible: parent.parent.cap.access !== true
+                            visible: Core.platform === "android" && parent.parent.cap.access !== true
                             text: Theme.tr("Allow control of other apps")
                             flat: true
                             icon.source: Theme.icon("tune")
@@ -1182,7 +1191,7 @@ Item {
                     Label {
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
-                        visible: parent.cap.access !== true
+                        visible: Core.platform === "android" && parent.cap.access !== true
                         text: Theme.tr("For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.")
                         color: Theme.textFaint
                         font.pixelSize: 13
@@ -1203,6 +1212,7 @@ Item {
                     Layout.rightMargin: 16
                     Label { textFormat: Text.PlainText; text: Theme.tr("Render resolution"); color: Theme.text }
                     Slider {
+                        Accessible.name: Theme.tr("Render resolution")
                         Layout.fillWidth: true
                         from: 0.25; to: 1; stepSize: 0.05
                         value: page.settings.renderScale || 1

@@ -84,6 +84,7 @@ AppDialog {
                 text: Theme.tr(dlg.kind.hint)
             }
             TextField {
+                Accessible.name: placeholderText
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: Theme.tr("Name")
@@ -123,6 +124,7 @@ AppDialog {
                 Accessible.name: Theme.tr("Address")
             }
             TextField {
+                Accessible.name: placeholderText
                 id: userField
                 visible: dlg.kind.id !== "dlna"
                 Layout.fillWidth: true
@@ -130,6 +132,7 @@ AppDialog {
                 inputMethodHints: Qt.ImhNoAutoUppercase
             }
             TextField {
+                Accessible.name: placeholderText
                 id: secretField
                 visible: dlg.kind.id !== "dlna"
                 Layout.fillWidth: true
@@ -137,6 +140,7 @@ AppDialog {
                 placeholderText: dlg.source && dlg.source.hasSecret ? Theme.tr("Password (unchanged)") : Theme.tr("Password")
             }
             TextField {
+                Accessible.name: placeholderText
                 id: pathField
                 visible: dlg.kind.id === "webdav" || dlg.kind.id === "sftp"
                 Layout.fillWidth: true

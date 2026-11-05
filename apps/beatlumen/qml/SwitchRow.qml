@@ -10,7 +10,14 @@ ItemDelegate {
     property bool on: false
     signal switched(bool on)
     implicitHeight: Math.max(Theme.row, col.implicitHeight + 20)
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: title
+    Accessible.description: detail
+    Accessible.checkable: true
+    Accessible.checked: on
     onClicked: r.switched(!r.on)
+    Keys.onReturnPressed: r.switched(!r.on)
+    Keys.onEnterPressed: r.switched(!r.on)
     contentItem: RowLayout {
         spacing: 12
         ColumnLayout {
@@ -22,6 +29,8 @@ ItemDelegate {
         }
         Switch {
             checked: r.on
+            // The row is the control; this only shows its state.
+            focusPolicy: Qt.NoFocus
             onToggled: r.switched(checked)
             Accessible.name: r.title
         }

@@ -264,6 +264,8 @@ Item {
                         }
 
                         ItemDelegate {
+                            Accessible.role: Accessible.Button
+                            Accessible.name: Theme.tr("Advanced editor")
                             Layout.fillWidth: true
                             Layout.topMargin: 8
                             height: Theme.row + 8

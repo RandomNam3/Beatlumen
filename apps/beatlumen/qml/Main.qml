@@ -10,7 +10,7 @@ ApplicationWindow {
     width: 1280
     height: 800
     minimumWidth: 320
-    minimumHeight: 480
+    minimumHeight: 360
     visible: true
     title: Core.state.current ? Core.state.current.title + " – Beatlumen" : "Beatlumen"
     color: "black"
@@ -38,6 +38,8 @@ ApplicationWindow {
     }
     // Little height: a phone held sideways.
     readonly property bool dense: height < 520
+    // The big phone controls need room.
+    readonly property bool bigPlayer: compact && page < 0 && height >= 560
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
     readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing || Theme.keepControls
@@ -57,6 +59,14 @@ ApplicationWindow {
     // Android's status and navigation bars go with the controls (a swipe
     // from the edge shows them briefly).
     onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
+    // The keyboard brings the controls back like the mouse does.
+    onActiveFocusItemChanged: {
+        poke()
+        focusRing.target = activeFocusItem
+    }
+    // Space and the arrow keys belong to a control reached by keyboard.
+    readonly property bool keyOnControl: !!activeFocusItem && activeFocusItem.visualFocus === true
+    readonly property bool playerKeys: !Theme.lyricsEditing && !keyOnControl
     onPageChanged: {
         if (page >= 0)
             lastPage = page
@@ -122,12 +132,12 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Space"; onActivated: Core.call("toggle") }
+    Shortcut { enabled: win.playerKeys; sequence: "Space"; onActivated: { win.poke(); Core.call("toggle") } }
     Shortcut { sequences: ["Media Play", "Toggle Media Play/Pause"]; onActivated: Core.call("toggle") }
     Shortcut { sequences: ["Ctrl+Right", "Media Next"]; onActivated: Core.call("next") }
     Shortcut { sequences: ["Ctrl+Left", "Media Previous"]; onActivated: Core.call("prev") }
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Right"; onActivated: Core.call("seekBy", { delta: 5 }) }
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Left"; onActivated: Core.call("seekBy", { delta: -5 }) }
+    Shortcut { enabled: win.playerKeys; sequence: "Right"; onActivated: { win.poke(); Core.call("seekBy", { delta: 5 }) } }
+    Shortcut { enabled: win.playerKeys; sequence: "Left"; onActivated: { win.poke(); Core.call("seekBy", { delta: -5 }) } }
     Shortcut { sequence: "Ctrl+Up"; onActivated: Core.call("volume", { value: Math.min(1, (Core.state.volume || 0) + 0.05) }) }
     Shortcut { sequence: "Ctrl+Down"; onActivated: Core.call("volume", { value: Math.max(0, (Core.state.volume || 0) - 0.05) }) }
     Shortcut { sequences: ["F11", "Alt+Return"]; onActivated: win.toggleFullscreen() }
@@ -157,9 +167,8 @@ ApplicationWindow {
         // The page floats over the visual: its entry closes it again.
         onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
         onShowHelp: help.open()
-        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
 
     // Tapping the visual toggles the controls (and closes pages on phones).
@@ -180,9 +189,8 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.margins: 8
         visible: win.page < 0
-        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         IconButton {
             iconName: "lyrics"; iconColor: "white"
             active: win.showLyrics
@@ -210,9 +218,10 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         // Slides down when the controls fade out.
         anchors.bottomMargin: !win.chromeVisible ? 8
-                              : win.compact ? expanded.height + nav.height
+                              : win.bigPlayer ? expanded.height + nav.height
+                              : win.compact ? playerBar.height + nav.height
                               : playerBar.height
-        Behavior on anchors.bottomMargin { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.ms(450); easing.type: Easing.OutCubic } }
         visible: win.page < 0
         showSpectrum: true
         showLyrics: win.showLyrics
@@ -233,14 +242,13 @@ ApplicationWindow {
     PlayerBar {
         id: expanded
         mode: "expanded"
-        visible: win.compact && win.page < 0
-        enabled: win.chromeVisible
+        visible: win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: nav.top
         height: implicitHeight
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         onOpenQueue: win.page = 1
     }
 
@@ -343,14 +351,13 @@ ApplicationWindow {
         id: playerBar
         mode: win.compact ? "mini" : "full"
         dense: win.dense
-        visible: !win.compact || win.page >= 0
+        visible: !win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: win.compact ? nav.top : parent.bottom
         height: visible ? implicitHeight : 0
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
-        enabled: win.chromeVisible
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         onOpenNowPlaying: win.compact ? win.page = -1 : win.toggleVisual()
         onOpenQueue: win.page = win.page === 1 ? -1 : 1
     }
@@ -365,15 +372,14 @@ ApplicationWindow {
         current: win.page
         onSelected: (i) => win.page = i
         onShowHelp: help.open()
-        enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
 
     // ---- toasts -------------------------------------------------------------
     Column {
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: (win.compact ? (win.page < 0 ? expanded : playerBar) : playerBar).top
+        anchors.bottom: (win.bigPlayer ? expanded : playerBar).top
         anchors.bottomMargin: 12
         spacing: 8
         z: 50
@@ -414,6 +420,13 @@ ApplicationWindow {
     function addFolder() { dialogs.addMusicFolder() }
     function addImageFolder() { dialogs.addImageFolder() }
     PlatformDialogs { id: dialogs }
+    FocusHighlight { id: focusRing }
+    // A screen reader hears when another song starts.
+    readonly property string currentTitle: Core.state.current ? Core.state.current.title + ", " + (Core.state.current.artist || "") : ""
+    onCurrentTitleChanged: {
+        if (currentTitle !== "" && Accessible.announce)
+            Accessible.announce(Theme.tr("Now playing") + ": " + currentTitle)
+    }
     HelpDialog {
         id: help
         onStartTour: win.startTour()

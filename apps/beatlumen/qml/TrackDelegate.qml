@@ -18,6 +18,11 @@ ItemDelegate {
     height: Theme.row
     padding: 0
     highlighted: current
+    Accessible.role: Accessible.ListItem
+    Accessible.name: [track.title, track.artist, track.album, current ? Theme.tr("Now playing") : ""].filter(x => x).join(", ")
+    Keys.onReturnPressed: play()
+    Keys.onEnterPressed: play()
+    Keys.onMenuPressed: if (showMenu) menu(track, menuButton)
     onClicked: play()
     onPressAndHold: if (showMenu) menu(track, menuButton)
 
@@ -67,7 +72,7 @@ ItemDelegate {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: d.track.title || ""
-                color: d.current ? Theme.accent : Theme.text
+                color: d.current ? Theme.accentText : Theme.text
                 font.pixelSize: 15
                 font.weight: d.current ? Font.DemiBold : Font.Medium
                 elide: Text.ElideRight

@@ -60,11 +60,11 @@ Rectangle {
                     height: 32
                     radius: 16
                     color: btn.sel ? Qt.alpha(Theme.accent, 0.22) : (btn.hovered ? Theme.surfaceVariant : "transparent")
-                    Behavior on color { ColorAnimation { duration: Theme.reduceMotion ? 0 : 150 } }
+                    Behavior on color { ColorAnimation { duration: Theme.ms(150) } }
                     Icon {
                         anchors.centerIn: parent
                         name: btn.iconName
-                        color: btn.sel ? Theme.accent : Theme.textDim
+                        color: btn.sel ? Theme.accentText : Theme.textDim
                     }
                 }
                 Label {
@@ -117,18 +117,13 @@ Rectangle {
             Menu {
                 id: moreMenu
                 Repeater {
-                    model: nav.moreItems
+                    model: nav.moreItems.concat([{ icon: "info", label: Theme.tr("Help"), page: -1 }])
                     MenuItem {
                         required property var modelData
                         text: modelData.label
                         icon.source: Theme.icon(modelData.icon)
-                        onTriggered: nav.selected(modelData.page)
+                        onTriggered: modelData.page >= 0 ? nav.selected(modelData.page) : nav.showHelp()
                     }
-                }
-                MenuItem {
-                    text: Theme.tr("Help")
-                    icon.source: Theme.icon("info")
-                    onTriggered: nav.showHelp()
                 }
             }
         }

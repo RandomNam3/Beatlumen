@@ -85,7 +85,7 @@ ColumnLayout {
             id: animation
             target: list
             property: "contentX"
-            duration: Theme.reduceMotion ? 0 : 220
+            duration: Theme.ms(220)
             easing.type: Easing.OutCubic
         }
     }

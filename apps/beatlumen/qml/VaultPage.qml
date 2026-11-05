@@ -167,6 +167,7 @@ Item {
                         : Theme.tr("Enter the recovery code you wrote down when creating the account, and choose a new password.")
                 }
                 TextField {
+                    Accessible.name: placeholderText
                     id: invite
                     visible: page.form === 1
                     Layout.fillWidth: true
@@ -176,6 +177,7 @@ Item {
                     inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
                 }
                 TextField {
+                    Accessible.name: placeholderText
                     id: user
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
@@ -185,6 +187,7 @@ Item {
                     inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhPreferLowercase
                 }
                 TextField {
+                    Accessible.name: placeholderText
                     id: code
                     visible: page.form === 2
                     Layout.fillWidth: true
@@ -195,6 +198,7 @@ Item {
                     inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
                 }
                 TextField {
+                    Accessible.name: placeholderText
                     id: password
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
@@ -204,6 +208,7 @@ Item {
                     onAccepted: submit.clicked()
                 }
                 TextField {
+                    Accessible.name: placeholderText
                     id: repeat
                     visible: page.form !== 0
                     Layout.fillWidth: true
@@ -345,6 +350,8 @@ Item {
                             model: page.vault.uploads || []
                             ItemDelegate {
                                 required property var modelData
+                                Accessible.role: Accessible.ListItem
+                                Accessible.name: modelData.name || ""
                                 width: fileList.width
                                 height: 56
                                 contentItem: ColumnLayout {
@@ -580,6 +587,7 @@ Item {
                 visible: linkDialog.forThis && !!linkDialog.links.url
                 Layout.fillWidth: true
                 TextField {
+                    Accessible.name: Theme.tr("Link")
                     Layout.fillWidth: true
                     readOnly: true
                     text: linkDialog.links.url || ""
@@ -601,6 +609,7 @@ Item {
                 Label { textFormat: Text.PlainText; text: Theme.tr("Valid for"); color: Theme.textDim }
                 ComboBox {
                     id: linkDays
+                    Accessible.name: Theme.tr("Valid for")
                     Layout.fillWidth: true
                     textRole: "l"
                     valueRole: "d"
@@ -609,6 +618,7 @@ Item {
                 }
             }
             TextField {
+                Accessible.name: placeholderText
                 id: linkPassword
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
@@ -785,9 +795,9 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             spacing: 8
-            TextField { id: cur; Layout.fillWidth: true; placeholderText: Theme.tr("Current password"); echoMode: TextInput.Password }
-            TextField { id: np; Layout.fillWidth: true; placeholderText: Theme.tr("New password"); echoMode: TextInput.Password }
-            TextField { id: np2; Layout.fillWidth: true; placeholderText: Theme.tr("Repeat password"); echoMode: TextInput.Password }
+            TextField { id: cur; Layout.fillWidth: true; placeholderText: Theme.tr("Current password"); echoMode: TextInput.Password; Accessible.name: placeholderText }
+            TextField { id: np; Layout.fillWidth: true; placeholderText: Theme.tr("New password"); echoMode: TextInput.Password; Accessible.name: placeholderText }
+            TextField { id: np2; Layout.fillWidth: true; placeholderText: Theme.tr("Repeat password"); echoMode: TextInput.Password; Accessible.name: placeholderText }
             AccentButton {
                 Layout.alignment: Qt.AlignRight
                 highlighted: true
@@ -817,8 +827,8 @@ Item {
                 color: Theme.textDim
                 text: Theme.tr("Your password manager stores the passkey; it then unlocks your encrypted files without the password.")
             }
-            TextField { id: pkPw; visible: !page.vault.passwordOff; Layout.fillWidth: true; placeholderText: Theme.tr("Current password"); echoMode: TextInput.Password }
-            TextField { id: pkName; Layout.fillWidth: true; placeholderText: Theme.tr("Name"); maximumLength: 64 }
+            TextField { id: pkPw; visible: !page.vault.passwordOff; Layout.fillWidth: true; placeholderText: Theme.tr("Current password"); echoMode: TextInput.Password; Accessible.name: placeholderText }
+            TextField { id: pkName; Layout.fillWidth: true; placeholderText: Theme.tr("Name"); maximumLength: 64; Accessible.name: placeholderText }
             AccentButton {
                 Layout.alignment: Qt.AlignRight
                 highlighted: true

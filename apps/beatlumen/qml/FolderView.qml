@@ -54,6 +54,8 @@ ColumnLayout {
             Component {
                 id: folderDelegate
                 ItemDelegate {
+                    Accessible.role: Accessible.Button
+                    Accessible.name: modelData.name || ""
                     height: Theme.row
                     onClicked: fv.path = fv.path.concat([modelData.path])
                     contentItem: RowLayout {

@@ -293,11 +293,15 @@ Item {
                                 anchors.leftMargin: 12
                                 anchors.rightMargin: 12
                                 spacing: 8
+                                // Narrow windows: the shuffle button keeps its icon only.
+                                readonly property bool narrow: width < 340
                                 AccentButton {
                                     text: Theme.tr("Play all"); icon.source: Theme.icon("play_arrow"); highlighted: true
                                     onClicked: page.play(page.tracks.map(t => t.id), false)
                                 }
                                 Button {
+                                    display: parent.narrow ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
+                                    Accessible.name: Theme.tr("Shuffle all")
                                     text: Theme.tr("Shuffle all"); icon.source: Theme.icon("shuffle"); flat: true
                                     onClicked: page.play(page.tracks.map(t => t.id), true)
                                 }
@@ -727,7 +731,7 @@ Item {
             height: 52
             readonly property bool solid: list.contentY - list.originY > 200
             color: solid ? Theme.surfaceStrong : "transparent"
-            Behavior on color { ColorAnimation { duration: 150 } }
+            Behavior on color { ColorAnimation { duration: Theme.ms(150) } }
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 2
@@ -742,7 +746,7 @@ Item {
                     Layout.fillWidth: true
                     text: dp.title
                     opacity: parent.parent.solid ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                    Behavior on opacity { NumberAnimation { duration: Theme.ms(150) } }
                     font.pixelSize: 17
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight

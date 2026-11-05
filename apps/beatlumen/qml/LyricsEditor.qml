@@ -231,6 +231,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 TextArea {
+                    Accessible.name: placeholderText
                     id: pasteArea
                     wrapMode: TextEdit.Wrap
                     color: "white"
@@ -295,6 +296,7 @@ Rectangle {
                         font.weight: row.isCurrent ? Font.DemiBold : Font.Normal
                     }
                     TextField {
+                        Accessible.name: Theme.tr("Song text")
                         visible: !ed.tapping
                         Layout.fillWidth: true
                         text: row.modelData.text
@@ -353,6 +355,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 10
             RoundButton {
+                Accessible.name: Core.state.play === "playing" ? Theme.tr("Pause") : Theme.tr("Play")
                 icon.source: Theme.icon(Core.state.play === "playing" ? "pause" : "play_arrow")
                 onClicked: { Core.call("toggle"); focusCatcher.forceActiveFocus() }
             }

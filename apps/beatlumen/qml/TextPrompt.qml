@@ -22,6 +22,7 @@ AppDialog {
         spacing: 12
         TextField {
             id: field
+            Accessible.name: dlg.placeholder || dlg.title
             Layout.fillWidth: true
             echoMode: dlg.password ? TextInput.Password : TextInput.Normal
             onAccepted: if (text.length > 0) { dlg.submitted(text); dlg.close() }
