@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Song texts
+
+- **Plain texts are timed closer:** a line whose first words the model did
+  not recognise no longer starts at its first recognised word, up to two
+  seconds late; it starts about where its first word is sung (on the test
+  songs 84 % of the lines within half a second instead of 79 %).
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.
