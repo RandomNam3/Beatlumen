@@ -34,6 +34,7 @@ mod outputs;
 pub mod player;
 mod push;
 pub mod queue;
+mod recommend;
 pub mod server;
 pub mod settings;
 mod share;

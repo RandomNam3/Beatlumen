@@ -240,6 +240,13 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
     let favorites = store.as_ref().map_or(&state.favorites, |s| &s.favorites);
     let history = store.as_ref().map_or(&state.history, |s| &s.history);
+    let song_labels = store.as_ref().map_or(&state.labels, |s| &s.labels);
+    let login = crate::recommend::Login {
+        favorites,
+        history,
+        playlists,
+        labels: song_labels,
+    };
     // Devices see the devices of the same login: an account, or everyone
     // with the server password.
     if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
@@ -300,6 +307,20 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                     Response::new(204)
                 }
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
+        ["tracks", id, "labels"] => {
+            let idx = state.library();
+            if idx.track(id).is_none() {
+                return Response::error(404, "track not found");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &Value::from(song_labels.of(id))),
+                "PUT" => match song_labels.change(id, &req.body) {
+                    Ok(names) => json(200, &Value::from(names)),
+                    Err(e) => fail(e),
+                },
+                _ => not_allowed("GET, HEAD, PUT"),
             }
         }
         ["tracks", id, what] => {
@@ -389,6 +410,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
             }
         }
+        ["labels"] if get => json(200, &crate::recommend::labels(state, &login)),
+        ["labels"] => not_allowed("GET, HEAD"),
+        ["recommendations"] if get => json(200, &crate::recommend::recommendations(state, &login)),
+        ["recommendations"] => not_allowed("GET, HEAD"),
+        ["radio"] if m == "POST" => match crate::recommend::radio(state, &login, &req.body) {
+            Ok(v) => json(200, &v),
+            Err(e) => fail(e),
+        },
+        ["radio"] => not_allowed("POST"),
         ["favorites"] if get => json(200, &favorites.list_json()),
         ["favorites"] => not_allowed("GET, HEAD"),
         ["favorites", id] => match m {

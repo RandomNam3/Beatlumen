@@ -66,6 +66,34 @@ QtObject {
         return "qrc:/qt/qml/Beatlumen/icons/" + name + ".svg"
     }
 
+    // Tags and names as written in lower case by the recommendations.
+    function capitalized(s) {
+        return String(s || "").replace(/(^|[\s-])(\S)/g, (m, a, b) => a + b.toUpperCase())
+    }
+
+    // What a label means, for those the server or the app works out.
+    function labelName(name) {
+        const i = name.indexOf(":")
+        if (i < 0)
+            return name
+        const kind = name.substring(0, i)
+        const value = name.substring(i + 1)
+        switch (kind) {
+        case "genre": return capitalized(value)
+        case "decade": return language === "de" ? value + "er" : value + "s"
+        case "key": return tr("Key of %1").arg(value)
+        case "tempo": return tr({ slow: "Slow", medium: "Medium tempo", fast: "Fast" }[value] || value)
+        case "energy": return tr({ low: "Quiet", medium: "Medium energy", high: "High energy" }[value] || value)
+        case "mood": return tr({ upbeat: "Upbeat", intense: "Intense", relaxed: "Relaxed", melancholic: "Melancholic", danceable: "Danceable" }[value] || value)
+        default: return value
+        }
+    }
+    // The kind of a label, to sort them into groups (given by people: "").
+    function labelKind(name) {
+        const i = name.indexOf(":")
+        return i < 0 ? "" : name.substring(0, i)
+    }
+
     function fmtTime(sec) {
         if (!(sec >= 0) || !isFinite(sec))
             sec = 0
@@ -580,6 +608,50 @@ QtObject {
         "Home folder": "Persönlicher Ordner",
         "Home": "Start",
         "Favorites": "Favoriten",
+        "For you": "Für dich",
+        "Because you listened to %1": "Weil du %1 gehört hast",
+        "New for you": "Neu für dich",
+        "Not heard for a while": "Lange nicht gehört",
+        "To discover": "Zum Entdecken",
+        "You listen to %1": "Du hörst %1",
+        "You like %1": "Du magst %1",
+        "Often heard with %1": "Oft mit %1 gehört",
+        "%1 mix": "%1-Mix",
+        "Discovery mix": "Entdeckungs-Mix",
+        "Forgotten favorites": "Vergessene Lieblinge",
+        "%1 songs": "%1 Titel",
+        "My radio": "Mein Radio",
+        "Your mixes": "Deine Mixes",
+        "Start radio": "Radio starten",
+        "Labels…": "Labels …",
+        "Labels": "Labels",
+        "Key of %1": "Tonart %1",
+        "Slow": "Langsam",
+        "Medium tempo": "Mittleres Tempo",
+        "Fast": "Schnell",
+        "Quiet": "Ruhig",
+        "Medium energy": "Mittlere Energie",
+        "High energy": "Viel Energie",
+        "Upbeat": "Fröhlich",
+        "Intense": "Intensiv",
+        "Relaxed": "Entspannt",
+        "Melancholic": "Melancholisch",
+        "Danceable": "Tanzbar",
+        "New label": "Neues Label",
+        "Your labels": "Deine Labels",
+        "Worked out from tags and sound (mood is an estimate)": "Aus Tags und Klang ermittelt (Stimmung ist eine Schätzung)",
+        "No labels yet": "Noch keine Labels",
+        "Songs get labels from their tags and, on a server, from how they sound. You can add your own in the song menu.": "Songs bekommen Labels aus ihren Tags und, auf einem Server, aus ihrem Klang. Eigene vergibst du im Songmenü.",
+        "Genres": "Genres",
+        "Decades": "Jahrzehnte",
+        "Mood": "Stimmung",
+        "Tempo": "Tempo",
+        "Energy": "Energie",
+        "Keys": "Tonarten",
+        "Endless playback": "Endlos-Wiedergabe",
+        "When the queue runs out, similar songs follow.": "Wenn die Warteschlange zu Ende geht, folgen ähnliche Titel.",
+        "Radio plays": "Radio läuft",
+        "Stop radio": "Radio beenden",
         "Add to favorites": "Zu Favoriten hinzufügen",
         "Remove from favorites": "Aus Favoriten entfernen",
         "Recently played": "Zuletzt gehört",

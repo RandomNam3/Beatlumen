@@ -4,6 +4,7 @@
 
 use crate::favorites::Favorites;
 use crate::history::History;
+use crate::labels::SongLabels;
 use crate::playlists::Playlists;
 use crate::presets::Presets;
 use std::collections::HashMap;
@@ -15,6 +16,7 @@ pub struct UserStore {
     pub presets: Presets,
     pub favorites: Favorites,
     pub history: History,
+    pub labels: SongLabels,
 }
 
 #[derive(Default)]
@@ -40,6 +42,7 @@ impl UserData {
             presets: Presets::new(presets),
             favorites: Favorites::load(dir.join("favorites.json")),
             history: History::load(dir.join("history.jsonl")),
+            labels: SongLabels::load(dir.join("labels.json")),
         });
         stores.insert(dir, s.clone());
         s

@@ -192,6 +192,8 @@ pub struct Settings {
     /// Latency of microphones (karaoke) by input id, in milliseconds
     /// (positive: their audio arrives later than the platform reports).
     pub mic_offsets: Vec<(String, f32)>,
+    /// When the queue runs out, similar songs follow.
+    pub endless: bool,
     /// What is played on this device also goes to the server (server songs
     /// only), for its recommendations and statistics across devices. Off
     /// until the user agrees.
@@ -262,6 +264,7 @@ impl Default for Settings {
             sync_items: Value::object(),
             sync_user: String::new(),
             mic_offsets: Vec::new(),
+            endless: false,
             history_sync: false,
             ui: Value::object(),
         }
@@ -359,6 +362,7 @@ impl Settings {
                 _ => Value::object(),
             },
             sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
+            endless: v.bool_or("endless", false),
             history_sync: v.bool_or("historySync", false),
             mic_offsets: v
                 .get("micOffsetsMs")
@@ -389,6 +393,7 @@ impl Settings {
             .with("language", self.language.as_str())
             .with("volume", self.volume)
             .with("muted", self.muted)
+            .with("endless", self.endless)
             .with("historySync", self.history_sync)
             .with("renderScale", self.render_scale)
             .with("serverUrl", self.server_url.as_str())

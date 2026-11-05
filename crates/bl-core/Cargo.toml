@@ -10,6 +10,7 @@ bl-json = { path = "../bl-json" }
 bl-media = { path = "../bl-media" }
 bl-image = { path = "../bl-image" }
 bl-analysis = { path = "../bl-analysis" }
+bl-recommend = { path = "../bl-recommend" }
 bl-fx = { path = "../bl-fx" }
 bl-gl = { path = "../bl-gl" }
 bl-render = { path = "../bl-render" }

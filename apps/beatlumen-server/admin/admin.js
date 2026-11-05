@@ -444,6 +444,7 @@
     sourceUrl: { label: "Source code link", type: "text", hint: "Required by the AGPL when you run a modified version for others." },
     extensions: { label: "Extensions", type: "map", hint: "Source extensions: a name and the address the extension listens on." },
     autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped." },
+    autoLabels: { label: "Labels from the sound", type: "switch", hint: "Works out tempo, key and energy of the songs in the music folders, one song at a time on half of one core, for labels and recommendations. Songs of music sources only get labels from their tags." },
     verbose: { label: "Detailed log", type: "switch", hint: "Logs every request." },
   };
 
@@ -689,7 +690,13 @@
   }
 
   async function library() {
-    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes"]);
+    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels"]);
+    try {
+      const o = await api("GET", "overview");
+      if (o.sound && o.sound.total > 0) {
+        main.append(h("p", { class: "hint" }, t("Sound analysis: %1 of %2 songs").replace("%1", o.sound.done).replace("%2", o.sound.total)));
+      }
+    } catch (e) { /* the page works without it */ }
     main.append(h("div", { class: "actions" }, h("button", { class: "btn", onclick: async () => {
       try { await api("POST", "rescan"); toast(t("Rescan started")); } catch (e) { fail(e); }
     } }, t("Rescan"))));

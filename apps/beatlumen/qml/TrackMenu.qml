@@ -9,6 +9,8 @@ Menu {
     property var ids: []
     property var extra: []      // [{text, action}] items shown first
     signal addToPlaylist(var ids)
+    signal editLabels(string id)
+    property bool canEditLabels: false
 
     // Offline copies: server songs that are / are not kept on this device.
     property var toSave: []
@@ -76,6 +78,18 @@ Menu {
         text: all ? Theme.tr("Remove from favorites") : Theme.tr("Add to favorites")
         icon.source: Theme.icon(all ? "favorite" : "favorite_border")
         onTriggered: Favorites.set(marks, !all)
+    }
+    MenuItem {
+        text: Theme.tr("Start radio")
+        icon.source: Theme.icon("radio")
+        onTriggered: Core.call("songs.radio", { seed: { tracks: menu.ids.slice(0, 50) }, name: "" })
+    }
+    MenuItem {
+        visible: menu.canEditLabels && menu.ids.length === 1
+        height: visible ? implicitHeight : 0
+        text: Theme.tr("Labels…")
+        icon.source: Theme.icon("label")
+        onTriggered: menu.editLabels(menu.ids[0])
     }
     MenuItem {
         text: Theme.tr("Add to playlist…")

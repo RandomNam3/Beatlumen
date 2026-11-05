@@ -71,6 +71,18 @@ issue.
   server's library and only plays from the moment of agreeing are sent;
   deleting the history in the app also deletes it on the server.
 
+## Labels and recommendations
+
+* The server reads the audio of the songs in its music folders to work out
+  tempo, key and energy (`sound.jsonl`); nothing leaves the server. It does not
+  touch encrypted files, and it does not download songs of music sources for
+  this. `--no-auto-labels` turns it off.
+* Labels given to songs are stored per login in plain text, like playlists
+  (those of local files on the device).
+* Recommendations are worked out on the server from what it knows of the
+  login; radio requests name the songs of the queue, only for that answer.
+  Without a server everything happens on the device.
+
 ## Accounts and encrypted files
 
 User files on the server are end-to-end encrypted; the design, threat

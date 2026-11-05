@@ -9,6 +9,8 @@ AbstractButton {
     id: card
     property string title
     property string subtitle
+    // Why it is suggested (a third, quieter line).
+    property string note
     property string cover
     property string seed: title
     property string placeholder: "music_note"
@@ -18,14 +20,14 @@ AbstractButton {
     signal menuRequested(Item anchor)
 
     width: side
-    implicitHeight: side + 58
+    implicitHeight: side + (note ? 76 : 58)
     padding: 0
     // Only the list takes focus by keyboard, clicks leave it alone.
     focusPolicy: Qt.NoFocus
     hoverEnabled: !Core.mobile
 
     Accessible.role: Accessible.Button
-    Accessible.name: subtitle ? title + ", " + subtitle : title
+    Accessible.name: [title, subtitle, note].filter(x => x).join(", ")
     ToolTip.text: title
     ToolTip.visible: hovered && titleLabel.truncated
     ToolTip.delay: 600
@@ -92,6 +94,17 @@ AbstractButton {
             text: card.subtitle
             color: Theme.textDim
             font.pixelSize: 13
+            elide: Text.ElideRight
+        }
+        Label {
+            textFormat: Text.PlainText
+            Layout.fillWidth: true
+            Layout.topMargin: -6
+            visible: card.note !== ""
+            text: card.note
+            color: Theme.textDim
+            font.pixelSize: 12
+            font.italic: true
             elide: Text.ElideRight
         }
     }

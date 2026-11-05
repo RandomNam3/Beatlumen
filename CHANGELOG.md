@@ -16,6 +16,25 @@
   then on, local and encrypted files never leave the device. Can be deleted
   at any time.
 
+### Labels and recommendations
+
+- **Labels:** the server works out tempo, key, energy and a rough mood of the
+  songs in its music folders in the background (one song at a time on half of
+  one core; off with `--no-auto-labels` or in the admin page), and labels come
+  from genre tags and years too. Your own labels are given in the song menu,
+  per login. In the library under *Labels*.
+- **Recommendations from the server:** *For you*, *Because you listened to…*,
+  *New for you*, *Not heard for a while* on the start page, each suggestion
+  with its reason, from your favorites, playlists and, if you agreed to send
+  it, your listening history. Without a server the app does the same with
+  tags and the history of the device.
+- **Your mixes:** personal playlists per genre or artist you listen to, a
+  discovery mix and forgotten favorites, the same for a day.
+- **Radio:** from a song, album, artist, label, or *My radio* from your taste;
+  goes on by itself, close to where it started, with artists taking turns.
+- **Endless playback:** when the queue runs out, similar songs follow (a
+  switch on the queue page).
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

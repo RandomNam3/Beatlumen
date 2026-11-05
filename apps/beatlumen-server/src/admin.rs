@@ -800,6 +800,7 @@ fn overview(state: &State) -> Value {
         .with("devices", state.devices.count_online() as u64)
         .with("passwordRequired", state.auth.required())
         .with("speech", state.lyrics_sync.summary())
+        .with("sound", state.sound.summary(state))
         .with("downloads", state.models.active())
         .with("disk", disk)
         .with("data", data.root.display().to_string())
@@ -923,6 +924,7 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "extensions" => cfg.extensions = d.extensions.clone(),
         "speechModel" => cfg.speech_model = d.speech_model.clone(),
         "autoSyncLyrics" => cfg.auto_sync_lyrics = d.auto_sync_lyrics,
+        "autoLabels" => cfg.auto_labels = d.auto_labels,
         "verbose" => cfg.verbose = d.verbose,
         _ => {}
     }

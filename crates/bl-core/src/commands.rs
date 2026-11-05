@@ -515,7 +515,27 @@ impl Core {
                 self.history_clear(host, b("server"));
                 ok()
             }
-            "home.overview" => self.home_overview(),
+            "home.overview" => self.home_overview(host),
+
+            // ---- radio, mixes and labels --------------------------------------
+            "songs.radio" => {
+                let seed = c.get("seed").clone();
+                let name = s("name");
+                self.radio_start(host, seed, name)
+            }
+            "songs.radioStop" => {
+                self.radio_stop();
+                ok()
+            }
+            "mix.play" => self.mix_play(host, &s("id"), b("shuffle")),
+            "labels.list" => self.labels_list(),
+            "labels.tracks" => self.labels_tracks(&s("name")),
+            "labels.of" => self.labels_of(&s("id")),
+            "labels.change" => {
+                let add = strs(c.get("add"));
+                let remove = strs(c.get("remove"));
+                self.labels_change(host, &s("id"), add, remove)
+            }
 
             // ---- playlists ------------------------------------------------
             "playlists.list" => {

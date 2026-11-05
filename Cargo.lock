@@ -77,6 +77,7 @@ dependencies = [
  "bl-net",
  "bl-offline",
  "bl-opus-enc",
+ "bl-recommend",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -147,6 +148,7 @@ dependencies = [
  "bl-mt",
  "bl-net",
  "bl-offline",
+ "bl-recommend",
  "bl-render",
  "bl-sources",
  "bl-upnp",
@@ -262,6 +264,10 @@ dependencies = [
  "bl-hyph",
  "bl-json",
 ]
+
+[[package]]
+name = "bl-recommend"
+version = "0.11.1"
 
 [[package]]
 name = "bl-render"

@@ -74,7 +74,8 @@ Item {
     Component.onCompleted: { reload(); reloadPlaylists() }
     Timer { id: reloadTimer; interval: 400; onTriggered: page.reload() }
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
     StationDialog { id: stationDialog }
     TextPrompt {
@@ -275,7 +276,7 @@ Item {
                     x: 12
                     spacing: 6
                     Repeater {
-                        model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists")]
+                        model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists"), Theme.tr("Labels")]
                                .concat((Core.state.sources || {}).available === true ? [Theme.tr("Radio")] : [])
                         Chip {
                             required property string modelData
@@ -565,6 +566,69 @@ Item {
                         }
                     }
 
+                    // Labels
+                    Item {
+                        id: labelsPane
+                        readonly property int rev: Core.state.labelsRev || 0
+                        property var all: []
+                        function reload() { all = Core.call("labels.list") || [] }
+                        onRevChanged: if (visible) reload()
+                        onVisibleChanged: if (visible) reload()
+                        function ofKind(kind) { return all.filter(l => Theme.labelKind(l.name) === kind) }
+                        EmptyState {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 420)
+                            visible: labelsPane.all.length === 0
+                            iconName: "label"
+                            title: Theme.tr("No labels yet")
+                            text: Theme.tr("Songs get labels from their tags and, on a server, from how they sound. You can add your own in the song menu.")
+                        }
+                        ScrollView {
+                            id: labelsScroll
+                            anchors.fill: parent
+                            clip: true
+                            contentWidth: availableWidth
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ColumnLayout {
+                                width: labelsScroll.availableWidth
+                                spacing: 8
+                                Repeater {
+                                    model: [
+                                        { kind: "", title: Theme.tr("Your labels") },
+                                        { kind: "mood", title: Theme.tr("Mood") },
+                                        { kind: "genre", title: Theme.tr("Genres") },
+                                        { kind: "decade", title: Theme.tr("Decades") },
+                                        { kind: "tempo", title: Theme.tr("Tempo") },
+                                        { kind: "energy", title: Theme.tr("Energy") },
+                                        { kind: "key", title: Theme.tr("Keys") }
+                                    ]
+                                    ColumnLayout {
+                                        required property var modelData
+                                        readonly property var labels: labelsPane.ofKind(modelData.kind)
+                                        Layout.fillWidth: true
+                                        visible: labels.length > 0
+                                        spacing: 8
+                                        SectionLabel { text: modelData.title }
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: 16
+                                            Layout.rightMargin: 16
+                                            spacing: 6
+                                            Repeater {
+                                                model: labels
+                                                Chip {
+                                                    required property var modelData
+                                                    text: Theme.labelName(modelData.name) + "  " + modelData.count
+                                                    onClicked: stack.push(labelView, { label: modelData.name })
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Internet radio
                     Item {
                         readonly property var stations: (Core.state.sources || {}).stations || []
@@ -808,6 +872,22 @@ Item {
     }
 
     Component {
+        id: labelView
+        DetailPage {
+            id: lv
+            property string label
+            tracks: Core.call("labels.tracks", { name: label }) || []
+            title: Theme.labelName(label)
+            subtitle: page.count(tracks.length, "song", "songs")
+            placeholder: "label"
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) }
+            ]
+            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+        }
+    }
+
+    Component {
         id: albumView
         DetailPage {
             property var album: ({})
@@ -816,6 +896,9 @@ Item {
             subtitle: [page.artistName(album.artist), album.year, page.count(tracks.length, "song", "songs")].filter(x => x).join(" · ")
             cover: album.coverTrack ? Covers.url(album.coverTrack, album.cover) : (album.cover || "")
             numbered: true
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { album: album.id }, name: page.albumTitle(album) }) }
+            ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }
@@ -830,6 +913,9 @@ Item {
             placeholder: "person"
             round: true
             cover: tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { artist: artist }, name: page.artistName(artist) }) }
+            ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }

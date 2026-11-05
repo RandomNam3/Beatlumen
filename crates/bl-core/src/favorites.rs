@@ -64,6 +64,10 @@ impl FavoritesState {
         self.items.iter().map(|(id, _)| id)
     }
 
+    pub fn with_times(&self) -> Vec<(String, u64)> {
+        self.items.clone()
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         self.set.contains(id)
     }

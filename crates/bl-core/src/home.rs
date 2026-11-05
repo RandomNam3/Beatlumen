@@ -1,6 +1,7 @@
 //! What the start page shows.
 
 use crate::core::Core;
+use crate::host::Host;
 use bl_json::Value;
 use bl_net::api::Track;
 use std::collections::HashSet;
@@ -14,8 +15,11 @@ const NO_ALBUM: &str = "Unknown Album";
 impl Core {
     /// `home.overview`: rows of the start page. Rows without anything in
     /// them are left to the page to hide.
-    pub(crate) fn home_overview(&self) -> Value {
+    pub(crate) fn home_overview(&mut self, host: &dyn Host) -> Value {
+        let (shelves, mixes) = self.suggestions_json(host);
         Value::object()
+            .with("shelves", shelves)
+            .with("mixes", mixes)
             .with("recent", self.history_recent(SHELF))
             .with("new", self.newest_items())
             .with(

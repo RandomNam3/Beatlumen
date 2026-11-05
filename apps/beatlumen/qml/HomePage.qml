@@ -20,13 +20,15 @@ Item {
     readonly property var recent: overview.recent || []
     readonly property var fresh: overview.new || []
     readonly property var favorites: overview.favorites || []
+    readonly property var suggestions: overview.shelves || []
+    readonly property var mixes: overview.mixes || []
 
     function reload() {
         overview = Core.call("home.overview") || {}
     }
     Component.onCompleted: reload()
     // Several of these change at once (a song ends, the library arrives).
-    readonly property string revisions: [Core.state.historyRev, Core.state.favoritesRev, Core.state.libraryRev].join()
+    readonly property string revisions: [Core.state.historyRev, Core.state.favoritesRev, Core.state.libraryRev, Core.state.recommendRev, Core.state.labelsRev].join()
     onRevisionsChanged: if (visible) reloadTimer.restart()
     onVisibleChanged: if (visible) reloadTimer.restart()
     Timer { id: reloadTimer; interval: 150; onTriggered: page.reload() }
@@ -37,8 +39,34 @@ Item {
     function artistOf(t) {
         return t.artist || Theme.tr("Unknown artist")
     }
+    function shelfTitle(s) {
+        switch (s.key) {
+        case "for-you": return Theme.tr("For you")
+        case "because": return Theme.tr("Because you listened to %1").arg(s.argTitle || "")
+        case "new": return Theme.tr("New for you")
+        case "forgotten": return Theme.tr("Not heard for a while")
+        default: return Theme.tr("To discover")
+        }
+    }
+    function reasonText(t) {
+        switch (t.reason) {
+        case "artist": return Theme.tr("You listen to %1").arg(Theme.capitalized(t.reasonArg))
+        case "genre": return Theme.tr("You like %1").arg(Theme.capitalized(t.reasonArg))
+        case "played-with": return Theme.tr("Often heard with %1").arg(t.reasonArg)
+        default: return ""
+        }
+    }
+    function mixName(m) {
+        switch (m.key) {
+        case "genre":
+        case "artist": return Theme.tr("%1 mix").arg(Theme.capitalized(m.arg))
+        case "discover": return Theme.tr("Discovery mix")
+        default: return Theme.tr("Forgotten favorites")
+        }
+    }
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
 
     component SongCard: ShelfCard {
@@ -69,6 +97,14 @@ Item {
             PageHeader {
                 Layout.fillWidth: true
                 title: Theme.tr("Home")
+                AccentButton {
+                    visible: page.hasContent
+                    Layout.rightMargin: 12
+                    text: Theme.tr("My radio")
+                    highlighted: true
+                    icon.source: Theme.icon("radio")
+                    onClicked: Core.call("songs.radio", { seed: { taste: true }, name: Theme.tr("My radio") })
+                }
             }
 
             EmptyState {
@@ -153,6 +189,36 @@ Item {
                 }
             }
 
+            // The server's suggestions (or those worked out here).
+            Repeater {
+                model: page.suggestions.slice(0, 1)
+                delegate: Shelf {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    title: page.shelfTitle(modelData)
+                    items: modelData.items
+                    delegate: SongCard { row: modelData.items; note: page.reasonText(modelData) }
+                }
+            }
+
+            Shelf {
+                Layout.fillWidth: true
+                title: Theme.tr("Your mixes")
+                items: page.mixes
+                delegate: ShelfCard {
+                    required property var modelData
+                    required property int index
+                    focus: ListView.isCurrentItem
+                    title: page.mixName(modelData)
+                    subtitle: Theme.tr("%1 songs").arg(modelData.count)
+                    seed: title
+                    placeholder: "queue_music"
+                    cover: Covers.url(modelData.coverTrack, modelData.cover)
+                    Component.onCompleted: if (!modelData.cover) Covers.request(modelData.coverTrack)
+                    onClicked: Core.call("mix.play", { id: modelData.id })
+                }
+            }
+
             Shelf {
                 Layout.fillWidth: true
                 title: Theme.tr("Recently played")
@@ -191,6 +257,17 @@ Item {
                 moreText: (page.overview.favoritesCount || 0) > page.favorites.length ? Theme.tr("Show all") : ""
                 onMoreClicked: page.openFavorites()
                 delegate: SongCard { row: page.favorites }
+            }
+
+            Repeater {
+                model: page.suggestions.slice(1)
+                delegate: Shelf {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    title: page.shelfTitle(modelData)
+                    items: modelData.items
+                    delegate: SongCard { row: modelData.items; note: page.reasonText(modelData) }
+                }
             }
 
             // Room to scroll past the last row.

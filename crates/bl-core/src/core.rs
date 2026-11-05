@@ -92,6 +92,13 @@ pub(crate) enum Req {
     /// Plays sent to the server (how many are done with that).
     HistorySent(u64),
     HistoryCleared,
+    Recommendations,
+    Labels,
+    LabelsSaved,
+    /// Songs for a radio: its start (replaces the queue) or more of it.
+    Radio {
+        start: bool,
+    },
     /// A vault request and the session it was sent with.
     Vault(crate::vault::VaultReq, String),
     WebCheck(crate::webcheck::WebReq),
@@ -177,6 +184,7 @@ pub(crate) struct Revisions {
     pub devices: u64,
     pub favorites: u64,
     pub history: u64,
+    pub labels: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -266,6 +274,7 @@ pub struct Core {
     pub(crate) local_playlists: Vec<Playlist>,
     pub(crate) favorites: crate::favorites::FavoritesState,
     pub(crate) history: crate::history::HistoryState,
+    pub(crate) recommend: crate::recommend::RecommendState,
     pub(crate) server_images: Vec<ImageEntry>,
     pub(crate) server_presets: Vec<String>,
     /// Files handed over as bytes (browser), by name.
@@ -462,6 +471,7 @@ impl Core {
             local_playlists,
             favorites: Default::default(),
             history: Default::default(),
+            recommend: Default::default(),
             server_images: Vec::new(),
             server_presets: Vec::new(),
             memory_files: HashMap::new(),
@@ -495,6 +505,7 @@ impl Core {
         };
         core.load_favorites(host);
         core.load_history(host);
+        core.load_recommend(host);
         core.engine.set_intensity(core.settings.intensity);
         core.engine.set_adaptive(core.settings.adaptive);
         // Native apps load server images through the core's HTTP client.
@@ -694,6 +705,9 @@ impl Core {
             .with("devicesRev", self.revs.devices)
             .with("favoritesRev", self.revs.favorites)
             .with("historyRev", self.revs.history)
+            .with("labelsRev", self.revs.labels)
+            .with("recommendRev", self.recommend.rev)
+            .with("radio", self.radio_json())
             .with("deviceName", self.device_name(host))
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
@@ -875,6 +889,10 @@ impl Core {
             Req::FavoriteSaved => self.favorite_saved(host, &res),
             Req::HistorySent(done) => self.history_sent(host, &res, done),
             Req::HistoryCleared => {}
+            Req::Recommendations => self.recommendations_fetched(&res),
+            Req::Labels => self.labels_fetched(&res),
+            Req::LabelsSaved => self.labels_saved(&res),
+            Req::Radio { start } => self.radio_answer(host, &res, start),
             Req::Images => {
                 if let Some(v) = ok_json(&res) {
                     self.server_images = v
@@ -1711,6 +1729,7 @@ impl Core {
         if ids.is_empty() {
             return;
         }
+        self.radio_end();
         let shuffle = self.queue.shuffle;
         self.queue.shuffle = false;
         self.queue.replace(ids, start, &mut self.rng);
@@ -2602,6 +2621,7 @@ impl Core {
         self.poll_account_sync(host);
         self.poll_favorites(host);
         self.poll_history(host);
+        self.poll_recommend(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_sources(host);
