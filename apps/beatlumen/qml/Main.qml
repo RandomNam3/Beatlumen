@@ -40,7 +40,7 @@ ApplicationWindow {
     readonly property bool dense: height < 520
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
-    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing
+    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing || Theme.keepControls
 
     Component.onCompleted: {
         if (startFullscreen)
@@ -300,6 +300,7 @@ ApplicationWindow {
             Loader {
                 active: win.page === 5 || item !== null
                 sourceComponent: HomePage {
+                    onStartTour: win.startTour()
                     onAddFolder: win.addFolder()
                     onOpenFiles: dialogs.openAudio()
                     onConnectServer: win.page = 3
@@ -413,7 +414,11 @@ ApplicationWindow {
     function addFolder() { dialogs.addMusicFolder() }
     function addImageFolder() { dialogs.addImageFolder() }
     PlatformDialogs { id: dialogs }
-    HelpDialog { id: help }
+    HelpDialog {
+        id: help
+        onStartTour: win.startTour()
+        onStartSetup: setup.open()
+    }
     TextPrompt {
         id: loginPrompt
         title: Theme.tr("Log in")
@@ -424,89 +429,41 @@ ApplicationWindow {
     }
     // Visualising other apps without access to their media sessions: the
     // title, cover and full control need it; offered once per start.
-    // First start: where the music comes from.
+    // First start: the setup. Not over songs someone just opened.
     Timer {
         id: welcomeTimer
-        interval: 1500
+        interval: 600
         onTriggered: {
             const s = Core.state.settings || {}
+            const ui = s.ui || {}
             const nothing = (Core.state.libraryTracks || 0) === 0 && (s.libraryFolders || []).length === 0
                 && (Core.state.server || "disabled") === "disabled"
-            if (!(s.ui && s.ui.welcomed) && nothing && Core.platform !== "web")
-                welcome.open()
+            if (!ui.setupDone && !ui.welcomed && nothing && Core.platform !== "web" && !Core.call("state").launchedWithFiles)
+                setup.open()
         }
     }
-    AppDialog {
-        id: welcome
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(480, win.width - 32)
-        title: Theme.tr("Welcome to Beatlumen")
-        standardButtons: Dialog.NoButton
-        onClosed: Core.call("settings.set", { key: "ui.welcomed", value: true })
-        function openSettings(category) {
-            welcome.close()
+    SetupWizard {
+        id: setup
+        onAddFolder: win.addFolder()
+        onOpenSettings: (category) => {
             win.page = 3
             Qt.callLater(() => { if (settingsLoader.item) settingsLoader.item.category = category })
         }
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: 6
-            Label {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.textDim
-                text: Theme.tr("Where does your music come from? You can change and add everything later in the settings.")
-            }
-            component Choice: ItemDelegate {
-                property string iconName
-                property string detail
-                Layout.fillWidth: true
-                contentItem: RowLayout {
-                    spacing: 14
-                    Icon { name: parent.parent.iconName; color: Theme.accent }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 0
-                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.text; color: Theme.text; wrapMode: Text.WordWrap }
-                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.detail; color: Theme.textDim; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                    }
-                }
-            }
-            Choice {
-                visible: Core.platform !== "web"
-                iconName: "create_new_folder"
-                text: Theme.tr("Music on this device")
-                detail: Theme.tr("Add a folder with your songs.")
-                onClicked: { welcome.close(); win.addFolder() }
-            }
-            Choice {
-                iconName: "cloud"
-                text: Theme.tr("A Beatlumen server")
-                detail: Theme.tr("Your library at home, analysed for the visuals, with accounts and encrypted files.")
-                onClicked: welcome.openSettings("server")
-            }
-            Choice {
-                visible: (Core.state.sources || {}).available === true
-                iconName: "storage"
-                text: Theme.tr("Navidrome, Jellyfin, Nextcloud, a NAS …")
-                detail: Theme.tr("Play the music of other servers and storage directly.")
-                onClicked: welcome.openSettings("library")
-            }
-            Choice {
-                visible: Core.platform !== "web"
-                iconName: "speaker"
-                text: Theme.tr("Use this device as a speaker")
-                detail: Theme.tr("iPhones, Macs, Windows and DLNA apps play here (AirPlay, DLNA) with visuals.")
-                onClicked: welcome.openSettings("receive")
-            }
-            Button {
-                Layout.alignment: Qt.AlignRight
-                text: Theme.tr("Later")
-                flat: true
-                onClicked: welcome.close()
-            }
-        }
+        onStartTour: win.startTour()
+    }
+    Tour { id: tourPopup }
+    function startTour() {
+        win.page = 5
+        win.poke()
+        const bar = win.compact ? nav : rail
+        tourPopup.start([
+            { item: bar.button(0), title: Theme.tr("Home"), text: Theme.tr("What you last played, what is new, your favorites and suggestions for you.") },
+            { item: bar.button(1), title: Theme.tr("Search"), text: Theme.tr("Find songs, albums and artists, or browse by genre and mood.") },
+            { item: bar.button(2), title: Theme.tr("Library"), text: Theme.tr("All your music: songs, albums, artists, folders, playlists and labels.") },
+            { item: bar.button(3), title: Theme.tr("Visuals"), text: Theme.tr("Styles, animations and backgrounds. The epilepsy mode is here too.") },
+            { item: playerBar, title: Theme.tr("Player"), text: Theme.tr("The heart marks a favorite. The cover takes you to the visual. On the right: where it plays, the volume and the queue.") },
+            { item: bar.button(4), title: Theme.tr("More"), text: Theme.tr("Statistics, devices, settings and help. You can start this tour again under Help.") }
+        ])
     }
 
     // Songs or a link shared with the app by another app.

@@ -11,6 +11,8 @@ QtObject {
     property bool lyricsEditing: false
     // No sliding and fading where it is not needed.
     readonly property bool reduceMotion: ui.reduceMotion === true
+    readonly property bool highContrast: ui.highContrast === true
+    readonly property bool keepControls: ui.keepControls === true
 
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
@@ -21,13 +23,19 @@ QtObject {
     // "" = system accent, otherwise "#rrggbb".
     readonly property color accent: (ui.accent && ui.accent.length > 0) ? ui.accent : Core.systemAccent
 
-    readonly property color surface: dark ? Qt.rgba(0.07, 0.07, 0.09, 0.86) : Qt.rgba(0.98, 0.97, 0.99, 0.90)
-    readonly property color surfaceStrong: dark ? Qt.rgba(0.09, 0.09, 0.11, 0.97) : Qt.rgba(1, 1, 1, 0.98)
-    readonly property color surfaceVariant: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.05)
-    readonly property color outline: dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.12)
-    readonly property color text: dark ? "#f2f1f5" : "#1b1a20"
-    readonly property color textDim: dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
-    readonly property color textFaint: dark ? Qt.rgba(1, 1, 1, 0.42) : Qt.rgba(0, 0, 0, 0.40)
+    readonly property color surface: highContrast ? (dark ? "#000000" : "#ffffff")
+        : dark ? Qt.rgba(0.07, 0.07, 0.09, 0.86) : Qt.rgba(0.98, 0.97, 0.99, 0.90)
+    readonly property color surfaceStrong: highContrast ? (dark ? "#000000" : "#ffffff")
+        : dark ? Qt.rgba(0.09, 0.09, 0.11, 0.97) : Qt.rgba(1, 1, 1, 0.98)
+    readonly property color surfaceVariant: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(0, 0, 0, 0.10))
+        : dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.05)
+    readonly property color outline: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.7) : Qt.rgba(0, 0, 0, 0.7))
+        : dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.12)
+    readonly property color text: highContrast ? (dark ? "#ffffff" : "#000000") : dark ? "#f2f1f5" : "#1b1a20"
+    readonly property color textDim: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.9) : Qt.rgba(0, 0, 0, 0.9))
+        : dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
+    readonly property color textFaint: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(0, 0, 0, 0.85))
+        : dark ? Qt.rgba(1, 1, 1, 0.42) : Qt.rgba(0, 0, 0, 0.40)
     readonly property color danger: "#ef5350"
     // Text/icon colour on top of the accent colour.
     readonly property color onAccent: onColor(accent)
@@ -619,6 +627,48 @@ QtObject {
         "Home folder": "Persönlicher Ordner",
         "Home": "Start",
         "Favorites": "Favoriten",
+        "Setup": "Einrichtung",
+        "Tour": "Tour",
+        "Step %1 of %2": "Schritt %1 von %2",
+        "Skip setup": "Einrichtung überspringen",
+        "Skip": "Überspringen",
+        "Next": "Weiter",
+        "Done": "Fertig",
+        "How should it look?": "Wie soll es aussehen?",
+        "Where does your music come from?": "Woher kommt deine Musik?",
+        "Personal recommendations?": "Persönliche Empfehlungen?",
+        "Ready": "Fertig eingerichtet",
+        "Beatlumen plays your music and lets pictures and light move with it. A few questions, all of them can be skipped.": "Beatlumen spielt deine Musik und lässt Bilder und Licht dazu tanzen. Ein paar Fragen, alle lassen sich überspringen.",
+        "The visuals flash and change colour with the music. If that is a problem for you (epilepsy, migraine), turn this on now:": "Die Visuals blitzen und wechseln die Farben mit der Musik. Wenn das für dich ein Problem ist (Epilepsie, Migräne), schalte das jetzt ein:",
+        "You can change and add everything later in the settings.": "Alles lässt sich später in den Einstellungen ändern und ergänzen.",
+        "%1 songs so far": "Bisher %1 Titel",
+        "Server address": "Server-Adresse",
+        "Connected": "Verbunden",
+        "Could not connect": "Verbindung fehlgeschlagen",
+        "Connecting…": "Verbinde …",
+        "This server needs a password; log in in the settings.": "Dieser Server braucht ein Passwort; melde dich in den Einstellungen an.",
+        "Your favorites and playlists give the server something to go by already. It suggests better if it also knows what you listen to.": "Deine Favoriten und Playlists geben dem Server schon Anhaltspunkte. Besser wird es, wenn er auch weiß, was du hörst.",
+        "Would you like a short tour of where everything is? It takes half a minute. You can start it again from More → Help.": "Möchtest du eine kurze Tour, wo was zu finden ist? Sie dauert eine halbe Minute. Du kannst sie unter Mehr → Hilfe wieder starten.",
+        "Show me around": "Tour starten",
+        "Repeat the setup": "Einrichtung wiederholen",
+        "What you last played, what is new, your favorites and suggestions for you.": "Was du zuletzt gehört hast, was neu ist, deine Favoriten und Vorschläge für dich.",
+        "Find songs, albums and artists, or browse by genre and mood.": "Finde Titel, Alben und Interpreten oder stöbere nach Genre und Stimmung.",
+        "All your music: songs, albums, artists, folders, playlists and labels.": "Deine ganze Musik: Titel, Alben, Interpreten, Ordner, Playlists und Labels.",
+        "Styles, animations and backgrounds. The epilepsy mode is here too.": "Stile, Animationen und Hintergründe. Auch der Epilepsie-Modus ist hier.",
+        "Player": "Player",
+        "The heart marks a favorite. The cover takes you to the visual. On the right: where it plays, the volume and the queue.": "Das Herz markiert einen Favoriten. Das Cover führt zum Visual. Rechts: wo es spielt, die Lautstärke und die Warteschlange.",
+        "Statistics, devices, settings and help. You can start this tour again under Help.": "Statistik, Geräte, Einstellungen und Hilfe. Unter Hilfe kannst du diese Tour wieder starten.",
+        "New: a start page, recommendations, statistics, more visuals and an epilepsy mode (under Visuals).": "Neu: eine Startseite, Empfehlungen, Statistik, mehr Visuals und ein Epilepsie-Modus (unter Visuals).",
+        "Got it": "Verstanden",
+        "Accessibility": "Barrierefreiheit",
+        "Reduce motion": "Weniger Bewegung",
+        "Less sliding and fading in the interface.": "Weniger Gleiten und Überblenden in der Oberfläche.",
+        "High contrast": "Hoher Kontrast",
+        "Stronger text and solid backgrounds.": "Kräftigere Schrift und deckende Hintergründe.",
+        "Keep the controls visible": "Bedienelemente eingeblendet lassen",
+        "The controls stay while music plays instead of fading out.": "Die Bedienelemente bleiben stehen, während Musik läuft, statt auszublenden.",
+        "Size of everything": "Größe von allem",
+        "Takes effect at the next start of the app.": "Wirkt beim nächsten Start der App.",
         "Epilepsy mode": "Epilepsie-Modus",
         "Prevents flashes and fast colour changes as far as possible: brightness changes slowly, flash effects and hard cuts are off. This lowers the risk but cannot rule it out.": "Verhindert Blitze und schnelle Farbwechsel so weit wie möglich: Die Helligkeit ändert sich langsam, Blitzeffekte und harte Schnitte sind aus. Das senkt das Risiko, kann es aber nicht ausschließen.",
         "Animation": "Animation",

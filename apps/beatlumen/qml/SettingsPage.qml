@@ -148,6 +148,16 @@ Item {
                 text: Theme.tr("No setting matches.")
             }
 
+            // ---- accessibility ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 4
+                visible: page.shows("look", ["Accessibility", "Epilepsy mode", "Reduce motion", "High contrast", "Keep the controls visible", "Size of everything"])
+                SectionLabel { text: Theme.tr("Accessibility") }
+                AccessOptions { Layout.fillWidth: true }
+            }
+
             // ---- appearance ----
             ColumnLayout {
                 objectName: "section"

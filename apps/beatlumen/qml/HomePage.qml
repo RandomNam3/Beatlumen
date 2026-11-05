@@ -12,6 +12,7 @@ Item {
     signal openFiles()
     signal openAlbum(var album)
     signal openFavorites()
+    signal startTour()
 
     readonly property int trackCount: Core.state.libraryTracks || 0
     readonly property var current: Core.state.current || null
@@ -125,6 +126,50 @@ Item {
                 }
                 Button { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onClicked: page.openFiles() }
                 Button { text: Theme.tr("Connect server"); flat: true; icon.source: Theme.icon("cloud"); onClicked: page.connectServer() }
+            }
+
+            // Who used the app before the setup came gets a hint, once.
+            Rectangle {
+                readonly property var ui: (Core.state.settings || {}).ui || ({})
+                visible: page.hasContent && ui.setupDone !== true
+                Layout.fillWidth: true
+                Layout.leftMargin: 12
+                Layout.rightMargin: 12
+                implicitHeight: hintRow.implicitHeight + 24
+                radius: Theme.radius
+                color: Theme.surfaceVariant
+                ColumnLayout {
+                    id: hintRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: 12
+                    spacing: 4
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.text
+                        text: Theme.tr("New: a start page, recommendations, statistics, more visuals and an epilepsy mode (under Visuals).")
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        AccentButton {
+                            text: Theme.tr("Show me around")
+                            highlighted: true
+                            onClicked: {
+                                Core.call("settings.set", { key: "ui.setupDone", value: true })
+                                page.startTour()
+                            }
+                        }
+                        Button {
+                            flat: true
+                            text: Theme.tr("Got it")
+                            onClicked: Core.call("settings.set", { key: "ui.setupDone", value: true })
+                        }
+                    }
+                }
             }
 
             // Where you left off.

@@ -1,13 +1,17 @@
 // Beatlumen: music player with beat-synchronized visuals.
 // Qt Quick user interface on top of the Rust core (crates/bl-core).
 
+#include <QFile>
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
 
 #include "bridge.h"
@@ -79,9 +83,22 @@ int main(int argc, char *argv[])
     fmt.setSwapInterval(1);
     QSurfaceFormat::setDefaultFormat(fmt);
 
-    QGuiApplication app(argc, argv);
     QGuiApplication::setOrganizationName(QStringLiteral("Beatlumen"));
     QGuiApplication::setApplicationName(QStringLiteral("Beatlumen"));
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
+    // "Size of everything" in the settings; Qt needs it before it starts.
+    if (!qEnvironmentVariableIsSet("QT_SCALE_FACTOR")) {
+        QFile settings(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/settings.json"));
+        if (settings.open(QIODevice::ReadOnly)) {
+            const double scale = QJsonDocument::fromJson(settings.readAll()).object()
+                                     .value(QStringLiteral("ui")).toObject()
+                                     .value(QStringLiteral("uiScale")).toDouble(1.0);
+            if (scale > 1.0 && scale <= 2.0)
+                qputenv("QT_SCALE_FACTOR", QByteArray::number(scale));
+        }
+    }
+#endif
+    QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationVersion(QStringLiteral(BL_VERSION));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Beatlumen/assets/icon.png")));
     QQuickStyle::setStyle(QStringLiteral("Material"));

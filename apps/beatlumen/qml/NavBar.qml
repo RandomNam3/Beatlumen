@@ -13,6 +13,10 @@ Rectangle {
     property bool dense: false
     signal selected(int index)
     signal showHelp()
+    // The button of the i-th entry (the last: More), for the tour.
+    function button(i) {
+        return i < navRepeater.count ? navRepeater.itemAt(i) : moreButton
+    }
 
     // `page`: what the item opens, see Main.qml.
     readonly property var items: [
@@ -87,6 +91,7 @@ Rectangle {
         rowSpacing: nav.dense ? 2 : 4
         columnSpacing: 0
         Repeater {
+            id: navRepeater
             model: nav.items
             delegate: NavButton {
                 required property var modelData

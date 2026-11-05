@@ -7,6 +7,8 @@ import Beatlumen.Core
 // (Android needs real paths for library scanning; Linux without the XDG
 // desktop portal).
 AppDialog {
+    // Above the setup, which opens it.
+    z: 10
     id: dlg
     // "folder", "file" (one file) or "files" (several).
     property string mode: "folder"

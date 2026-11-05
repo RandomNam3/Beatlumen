@@ -70,6 +70,16 @@
   cuts are off, transitions only blend. This works for every preset. It lowers
   the risk but cannot rule it out.
 
+### Setup and accessibility
+
+- **Setup at the first start:** language and epilepsy mode first, how it looks,
+  where the music comes from, the listening history (with a server), and a
+  short tour of the app. Every step can be skipped, and the whole can be left
+  at any time; under More → Help you can start it again. Who has used the app
+  before gets a hint on the start page instead.
+- **New options:** reduce motion, high contrast, keep the controls visible and
+  the size of everything, under Settings → Display.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

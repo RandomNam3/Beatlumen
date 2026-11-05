@@ -6,6 +6,8 @@ import Beatlumen.Core
 // Keyboard shortcuts at a glance.
 AppDialog {
     id: dlg
+    signal startTour()
+    signal startSetup()
     title: Theme.tr("Help")
     modal: true
     anchors.centerIn: Overlay.overlay
@@ -35,6 +37,21 @@ AppDialog {
         ColumnLayout {
             width: scroll.availableWidth
             spacing: 6
+            Flow {
+                Layout.fillWidth: true
+                Layout.bottomMargin: 8
+                spacing: 8
+                AccentButton {
+                    text: Theme.tr("Show me around")
+                    highlighted: true
+                    onClicked: { dlg.close(); dlg.startTour() }
+                }
+                Button {
+                    flat: true
+                    text: Theme.tr("Repeat the setup")
+                    onClicked: { dlg.close(); dlg.startSetup() }
+                }
+            }
             Label {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
