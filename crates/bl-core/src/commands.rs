@@ -1097,6 +1097,9 @@ impl Core {
             self.airplay.error = None;
             self.dlna.error = None;
         }
+        if old.photosensitive != self.settings.photosensitive {
+            self.engine.set_photosensitive(self.settings.photosensitive);
+        }
         if old.history_sync != self.settings.history_sync {
             self.history_sync_changed();
         }

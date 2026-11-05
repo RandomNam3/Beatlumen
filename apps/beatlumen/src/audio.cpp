@@ -526,13 +526,45 @@ void AudioOutput::stop() {}
 
 #else
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <vector>
+
+// Built without Qt Multimedia: silent, but playback still advances, so the
+// clock and the visuals keep going (test runs on systems without its headers).
+namespace {
+std::atomic<bool> g_clockRun{false};
+std::thread g_clock;
+}
+
 AudioOutput *AudioOutput::instance()
 {
     static AudioOutput out;
     return &out;
 }
 void AudioOutput::configure(BlCallbacks &) {}
-uint32_t AudioOutput::start() { return 0; }
-void AudioOutput::stop() {}
+uint32_t AudioOutput::start()
+{
+    const uint32_t rate = 48000;
+    if (!g_clockRun.exchange(true)) {
+        g_clock = std::thread([rate]() {
+            const size_t frames = rate / 100;
+            std::vector<float> buf(frames * 2);
+            auto next = std::chrono::steady_clock::now();
+            while (g_clockRun) {
+                bl_audio_render(buf.data(), frames, uint32_t(frames));
+                next += std::chrono::milliseconds(10);
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
+    return rate;
+}
+void AudioOutput::stop()
+{
+    if (g_clockRun.exchange(false) && g_clock.joinable())
+        g_clock.join();
+}
 
 #endif

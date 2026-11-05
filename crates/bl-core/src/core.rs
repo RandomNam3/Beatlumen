@@ -261,6 +261,10 @@ pub struct Core {
     pub(crate) sync_taps: Vec<f64>,
     live_buf: Vec<f32>,
     last_live_pos: f64,
+    /// How far the endless animation has run, and what it follows (bass,
+    /// middle, high, energy; smoothed).
+    animation_time: f64,
+    animation_levels: [f32; 4],
     pub(crate) spectrum: Vec<f32>,
     pub(crate) waveform: Vec<f32>,
     next_image_id: u64,
@@ -459,6 +463,8 @@ impl Core {
             sync_taps: Vec::new(),
             live_buf: vec![0.0; 2048],
             last_live_pos: 0.0,
+            animation_time: 0.0,
+            animation_levels: [0.0; 4],
             spectrum: Vec::new(),
             waveform: Vec::new(),
             next_image_id: 10,
@@ -508,6 +514,7 @@ impl Core {
         core.load_favorites(host);
         core.load_history(host);
         core.load_recommend(host);
+        core.engine.set_photosensitive(core.settings.photosensitive);
         core.engine.set_intensity(core.settings.intensity);
         core.engine.set_adaptive(core.settings.adaptive);
         // Native apps load server images through the core's HTTP client.
@@ -2757,8 +2764,12 @@ impl Core {
             analysis: analysis.as_deref(),
             ..frame_input
         };
+        let animation = self.next_animation(live, dt, playing);
+        let photosensitive = self.settings.photosensitive;
         let frame = self.engine.update(&frame_input);
         let Some(gfx) = &mut self.gfx else { return };
+        gfx.vis.set_animation(animation);
+        gfx.vis.set_flash_limit(gl, photosensitive, dt);
         gfx.vis.render(
             gl,
             &frame,
@@ -2790,6 +2801,53 @@ impl Core {
             );
             gfx.batch.end_to(gl, fbo, w as i32, h as i32);
         }
+    }
+
+    /// The endless animation of this frame, if one is chosen.
+    fn next_animation(
+        &mut self,
+        live: [f32; 3],
+        dt: f64,
+        playing: bool,
+    ) -> Option<bl_render::SceneInput> {
+        let kind = if self.settings.animation == "cycle" {
+            let all = bl_render::SceneKind::ALL;
+            Some(all[(self.play_generation % all.len() as u64) as usize])
+        } else {
+            bl_render::SceneKind::parse(&self.settings.animation)
+        }?;
+        let target = [live[0], live[1], live[2], self.live.energy() * 3.0];
+        // Beats come through quickly, and slowly with the calm settings.
+        let rise = if self.settings.photosensitive {
+            0.8
+        } else {
+            10.0
+        };
+        let fall = if self.settings.photosensitive {
+            0.8
+        } else {
+            2.5
+        };
+        for (v, t) in self.animation_levels.iter_mut().zip(target) {
+            let t = if playing { t.clamp(0.0, 1.0) } else { 0.0 };
+            let rate = if t > *v { rise } else { fall };
+            *v += (t - *v) * (1.0 - (-rate * dt as f32).exp());
+        }
+        let [bass, mid, high, energy] = self.animation_levels;
+        let speed = if self.settings.photosensitive {
+            0.5
+        } else {
+            0.5 + energy as f64
+        };
+        self.animation_time = (self.animation_time + dt * speed) % 36_000.0;
+        Some(bl_render::SceneInput {
+            kind,
+            time: self.animation_time as f32,
+            bass,
+            mid,
+            high,
+            energy,
+        })
     }
 
     pub fn shutdown(&mut self, host: &mut dyn Host) {

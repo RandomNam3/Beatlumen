@@ -4,6 +4,7 @@
 
 use crate::gpu::{Fullscreen, Program, RenderTarget, Target, Texture, FULLSCREEN_VS};
 use crate::math::Mat4;
+use crate::scenes::{SceneInput, SceneKind, LIMIT_FS, LIMIT_PER_SECOND};
 use crate::shaders::*;
 use bl_fx::{FilterView, FrameView, SceneView, TransitionKind, TransitionView};
 use bl_gl::*;
@@ -49,6 +50,17 @@ pub struct Visualizer {
     pong: RenderTarget,
     blur_tmp: RenderTarget,
     effect_tmp: RenderTarget,
+    /// The endless animation shown instead of pictures, if any.
+    animation: Option<SceneInput>,
+    animation_programs: HashMap<SceneKind, Program>,
+    animation_rt: RenderTarget,
+    /// Photosensitive mode: the limiter and the two last pictures.
+    limit: Option<Program>,
+    limit_step: f32,
+    limit_rt: [RenderTarget; 2],
+    limit_index: usize,
+    limit_valid: bool,
+    limit_seed: f32,
     images: HashMap<u64, Texture>,
     prev_view_proj: HashMap<u64, Mat4>,
     width: u32,
@@ -143,12 +155,77 @@ impl Visualizer {
             pong: rt(),
             blur_tmp: rt(),
             effect_tmp: rt(),
+            animation: None,
+            animation_programs: HashMap::new(),
+            animation_rt: rt(),
+            limit: None,
+            limit_step: 0.0,
+            limit_rt: [rt(), rt()],
+            limit_index: 0,
+            limit_valid: false,
+            limit_seed: 0.0,
             images: HashMap::new(),
             prev_view_proj: HashMap::new(),
             width: 16,
             height: 16,
             empty_color: [0.06, 0.055, 0.07],
         })
+    }
+
+    /// Shows an endless animation instead of the pictures (`None`: pictures).
+    pub fn set_animation(&mut self, animation: Option<SceneInput>) {
+        self.animation = animation;
+    }
+
+    /// Photosensitive mode: limits how fast the picture may change. `dt` is
+    /// the time since the last frame.
+    pub fn set_flash_limit(&mut self, gl: &Gl, on: bool, dt: f64) {
+        if on && self.limit.is_none() {
+            match prog(gl, LIMIT_FS) {
+                Ok(p) => self.limit = Some(p),
+                // Without it the mode still has its calmer effects.
+                Err(e) => eprintln!("flash limiter: {e}"),
+            }
+            self.limit_valid = false;
+        }
+        if !on {
+            self.limit_valid = false;
+        }
+        self.limit_step = if on {
+            LIMIT_PER_SECOND * (dt as f32).clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+    }
+
+    /// Draws the animation of this frame into its target.
+    fn render_animation(&mut self, gl: &Gl) -> bool {
+        let Some(a) = self.animation else {
+            return false;
+        };
+        if !self.animation_programs.contains_key(&a.kind) {
+            match a.kind.program(gl) {
+                Ok(p) => {
+                    self.animation_programs.insert(a.kind, p);
+                }
+                Err(e) => {
+                    eprintln!("animation: {e}");
+                    self.animation = None;
+                    return false;
+                }
+            }
+        }
+        let p = &self.animation_programs[&a.kind];
+        self.animation_rt.bind(gl);
+        p.use_program(gl);
+        p.set_f(gl, "time", a.time);
+        p.set_f(gl, "bass", a.bass);
+        p.set_f(gl, "mid", a.mid);
+        p.set_f(gl, "high", a.high);
+        p.set_f(gl, "energy", a.energy);
+        p.set_f(gl, "aspect", self.width as f32 / self.height.max(1) as f32);
+        self.fullscreen.draw(gl);
+        true
     }
 
     /// Uploads a background image (RGBA8, top row first).
@@ -198,6 +275,7 @@ impl Visualizer {
             &mut self.pong,
             &mut self.blur_tmp,
             &mut self.effect_tmp,
+            &mut self.animation_rt,
         ] {
             rt.resize(gl, w, h);
         }
@@ -238,9 +316,14 @@ impl Visualizer {
             self.empty_color[1],
             self.empty_color[2],
         );
-        match s.image.and_then(|i| self.images.get(&i.id)) {
+        let map = if self.animation.is_some() {
+            Some(self.animation_rt.texture)
+        } else {
+            s.image.and_then(|i| self.images.get(&i.id)).map(|t| t.id)
+        };
+        match map {
             Some(tex) => {
-                p.set_texture(gl, "map", 0, tex.id);
+                p.set_texture(gl, "map", 0, tex);
                 p.set_i(gl, "hasMap", 1);
             }
             None => p.set_i(gl, "hasMap", 0),
@@ -543,6 +626,7 @@ impl Visualizer {
         gl.disable(SCISSOR_TEST);
         gl.disable(DEPTH_TEST);
         gl.disable(CULL_FACE);
+        self.render_animation(gl);
         let mut seen = Vec::new();
         self.render_scene(gl, &frame.current, 0, pixel_scale, &mut seen);
         let mut src_is_scene = true;
@@ -562,7 +646,34 @@ impl Visualizer {
             self.apply_filter(gl, f, self.target_ref(src), self.target_ref(dst));
             src = dst;
         }
-        self.copy(gl, self.target_ref(src).texture, out);
+        let last = self.target_ref(src).texture;
+        let last = self.limit_changes(gl, last);
+        self.copy(gl, last, out);
+    }
+
+    /// Photosensitive mode: the picture, changed from the last one only as
+    /// far as allowed.
+    fn limit_changes(&mut self, gl: &Gl, picture: GLuint) -> GLuint {
+        let (Some(p), true) = (&self.limit, self.limit_step > 0.0) else {
+            return picture;
+        };
+        let next = 1 - self.limit_index;
+        let target = &self.limit_rt[next];
+        if self.limit_valid {
+            target.bind(gl);
+            p.use_program(gl);
+            p.set_texture(gl, "tCur", 0, picture);
+            p.set_texture(gl, "tPrev", 1, self.limit_rt[self.limit_index].texture);
+            p.set_f(gl, "maxStep", self.limit_step);
+            self.limit_seed = (self.limit_seed + 0.618_034) % 1.0;
+            p.set_f(gl, "seed", self.limit_seed);
+            self.fullscreen.draw(gl);
+        } else {
+            self.copy(gl, picture, Target::Offscreen(target));
+        }
+        self.limit_index = next;
+        self.limit_valid = true;
+        self.limit_rt[next].texture
     }
 
     fn target_ref(&self, i: usize) -> &RenderTarget {

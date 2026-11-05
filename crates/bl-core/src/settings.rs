@@ -68,25 +68,40 @@ pub enum VisualizerKind {
     None,
     Spectrum,
     Waveform,
+    /// A smooth curve of the frequencies.
+    Wave,
+    /// Bars to both sides of the middle.
+    Mirror,
+    /// The frequencies around a circle.
+    Circle,
 }
 
 impl VisualizerKind {
-    pub const ALL: [VisualizerKind; 3] = [
+    pub const ALL: [VisualizerKind; 6] = [
         VisualizerKind::None,
         VisualizerKind::Spectrum,
         VisualizerKind::Waveform,
+        VisualizerKind::Wave,
+        VisualizerKind::Mirror,
+        VisualizerKind::Circle,
     ];
     pub fn name(self) -> &'static str {
         match self {
             VisualizerKind::None => "None",
             VisualizerKind::Spectrum => "Spectrum",
             VisualizerKind::Waveform => "Waveform",
+            VisualizerKind::Wave => "Wave",
+            VisualizerKind::Mirror => "Mirror",
+            VisualizerKind::Circle => "Circle",
         }
     }
     pub fn parse(s: &str) -> VisualizerKind {
         match s {
             "None" => VisualizerKind::None,
             "Waveform" => VisualizerKind::Waveform,
+            "Wave" => VisualizerKind::Wave,
+            "Mirror" => VisualizerKind::Mirror,
+            "Circle" => VisualizerKind::Circle,
             _ => VisualizerKind::Spectrum,
         }
     }
@@ -192,6 +207,13 @@ pub struct Settings {
     /// Latency of microphones (karaoke) by input id, in milliseconds
     /// (positive: their audio arrives later than the platform reports).
     pub mic_offsets: Vec<(String, f32)>,
+    /// An endless animation instead of pictures: "" (pictures), a kind of
+    /// `bl_render::SceneKind` or "cycle" (another one per song).
+    pub animation: String,
+    /// The overlay fills the visual instead of a strip below the title.
+    pub overlay_full: bool,
+    /// Photosensitive (epilepsy) mode: no flashes or fast colour changes.
+    pub photosensitive: bool,
     /// When the queue runs out, similar songs follow.
     pub endless: bool,
     /// What is played on this device also goes to the server (server songs
@@ -264,6 +286,9 @@ impl Default for Settings {
             sync_items: Value::object(),
             sync_user: String::new(),
             mic_offsets: Vec::new(),
+            animation: String::new(),
+            overlay_full: false,
+            photosensitive: false,
             endless: false,
             history_sync: false,
             ui: Value::object(),
@@ -362,6 +387,9 @@ impl Settings {
                 _ => Value::object(),
             },
             sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
+            animation: v.str_or("animation", "").chars().take(16).collect(),
+            overlay_full: v.bool_or("overlayFull", false),
+            photosensitive: v.bool_or("photosensitive", false),
             endless: v.bool_or("endless", false),
             history_sync: v.bool_or("historySync", false),
             mic_offsets: v
@@ -393,6 +421,9 @@ impl Settings {
             .with("language", self.language.as_str())
             .with("volume", self.volume)
             .with("muted", self.muted)
+            .with("animation", self.animation.as_str())
+            .with("overlayFull", self.overlay_full)
+            .with("photosensitive", self.photosensitive)
             .with("endless", self.endless)
             .with("historySync", self.history_sync)
             .with("renderScale", self.render_scale)

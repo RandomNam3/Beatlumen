@@ -6,6 +6,8 @@
 // scroll <x> <y> <steps>, key <sequence>, text <text>, size <w> <h>,
 // set <window property> <JSON value>, core <command> <JSON arguments>.
 // BEATLUMEN_TEST_SIZE=<w>x<h> sets the size of the window at the start.
+// frames <file> <seconds>: writes the brightness of the window's picture, on
+// a grid of 8x6 cells, about 20 times a second (for measuring flashes).
 #pragma once
 
 #include <QElapsedTimer>
@@ -28,11 +30,16 @@ private:
     void frame();
     void poll();
     void run(const QString &line);
+    void sampleFrame();
 
     QQuickWindow *m_window;
     QString m_path;
     QTimer m_timer;
     QTimer m_commands;
+    QTimer m_sampler;
+    QString m_framesPath;
+    QElapsedTimer m_framesClock;
+    int m_framesMs = 0;
     QElapsedTimer m_clock;
     QVector<double> m_frames;
     QElapsedTimer m_statsClock;

@@ -109,6 +109,41 @@ Item {
                         width: fxScroll.availableWidth
                         spacing: 16
 
+                        SwitchRow {
+                            Layout.fillWidth: true
+                            title: Theme.tr("Epilepsy mode")
+                            detail: Theme.tr("Prevents flashes and fast colour changes as far as possible: brightness changes slowly, flash effects and hard cuts are off. This lowers the risk but cannot rule it out.")
+                            on: page.settings.photosensitive === true
+                            onSwitched: (v) => Core.call("settings.set", { key: "photosensitive", value: v })
+                        }
+
+                        SectionLabel { text: Theme.tr("Animation") }
+                        Flow {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            spacing: 8
+                            Repeater {
+                                model: [
+                                    { v: "", l: Theme.tr("Pictures") },
+                                    { v: "flow", l: Theme.tr("Flow") },
+                                    { v: "tunnel", l: Theme.tr("Tunnel") },
+                                    { v: "stars", l: Theme.tr("Stars") },
+                                    { v: "aurora", l: Theme.tr("Aurora") },
+                                    { v: "waves", l: Theme.tr("Waves") },
+                                    { v: "cycle", l: Theme.tr("A new one per song") }
+                                ]
+                                delegate: AccentButton {
+                                    text: modelData.l
+                                    checkable: true
+                                    checked: (page.settings.animation || "") === modelData.v
+                                    highlighted: checked
+                                    flat: !checked
+                                    onClicked: Core.call("settings.set", { key: "animation", value: modelData.v })
+                                }
+                            }
+                        }
+
                         SectionLabel { text: Theme.tr("Style") }
                         GridLayout {
                             Layout.fillWidth: true
@@ -201,7 +236,14 @@ Item {
                             Layout.rightMargin: 8
                             spacing: 8
                             Repeater {
-                                model: [{ v: "Spectrum", l: Theme.tr("Spectrum") }, { v: "Waveform", l: Theme.tr("Waveform") }, { v: "None", l: Theme.tr("Off") }]
+                                model: [
+                                    { v: "Spectrum", l: Theme.tr("Spectrum") },
+                                    { v: "Wave", l: Theme.tr("Frequency wave") },
+                                    { v: "Mirror", l: Theme.tr("Mirrored bars") },
+                                    { v: "Circle", l: Theme.tr("Circle") },
+                                    { v: "Waveform", l: Theme.tr("Waveform") },
+                                    { v: "None", l: Theme.tr("Off") }
+                                ]
                                 delegate: AccentButton {
                                     text: modelData.l
                                     checkable: true
@@ -211,6 +253,14 @@ Item {
                                     onClicked: Core.call("settings.set", { key: "visualizer", value: modelData.v })
                                 }
                             }
+                        }
+
+                        SwitchRow {
+                            Layout.fillWidth: true
+                            title: Theme.tr("Fill the visual")
+                            detail: Theme.tr("The overlay takes up the visual instead of a strip below the title.")
+                            on: page.settings.overlayFull === true
+                            onSwitched: (v) => Core.call("settings.set", { key: "overlayFull", value: v })
                         }
 
                         ItemDelegate {

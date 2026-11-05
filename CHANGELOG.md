@@ -57,6 +57,19 @@
 - **Phones held sideways:** the navigation fits, the player bar keeps the
   title and hides the volume slider and the time instead.
 
+### Visuals and epilepsy mode
+
+- **Endless animations without pictures:** Flow, Tunnel, Stars, Aurora and
+  Waves, following the music, or a new one per song. The effects work on them
+  like on pictures.
+- **More displays:** frequency wave, mirrored bars and a circle next to
+  spectrum and waveform, as a strip below the title or filling the visual.
+- **Epilepsy mode:** brightness can only change slowly at every point of the
+  picture (at most 2.5 flashes per second are possible, WCAG 2.3.1 allows
+  three), saturated red is held back, flash, glitch and hue effects and hard
+  cuts are off, transitions only blend. This works for every preset. It lowers
+  the risk but cannot rule it out.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

@@ -70,7 +70,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: np.compact ? 36 : 56
             Layout.maximumWidth: 720
-            visible: np.cur !== null
+            visible: np.cur !== null && !np.overlayFull
         }
     }
 
@@ -94,13 +94,25 @@ Item {
         z: 50
     }
 
+    // The overlay can fill the visual above the title.
+    readonly property bool overlayFull: (Core.state.settings || {}).overlayFull === true
+    Item {
+        id: fullArea
+        anchors.left: info.left
+        anchors.right: info.right
+        anchors.top: parent.top
+        anchors.bottom: info.top
+        anchors.topMargin: np.compact ? 56 : 64
+        anchors.bottomMargin: 8
+    }
     function updateOverlay() {
-        if (!spectrumArea.visible || !np.visible || !np.showSpectrum || np.opacity < 0.01) {
+        if (!np.visible || !np.showSpectrum || np.opacity < 0.01 || (!np.overlayFull && !spectrumArea.visible)) {
             Core.call("ui.overlay", { x: 0, y: 0, w: 0, h: 0, alpha: 0 })
             return
         }
-        const p = spectrumArea.mapToItem(null, 0, 0)
-        Core.call("ui.overlay", { x: p.x, y: p.y, w: spectrumArea.width, h: spectrumArea.height, alpha: np.opacity })
+        const area = np.overlayFull ? fullArea : spectrumArea
+        const p = area.mapToItem(null, 0, 0)
+        Core.call("ui.overlay", { x: p.x, y: p.y, w: area.width, h: area.height, alpha: np.opacity })
     }
     Timer {
         // Geometry rarely changes; a cheap periodic sync also follows

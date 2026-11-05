@@ -120,6 +120,7 @@ TestHooks::TestHooks(QQuickWindow *window, const QString &path)
     connect(&m_commands, &QTimer::timeout, this, &TestHooks::poll);
     m_commands.start(50);
     connect(window, &QQuickWindow::frameSwapped, this, &TestHooks::frame);
+    connect(&m_sampler, &QTimer::timeout, this, &TestHooks::sampleFrame);
     m_clock.start();
     m_statsClock.start();
 }
@@ -154,6 +155,28 @@ void TestHooks::frame()
     }
 }
 
+void TestHooks::sampleFrame()
+{
+    if (m_framesClock.elapsed() > m_framesMs) {
+        m_sampler.stop();
+        qInfo("frames written: %s", qPrintable(m_framesPath));
+        return;
+    }
+    const QImage image = m_window->grabWindow().scaled(8, 6, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                             .convertToFormat(QImage::Format_RGB32);
+    QFile f(m_framesPath);
+    if (!f.open(QIODevice::Append | QIODevice::Text))
+        return;
+    QByteArray line = QByteArray::number(m_framesClock.elapsed());
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb p = image.pixel(x, y);
+            line += ' ' + QByteArray::number(qRed(p)) + ',' + QByteArray::number(qGreen(p)) + ',' + QByteArray::number(qBlue(p));
+        }
+    }
+    f.write(line + '\n');
+}
+
 void TestHooks::poll()
 {
     QFile f(m_path + QStringLiteral(".cmd"));
@@ -177,7 +200,13 @@ void TestHooks::run(const QString &line)
         QMouseEvent e(type, pos, m_window->mapToGlobal(pos), button, held, Qt::NoModifier);
         QCoreApplication::sendEvent(m_window, &e);
     };
-    if (cmd == QLatin1String("shot") && !a.isEmpty()) {
+    if (cmd == QLatin1String("frames") && a.size() >= 2) {
+        m_framesPath = a.at(0);
+        QFile::remove(m_framesPath);
+        m_framesMs = a.at(1).toInt() * 1000;
+        m_framesClock.start();
+        m_sampler.start(50);
+    } else if (cmd == QLatin1String("shot") && !a.isEmpty()) {
         m_window->grabWindow().save(a.at(0));
     } else if (cmd == QLatin1String("hover") && a.size() >= 2) {
         mouse(QEvent::MouseMove, QPointF(a.at(0).toDouble(), a.at(1).toDouble()), Qt::NoButton, Qt::NoButton);
