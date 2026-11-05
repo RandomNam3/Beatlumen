@@ -697,6 +697,11 @@ struct LineTimes<'a> {
     matched: f32,
 }
 
+/// A line whose first words were not recognised is moved back by this
+/// share of the song's usual time per word for each of them (measured on
+/// the test songs: 0.5 to 1.0 alike, 0.7 best).
+const WORD_BACKOFF: f64 = 0.7;
+
 fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTimes<'a> {
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     let mut words = Vec::new();
@@ -736,7 +741,26 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
     let follows = |a: (usize, usize), b: (usize, usize)| {
         lead_pos[&b.0] == lead_pos[&a.0] + 1 && b.1 == a.1 + 1 && word_line[a.0] == word_line[b.0]
     };
+    // A line whose first words were not recognised starts that many words
+    // before its first matched one: a word takes about the song's usual
+    // time from one recognised word to the next.
+    let word_s = {
+        let mut d: Vec<f64> = rec
+            .windows(2)
+            .map(|p| p[1].1 - p[0].1)
+            .filter(|d| (0.05..1.5).contains(d))
+            .collect();
+        d.sort_by(f64::total_cmp);
+        d.get(d.len() / 2).copied().unwrap_or(0.3)
+    } * WORD_BACKOFF;
+    let mut lead_before = vec![0usize; words.len()];
+    let mut seen = vec![0usize; lines.len()];
+    for &w in &lead {
+        lead_before[w] = seen[word_line[w]];
+        seen[word_line[w]] += 1;
+    }
     let mut line_time: Vec<Option<f64>> = vec![None; lines.len()];
+    let mut skipped = vec![0usize; lines.len()];
     for (k, &(wi, ri)) in pairs.iter().enumerate() {
         let li = word_line[wi];
         let in_run = (k > 0 && follows(pairs[k - 1], pairs[k]))
@@ -744,15 +768,18 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
             || lead_count[li] == 1;
         if in_run && line_time[li].is_none() {
             line_time[li] = Some(rec[ri].1);
+            skipped[li] = lead_before[wi];
         }
     }
-    // Times must increase.
+    // Times must increase (by the matched words); then moved back by the
+    // words not recognised, not before the line before.
     let mut last = f64::MIN;
-    for t in line_time.iter_mut() {
+    for (t, &n) in line_time.iter_mut().zip(&skipped) {
         if let Some(v) = *t {
             if v < last {
                 *t = None;
             } else {
+                *t = Some((v - n as f64 * word_s).max(last));
                 last = v;
             }
         }
@@ -915,6 +942,32 @@ mod tests {
         assert_eq!(
             lrc,
             "[00:10.00]Hello darkness, my old friend\n[00:14.00]I've come to talk with you again\n[00:18.00]\n[00:40.00]Because a vision softly creeping\n"
+        );
+    }
+
+    #[test]
+    fn lines_start_before_unrecognised_first_words() {
+        // "Hello" not recognised: the line starts about a word before "darkness".
+        let segments = vec![
+            seg(10.0, 14.0, "darkness my old friend"),
+            seg(14.0, 18.0, "I've come to talk with you again"),
+        ];
+        let text = "Hello darkness, my old friend\nI've come to talk with you again";
+        let (anchors, _) = anchor_lines(text, &segments);
+        assert!(anchors[0].matched);
+        assert!(
+            anchors[0].time < 10.0 && anchors[0].time > 9.0,
+            "{}",
+            anchors[0].time
+        );
+        assert_eq!(anchors[1].time, 14.0);
+        // Never before the line before.
+        let segments = vec![seg(10.0, 11.0, "one two"), seg(11.0, 12.0, "five six")];
+        let (anchors, _) = anchor_lines("one two\nthree four five six", &segments);
+        assert!(
+            anchors[1].time >= anchors[0].time,
+            "{:?}",
+            anchors.iter().map(|a| a.time).collect::<Vec<_>>()
         );
     }
 
