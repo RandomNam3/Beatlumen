@@ -7,7 +7,9 @@
 - **Plain texts are timed closer:** a line whose first words the model did
   not recognise no longer starts at its first recognised word, up to two
   seconds late; it starts about where its first word is sung (on the test
-  songs 84 % of the lines within half a second instead of 79 %).
+  songs 84 % of the lines within half a second instead of 79 %). Lines
+  also no longer start up to a third of a second too early when the timing
+  picks up after a longer stretch.
 
 ## 0.11.1 (beta)
 
