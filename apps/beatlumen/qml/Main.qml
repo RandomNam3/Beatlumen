@@ -164,7 +164,7 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 8
-        visible: win.page < 0 || !win.compact
+        visible: win.page < 0
         enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
@@ -234,13 +234,10 @@ ApplicationWindow {
         id: panel
         visible: win.page >= 0
         color: Theme.surface
-        radius: win.compact ? 0 : Theme.radius
         anchors.left: win.compact ? parent.left : rail.right
         anchors.top: parent.top
         anchors.bottom: playerBar.top
-        anchors.topMargin: win.compact ? 0 : 12
-        anchors.bottomMargin: win.compact ? 0 : 12
-        width: win.compact ? parent.width : Math.min(680, Math.max(420, (parent.width - rail.width) * 0.5))
+        anchors.right: parent.right
 
         StackLayout {
             anchors.fill: parent

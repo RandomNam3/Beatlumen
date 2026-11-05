@@ -5,6 +5,7 @@
 // file is removed once they ran): shot <file>, click <x> <y>, hover <x> <y>,
 // scroll <x> <y> <steps>, key <sequence>, text <text>, size <w> <h>,
 // set <window property> <JSON value>, core <command> <JSON arguments>.
+// BEATLUMEN_TEST_SIZE=<w>x<h> sets the size of the window at the start.
 #pragma once
 
 #include <QElapsedTimer>

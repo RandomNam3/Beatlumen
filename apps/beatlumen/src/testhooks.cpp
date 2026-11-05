@@ -103,8 +103,13 @@ void collect(QQuickItem *item, QJsonArray &out, QRectF clip)
 void TestHooks::attach(QQuickWindow *window)
 {
     const QString path = qEnvironmentVariable("BEATLUMEN_TEST_DUMP");
-    if (!path.isEmpty())
-        new TestHooks(window, path);
+    if (path.isEmpty())
+        return;
+    // BEATLUMEN_TEST_SIZE=<w>x<h>: the size of the window from the start.
+    const QStringList size = qEnvironmentVariable("BEATLUMEN_TEST_SIZE").split(QLatin1Char('x'));
+    if (size.size() == 2)
+        window->resize(size.at(0).toInt(), size.at(1).toInt());
+    new TestHooks(window, path);
 }
 
 TestHooks::TestHooks(QQuickWindow *window, const QString &path)
