@@ -109,6 +109,7 @@ fn de(s: &str) -> Option<&'static str> {
         "Could not load the song" => "Das Lied konnte nicht geladen werden",
         "Saved in your encrypted files" => "In deinen verschlüsselten Dateien gespeichert",
         "Could not save the song" => "Das Lied konnte nicht gespeichert werden",
+        "Favorites" => "Favoriten",
         "Add to queue" => "Zur Warteschlange",
         "Advance" => "Wechseln",
         "Albums" => "Alben",

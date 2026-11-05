@@ -59,6 +59,11 @@ Item {
                     elide: Text.ElideRight
                 }
             }
+            FavoriteButton {
+                trackId: np.cur ? np.cur.id : ""
+                iconColor: "white"
+                iconSize: np.compact ? 26 : 30
+            }
         }
         Item {
             id: spectrumArea

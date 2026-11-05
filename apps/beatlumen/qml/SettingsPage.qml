@@ -942,6 +942,59 @@ Item {
                     }
                 }
             }
+            // ---- what was played ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 4
+                visible: page.shows("library", ["Listening history", "Also keep it on the server", "Delete listening history"])
+                SectionLabel { text: Theme.tr("Listening history") }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    text: Theme.tr("Beatlumen remembers on this device what you played, for the start page and the statistics.")
+                }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    visible: page.server === "connected"
+                    title: Theme.tr("Also keep it on the server")
+                    detail: Theme.tr("What you play on this device also goes to your server, for recommendations and statistics across your devices. The server's admin could read it. Only the server's songs, and only from now on: local and encrypted files never leave this device.")
+                    on: page.settings.historySync === true
+                    onSwitched: (v) => Core.call("settings.set", { key: "historySync", value: v })
+                }
+                Button {
+                    Layout.leftMargin: 16
+                    flat: true
+                    text: Theme.tr("Delete listening history")
+                    icon.source: Theme.icon("delete")
+                    onClicked: historyDelete.open()
+                }
+                AppDialog {
+                    id: historyDelete
+                    readonly property bool withServer: page.server === "connected" && page.settings.historySync === true
+                    anchors.centerIn: Overlay.overlay
+                    width: Math.min(420, page.width - 32)
+                    title: Theme.tr("Delete listening history")
+                    standardButtons: Dialog.Cancel | Dialog.Ok
+                    onAccepted: {
+                        Core.call("history.clear", { server: page.server === "connected" })
+                        Core.call("toast", { text: Theme.tr("Listening history deleted") })
+                    }
+                    Label {
+                        textFormat: Text.PlainText
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.textDim
+                        text: page.server === "connected" ? Theme.tr("Delete what you played on this device and on the server?")
+                                                          : Theme.tr("Delete what you played on this device?")
+                    }
+                }
+            }
+
             // ---- offline copies of server songs ----
             ColumnLayout {
                 objectName: "section"

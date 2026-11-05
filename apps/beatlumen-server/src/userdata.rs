@@ -1,7 +1,9 @@
-//! Playlists and presets of user accounts. Requests signed in with a user
-//! account use that user's own; the server password signs in to the shared
-//! ones.
+//! Playlists, presets, favorites and listening history of user accounts.
+//! Requests signed in with a user account use that user's own; the server
+//! password signs in to the shared ones.
 
+use crate::favorites::Favorites;
+use crate::history::History;
 use crate::playlists::Playlists;
 use crate::presets::Presets;
 use std::collections::HashMap;
@@ -11,6 +13,8 @@ use std::sync::{Arc, Mutex};
 pub struct UserStore {
     pub playlists: Playlists,
     pub presets: Presets,
+    pub favorites: Favorites,
+    pub history: History,
 }
 
 #[derive(Default)]
@@ -34,6 +38,8 @@ impl UserData {
         let s = Arc::new(UserStore {
             playlists: Playlists::load(dir.join("playlists.json")),
             presets: Presets::new(presets),
+            favorites: Favorites::load(dir.join("favorites.json")),
+            history: History::load(dir.join("history.jsonl")),
         });
         stores.insert(dir, s.clone());
         s

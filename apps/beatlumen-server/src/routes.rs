@@ -238,6 +238,8 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
+    let favorites = store.as_ref().map_or(&state.favorites, |s| &s.favorites);
+    let history = store.as_ref().map_or(&state.history, |s| &s.history);
     // Devices see the devices of the same login: an account, or everyone
     // with the server password.
     if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
@@ -387,6 +389,35 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
             }
         }
+        ["favorites"] if get => json(200, &favorites.list_json()),
+        ["favorites"] => not_allowed("GET, HEAD"),
+        ["favorites", id] => match m {
+            "PUT" => match favorites.add(id, &req.body) {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            "DELETE" => match favorites.remove(id) {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            _ => not_allowed("PUT, DELETE"),
+        },
+        ["history"] => match m {
+            "GET" | "HEAD" => {
+                let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let limit = size_param(req, 1000, 1, 10_000) as usize;
+                json(200, &history.list_json(since, limit))
+            }
+            "POST" => match history.add(&req.body) {
+                Ok(n) => json(200, &Value::object().with("added", n)),
+                Err(e) => fail(e),
+            },
+            "DELETE" => match history.clear() {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            _ => not_allowed("GET, HEAD, POST, DELETE"),
+        },
         ["images"] => match m {
             "GET" | "HEAD" => json(200, &state.images.list_json()),
             "POST" => match state.images.upload(req.header("x-filename"), &req.body) {

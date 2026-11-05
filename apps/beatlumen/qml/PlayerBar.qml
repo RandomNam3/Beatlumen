@@ -119,6 +119,11 @@ Item {
                 color: Theme.textDim
             }
         }
+        FavoriteButton {
+            trackId: bar.cur ? bar.cur.id : ""
+            visible: Favorites.canMark(trackId) && (bar.width >= 400 || on)
+            iconColor: Theme.textDim
+        }
     }
 
     Connections {

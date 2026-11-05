@@ -9,6 +9,8 @@ QtObject {
 
     // The song text editor takes Space, arrows and undo for itself.
     property bool lyricsEditing: false
+    // No sliding and fading where it is not needed.
+    readonly property bool reduceMotion: ui.reduceMotion === true
 
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
@@ -349,7 +351,6 @@ QtObject {
         "Create": "Erstellen",
         "Cancel": "Abbrechen",
         "Save": "Speichern",
-        "Delete": "Löschen",
         "Rename": "Umbenennen",
         "OK": "OK",
         "Back": "Zurück",
@@ -576,7 +577,25 @@ QtObject {
         "No matching files here": "Keine passenden Dateien hier",
         "No folders here": "Keine Ordner hier",
         "%1 selected": "%1 ausgewählt",
-        "Home": "Persönlicher Ordner",
+        "Home folder": "Persönlicher Ordner",
+        "Home": "Start",
+        "Favorites": "Favoriten",
+        "Add to favorites": "Zu Favoriten hinzufügen",
+        "Remove from favorites": "Aus Favoriten entfernen",
+        "Recently played": "Zuletzt gehört",
+        "New in your library": "Neu in deiner Bibliothek",
+        "Continue listening": "Weiterhören",
+        "Scroll back": "Zurückblättern",
+        "Scroll on": "Weiterblättern",
+        "Listening history": "Hörverlauf",
+        "Also keep it on the server": "Auch auf dem Server speichern",
+        "What you play on this device also goes to your server, for recommendations and statistics across your devices. The server's admin could read it. Only the server's songs, and only from now on: local and encrypted files never leave this device.": "Was du auf diesem Gerät hörst, geht auch an deinen Server, für Empfehlungen und Statistiken über alle Geräte. Der Admin des Servers könnte es lesen. Nur Songs des Servers und erst ab jetzt: lokale und verschlüsselte Dateien verlassen dieses Gerät nie.",
+        "Beatlumen remembers on this device what you played, for the start page and the statistics.": "Beatlumen merkt sich auf diesem Gerät, was du gehört hast, für die Startseite und die Statistik.",
+        "Delete listening history": "Hörverlauf löschen",
+        "Delete what you played on this device?": "Hörverlauf dieses Geräts löschen?",
+        "Delete what you played on this device and on the server?": "Hörverlauf dieses Geräts und des Servers löschen?",
+        "Listening history deleted": "Hörverlauf gelöscht",
+        "Delete": "Löschen",
         "Music": "Musik",
         "Pictures": "Bilder",
         "Documents": "Dokumente",

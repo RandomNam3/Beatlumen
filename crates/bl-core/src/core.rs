@@ -87,6 +87,11 @@ pub(crate) enum Req {
     BgImage(String),
     Upload(String),
     Rescan,
+    Favorites,
+    FavoriteSaved,
+    /// Plays sent to the server (how many are done with that).
+    HistorySent(u64),
+    HistoryCleared,
     /// A vault request and the session it was sent with.
     Vault(crate::vault::VaultReq, String),
     WebCheck(crate::webcheck::WebReq),
@@ -170,6 +175,8 @@ pub(crate) struct Revisions {
     pub settings: u64,
     pub lyrics: u64,
     pub devices: u64,
+    pub favorites: u64,
+    pub history: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -257,6 +264,8 @@ pub struct Core {
     pub(crate) requests: HashMap<u64, Req>,
     pub(crate) server_playlists: Vec<Playlist>,
     pub(crate) local_playlists: Vec<Playlist>,
+    pub(crate) favorites: crate::favorites::FavoritesState,
+    pub(crate) history: crate::history::HistoryState,
     pub(crate) server_images: Vec<ImageEntry>,
     pub(crate) server_presets: Vec<String>,
     /// Files handed over as bytes (browser), by name.
@@ -271,6 +280,7 @@ pub struct Core {
     menu_blur: f32,
     pub(crate) overlay: Overlay,
     launch: LaunchArgs,
+    launched_with_files: bool,
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
@@ -450,6 +460,8 @@ impl Core {
             requests: HashMap::new(),
             server_playlists: Vec::new(),
             local_playlists,
+            favorites: Default::default(),
+            history: Default::default(),
             server_images: Vec::new(),
             server_presets: Vec::new(),
             memory_files: HashMap::new(),
@@ -461,6 +473,7 @@ impl Core {
             blur_target: 0.0,
             menu_blur: 0.0,
             overlay: Overlay::default(),
+            launched_with_files: !launch.files.is_empty(),
             launch,
             last_dt: 0.0,
             time: 0.0,
@@ -480,6 +493,8 @@ impl Core {
             push: Default::default(),
             started: false,
         };
+        core.load_favorites(host);
+        core.load_history(host);
         core.engine.set_intensity(core.settings.intensity);
         core.engine.set_adaptive(core.settings.adaptive);
         // Native apps load server images through the core's HTTP client.
@@ -627,6 +642,7 @@ impl Core {
             .unwrap_or(Value::Null);
         Value::object()
             .with("platform", host.platform())
+            .with("launchedWithFiles", self.launched_with_files)
             .with("metered", self.metered)
             .with("play", play)
             .with(
@@ -676,6 +692,8 @@ impl Core {
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
             .with("devicesRev", self.revs.devices)
+            .with("favoritesRev", self.revs.favorites)
+            .with("historyRev", self.revs.history)
             .with("deviceName", self.device_name(host))
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
@@ -721,6 +739,7 @@ impl Core {
             .with("local", library::is_local(&t.id))
             .with("source", t.id.starts_with(crate::sources::ID_PREFIX))
             .with("offline", self.is_offline(&t.id))
+            .with("favorite", self.is_favorite(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
 
@@ -852,6 +871,10 @@ impl Core {
                 let id = self.server.get(host, bl_net::api::paths::PLAYLISTS);
                 self.requests.insert(id, Req::Playlists);
             }
+            Req::Favorites => self.favorites_fetched(host, &res),
+            Req::FavoriteSaved => self.favorite_saved(host, &res),
+            Req::HistorySent(done) => self.history_sent(host, &res, done),
+            Req::HistoryCleared => {}
             Req::Images => {
                 if let Some(v) = ok_json(&res) {
                     self.server_images = v
@@ -2577,6 +2600,8 @@ impl Core {
         self.poll_lyrics_sync(host);
         self.poll_devices(host);
         self.poll_account_sync(host);
+        self.poll_favorites(host);
+        self.poll_history(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_sources(host);
@@ -2621,6 +2646,7 @@ impl Core {
             }
         }
         self.sync_preload(host);
+        self.track_listening(host);
         self.mic_tick(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
@@ -2743,6 +2769,8 @@ impl Core {
     }
 
     pub fn shutdown(&mut self, host: &mut dyn Host) {
+        self.finish_listening(host);
+        self.save_history(host);
         self.save_settings(host);
         self.player.stop(host);
         self.close_mics(host);

@@ -13,6 +13,7 @@ Rectangle {
     // `page`: what the item opens (-1 = now playing). Devices only with a
     // server connection.
     readonly property var all: [
+        { icon: "home", label: Theme.tr("Home"), page: 5 },
         { icon: "graphic_eq", label: Theme.tr("Now playing"), page: -1 },
         { icon: "library_music", label: Theme.tr("Library"), page: 0 },
         { icon: "queue_music", label: Theme.tr("Queue"), page: 1 },

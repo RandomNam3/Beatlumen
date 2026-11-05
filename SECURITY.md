@@ -58,6 +58,19 @@ issue.
   front of it (see the server README). The apps and the web app connect to
   `https://` addresses.
 
+## Favorites and listening history
+
+* Favorites of songs on the server are stored in plain text with the login
+  on the server, like playlists. Favorites of local and encrypted files
+  stay on the device.
+* The listening history is kept on the device (`history.json`) and can be
+  deleted in the settings.
+* It only goes to the server after the user agreed in the settings. Then the
+  server's admin could read it (`userdata/<hash>/history.jsonl`, or
+  `history.jsonl` for the shared server password). Only songs of the
+  server's library and only plays from the moment of agreeing are sent;
+  deleting the history in the app also deletes it on the server.
+
 ## Accounts and encrypted files
 
 User files on the server are end-to-end encrypted; the design, threat

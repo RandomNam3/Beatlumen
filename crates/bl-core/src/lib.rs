@@ -18,6 +18,9 @@ mod dlna_receiver;
 #[path = "dlna_receiver_web.rs"]
 mod dlna_receiver;
 mod extensions;
+mod favorites;
+mod history;
+mod home;
 pub mod host;
 pub mod icon;
 pub mod jobs;

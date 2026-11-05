@@ -250,7 +250,7 @@ pub fn desktop_roots() -> Vec<(String, String)> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
     if let Some(h) = &home {
-        roots.push(("Home".to_string(), h.clone()));
+        roots.push(("Home folder".to_string(), h.clone()));
         for (label, sub) in [
             ("Music", "Music"),
             ("Pictures", "Pictures"),

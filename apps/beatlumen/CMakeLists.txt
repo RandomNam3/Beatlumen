@@ -113,7 +113,7 @@ else()
     list(APPEND BL_QML "${CMAKE_CURRENT_BINARY_DIR}/qml/PlatformDialogs.qml")
 endif()
 file(GLOB BL_ICONS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS icons/*.svg)
-set_source_files_properties(qml/Theme.qml qml/Covers.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/Theme.qml qml/Covers.qml qml/Favorites.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 # Place the QML files at the module root so that they see each other
 # (including the singletons) through the module's qmldir.
 foreach(f ${BL_QML})

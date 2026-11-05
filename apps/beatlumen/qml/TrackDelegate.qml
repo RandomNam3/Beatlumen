@@ -95,6 +95,12 @@ ItemDelegate {
             font.pixelSize: 13
             font.features: { "tnum": 1 }
         }
+        // On narrow screens the row needs the room; the menu has it too.
+        FavoriteButton {
+            trackId: d.track.id || ""
+            visible: d.showMenu && Favorites.canMark(trackId) && (d.width >= 420 || on)
+            iconColor: Theme.textDim
+        }
         IconButton {
             id: menuButton
             visible: d.showMenu

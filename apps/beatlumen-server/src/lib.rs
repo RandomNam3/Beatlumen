@@ -28,6 +28,8 @@ pub mod config;
 pub mod covers;
 pub mod devices;
 pub mod extensions;
+pub mod favorites;
+pub mod history;
 pub mod images;
 pub mod library;
 pub mod lyrics;
@@ -69,6 +71,8 @@ pub struct DataPaths {
     pub library: PathBuf,
     pub tokens: PathBuf,
     pub playlists: PathBuf,
+    pub favorites: PathBuf,
+    pub history: PathBuf,
     pub presets: PathBuf,
     pub uploads: PathBuf,
     pub covers: PathBuf,
@@ -85,6 +89,8 @@ impl DataPaths {
             library: root.join("library.json"),
             tokens: root.join("tokens.json"),
             playlists: root.join("playlists.json"),
+            favorites: root.join("favorites.json"),
+            history: root.join("history.jsonl"),
             presets: root.join("presets"),
             uploads: root.join("uploads"),
             covers: cache.join("covers"),
@@ -144,6 +150,8 @@ pub struct State {
     scan_cv: Condvar,
     pub auth: auth::Auth,
     pub playlists: playlists::Playlists,
+    pub favorites: favorites::Favorites,
+    pub history: history::History,
     pub presets: presets::Presets,
     pub images: images::Images,
     pub lyrics: lyrics::Lyrics,
@@ -657,6 +665,8 @@ pub fn start(config: Config) -> Result<Server, String> {
         models,
         devices: devices::Devices::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
+        favorites: favorites::Favorites::load(data.favorites.clone()),
+        history: history::History::load(data.history.clone()),
         presets: presets::Presets::new(data.presets.clone()),
         images: images::Images::new(
             image_dirs.clone(),

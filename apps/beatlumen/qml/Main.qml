@@ -24,7 +24,8 @@ ApplicationWindow {
 
     readonly property bool compact: width < 760
     readonly property bool playing: Core.state.play === "playing"
-    // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings
+    // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings,
+    // 4 devices, 5 start page
     property int page: -1
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
@@ -33,6 +34,9 @@ ApplicationWindow {
     Component.onCompleted: {
         if (startFullscreen)
             showFullScreen()
+        // Songs given on the command line play with their visual right away.
+        else if (!Core.call("state").launchedWithFiles)
+            page = 5
         welcomeTimer.start()
         if (Core.platform === "android" && !(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.askedPermission)) {
             Core.call("settings.set", { key: "ui.askedPermission", value: true })
@@ -116,6 +120,11 @@ ApplicationWindow {
     Shortcut { sequences: ["F11", "Alt+Return"]; onActivated: win.toggleFullscreen() }
     Shortcut { sequence: "Escape"; onActivated: if (!win.goBack() && win.visibility === Window.FullScreen) win.showNormal() }
     Shortcut { sequence: "Ctrl+F"; onActivated: win.page = 0 }
+    Shortcut {
+        sequence: "Ctrl+L"
+        enabled: !!Core.state.current && Favorites.canMark(Core.state.current.id)
+        onActivated: Favorites.toggle(Core.state.current.id)
+    }
     Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Z"; onActivated: Core.call("preset.undo") }
     Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Shift+Z"; onActivated: Core.call("preset.redo") }
     Shortcut { sequence: "Ctrl+Alt+Right"; onActivated: Core.call("backgrounds.next") }
@@ -274,6 +283,22 @@ ApplicationWindow {
                 active: win.page === 4 || item !== null
                 sourceComponent: DevicesPage {
                     onOpenSettings: win.page = 3
+                }
+            }
+            Loader {
+                active: win.page === 5 || item !== null
+                sourceComponent: HomePage {
+                    onAddFolder: win.addFolder()
+                    onOpenFiles: dialogs.openAudio()
+                    onConnectServer: win.page = 3
+                    onOpenAlbum: (album) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openAlbum(album))
+                    }
+                    onOpenFavorites: {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openFavorites())
+                    }
                 }
             }
         }

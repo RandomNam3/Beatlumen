@@ -69,6 +69,15 @@ Menu {
         }
     }
     MenuItem {
+        readonly property var marks: menu.ids.filter(id => Favorites.canMark(id))
+        readonly property bool all: marks.length > 0 && marks.every(id => Favorites.has(id))
+        visible: marks.length > 0
+        height: visible ? implicitHeight : 0
+        text: all ? Theme.tr("Remove from favorites") : Theme.tr("Add to favorites")
+        icon.source: Theme.icon(all ? "favorite" : "favorite_border")
+        onTriggered: Favorites.set(marks, !all)
+    }
+    MenuItem {
         text: Theme.tr("Add to playlist…")
         icon.source: Theme.icon("playlist_add")
         onTriggered: menu.addToPlaylist(menu.ids)

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Start page and favorites
+
+- **Start page:** the app opens on a start page with what you last played,
+  what is new in your library, your favorites and where you left off.
+  Started with songs or in fullscreen it still opens on the visual.
+- **Favorites:** a heart on every song (list, player, now playing, song
+  menu, Ctrl+L) and an automatic playlist. Favorites among the server's
+  songs follow your login to your other devices, also when set offline.
+- **Listening history:** kept on the device. A song counts after 30 s or
+  half of its length, less counts as skipped. Sending it to the server is
+  off until you agree (Settings); only the server's songs and only from
+  then on, local and encrypted files never leave the device. Can be deleted
+  at any time.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

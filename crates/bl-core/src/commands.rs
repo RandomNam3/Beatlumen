@@ -333,31 +333,7 @@ impl Core {
                 self.library
                     .albums
                     .iter()
-                    .map(|a| {
-                        let cover = a
-                            .cover_track
-                            .as_ref()
-                            .or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id))
-                            .and_then(|id| self.library.track(id))
-                            .map(|t| self.cover_url_cached(t))
-                            .unwrap_or_default();
-                        Value::object()
-                            .with("id", a.id.as_str())
-                            .with("title", a.name.as_str())
-                            .with("artist", a.artist.as_str())
-                            .with("year", a.year)
-                            .with("tracks", a.track_count)
-                            .with("cover", cover)
-                            .with(
-                                "coverTrack",
-                                a.cover_track.clone().or_else(|| {
-                                    self.library
-                                        .album_tracks(&a.id)
-                                        .first()
-                                        .map(|t| t.id.clone())
-                                }),
-                            )
-                    })
+                    .map(|a| self.album_json(a))
                     .collect(),
             ),
             "library.album" => {
@@ -518,12 +494,33 @@ impl Core {
                 Value::from(parent)
             }
 
+            // ---- favorites and what was played ------------------------------
+            "favorites.list" => Value::Array(
+                self.favorites
+                    .ids()
+                    .map(|id| self.track_json(&self.track_for(id)))
+                    .collect(),
+            ),
+            "favorites.ids" => Value::Array(self.favorites.ids().map(Value::from).collect()),
+            "favorites.set" => {
+                let ids = strs(c.get("ids"));
+                let on = b("value");
+                for id in ids {
+                    self.set_favorite(host, &id, on);
+                }
+                ok()
+            }
+            "history.recent" => self.history_recent(n("limit").clamp(1.0, 500.0) as usize),
+            "history.clear" => {
+                self.history_clear(host, b("server"));
+                ok()
+            }
+            "home.overview" => self.home_overview(),
+
             // ---- playlists ------------------------------------------------
             "playlists.list" => {
-                let all: Vec<Value> = self
-                    .local_playlists
-                    .iter()
-                    .map(|p| (p, false))
+                let all: Vec<Value> = std::iter::once((self.favorites.playlist(), false))
+                    .chain(self.local_playlists.iter().map(|p| (p, false)))
                     .chain(self.server_playlists.iter().map(|p| (p, true)))
                     .map(|(p, srv)| {
                         let cover = p
@@ -533,12 +530,21 @@ impl Core {
                             .find_map(|id| self.library.track(id))
                             .map(|t| self.cover_url_cached(t))
                             .unwrap_or_default();
+                        let fixed = p.id == crate::favorites::PLAYLIST_ID;
                         Value::object()
                             .with("id", p.id.as_str())
-                            .with("name", p.name.as_str())
+                            .with(
+                                "name",
+                                if fixed {
+                                    self.tr("Favorites").to_string()
+                                } else {
+                                    p.name.clone()
+                                },
+                            )
                             .with("kind", p.kind.name())
                             .with("count", p.items.len())
                             .with("server", srv)
+                            .with("fixed", fixed)
                             .with("cover", cover)
                     })
                     .collect();
@@ -577,8 +583,13 @@ impl Core {
                 if let Some(mut p) = self.find_playlist(&s("id")).cloned() {
                     p.items.extend(strs(c.get("items")));
                     self.update_playlist(host, &p);
+                    let name = if p.id == crate::favorites::PLAYLIST_ID {
+                        self.tr("Favorites")
+                    } else {
+                        p.name.as_str()
+                    };
                     self.toast(
-                        format!("{} \"{}\"", self.tr("Added to playlist"), p.name),
+                        format!("{} \"{name}\"", self.tr("Added to playlist")),
                         false,
                     );
                 }
@@ -1059,6 +1070,9 @@ impl Core {
             self.airplay.error = None;
             self.dlna.error = None;
         }
+        if old.history_sync != self.settings.history_sync {
+            self.history_sync_changed();
+        }
         if old.notifications != self.settings.notifications {
             if self.settings.notifications {
                 if self.vault_unlocked() {
@@ -1379,9 +1393,35 @@ impl Core {
             .with("tracks", Value::Array(tracks))
     }
 
+    pub(crate) fn album_json(&self, a: &bl_net::api::Album) -> Value {
+        let cover = a
+            .cover_track
+            .as_ref()
+            .or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id))
+            .and_then(|id| self.library.track(id))
+            .map(|t| self.cover_url_cached(t))
+            .unwrap_or_default();
+        Value::object()
+            .with("id", a.id.as_str())
+            .with("title", a.name.as_str())
+            .with("artist", a.artist.as_str())
+            .with("year", a.year)
+            .with("tracks", a.track_count)
+            .with("cover", cover)
+            .with(
+                "coverTrack",
+                a.cover_track.clone().or_else(|| {
+                    self.library
+                        .album_tracks(&a.id)
+                        .first()
+                        .map(|t| t.id.clone())
+                }),
+            )
+    }
+
     pub(crate) fn find_playlist(&self, id: &str) -> Option<&Playlist> {
-        self.local_playlists
-            .iter()
+        std::iter::once(self.favorites.playlist())
+            .chain(self.local_playlists.iter())
             .chain(self.server_playlists.iter())
             .find(|p| p.id == id)
     }
@@ -1431,7 +1471,9 @@ impl Core {
     }
 
     pub(crate) fn update_playlist(&mut self, host: &mut dyn Host, pl: &Playlist) {
-        if pl.id.starts_with("local-") {
+        if pl.id == crate::favorites::PLAYLIST_ID {
+            self.favorites_replace(host, &pl.items);
+        } else if pl.id.starts_with("local-") {
             if let Some(p) = self.local_playlists.iter_mut().find(|p| p.id == pl.id) {
                 *p = pl.clone();
             }
@@ -1458,7 +1500,9 @@ impl Core {
     }
 
     pub(crate) fn delete_playlist(&mut self, host: &mut dyn Host, id: &str) {
-        if id.starts_with("local-") {
+        if id == crate::favorites::PLAYLIST_ID {
+            // Always there; emptied song by song.
+        } else if id.starts_with("local-") {
             self.local_playlists.retain(|p| p.id != id);
             self.save_local_playlists(host);
         } else {

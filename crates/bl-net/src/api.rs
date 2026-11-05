@@ -336,7 +336,12 @@ pub mod paths {
     pub const PLAYLISTS: &str = "/api/playlists";
     pub const IMAGES: &str = "/api/images";
     pub const PRESETS: &str = "/api/presets";
+    pub const FAVORITES: &str = "/api/favorites";
+    pub const HISTORY: &str = "/api/history";
 
+    pub fn favorite(id: &str) -> String {
+        format!("/api/favorites/{id}")
+    }
     pub fn track_stream(id: &str) -> String {
         format!("/api/tracks/{id}/stream")
     }

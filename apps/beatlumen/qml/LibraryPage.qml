@@ -49,6 +49,16 @@ Item {
         }
         return false
     }
+    function openAlbum(album) {
+        stack.pop(null)
+        stack.push(albumView, { album: album })
+    }
+    function openFavorites() {
+        const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
+        stack.pop(null)
+        if (fav)
+            stack.push(playlistView, { playlist: fav })
+    }
     function play(ids, shuffle) {
         if (ids.length === 0)
             return
@@ -540,7 +550,7 @@ Item {
                                 lead: CoverImage {
                                     anchors.fill: parent
                                     radius: 12
-                                    placeholder: "queue_music"
+                                    placeholder: playlistRow.modelData.fixed ? "favorite" : "queue_music"
                                     seed: playlistRow.modelData.name || ""
                                     source: playlistRow.modelData.cover || ""
                                 }
@@ -840,9 +850,11 @@ Item {
             Connections { target: page; function onPlaylistsRevChanged() { pv.reload() } }
             title: playlist.name || ""
             subtitle: page.count(tracks.length, "song", "songs")
-            placeholder: "queue_music"
+            placeholder: playlist.fixed ? "favorite" : "queue_music"
             cover: playlist.cover || ""
-            menuItems: [
+            menuItems: playlist.fixed ? [
+                { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) }
+            ] : [
                 { text: Theme.tr("Rename"), action: () => renamePrompt.open() },
                 { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) },
                 { text: Theme.tr("Delete"), action: () => { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() } }
