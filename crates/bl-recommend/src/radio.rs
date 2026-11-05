@@ -13,6 +13,8 @@ const POOL: usize = 1500;
 const MAX_SEEDS: usize = 40;
 /// So many songs pass before an artist comes again, if possible.
 const ARTIST_SPACING: usize = 6;
+/// A song by another artist comes first if it is this much like the last one.
+const STILL_ALIKE: f32 = 0.45;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Seed {
@@ -98,6 +100,8 @@ pub fn radio(
         // The second round takes what was left out, if the library is small.
         while out.len() < count {
             let mut best: Option<(f32, u32)> = None;
+            // The best by another artist than the one that just played.
+            let mut other: Option<(f32, u32)> = None;
             for (base, i) in &pool {
                 if used.contains(i) || (round == 0 && excluded.contains(i)) {
                     continue;
@@ -116,19 +120,27 @@ pub fn radio(
                 }
                 score *= 0.5 + 0.5 * t.freshness(*i);
                 score -= 0.5 * (t.skips[*i as usize].min(5) as f32 / 5.0);
-                // Not the same artist again, and not too soon.
-                if item
+                // Not too soon again.
+                let last = item
                     .artists
                     .iter()
-                    .any(|a| recent_artists.back() == Some(a))
-                {
-                    score -= 0.8;
-                } else if item.artists.iter().any(|a| recent_artists.contains(a)) {
+                    .any(|a| recent_artists.back() == Some(a));
+                if item.artists.iter().any(|a| recent_artists.contains(a)) {
                     score -= 0.25;
                 }
                 score += 0.18 * rng.f32();
                 if best.is_none_or(|(b, _)| score > b) {
                     best = Some((score, *i));
+                }
+                if !last && other.is_none_or(|(b, _)| score > b) {
+                    other = Some((score, *i));
+                }
+            }
+            // Another artist, unless that means leaving the music behind (a
+            // small library with little of this kind).
+            if let Some((_, o)) = other {
+                if current.is_none_or(|cur| c.similarity(cur, o) >= STILL_ALIKE) {
+                    best = other;
                 }
             }
             let Some((_, pick)) = best else {
