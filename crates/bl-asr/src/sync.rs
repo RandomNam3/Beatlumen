@@ -168,7 +168,7 @@ pub fn time_song(
 /// (`anchors`) and writes the LRC. A matched line is looked for from its
 /// time on; a line that was not matched anywhere between the matched lines
 /// around it. Each line starts with its first word.
-fn time_anchors(
+pub fn time_anchors(
     t: &Transcriber,
     samples: &[f32],
     segments: &[crate::transcribe::Segment],
