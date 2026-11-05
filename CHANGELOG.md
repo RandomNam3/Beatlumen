@@ -44,6 +44,19 @@
   With the agreement to keep the history on the server also across all devices
   (`GET /api/stats`).
 
+### Navigation
+
+- **Slimmer menu:** Home, Search, Library and Visuals; statistics, devices,
+  settings and help under *More*. The queue, the output and the visual are in
+  the player bar (or click the cover).
+- **Search has its own page:** artists, albums and songs, and labels to browse
+  before you type.
+- **Settings by category:** at the side on wide windows, the search looks
+  through all of them.
+- **Help:** the keyboard shortcuts at a glance.
+- **Phones held sideways:** the navigation fits, the player bar keeps the
+  title and hides the volume slider and the time instead.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

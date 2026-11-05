@@ -25,8 +25,19 @@ ApplicationWindow {
     readonly property bool compact: width < 760
     readonly property bool playing: Core.state.play === "playing"
     // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings,
-    // 4 devices, 5 start page, 6 statistics
+    // 4 devices, 5 start page, 6 statistics, 7 search
     property int page: -1
+    // Where the player's button returns to from the visual.
+    property int lastPage: 5
+    function toggleVisual() {
+        page = page >= 0 ? -1 : lastPage
+    }
+    function openSearch() {
+        page = 7
+        Qt.callLater(() => searchLoader.item && searchLoader.item.focusField())
+    }
+    // Little height: a phone held sideways.
+    readonly property bool dense: height < 520
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
     readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing
@@ -47,6 +58,8 @@ ApplicationWindow {
     // from the edge shows them briefly).
     onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
     onPageChanged: {
+        if (page >= 0)
+            lastPage = page
         Core.call("ui.blur", { value: page >= 0 ? 2.0 : 0.0 })
         poke()
     }
@@ -119,7 +132,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Down"; onActivated: Core.call("volume", { value: Math.max(0, (Core.state.volume || 0) - 0.05) }) }
     Shortcut { sequences: ["F11", "Alt+Return"]; onActivated: win.toggleFullscreen() }
     Shortcut { sequence: "Escape"; onActivated: if (!win.goBack() && win.visibility === Window.FullScreen) win.showNormal() }
-    Shortcut { sequence: "Ctrl+F"; onActivated: win.page = 0 }
+    Shortcut { sequence: "Ctrl+F"; onActivated: win.openSearch() }
     Shortcut {
         sequence: "Ctrl+L"
         enabled: !!Core.state.current && Favorites.canMark(Core.state.current.id)
@@ -135,13 +148,15 @@ ApplicationWindow {
         id: rail
         visible: !win.compact
         rail: true
+        dense: win.dense
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: playerBar.top
-        width: 88
+        width: implicitWidth
         current: win.page
         // The page floats over the visual: its entry closes it again.
         onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
+        onShowHelp: help.open()
         enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
@@ -302,12 +317,31 @@ ApplicationWindow {
                 active: win.page === 6 || item !== null
                 sourceComponent: StatsPage { }
             }
+            Loader {
+                id: searchLoader
+                active: win.page === 7 || item !== null
+                sourceComponent: SearchPage {
+                    onOpenAlbum: (album) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openAlbum(album))
+                    }
+                    onOpenArtist: (name) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openArtist(name))
+                    }
+                    onOpenLabel: (name) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openLabel(name))
+                    }
+                }
+            }
         }
     }
 
     PlayerBar {
         id: playerBar
         mode: win.compact ? "mini" : "full"
+        dense: win.dense
         visible: !win.compact || win.page >= 0
         anchors.left: parent.left
         anchors.right: parent.right
@@ -316,7 +350,7 @@ ApplicationWindow {
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
         enabled: win.chromeVisible
-        onOpenNowPlaying: win.page = -1
+        onOpenNowPlaying: win.compact ? win.page = -1 : win.toggleVisual()
         onOpenQueue: win.page = win.page === 1 ? -1 : 1
     }
 
@@ -329,6 +363,7 @@ ApplicationWindow {
         height: visible ? implicitHeight : 0
         current: win.page
         onSelected: (i) => win.page = i
+        onShowHelp: help.open()
         enabled: win.chromeVisible
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
@@ -378,6 +413,7 @@ ApplicationWindow {
     function addFolder() { dialogs.addMusicFolder() }
     function addImageFolder() { dialogs.addImageFolder() }
     PlatformDialogs { id: dialogs }
+    HelpDialog { id: help }
     TextPrompt {
         id: loginPrompt
         title: Theme.tr("Log in")

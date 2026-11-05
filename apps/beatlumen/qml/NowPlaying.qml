@@ -12,7 +12,7 @@ Item {
     property bool controlsVisible: true
     signal addLyrics()
     readonly property var cur: Core.state.current || null
-    readonly property bool compact: width < 600
+    readonly property bool compact: width < 600 || height < 420
 
     ColumnLayout {
         id: info

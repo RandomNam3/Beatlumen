@@ -10,6 +10,8 @@ import Beatlumen.Core
 Item {
     id: bar
     property string mode: "full"
+    // Little height (a phone held sideways).
+    property bool dense: false
     signal openNowPlaying()
     signal openQueue()
 
@@ -23,7 +25,7 @@ Item {
     readonly property color fg: overVisual ? "white" : Theme.text
     readonly property color fgDim: overVisual ? Qt.rgba(1, 1, 1, 0.75) : Theme.textDim
 
-    implicitHeight: mode === "mini" ? 72 : mode === "expanded" ? 196 : 92
+    implicitHeight: mode === "mini" ? 72 : mode === "expanded" ? 196 : dense ? 72 : 92
 
     component Transport: RowLayout {
         property int big: 56
@@ -92,6 +94,11 @@ Item {
     component TrackInfo: RowLayout {
         property int coverSize: 48
         spacing: 12
+        // Cover and title lead to the visual.
+        TapHandler {
+            enabled: bar.mode === "full"
+            onTapped: bar.openNowPlaying()
+        }
         CoverImage {
             Layout.preferredWidth: parent.coverSize
             Layout.preferredHeight: parent.coverSize
@@ -222,10 +229,14 @@ Item {
             anchors.rightMargin: 16
             spacing: 12
             TrackInfo {
+                Layout.fillWidth: true
                 Layout.preferredWidth: Math.min(360, bar.width * 0.3)
-                coverSize: 52
+                Layout.maximumWidth: 360
+                Layout.minimumWidth: 140
+                coverSize: bar.dense ? 44 : 52
             }
             Label {
+                visible: bar.width >= 1040
                 textFormat: Text.PlainText
                 text: Theme.fmtTime(Core.position) + " / " + (bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"))
                 color: Theme.textDim
@@ -233,7 +244,7 @@ Item {
                 font.features: { "tnum": 1 }
             }
             Item { Layout.fillWidth: true }
-            Transport { big: 52 }
+            Transport { big: bar.dense ? 44 : 52 }
             Item { Layout.fillWidth: true }
             OutputButton { }
             IconButton {
@@ -242,6 +253,7 @@ Item {
                 onClicked: Core.call("mute")
             }
             Slider {
+                visible: bar.width >= 940
                 Layout.preferredWidth: 120
                 from: 0; to: 1
                 value: Core.state.muted ? 0 : (Core.state.volume || 0)
@@ -251,6 +263,10 @@ Item {
             IconButton {
                 iconName: "queue_music"; tip: Theme.tr("Queue")
                 onClicked: bar.openQueue()
+            }
+            IconButton {
+                iconName: "graphic_eq"; tip: Theme.tr("Now playing")
+                onClicked: bar.openNowPlaying()
             }
         }
     }

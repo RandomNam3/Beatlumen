@@ -16,15 +16,15 @@ Item {
     readonly property var speechLocal: Core.state.speechLocal || ({})
 
     // Shown category ("" = all) and the search.
-    property string category: ""
+    property string category: "look"
+    readonly property bool wide: width >= 720
     readonly property var categories: [
-        { id: "", label: Theme.tr("All") },
+        { id: "look", label: Theme.tr("Display") },
         { id: "playback", label: Theme.tr("Playback") },
         { id: "library", label: Theme.tr("Library & sources") },
         { id: "server", label: Theme.tr("Server & account") },
         { id: "receive", label: Theme.tr("Receiving") },
         { id: "texts", label: Theme.tr("Song texts") },
-        { id: "look", label: Theme.tr("Display") },
         { id: "about", label: Theme.tr("About") }
     ].filter(c => c.id !== "texts" || speechLocal.available === true)
     // Whether the search found anything (set after the sections updated).
@@ -36,7 +36,7 @@ Item {
         const q = settingsSearch.text.trim().toLowerCase()
         if (q.length > 0)
             return words.some(w => Theme.tr(w).toLowerCase().indexOf(q) >= 0 || w.toLowerCase().indexOf(q) >= 0)
-        return category === "" || category === cat
+        return category === cat
     }
 
     SourceDialog { id: sourceDialog }
@@ -54,6 +54,37 @@ Item {
                  || /^\[(::1|f[cd]|fe80)/.test(h) || !h.includes("."))
     }
 
+    // On wide windows the categories sit at the side.
+    Column {
+        id: categoryColumn
+        visible: page.wide
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.topMargin: 56
+        width: 200
+        spacing: 2
+        Repeater {
+            model: page.categories
+            ItemDelegate {
+                required property var modelData
+                width: categoryColumn.width
+                height: 44
+                highlighted: settingsSearch.text === "" && page.category === modelData.id
+                Accessible.role: Accessible.Button
+                Accessible.name: modelData.label
+                // Plain text: a "&" in a name is no shortcut key.
+                contentItem: Label {
+                    textFormat: Text.PlainText
+                    text: modelData.label
+                    color: Theme.text
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                onClicked: { settingsSearch.text = ""; page.category = modelData.id }
+            }
+        }
+    }
+
     ScrollView {
 
         // Vertical only: an (invisible) horizontal bar would catch taps
@@ -62,7 +93,11 @@ Item {
 
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         id: sv
-        anchors.fill: parent
+        anchors.left: page.wide ? categoryColumn.right : parent.left
+        anchors.leftMargin: page.wide ? 8 : 0
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
         clip: true
         contentWidth: availableWidth
         ColumnLayout {
@@ -79,9 +114,10 @@ Item {
                 Layout.rightMargin: 16
                 placeholderText: Theme.tr("Search settings")
                 inputMethodHints: Qt.ImhNoPredictiveText
-                onTextChanged: { if (text) page.category = ""; Qt.callLater(page.updateShown) }
+                onTextChanged: Qt.callLater(page.updateShown)
             }
             Flickable {
+                visible: !page.wide
                 Layout.fillWidth: true
                 Layout.preferredHeight: catRow.height
                 contentWidth: catRow.width + 24

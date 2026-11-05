@@ -22,12 +22,7 @@ Item {
     property var albums: []
     property var artists: []
     property var playlists: []
-    property var results: []
     property bool loaded: false
-    // Server extensions that search (e.g. YouTube) and the search's source.
-    readonly property var extList: (Core.state.extensions || {}).list || []
-    property string searchSource: "library"
-    onExtListChanged: if (searchSource !== "library" && !extList.some(e => e.id === searchSource)) searchSource = "library"
 
     function reload() {
         tracks = Core.call("library.tracks") || []
@@ -52,6 +47,14 @@ Item {
     function openAlbum(album) {
         stack.pop(null)
         stack.push(albumView, { album: album })
+    }
+    function openArtist(name) {
+        stack.pop(null)
+        stack.push(artistView, { artist: name })
+    }
+    function openLabel(name) {
+        stack.pop(null)
+        stack.push(labelView, { label: name })
     }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
@@ -154,7 +157,6 @@ Item {
             id: main
             spacing: 0
             property int section: 0
-            readonly property bool searching: search.text.trim().length > 0
 
             PageHeader {
                 Layout.fillWidth: true
@@ -190,66 +192,6 @@ Item {
                 }
             }
 
-            // Search: a filled pill instead of an outlined form field.
-            TextField {
-                id: search
-                Layout.fillWidth: true
-                Layout.leftMargin: 12
-                Layout.rightMargin: 12
-                Layout.topMargin: 4
-                visible: page.trackCount > 0 || page.extList.length > 0
-                implicitHeight: 46
-                leftPadding: 46
-                rightPadding: clearButton.visible ? 46 : 16
-                topPadding: 0
-                bottomPadding: 0
-                verticalAlignment: TextInput.AlignVCenter
-                font.pixelSize: 15
-                color: Theme.text
-                inputMethodHints: Qt.ImhNoPredictiveText
-                Accessible.name: Theme.tr("Search music")
-                background: Rectangle {
-                    radius: height / 2
-                    color: Theme.surfaceVariant
-                    border.width: search.activeFocus ? 2 : 1
-                    border.color: search.activeFocus ? Theme.accent : Theme.outline
-                }
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: 14
-                    name: "search"
-                    size: 22
-                    color: search.activeFocus ? Theme.accent : Theme.textDim
-                }
-                Label {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: search.leftPadding
-                    width: search.width - search.leftPadding - 16
-                    visible: search.text.length === 0
-                    text: Theme.tr("Search music")
-                    color: Theme.textFaint
-                    font.pixelSize: 15
-                    elide: Text.ElideRight
-                }
-                IconButton {
-                    id: clearButton
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: search.text.length > 0
-                    iconName: "close"
-                    iconSize: 20
-                    tip: Theme.tr("Clear")
-                    onClicked: { search.clear(); search.focus = false }
-                }
-                onTextChanged: searchTimer.restart()
-                Timer {
-                    id: searchTimer
-                    interval: 180
-                    onTriggered: page.results = main.searching ? (Core.call("library.search", { query: search.text }) || []) : []
-                }
-            }
-
             // Sections as filter chips (scroll sideways on narrow screens).
             Flickable {
                 id: chips
@@ -257,7 +199,7 @@ Item {
                 Layout.preferredHeight: 36
                 Layout.topMargin: 10
                 Layout.bottomMargin: 6
-                visible: !main.searching && page.hasContent
+                visible: page.hasContent
                 contentWidth: chipRow.width + 24
                 flickableDirection: Flickable.HorizontalFlick
                 boundsBehavior: Flickable.StopAtBounds
@@ -311,7 +253,7 @@ Item {
                 EmptyState {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - 48, 420)
-                    visible: page.loaded && !page.hasContent && !main.searching
+                    visible: page.loaded && !page.hasContent
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
@@ -334,70 +276,9 @@ Item {
                     }
                 }
 
-                // Search results: the library or a server extension.
-                Item {
-                    anchors.fill: parent
-                    visible: main.searching
-                    Row {
-                        id: sourceChips
-                        x: 12
-                        y: 8
-                        spacing: 6
-                        visible: page.extList.length > 0
-                        Chip {
-                            text: Theme.tr("Library")
-                            checked: page.searchSource === "library"
-                            onClicked: page.searchSource = "library"
-                        }
-                        Repeater {
-                            model: page.extList
-                            Chip {
-                                required property var modelData
-                                text: modelData.name
-                                checked: page.searchSource === modelData.id
-                                onClicked: page.searchSource = modelData.id
-                            }
-                        }
-                    }
-                    Item {
-                        anchors.fill: parent
-                        anchors.topMargin: sourceChips.visible ? sourceChips.height + 12 : 0
-                        TrackListView {
-                            anchors.fill: parent
-                            anchors.topMargin: 8
-                            visible: page.searchSource === "library"
-                            tracks: page.results
-                            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
-                        }
-                        EmptyState {
-                            anchors.centerIn: parent
-                            width: Math.min(parent.width - 48, 420)
-                            visible: page.searchSource === "library" && page.results.length === 0 && !searchTimer.running
-                            iconName: "search"
-                            title: Theme.tr("No results")
-                            text: Theme.tr("Try a different title, artist or album.")
-                            Repeater {
-                                model: page.extList
-                                AccentButton {
-                                    required property var modelData
-                                    text: Theme.tr("Search on") + " " + modelData.name
-                                    highlighted: true
-                                    icon.source: Theme.icon("search")
-                                    onClicked: page.searchSource = modelData.id
-                                }
-                            }
-                        }
-                        Loader {
-                            anchors.fill: parent
-                            active: main.searching && page.searchSource !== "library"
-                            sourceComponent: ExtensionSearch { query: search.text }
-                        }
-                    }
-                }
-
                 StackLayout {
                     anchors.fill: parent
-                    visible: !main.searching && page.hasContent
+                    visible: page.hasContent
                     currentIndex: main.section
 
                     // Songs: play/shuffle scroll away with the list.
