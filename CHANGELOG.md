@@ -177,6 +177,13 @@
 - **Small windows:** phones held sideways get the small player instead of big
   controls that covered the title; the window can be made lower.
 
+### Apps
+
+- **Windows now uses Qt 6.11.3** (before: 6.10.3), like Linux, Android and
+  the web client. Qt's security issue CVE-2026-114366 is in the Qt WebSockets
+  module, which Beatlumen neither uses nor ships, so the apps were not
+  affected.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.
