@@ -34,6 +34,16 @@
   then on, local and encrypted files never leave the device. Can be deleted
   at any time.
 
+### Song texts
+
+- **TTML files** next to a song or added by hand work like LRC ones, with word times,
+  voices and backing voices.
+- **The most finely timed text wins:** word times beat line times beat plain text, no
+  matter whether they are in a file next to the song or in its tags. Extensions may
+  be written in any case (`.LRC`).
+- **A warning when a text does not fit:** when its lines go on well after the song
+  ends, or it says it was timed for another length.
+
 ### Song metadata
 
 - **More from the tags:** ISRC, MusicBrainz ids, tempo, key (also Camelot and Open

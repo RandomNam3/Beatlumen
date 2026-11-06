@@ -298,6 +298,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Sensitivity" => "Empfindlichkeit",
         "Server" => "Server",
         "Server address" => "Serveradresse",
+        "From the song's TTML file" => "Aus der TTML-Datei des Songs",
+        "This song text probably belongs to another version of the song: its times do not fit the length." => "Dieser Songtext gehört vermutlich zu einer anderen Fassung des Songs: Seine Zeiten passen nicht zur Länge.",
         "The sound card is in use by another program" => "Die Soundkarte wird von einem anderen Programm benutzt",
         "The sound card is not available" => "Die Soundkarte ist nicht verfügbar",
         "The sound server would not let go of the sound card" => "Der Sound-Server gibt die Soundkarte nicht frei",

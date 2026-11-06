@@ -28,7 +28,7 @@ Item {
     }
     function openLyrics() {
         if (Core.nativeDialogs) lyricsDialog.open()
-        else pick("file", ["lrc", "txt"], "lyrics", Theme.tr("Add song text…"), (p) => Core.call("lyrics.importFile", { path: p[0] }))
+        else pick("file", ["lrc", "ttml", "txt"], "lyrics", Theme.tr("Add song text…"), (p) => Core.call("lyrics.importFile", { path: p[0] }))
     }
     function addMusicFolder() {
         if (Core.nativeDialogs) folderDialog.open()
@@ -103,7 +103,7 @@ Item {
     FileDialog {
         id: lyricsDialog
         title: Theme.tr("Add song text…")
-        nameFilters: [Theme.tr("Song texts") + " (*.lrc *.txt)", "* (*)"]
+        nameFilters: [Theme.tr("Song texts") + " (*.lrc *.ttml *.txt)", "* (*)"]
         onAccepted: {
             const p = Core.localPaths([selectedFile])
             if (p.length > 0)

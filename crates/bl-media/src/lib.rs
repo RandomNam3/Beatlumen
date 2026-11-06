@@ -39,6 +39,7 @@ mod pcm;
 mod probe;
 mod resample;
 mod tags;
+mod ttml;
 mod util;
 mod wav;
 mod window;
@@ -268,6 +269,7 @@ pub fn downmix_to_stereo(input: &[f32], channels: u16, out: &mut Vec<f32>) {
 pub use eq::{eq_response_db, EqSettings, Equalizer, EQ_BANDS, EQ_MAX_DB};
 pub use pack::{pack_pcm, pcm_preference, PcmFormat};
 pub use resample::Resampler;
+pub use ttml::{is_ttml, ttml_to_lrc};
 
 /// Decodes a whole file to mono at `rate` Hz (the channels averaged), at
 /// most `max_secs` seconds. `keep_going` is asked between chunks.

@@ -45,6 +45,43 @@ pub struct Lyrics {
     pub creator: Option<String>,
 }
 
+/// Whether a timed text can belong to a song of this length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fit {
+    Fine,
+    /// It goes on well after the song has ended.
+    Overruns,
+    /// It says it was timed for another length (`[length:]`).
+    OtherLength,
+}
+
+/// How long after a song's end a text may still be sung (ms).
+const OVERRUN_MS: i64 = 10_000;
+/// How far the length a text was timed for may differ (ms): timings drift
+/// noticeably on another edit of a song.
+const LENGTH_TOLERANCE_MS: i64 = 2_000;
+
+pub(crate) fn fit(text: &str, lyrics: &Lyrics, duration_ms: Option<i64>) -> Fit {
+    let Some(duration) = duration_ms.filter(|d| *d > 0) else {
+        return Fit::Fine;
+    };
+    if !lyrics.synced {
+        return Fit::Fine;
+    }
+    let last = lyrics.lines.iter().filter_map(|l| l.time_ms).max();
+    if last.is_some_and(|t| t > duration + OVERRUN_MS) {
+        return Fit::Overruns;
+    }
+    let stated = text.lines().find_map(|l| {
+        let tag = l.trim().strip_prefix("[length:")?.strip_suffix(']')?;
+        parse_time(tag)
+    });
+    if stated.is_some_and(|s| (s - duration).abs() > LENGTH_TOLERANCE_MS) {
+        return Fit::OtherLength;
+    }
+    Fit::Fine
+}
+
 /// Parses a time like "01:23.45", "1:23", "01:23:45" (hundredths) or
 /// "1:02:03.5" into milliseconds.
 fn parse_time(s: &str) -> Option<i64> {
@@ -616,6 +653,7 @@ impl Core {
         let speech = lyrics.creator.as_deref().and_then(speech_creator);
         let what = match (source, &speech) {
             ("lrc", _) => self.tr("From the song's LRC file"),
+            ("ttml", _) => self.tr("From the song's TTML file"),
             ("embedded", _) => self.tr("From the music file"),
             ("txt", _) => self.tr("From the song's text file"),
             ("recognized", _) => self.tr("Written down by speech recognition, saved on the server"),
@@ -847,10 +885,18 @@ impl Core {
         let Some(id) = self.queue.current().cloned() else {
             return Value::object().with("error", "nothing playing");
         };
+        let text = bl_media::lyrics::normalize_text(text);
         let text = text.trim();
         if text.is_empty() || text.len() > 256 * 1024 {
             return Value::object().with("error", self.tr("This file has no usable song text"));
         }
+        let duration = self.player.duration().map(|d| (d * 1000.0) as i64);
+        let warning = match fit(text, &parse(text), duration) {
+            Fit::Fine => None,
+            Fit::Overruns | Fit::OtherLength => {
+                Some(self.tr("This song text probably belongs to another version of the song: its times do not fit the length."))
+            }
+        };
         if library::is_server_id(&id) && self.server.is_connected() {
             let rid = self.server.send(
                 host,
@@ -874,7 +920,11 @@ impl Core {
             ..Default::default()
         };
         self.revs.lyrics += 1;
-        Value::object().with("ok", true)
+        let answer = Value::object().with("ok", true);
+        match warning {
+            Some(w) => answer.with("warning", w),
+            None => answer,
+        }
     }
 
     /// Imports a picked file as the current track's song text.
@@ -884,9 +934,10 @@ impl Core {
         } else {
             self.lyrics_import(host, &bl_media::lyrics::decode_text(data))
         };
-        match r.get("error").as_str() {
-            Some(e) => self.toast(e.to_string(), true),
-            None => self.toast(self.tr("Song text added"), false),
+        match (r.get("error").as_str(), r.get("warning").as_str()) {
+            (Some(e), _) => self.toast(e.to_string(), true),
+            (None, Some(w)) => self.toast(w.to_string(), true),
+            _ => self.toast(self.tr("Song text added"), false),
         }
     }
 
@@ -1005,6 +1056,54 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_ttml_file_ends_up_with_its_words_voices_and_pauses() {
+        let lrc = bl_media::ttml_to_lrc(
+            r#"<tt xmlns:ttm="x"><body><div>
+              <p begin="1s" ttm:agent="v1"><span begin="1s" end="1.5s">Hel</span><span begin="1.5s" end="2s">lo</span> <span begin="3s" end="4s">world</span></p>
+              <p begin="5s" ttm:agent="v2"><span begin="5s" end="6s">Other</span> <span ttm:role="x-bg"><span begin="6s" end="7s">oh</span></span></p>
+            </div></body></tt>"#,
+        )
+        .unwrap();
+        let l = parse(&lrc);
+        assert!(l.synced);
+        assert!(l.word_timed());
+        assert_eq!(l.lines.len(), 2);
+        let first = &l.lines[0];
+        assert_eq!(first.text, "Hello world");
+        assert_eq!(first.voice, 1);
+        assert_eq!(first.time_ms, Some(1000));
+        assert_eq!(first.words[0].w, "Hel");
+        assert_eq!(first.words[1].w, "lo ");
+        // The pause before "world" is kept.
+        assert_eq!(first.words[1].end, 2000);
+        assert_eq!(first.words[2].t, 3000);
+        assert_eq!(first.words[2].end, 4000);
+        let second = &l.lines[1];
+        assert_eq!(second.voice, 2);
+        assert_eq!(second.text, "Other (oh)");
+    }
+
+    #[test]
+    fn a_text_that_cannot_belong_to_the_song_is_told_apart() {
+        let timed = "[00:10.00]A\n[03:00.00]B\n";
+        let l = parse(timed);
+        assert_eq!(fit(timed, &l, Some(200_000)), Fit::Fine);
+        // A few seconds past the end: a fade-out, not another song.
+        assert_eq!(fit(timed, &l, Some(175_000)), Fit::Fine);
+        assert_eq!(fit(timed, &l, Some(120_000)), Fit::Overruns);
+        // Nothing to compare with.
+        assert_eq!(fit(timed, &l, None), Fit::Fine);
+        // Without times there is nothing that could not fit.
+        let plain = "A\nB\n";
+        assert_eq!(fit(plain, &parse(plain), Some(1000)), Fit::Fine);
+        // Its own statement of the length.
+        let stated = "[length:03:30]\n[00:10.00]A\n";
+        let l = parse(stated);
+        assert_eq!(fit(stated, &l, Some(211_000)), Fit::Fine);
+        assert_eq!(fit(stated, &l, Some(240_000)), Fit::OtherLength);
+    }
 
     #[test]
     fn edited_texts_are_written_back_unchanged() {

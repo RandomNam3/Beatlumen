@@ -2487,7 +2487,7 @@ impl Core {
         let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
         if let Some(p) = paths.iter().find(|p| {
             let ext = extension(p).unwrap_or_default();
-            ext == "lrc" || (expect_lyrics && ext == "txt")
+            ext == "lrc" || ext == "ttml" || (expect_lyrics && ext == "txt")
         }) {
             if let Ok(d) = host.fs_read(p) {
                 self.lyrics_import_bytes(host, &d);
