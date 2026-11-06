@@ -16,7 +16,7 @@ mod rng;
 pub mod stats;
 mod taste;
 
-pub use catalog::{Catalog, Features, Song};
+pub use catalog::{language_code, normalize_genre, parse_key, Catalog, Features, Song, Tagged};
 pub use labels::{auto_labels, key_name};
 pub use mixes::{mixes, shelves, Mix, Reason, Shelf, Suggestion};
 pub use radio::{radio, Seed};

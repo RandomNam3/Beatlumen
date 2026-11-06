@@ -23,6 +23,10 @@ const MINOR: [f32; 12] = [
     6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
 ];
 
+/// Goes up when the same song gets other results: what was worked out earlier
+/// is then worked out again, also where the file did not change.
+pub const FEATURES_VERSION: u64 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SongFeatures {
     pub bpm: f32,

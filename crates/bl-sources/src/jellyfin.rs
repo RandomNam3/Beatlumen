@@ -131,7 +131,15 @@ impl Jellyfin {
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
+        let ids = i.get("ProviderIds");
+        let meta = bl_net::api::TrackMeta {
+            mb_recording: ids.str_or("MusicBrainzTrack", "").to_string(),
+            mb_artist: ids.str_or("MusicBrainzArtist", "").to_string(),
+            mb_album: ids.str_or("MusicBrainzAlbum", "").to_string(),
+            ..Default::default()
+        };
         Some(RemoteTrack {
+            meta,
             key: id.to_string(),
             title: i.str_or("Name", "").to_string(),
             artists: strings("Artists"),

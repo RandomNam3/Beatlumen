@@ -36,6 +36,14 @@ struct Analysed {
     /// `None`: nothing to tell (silence, cannot be read); not tried again
     /// until the file changes.
     features: Option<Features>,
+    /// Of the analysis it comes from (lines without one: the first).
+    version: u64,
+}
+
+impl Analysed {
+    fn current(&self, mtime_ns: u64) -> bool {
+        self.mtime_ns == mtime_ns && self.version == bl_analysis::features::FEATURES_VERSION
+    }
 }
 
 /// The features of all songs and the worker that fills them in.
@@ -50,7 +58,10 @@ pub struct SoundIndex {
 }
 
 fn features_json(id: &str, a: &Analysed) -> Value {
-    let mut v = Value::object().with("id", id).with("mtime", a.mtime_ns);
+    let mut v = Value::object()
+        .with("id", id)
+        .with("mtime", a.mtime_ns)
+        .with("v", a.version);
     if let Some(f) = &a.features {
         v = v
             .with("bpm", f.bpm)
@@ -78,6 +89,7 @@ fn parse_line(v: &Value) -> Option<(String, Analysed)> {
         Analysed {
             mtime_ns: v.get("mtime").as_u64().unwrap_or(0),
             features,
+            version: v.get("v").as_u64().unwrap_or(1),
         },
     ))
 }
@@ -119,6 +131,7 @@ impl SoundIndex {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get(id)
+            // An older analysis still counts until the new one is done.
             .filter(|a| a.mtime_ns == mtime_ns)
             .and_then(|a| a.features)
     }
@@ -131,10 +144,7 @@ impl SoundIndex {
         let mut done = 0usize;
         for e in lib.tracks().iter().filter(|e| e.remote.is_none()) {
             total += 1;
-            if map
-                .get(&e.track.id)
-                .is_some_and(|a| a.mtime_ns == e.mtime_ns)
-            {
+            if map.get(&e.track.id).is_some_and(|a| a.current(e.mtime_ns)) {
                 done += 1;
             }
         }
@@ -184,10 +194,7 @@ impl SoundIndex {
         lib.tracks()
             .iter()
             .find(|e| {
-                e.remote.is_none()
-                    && map
-                        .get(&e.track.id)
-                        .is_none_or(|a| a.mtime_ns != e.mtime_ns)
+                e.remote.is_none() && map.get(&e.track.id).is_none_or(|a| !a.current(e.mtime_ns))
             })
             .cloned()
     }
@@ -204,6 +211,7 @@ impl SoundIndex {
         let a = Analysed {
             mtime_ns: e.mtime_ns,
             features,
+            version: bl_analysis::features::FEATURES_VERSION,
         };
         let line = features_json(&e.track.id, &a).to_json() + "\n";
         if let Some(dir) = self.path.parent() {
@@ -495,12 +503,14 @@ mod tests {
                 energy: 0.7,
                 brightness: 0.25,
             }),
+            version: 1,
         };
         let v = bl_json::parse(&features_json(A, &a).to_json()).unwrap();
         assert_eq!(parse_line(&v), Some((A.to_string(), a)));
         let none = Analysed {
             mtime_ns: 77,
             features: None,
+            version: 1,
         };
         let v = bl_json::parse(&features_json(A, &none).to_json()).unwrap();
         assert_eq!(parse_line(&v), Some((A.to_string(), none)));

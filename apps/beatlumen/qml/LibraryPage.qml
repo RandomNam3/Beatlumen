@@ -483,6 +483,8 @@ Item {
                                         { kind: "mood", title: Theme.tr("Mood") },
                                         { kind: "genre", title: Theme.tr("Genres") },
                                         { kind: "decade", title: Theme.tr("Decades") },
+                                        { kind: "lang", title: Theme.tr("Languages") },
+                                        { kind: "publisher", title: Theme.tr("Record labels") },
                                         { kind: "tempo", title: Theme.tr("Tempo") },
                                         { kind: "energy", title: Theme.tr("Energy") },
                                         { kind: "key", title: Theme.tr("Keys") }

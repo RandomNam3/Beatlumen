@@ -378,3 +378,69 @@ fn ape_and_id3v1_at_end() {
         "audio length changed by trailing tags ({audio_len} bytes audio)"
     );
 }
+
+#[test]
+fn what_files_say_for_recommendations() {
+    if !common::have_ffmpeg() {
+        eprintln!("ffmpeg not found: skipping");
+        return;
+    }
+    let recording = "b1a9c0e9-d987-4042-ae91-78d6a3267d69";
+    let artist = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let flac: &[(&str, String)] = &[
+        ("BPM", "128".into()),
+        ("INITIALKEY", "Am".into()),
+        ("MOOD", "Calm".into()),
+        ("LABEL", "Warp".into()),
+        ("LANGUAGE", "deu".into()),
+        ("ISRC", "USRC17607839".into()),
+        ("MUSICBRAINZ_TRACKID", recording.into()),
+        ("MUSICBRAINZ_ARTISTID", artist.into()),
+        ("ORIGINALDATE", "1997".into()),
+        ("FMPS_RATING", "0.8".into()),
+    ];
+    let mp3: &[(&str, String)] = &[
+        ("TBPM", "128".into()),
+        ("TKEY", "Am".into()),
+        ("TMOO", "Calm".into()),
+        ("publisher", "Warp".into()),
+        ("language", "deu".into()),
+        ("TSRC", "USRC17607839".into()),
+        ("MusicBrainz Artist Id", artist.into()),
+    ];
+    for (name, codec, meta) in [
+        ("meta.flac", &["-c:a", "flac"][..], flac),
+        (
+            "meta.mp3",
+            &["-c:a", "libmp3lame", "-id3v2_version", "4"][..],
+            mp3,
+        ),
+    ] {
+        let mut args: Vec<&str> = codec.to_vec();
+        let pairs: Vec<String> = meta.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        for p in &pairs {
+            args.push("-metadata");
+            args.push(p);
+        }
+        let Some(path) = common::make(name, "stereo44", &args) else {
+            eprintln!("{name}: encoder missing");
+            continue;
+        };
+        let mut file = std::fs::File::open(&path).unwrap();
+        let info = bl_media::read_info(&mut file, path.extension().and_then(|e| e.to_str()), false)
+            .unwrap();
+        let t = info.tags;
+        assert_eq!(t.bpm, Some(128.0), "{name}");
+        assert_eq!(t.key.as_deref(), Some("Am"), "{name}");
+        assert_eq!(t.mood.as_deref(), Some("Calm"), "{name}");
+        assert_eq!(t.publisher.as_deref(), Some("Warp"), "{name}");
+        assert_eq!(t.language.as_deref(), Some("deu"), "{name}");
+        assert_eq!(t.isrc.as_deref(), Some("USRC17607839"), "{name}");
+        assert_eq!(t.mb_artist.as_deref(), Some(artist), "{name}");
+        if name.ends_with("flac") {
+            assert_eq!(t.mb_recording.as_deref(), Some(recording));
+            assert_eq!(t.original_year, Some(1997));
+            assert_eq!(t.rating, Some(0.8));
+        }
+    }
+}

@@ -36,6 +36,18 @@ pub struct Cache {
     built: Mutex<Vec<(Built, Arc<Catalog>)>>,
 }
 
+fn tagged(m: &bl_net::api::TrackMeta) -> bl_recommend::Tagged {
+    bl_recommend::Tagged::from_text(
+        m.bpm,
+        &m.key,
+        &m.mood,
+        &m.publisher,
+        &m.language,
+        &m.composer,
+        m.rating,
+    )
+}
+
 impl Cache {
     /// Building takes a moment with a large library, and most requests find
     /// nothing changed.
@@ -65,10 +77,11 @@ impl Cache {
                 artists: e.track.artists.clone(),
                 album_id: e.track.album_id.clone(),
                 genre: e.track.genre.clone(),
-                year: e.track.year,
+                year: e.track.meta.original_year.or(e.track.year),
                 added: e.track.modified,
                 features: state.sound.features(&e.track.id, e.mtime_ns),
                 labels: given.get(&e.track.id).cloned().unwrap_or_default(),
+                tagged: tagged(&e.track.meta),
             })
             .collect();
         let c = Arc::new(Catalog::new(songs));

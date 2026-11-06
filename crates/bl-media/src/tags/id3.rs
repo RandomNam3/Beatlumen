@@ -316,6 +316,13 @@ fn canonical_id(id: &str) -> &str {
         "COM" => "COMM",
         "TXX" => "TXXX",
         "ULT" => "USLT",
+        "TBP" => "TBPM",
+        "TKE" => "TKEY",
+        "TPB" => "TPUB",
+        "TLA" => "TLAN",
+        "TRC" => "TSRC",
+        "POP" => "POPM",
+        "UFI" => "UFID",
         "SLT" => "SYLT",
         "TOR" => "TORY",
         "PIC" => "PIC",
@@ -339,6 +346,14 @@ fn wanted(id: &str) -> bool {
             | "TDOR"
             | "TRCK"
             | "TPOS"
+            | "TBPM"
+            | "TKEY"
+            | "TMOO"
+            | "TPUB"
+            | "TLAN"
+            | "TSRC"
+            | "POPM"
+            | "UFID"
             | "COMM"
             | "TXXX"
             | "USLT"
@@ -427,10 +442,39 @@ fn handle_frame(
     found: &mut Found,
 ) {
     match id {
+        "TBPM" | "TKEY" | "TMOO" | "TPUB" | "TLAN" | "TSRC" => {
+            if let Some(first) = text_values(data).first() {
+                apply_common(tags, id, first);
+            }
+        }
+        // Owner, then the rating of 255 (0: not rated) and a play count.
+        "POPM" => {
+            let rating = data
+                .iter()
+                .position(|b| *b == 0)
+                .and_then(|end| data.get(end + 1));
+            if let Some(r) = rating.filter(|r| **r > 0) {
+                tags.rating.get_or_insert(*r as f32 / 255.0);
+            }
+        }
+        // MusicBrainz writes its recording id as a unique file identifier.
+        "UFID" => {
+            if let Some(end) = data.iter().position(|b| *b == 0) {
+                if &data[..end] == b"http://musicbrainz.org" {
+                    let id = String::from_utf8_lossy(&data[end + 1..]);
+                    if tags.mb_recording.is_none() {
+                        tags.mb_recording = super::parse_mbid(&id);
+                    }
+                }
+            }
+        }
         "TIT2" | "TPE1" | "TPE2" | "TALB" | "TCOM" | "TCON" | "TYER" | "TDRC" | "TDRL" | "TORY"
         | "TDOR" | "TRCK" | "TPOS" => {
             let values = text_values(data);
             let Some(first) = values.first() else { return };
+            if matches!(id, "TORY" | "TDOR") && tags.original_year.is_none() {
+                tags.original_year = parse_year(first);
+            }
             match id {
                 "TIT2" => set_str(&mut tags.title, first),
                 "TPE1" => set_str(&mut tags.artist, &values.join("; ")),
@@ -482,6 +526,8 @@ fn handle_frame(
             if matches!(key.as_str(), "LYRICS" | "UNSYNCEDLYRICS" | "USLT") {
                 super::set_lyrics(tags, &value);
             } else if key.starts_with("REPLAYGAIN_")
+                || key.starts_with("MUSICBRAINZ ")
+                || key.starts_with("MUSICBRAINZ_")
                 || matches!(
                     key.as_str(),
                     "ALBUM ARTIST"
@@ -490,6 +536,16 @@ fn handle_frame(
                         | "TOTALDISCS"
                         | "TRACKTOTAL"
                         | "DISCTOTAL"
+                        | "ISRC"
+                        | "BPM"
+                        | "INITIALKEY"
+                        | "KEY"
+                        | "MOOD"
+                        | "LABEL"
+                        | "PUBLISHER"
+                        | "LANGUAGE"
+                        | "RATING"
+                        | "FMPS_RATING"
                 )
             {
                 apply_common(tags, &key, &value);

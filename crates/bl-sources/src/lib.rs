@@ -42,6 +42,7 @@ pub struct RemoteTrack {
     /// File extension or container hint ("mp3", "flac", …).
     pub ext: String,
     pub has_cover: bool,
+    pub meta: bl_net::api::TrackMeta,
 }
 
 /// A playlist of a source (keys of its songs).

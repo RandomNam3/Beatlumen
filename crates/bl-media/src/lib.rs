@@ -162,6 +162,24 @@ pub struct Tags {
     pub replaygain_track_peak: Option<f32>,
     pub replaygain_album_gain: Option<f32>,
     pub replaygain_album_peak: Option<f32>,
+    /// The year it first came out, when the tags tell it apart from `year`.
+    pub original_year: Option<i32>,
+    /// International Standard Recording Code (12 characters, no hyphens).
+    pub isrc: Option<String>,
+    /// MusicBrainz ids of the recording, the artist and the release.
+    pub mb_recording: Option<String>,
+    pub mb_artist: Option<String>,
+    pub mb_album: Option<String>,
+    /// Tempo as tagged (beats per minute).
+    pub bpm: Option<f32>,
+    /// Musical key as tagged ("Am", "F#", "8A", ...).
+    pub key: Option<String>,
+    pub mood: Option<String>,
+    /// Record label or publisher.
+    pub publisher: Option<String>,
+    pub language: Option<String>,
+    /// Rating (0..1).
+    pub rating: Option<f32>,
 }
 
 /// An embedded picture (cover art).

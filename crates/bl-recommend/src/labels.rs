@@ -65,6 +65,23 @@ pub fn auto_labels(s: &Song) -> Vec<String> {
     if let Some(y) = s.year.filter(|y| *y >= 1000) {
         out.push(format!("decade:{}", y / 10 * 10));
     }
+    for m in &s.tagged.moods {
+        out.push(format!("mood:{m}"));
+    }
+    if !s.tagged.publisher.is_empty() {
+        out.push(format!("publisher:{}", s.tagged.publisher));
+    }
+    if !s.tagged.language.is_empty() {
+        out.push(format!("lang:{}", s.tagged.language));
+    }
+    if s.features.is_none() {
+        if let Some(bpm) = s.tagged.bpm {
+            out.push(format!("tempo:{}", tempo_class(bpm)));
+        }
+        if let Some((key, minor)) = s.tagged.key {
+            out.push(format!("key:{}", key_name(key, minor)));
+        }
+    }
     if let Some(f) = &s.features {
         out.push(format!("tempo:{}", tempo_class(f.bpm)));
         out.push(format!("energy:{}", energy_class(f.energy)));
@@ -105,6 +122,45 @@ mod tests {
             auto_labels(&s),
             ["genre:hard rock", "genre:metal", "decade:1980"]
         );
+    }
+
+    #[test]
+    fn from_more_tags() {
+        let s = Song {
+            tagged: crate::catalog::Tagged::from_text(
+                Some(150.0),
+                "8A",
+                "Calm; Dark",
+                "Warp",
+                "ger",
+                "",
+                None,
+            ),
+            ..Song::default()
+        };
+        let l = auto_labels(&s);
+        for want in [
+            "tempo:fast",
+            "key:Am",
+            "mood:calm",
+            "mood:dark",
+            "publisher:warp",
+            "lang:de",
+        ] {
+            assert!(l.iter().any(|x| x == want), "{want} in {l:?}");
+        }
+        // What the sound says wins over the tags.
+        let s = Song {
+            features: Some(features(80.0, 0.6, false)),
+            tagged: crate::catalog::Tagged {
+                bpm: Some(150.0),
+                ..Default::default()
+            },
+            ..Song::default()
+        };
+        let l = auto_labels(&s);
+        assert!(l.iter().any(|x| x == "tempo:slow"));
+        assert!(!l.iter().any(|x| x == "tempo:fast"));
     }
 
     #[test]

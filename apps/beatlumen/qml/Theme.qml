@@ -118,7 +118,9 @@ QtObject {
         case "key": return tr("Key of %1").arg(value)
         case "tempo": return tr({ slow: "Slow", medium: "Medium tempo", fast: "Fast" }[value] || value)
         case "energy": return tr({ low: "Quiet", medium: "Medium energy", high: "High energy" }[value] || value)
-        case "mood": return tr({ upbeat: "Upbeat", intense: "Intense", relaxed: "Relaxed", melancholic: "Melancholic", danceable: "Danceable" }[value] || value)
+        case "mood": return tr({ upbeat: "Upbeat", intense: "Intense", relaxed: "Relaxed", melancholic: "Melancholic", danceable: "Danceable" }[value] || capitalized(value))
+        case "publisher": return capitalized(value)
+        case "lang": return tr({ en: "English", de: "German", fr: "French", es: "Spanish", it: "Italian", nl: "Dutch", pt: "Portuguese", ru: "Russian", ja: "Japanese", ko: "Korean", zh: "Chinese", sv: "Swedish" }[value] || value)
         default: return value
         }
     }
@@ -629,6 +631,13 @@ QtObject {
         "Playback": "Wiedergabe",
         "Normalize volume": "Lautstärke angleichen",
         "Crossfade": "Überblendung",
+        "Languages": "Sprachen",
+        "Record labels": "Plattenfirmen",
+        "Portuguese": "Portugiesisch",
+        "Japanese": "Japanisch",
+        "Korean": "Koreanisch",
+        "Chinese": "Chinesisch",
+        "Swedish": "Schwedisch",
         "Bit-perfect playback": "Bit-perfekte Wiedergabe",
         "Hands the music to a sound card exactly as it is in the file: no converting, no mixing. While it runs, other programs have no sound on this card. Equalizer, normalizing, crossfade and skipping silence are off. Set the volume to 100 % and turn it down on your amplifier.": "Gibt die Musik genau so an eine Soundkarte, wie sie in der Datei steht: ohne Umrechnen, ohne Mischen. Solange das läuft, haben andere Programme auf dieser Karte keinen Ton. Equalizer, Lautstärke angleichen, Überblendung und Stille überspringen sind aus. Stell die Lautstärke auf 100 % und regle sie am Verstärker.",
         "Sound card": "Soundkarte",

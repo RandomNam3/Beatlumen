@@ -30,6 +30,48 @@ pub struct Song {
     pub features: Option<Features>,
     /// Labels given by people.
     pub labels: Vec<String>,
+    /// What its tags say beyond that.
+    pub tagged: Tagged,
+}
+
+/// What tags can say about a song. Where a server knows how it sounds, the
+/// sound wins; everywhere else (devices without a server, other sources) this
+/// is all there is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Tagged {
+    pub bpm: Option<f32>,
+    /// Pitch class and whether it is minor.
+    pub key: Option<(u8, bool)>,
+    pub moods: Vec<String>,
+    pub publisher: String,
+    /// Two letters.
+    pub language: String,
+    pub composers: Vec<String>,
+    /// (0..1)
+    pub rating: Option<f32>,
+}
+
+impl Tagged {
+    /// From tags as they are written.
+    pub fn from_text(
+        bpm: Option<f32>,
+        key: &str,
+        mood: &str,
+        publisher: &str,
+        language: &str,
+        composer: &str,
+        rating: Option<f32>,
+    ) -> Tagged {
+        Tagged {
+            bpm,
+            key: parse_key(key),
+            moods: split_values(mood),
+            publisher: publisher.trim().to_lowercase(),
+            language: language_code(language).unwrap_or_default().to_string(),
+            composers: split_values(composer),
+            rating,
+        }
+    }
 }
 
 pub(crate) struct Item {
@@ -41,6 +83,10 @@ pub(crate) struct Item {
     pub features: Option<Features>,
     /// Both automatic ones and those given by people.
     pub labels: Vec<u32>,
+    /// From the sound, else from the tags.
+    pub tempo: Option<f32>,
+    pub composers: Vec<u32>,
+    pub rating: Option<f32>,
 }
 
 #[derive(Default)]
@@ -70,18 +116,190 @@ pub struct Catalog {
     genres: Names,
     labels: Names,
     albums: Names,
+    composers: Names,
     pub(crate) by_artist: Vec<Vec<u32>>,
     pub(crate) by_album: Vec<Vec<u32>>,
     pub(crate) by_label: Vec<Vec<u32>>,
 }
 
+/// Tags that say something about the listener and not about the music.
+const NOT_GENRES: &[&str] = &[
+    "unknown",
+    "other",
+    "none",
+    "misc",
+    "miscellaneous",
+    "various",
+    "music",
+    "genre",
+    "favorite",
+    "favorites",
+    "favourite",
+    "favourites",
+    "seen live",
+    "albums i own",
+    "my music",
+    "awesome",
+    "amazing",
+    "beautiful",
+    "best",
+    "cool",
+    "good",
+    "great",
+    "love",
+    "loved",
+    "mp3",
+    "flac",
+];
+
+/// One spelling for what is written in many ways, so that songs meet.
+const GENRE_SPELLINGS: &[(&str, &str)] = &[
+    ("hiphop", "hip hop"),
+    ("hip-hop", "hip hop"),
+    ("rnb", "r&b"),
+    ("r and b", "r&b"),
+    ("rhythm and blues", "r&b"),
+    ("rhythm & blues", "r&b"),
+    ("dnb", "drum and bass"),
+    ("d&b", "drum and bass"),
+    ("drum & bass", "drum and bass"),
+    ("drum n bass", "drum and bass"),
+    ("drum'n'bass", "drum and bass"),
+    ("synth-pop", "synthpop"),
+    ("synth pop", "synthpop"),
+    ("electronica", "electronic"),
+    ("alt rock", "alternative rock"),
+    ("alt-rock", "alternative rock"),
+    ("indie-rock", "indie rock"),
+    ("post punk", "post-punk"),
+    ("rock & roll", "rock and roll"),
+    ("rock n roll", "rock and roll"),
+    ("rock'n'roll", "rock and roll"),
+];
+
+/// A genre in its one spelling, or nothing when it is not one.
+pub fn normalize_genre(genre: &str) -> Option<String> {
+    let g = genre
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if g.is_empty() || NOT_GENRES.contains(&g.as_str()) {
+        return None;
+    }
+    let spelled = GENRE_SPELLINGS.iter().find(|(from, _)| *from == g);
+    Some(spelled.map_or(g.clone(), |(_, to)| to.to_string()))
+}
+
 /// A genre tag may hold several ("Rock; Pop", "Indie/Folk").
 pub(crate) fn split_genres(genre: &str) -> Vec<String> {
-    genre
+    let mut out: Vec<String> = Vec::new();
+    for g in genre
         .split([';', ',', '/', '|'])
-        .map(|g| g.trim().to_lowercase())
-        .filter(|g| !g.is_empty() && g != "unknown" && g != "other")
+        .filter_map(normalize_genre)
+    {
+        if !out.contains(&g) {
+            out.push(g);
+        }
+    }
+    out
+}
+
+/// Several values in one tag ("Calm; Dark"), in lower case.
+pub(crate) fn split_values(text: &str) -> Vec<String> {
+    text.split([';', ',', '/', '|', '\0'])
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
         .collect()
+}
+
+/// A musical key as taggers write it: `Am`, `F#`, `Bb minor`, Camelot (`8A`)
+/// or Open Key (`1m`). Pitch class (0 = C) and whether it is minor.
+pub fn parse_key(text: &str) -> Option<(u8, bool)> {
+    let t = text.trim();
+    let wheel = |n: i32, start: i32| (start + 7 * (n - 1)).rem_euclid(12) as u8;
+    if let Some(split) = t.find(|c: char| !c.is_ascii_digit()).filter(|i| *i > 0) {
+        let n: i32 = t[..split].parse().ok()?;
+        if !(1..=12).contains(&n) {
+            return None;
+        }
+        return match t[split..].to_ascii_lowercase().as_str() {
+            // 8A is A minor, 8B is C major.
+            "a" => Some((wheel(n, 8), true)),
+            "b" => Some((wheel(n, 11), false)),
+            // 1m is A minor, 1d is C major.
+            "m" => Some((wheel(n, 9), true)),
+            "d" => Some((wheel(n, 0), false)),
+            _ => None,
+        };
+    }
+    let mut chars = t.chars();
+    let letter = chars.next()?.to_ascii_uppercase();
+    let base: i32 = match letter {
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let rest = chars.as_str();
+    let (shift, rest) = match rest.chars().next() {
+        Some('#') | Some('♯') => (1, &rest[rest.chars().next()?.len_utf8()..]),
+        Some('b') | Some('♭') => (-1, &rest[rest.chars().next()?.len_utf8()..]),
+        _ => (0, rest),
+    };
+    let mode = rest
+        .trim_matches(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .to_lowercase();
+    let minor = match mode.as_str() {
+        "" | "maj" | "major" | "dur" => false,
+        "m" | "min" | "minor" | "moll" => true,
+        _ => return None,
+    };
+    Some(((base + shift).rem_euclid(12) as u8, minor))
+}
+
+/// Two letters for how languages are tagged: `de`, `ger`, `deu`, `German`.
+pub fn language_code(text: &str) -> Option<&'static str> {
+    const LANGUAGES: &[(&str, &[&str])] = &[
+        ("en", &["en", "eng", "english", "englisch"]),
+        ("de", &["de", "ger", "deu", "german", "deutsch"]),
+        (
+            "fr",
+            &[
+                "fr",
+                "fre",
+                "fra",
+                "french",
+                "französisch",
+                "francais",
+                "français",
+            ],
+        ),
+        (
+            "es",
+            &["es", "spa", "spanish", "spanisch", "español", "espanol"],
+        ),
+        ("it", &["it", "ita", "italian", "italienisch", "italiano"]),
+        ("nl", &["nl", "dut", "nld", "dutch", "niederländisch"]),
+        (
+            "pt",
+            &["pt", "por", "portuguese", "portugiesisch", "português"],
+        ),
+        ("ru", &["ru", "rus", "russian", "russisch"]),
+        ("ja", &["ja", "jpn", "japanese", "japanisch"]),
+        ("ko", &["ko", "kor", "korean", "koreanisch"]),
+        ("zh", &["zh", "chi", "zho", "chinese", "chinesisch"]),
+        ("sv", &["sv", "swe", "swedish", "schwedisch"]),
+    ];
+    let t = text.trim().to_lowercase();
+    LANGUAGES
+        .iter()
+        .find(|(_, names)| names.contains(&t.as_str()))
+        .map(|(code, _)| *code)
 }
 
 impl Catalog {
@@ -94,6 +312,7 @@ impl Catalog {
             genres: Names::default(),
             labels: Names::default(),
             albums: Names::default(),
+            composers: Names::default(),
             by_artist: Vec::new(),
             by_album: Vec::new(),
             by_label: Vec::new(),
@@ -137,6 +356,12 @@ impl Catalog {
             }
             c.by_id.insert(s.id.clone(), i);
             c.ids.push(s.id);
+            let composers = s
+                .tagged
+                .composers
+                .iter()
+                .map(|n| c.composers.id(n))
+                .collect();
             c.items.push(Item {
                 artists,
                 album,
@@ -145,6 +370,9 @@ impl Catalog {
                 added: s.added,
                 features: s.features,
                 labels,
+                tempo: s.features.map(|f| f.bpm).or(s.tagged.bpm),
+                composers,
+                rating: s.tagged.rating,
             });
         }
         c
@@ -267,6 +495,12 @@ impl Catalog {
             weight += 0.10;
             score += 0.10 * shared as f32 / all as f32;
         }
+        if !x.composers.is_empty() && !y.composers.is_empty() {
+            weight += 0.05;
+            if x.composers.iter().any(|t| y.composers.contains(t)) {
+                score += 0.05;
+            }
+        }
         if let (Some(p), Some(q)) = (x.features, y.features) {
             weight += 0.37;
             score += 0.12 * tempo_closeness(p.bpm, q.bpm)
@@ -274,6 +508,10 @@ impl Catalog {
                 + 0.05 * (1.0 - (p.brightness - q.brightness).abs())
                 + 0.04 * (1.0 - (p.beat - q.beat).abs())
                 + 0.03 * key_closeness(p, q);
+        } else if let (Some(p), Some(q)) = (x.tempo, y.tempo) {
+            // Only the tempo tags: what is known still counts.
+            weight += 0.12;
+            score += 0.12 * tempo_closeness(p, q);
         }
         if weight <= 0.0 {
             0.0
@@ -326,7 +564,84 @@ pub(crate) mod tests {
                 brightness: 0.5,
             }),
             labels: Vec::new(),
+            tagged: Tagged::default(),
         }
+    }
+
+    #[test]
+    fn genres_meet_in_one_spelling_and_noise_is_not_a_genre() {
+        assert_eq!(
+            split_genres("Hip-Hop; hiphop / R&B | Rhythm and Blues, favorites"),
+            ["hip hop", "r&b"]
+        );
+        assert_eq!(split_genres("Seen Live;  Drum   & Bass"), ["drum and bass"]);
+        assert!(split_genres("Unknown").is_empty());
+    }
+
+    #[test]
+    fn keys_in_every_notation() {
+        for (text, want) in [
+            ("Am", (9, true)),
+            ("A minor", (9, true)),
+            ("a-moll", (9, true)),
+            ("C", (0, false)),
+            ("C Major", (0, false)),
+            ("F#m", (6, true)),
+            ("Bb", (10, false)),
+            ("Ebm", (3, true)),
+            ("Db min", (1, true)),
+            ("8A", (9, true)),
+            ("8B", (0, false)),
+            ("1A", (8, true)),
+            ("1B", (11, false)),
+            ("12B", (4, false)),
+            ("1m", (9, true)),
+            ("1d", (0, false)),
+            ("6m", (8, true)),
+        ] {
+            assert_eq!(parse_key(text), Some(want), "{text}");
+        }
+        for text in ["", "o", "13A", "H", "Xm", "9X"] {
+            assert_eq!(parse_key(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn languages_in_every_notation() {
+        assert_eq!(language_code("ger"), Some("de"));
+        assert_eq!(language_code(" Deutsch "), Some("de"));
+        assert_eq!(language_code("eng"), Some("en"));
+        assert_eq!(language_code("xxx"), None);
+    }
+
+    #[test]
+    fn tempo_tags_count_where_the_sound_is_not_known() {
+        let bare = |id: &str, bpm: f32| Song {
+            id: id.to_string(),
+            album_id: id.to_string(),
+            tagged: Tagged {
+                bpm: Some(bpm),
+                ..Tagged::default()
+            },
+            ..Song::default()
+        };
+        let c = Catalog::new(vec![bare("a", 120.0), bare("b", 120.0), bare("c", 171.0)]);
+        assert!(c.similarity(0, 1) > c.similarity(0, 2));
+    }
+
+    #[test]
+    fn the_same_composer_brings_songs_closer() {
+        let by = |id: &str, composer: &str| Song {
+            id: id.to_string(),
+            album_id: id.to_string(),
+            tagged: Tagged {
+                composers: vec![composer.to_string()],
+                ..Tagged::default()
+            },
+            ..Song::default()
+        };
+        let c = Catalog::new(vec![by("a", "bach"), by("b", "bach"), by("c", "händel")]);
+        assert!(c.similarity(0, 1) > c.similarity(0, 2));
     }
 
     #[test]

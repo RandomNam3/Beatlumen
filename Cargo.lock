@@ -228,6 +228,7 @@ name = "bl-net"
 version = "0.11.1"
 dependencies = [
  "bl-json",
+ "bl-media",
 ]
 
 [[package]]

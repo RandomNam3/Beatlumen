@@ -165,10 +165,19 @@ impl Core {
                     artists: t.artists.clone(),
                     album_id: t.album_id.clone(),
                     genre: t.genre.clone(),
-                    year: t.year,
+                    year: t.meta.original_year.or(t.year),
                     added: t.modified,
                     features: None,
                     labels: labels.cloned().unwrap_or_default(),
+                    tagged: bl_recommend::Tagged::from_text(
+                        t.meta.bpm,
+                        &t.meta.key,
+                        &t.meta.mood,
+                        &t.meta.publisher,
+                        &t.meta.language,
+                        &t.meta.composer,
+                        t.meta.rating,
+                    ),
                 }
             })
             .collect();

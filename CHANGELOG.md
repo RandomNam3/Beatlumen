@@ -34,6 +34,19 @@
   then on, local and encrypted files never leave the device. Can be deleted
   at any time.
 
+### Song metadata
+
+- **More from the tags:** ISRC, MusicBrainz ids, tempo, key (also Camelot and Open
+  Key), mood, record label, language, original year, composer and rating are read
+  from all tag formats, and from Navidrome and Jellyfin where they tell them. Tempo,
+  key, mood, language and label become labels, so devices without a server and
+  songs of other sources get them too. What the server hears wins over the tags.
+- **Genres meet:** "Hip-Hop", "hiphop" and "hip hop" are one genre now, and tags like
+  "favorites" or "seen live" are not genres. Clear ratings count for your taste.
+- **Analysis version:** when the sound analysis improves, the server works songs
+  out again by itself instead of keeping old results until the file changes.
+- The library is read once more after the update to find all this.
+
 ### Labels and recommendations
 
 - **Labels:** the server works out tempo, key, energy and a rough mood of the

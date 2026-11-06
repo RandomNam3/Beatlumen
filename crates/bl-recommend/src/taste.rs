@@ -15,6 +15,8 @@ const FAVORITE: f32 = 4.0;
 const PLAYLIST: f32 = 1.0;
 const PLAYED: f32 = 1.0;
 const SKIPPED: f32 = -0.6;
+/// A clear rating in the tags, given by the listener at some time.
+const RATED: f32 = 2.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Play {
@@ -80,6 +82,16 @@ impl Taste {
                     song[i as usize] += PLAYLIST;
                     known = true;
                 }
+            }
+        }
+        for (i, item) in c.items.iter().enumerate() {
+            match item.rating {
+                Some(r) if r >= 0.8 => {
+                    song[i] += RATED;
+                    known = true;
+                }
+                Some(r) if r > 0.0 && r <= 0.2 => song[i] -= RATED,
+                _ => {}
             }
         }
         // Sessions, for what is played together.

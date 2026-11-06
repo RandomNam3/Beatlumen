@@ -23,7 +23,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Version of the `library.json` cache layout.
-const CACHE_FORMAT: u64 = 2;
+const CACHE_FORMAT: u64 = 3;
 
 /// Folder image base names in order of preference (matched case-insensitively,
 /// `.jpg`, `.jpeg` and `.png`).
@@ -650,6 +650,7 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
     }) {
         Ok(Ok(info)) => {
             let t = info.tags;
+            track.meta = bl_net::api::TrackMeta::from_tags(&t);
             track.title = clean(t.title).unwrap_or_else(|| stem.clone());
             track.artists = t.artist.as_deref().map(split_artists).unwrap_or_default();
             track.album = clean(t.album).unwrap_or_default();
