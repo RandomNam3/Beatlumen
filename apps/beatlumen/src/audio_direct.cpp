@@ -423,6 +423,7 @@ private:
 
     void stopWorker(bool playOut)
     {
+        m_playOut = playOut;
         m_run = false;
         if (m_thread.joinable())
             m_thread.join();
@@ -468,12 +469,17 @@ private:
                 delay = 0;
             bl_audio_render_pcm(buffer.data(), m_periodFrames, m_opened.format, m_opened.channels, uint32_t(delay));
             size_t done = 0;
-            while (done < m_periodFrames && m_run) {
+            // What was taken from the queue still goes out when the card is to
+            // play out; otherwise a song would lose its end at a change of rate.
+            int patience = 30;
+            while (done < m_periodFrames && (m_run || (m_playOut && patience > 0))) {
                 long n = a->pcm_writei(m_pcm, buffer.data() + done * frameBytes, m_periodFrames - done);
                 // Never blocked for good: a stream the sound server has not
                 // started, or a card that hangs, must not keep this from stopping.
                 if (n == -EAGAIN) {
                     a->pcm_wait(m_pcm, 100);
+                    if (!m_run)
+                        --patience;
                     continue;
                 }
                 if (n < 0)
@@ -496,6 +502,7 @@ private:
     std::thread m_thread;
     std::atomic<bool> m_run{false};
     std::atomic<bool> m_failed{false};
+    std::atomic<bool> m_playOut{false};
     bool m_idle = false;
     bool m_rateForced = false;
     Pcm *m_pcm = nullptr;
