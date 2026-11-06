@@ -23,6 +23,18 @@ contain the ported code and carries the full license text where required.
 | [wav2vec2](https://huggingface.co/facebook/wav2vec2-base-960h) models (facebook/wav2vec2-base-960h, jonatasgrosman/wav2vec2-large-xlsr-53-*) | word alignment (`bl-align`); weights downloaded on use, not shipped | Apache-2.0 |
 | [TeX hyphenation patterns](https://github.com/hyphenation/tex-hyphen) (hyph-utf8) | embedded patterns for English, German, French, Spanish, Italian, Dutch, Portuguese (`bl-hyph`) | MIT, BSD-3-Clause, permissive (per language) |
 
+Only when the listener or the server's admin switches on artist information from
+the internet (off by default), these services are asked at run time; nothing of
+theirs is shipped with Beatlumen, and the artist page names its sources.
+
+| Service | Used for | Terms of the data |
+|---|---|---|
+| [MusicBrainz](https://musicbrainz.org/doc/About/Data_License) | artists, members, links, genres | core data CC0; other data CC BY-NC-SA 3.0 |
+| [Wikidata](https://www.wikidata.org/wiki/Wikidata:Licensing) | where to find the page and the picture | CC0 |
+| [Wikipedia](https://en.wikipedia.org/wiki/Wikipedia:Copyrights) | biography, shown with a link to the page | CC BY-SA 4.0 |
+| [Wikimedia Commons](https://commons.wikimedia.org/wiki/Commons:Licensing) | picture, shown with author, license and a link | per picture |
+| [ListenBrainz](https://listenbrainz.org) | similar artists | public API of the MetaBrainz Foundation |
+
 Full texts: `crates/bl-opus/NOTICE`, `crates/bl-vorbis/NOTICE`,
 `crates/bl-media/NOTICE`, `crates/bl-mp3/NOTICE`,
 `crates/bl-image/NOTICE`, `crates/bl-sep/NOTICE`, `crates/bl-hyph/patterns/LICENSE-*.txt`,
@@ -90,4 +102,5 @@ library (`libQt6Qml`): it is built from the official Qt source with the
 patches in `apps/beatlumen/android/qt-patches/` by `build-qml.sh` there, and
 can be replaced by any compatible build of the library. The icons in
 `apps/beatlumen/icons` are [Material Symbols](https://github.com/google/material-design-icons)
-by Google, licensed under the Apache License 2.0.
+by Google, licensed under the Apache License 2.0; `smart_playlist.svg` was drawn
+for Beatlumen in their style.

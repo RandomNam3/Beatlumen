@@ -264,6 +264,7 @@ impl Dlna {
             duration_ms: attr(&ra, "duration").map_or(0, |d| duration_ms(&d)),
             size: attr(&ra, "size").and_then(|s| s.parse().ok()).unwrap_or(0),
             modified: 0,
+            meta: Default::default(),
             ext: if ext.is_empty() {
                 crate::ext_of(&url)
             } else {

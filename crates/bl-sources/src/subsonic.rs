@@ -121,7 +121,24 @@ impl Subsonic {
                 .map(|a| vec![a.to_string()])
                 .unwrap_or_default(),
         };
+        // OpenSubsonic servers (Navidrome) also tell these.
+        let meta = bl_net::api::TrackMeta {
+            mb_recording: s.str_or("musicBrainzId", "").to_string(),
+            bpm: s.get("bpm").as_f32().filter(|b| *b > 0.0),
+            mood: s
+                .get("moods")
+                .as_array()
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .unwrap_or_default(),
+            ..Default::default()
+        };
         Some(RemoteTrack {
+            meta,
             key: id.to_string(),
             title: s.str_or("title", "").to_string(),
             artists,

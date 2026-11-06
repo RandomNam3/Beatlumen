@@ -68,25 +68,40 @@ pub enum VisualizerKind {
     None,
     Spectrum,
     Waveform,
+    /// A smooth curve of the frequencies.
+    Wave,
+    /// Bars to both sides of the middle.
+    Mirror,
+    /// The frequencies around a circle.
+    Circle,
 }
 
 impl VisualizerKind {
-    pub const ALL: [VisualizerKind; 3] = [
+    pub const ALL: [VisualizerKind; 6] = [
         VisualizerKind::None,
         VisualizerKind::Spectrum,
         VisualizerKind::Waveform,
+        VisualizerKind::Wave,
+        VisualizerKind::Mirror,
+        VisualizerKind::Circle,
     ];
     pub fn name(self) -> &'static str {
         match self {
             VisualizerKind::None => "None",
             VisualizerKind::Spectrum => "Spectrum",
             VisualizerKind::Waveform => "Waveform",
+            VisualizerKind::Wave => "Wave",
+            VisualizerKind::Mirror => "Mirror",
+            VisualizerKind::Circle => "Circle",
         }
     }
     pub fn parse(s: &str) -> VisualizerKind {
         match s {
             "None" => VisualizerKind::None,
             "Waveform" => VisualizerKind::Waveform,
+            "Wave" => VisualizerKind::Wave,
+            "Mirror" => VisualizerKind::Mirror,
+            "Circle" => VisualizerKind::Circle,
             _ => VisualizerKind::Spectrum,
         }
     }
@@ -154,6 +169,18 @@ pub struct Settings {
     pub crossfade: f32,
     /// Skip silence at the end and start of tracks when moving on.
     pub skip_silence: bool,
+    /// The equalizer (of this device: it depends on what is connected).
+    pub eq: bl_media::EqSettings,
+    /// Smart playlists: rules, as `bl_recommend::SmartList` writes them.
+    pub smart_lists: Value,
+    /// Look artists up in public databases (their names go out). Off until
+    /// the listener agrees.
+    pub online_metadata: bool,
+    /// Hand the samples to a sound card directly (bit-perfect playback) and
+    /// which one: its id and the name it had. Off until asked for.
+    pub audio_direct: bool,
+    pub audio_direct_device: String,
+    pub audio_direct_name: String,
     /// Offer this device as an AirPlay speaker in the local network.
     pub airplay: bool,
     /// Also announce the AirPlay 2 receiver (experimental).
@@ -192,6 +219,19 @@ pub struct Settings {
     /// Latency of microphones (karaoke) by input id, in milliseconds
     /// (positive: their audio arrives later than the platform reports).
     pub mic_offsets: Vec<(String, f32)>,
+    /// An endless animation instead of pictures: "" (pictures), a kind of
+    /// `bl_render::SceneKind` or "cycle" (another one per song).
+    pub animation: String,
+    /// The overlay fills the visual instead of a strip below the title.
+    pub overlay_full: bool,
+    /// Photosensitive (epilepsy) mode: no flashes or fast colour changes.
+    pub photosensitive: bool,
+    /// When the queue runs out, similar songs follow.
+    pub endless: bool,
+    /// What is played on this device also goes to the server (server songs
+    /// only), for its recommendations and statistics across devices. Off
+    /// until the user agrees.
+    pub history_sync: bool,
     /// Settings owned by the user interface (theme, accent colour, …),
     /// stored as given.
     pub ui: Value,
@@ -240,6 +280,12 @@ impl Default for Settings {
             normalize: false,
             crossfade: 0.0,
             skip_silence: true,
+            eq: bl_media::EqSettings::default(),
+            smart_lists: Value::Array(Vec::new()),
+            online_metadata: false,
+            audio_direct: false,
+            audio_direct_device: String::new(),
+            audio_direct_name: String::new(),
             airplay: false,
             dlna_receiver: false,
             airplay2: false,
@@ -258,6 +304,11 @@ impl Default for Settings {
             sync_items: Value::object(),
             sync_user: String::new(),
             mic_offsets: Vec::new(),
+            animation: String::new(),
+            overlay_full: false,
+            photosensitive: false,
+            endless: false,
+            history_sync: false,
             ui: Value::object(),
         }
     }
@@ -273,7 +324,27 @@ fn strs(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn eq_from_json(v: &Value) -> bl_media::EqSettings {
+    let mut bands_db = [0.0; 10];
+    if let Some(a) = v.get("eqBands").as_array() {
+        for (band, value) in bands_db.iter_mut().zip(a) {
+            *band = value.as_f32().unwrap_or(0.0);
+        }
+    }
+    bl_media::EqSettings {
+        enabled: v.bool_or("eqEnabled", false),
+        preamp_db: v.f32_or("eqPreamp", 0.0),
+        bands_db,
+    }
+}
+
 impl Settings {
+    /// The sound card to use directly.
+    pub fn direct_device(&self) -> Option<String> {
+        (self.audio_direct && !self.audio_direct_device.is_empty())
+            .then(|| self.audio_direct_device.clone())
+    }
+
     pub const STORAGE_KEY: &'static str = "settings.json";
 
     pub fn from_json(v: &Value) -> Settings {
@@ -326,6 +397,16 @@ impl Settings {
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
+            eq: eq_from_json(v),
+            smart_lists: if v.get("smartLists").as_array().is_some() {
+                v.get("smartLists").clone()
+            } else {
+                Value::Array(Vec::new())
+            },
+            online_metadata: v.bool_or("onlineMetadata", false),
+            audio_direct: v.bool_or("audioDirect", false),
+            audio_direct_device: v.str_or("audioDirectDevice", "").to_string(),
+            audio_direct_name: v.str_or("audioDirectName", "").to_string(),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
             airplay2: v.bool_or("airplay2", false),
@@ -354,6 +435,11 @@ impl Settings {
                 _ => Value::object(),
             },
             sync_user: v.str_or("syncUser", "").chars().take(32).collect(),
+            animation: v.str_or("animation", "").chars().take(16).collect(),
+            overlay_full: v.bool_or("overlayFull", false),
+            photosensitive: v.bool_or("photosensitive", false),
+            endless: v.bool_or("endless", false),
+            history_sync: v.bool_or("historySync", false),
             mic_offsets: v
                 .get("micOffsetsMs")
                 .as_object()
@@ -383,6 +469,11 @@ impl Settings {
             .with("language", self.language.as_str())
             .with("volume", self.volume)
             .with("muted", self.muted)
+            .with("animation", self.animation.as_str())
+            .with("overlayFull", self.overlay_full)
+            .with("photosensitive", self.photosensitive)
+            .with("endless", self.endless)
+            .with("historySync", self.history_sync)
             .with("renderScale", self.render_scale)
             .with("serverUrl", self.server_url.as_str())
             .with("serverToken", self.server_token.as_str())
@@ -420,6 +511,21 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("smartLists", self.smart_lists.clone())
+            .with("onlineMetadata", self.online_metadata)
+            .with("audioDirect", self.audio_direct)
+            .with("audioDirectDevice", self.audio_direct_device.as_str())
+            .with("audioDirectName", self.audio_direct_name.as_str())
+            .with("eqEnabled", self.eq.enabled)
+            .with("eqPreamp", self.eq.preamp_db)
+            .with(
+                "eqBands",
+                self.eq
+                    .bands_db
+                    .iter()
+                    .map(|b| Value::from(*b))
+                    .collect::<Vec<_>>(),
+            )
             .with("airplay", self.airplay)
             .with("dlnaReceiver", self.dlna_receiver)
             .with("airplay2", self.airplay2)
@@ -459,6 +565,21 @@ fn stream_kbps(v: Option<u64>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equalizer_survives_saving_and_starts_off() {
+        assert!(!Settings::default().eq.enabled);
+        let mut s = Settings::default();
+        s.eq.enabled = true;
+        s.eq.preamp_db = -3.5;
+        s.eq.bands_db[2] = 6.0;
+        s.eq.bands_db[9] = -4.5;
+        let back = Settings::from_json(&bl_json::parse(&s.to_json().to_json()).unwrap());
+        assert_eq!(back.eq, s.eq);
+        // Files from before the equalizer existed.
+        let old = Settings::from_json(&bl_json::parse("{}").unwrap());
+        assert_eq!(old.eq, bl_media::EqSettings::default());
+    }
 
     #[test]
     fn roundtrip() {

@@ -122,7 +122,7 @@ Item {
             height: Math.max(lineText.implicitHeight, words.implicitHeight)
                 + (trText.visible ? trText.implicitHeight + 2 : 0)
             opacity: !lv.synced ? 0.95 : isCurrent ? 1 : past ? 0.4 : 0.6
-            Behavior on opacity { NumberAnimation { duration: 250 } }
+            Behavior on opacity { NumberAnimation { duration: Theme.ms(250) } }
 
             Label {
                 id: lineText

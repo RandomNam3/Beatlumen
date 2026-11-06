@@ -26,14 +26,16 @@ AppDialog {
     ColumnLayout {
         anchors.fill: parent
         spacing: 8
-        TextField {
+        InputField {
+            Accessible.name: placeholderText
             id: urlField
             Layout.fillWidth: true
             enabled: !dlg.station
             placeholderText: Theme.tr("Stream address or station file")
             inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
         }
-        TextField {
+        InputField {
+            Accessible.name: placeholderText
             id: nameField
             Layout.fillWidth: true
             placeholderText: Theme.tr("Name")

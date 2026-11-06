@@ -8,6 +8,7 @@
 
 mod account_sync;
 mod airplay;
+mod artists;
 pub mod capture;
 mod commands;
 pub mod core;
@@ -18,6 +19,9 @@ mod dlna_receiver;
 #[path = "dlna_receiver_web.rs"]
 mod dlna_receiver;
 mod extensions;
+mod favorites;
+mod history;
+mod home;
 pub mod host;
 pub mod icon;
 pub mod jobs;
@@ -28,12 +32,16 @@ pub mod mic;
 pub mod native;
 mod offline;
 mod outputs;
+pub mod pipewire;
 pub mod player;
 mod push;
 pub mod queue;
+mod recommend;
+mod route;
 pub mod server;
 pub mod settings;
 mod share;
+mod smart;
 #[cfg(not(target_arch = "wasm32"))]
 mod sources;
 #[cfg(target_arch = "wasm32")]

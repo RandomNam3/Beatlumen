@@ -20,6 +20,7 @@ pub fn read(src: &mut dyn bl_media::Source, key: &str, size: u64, modified: u64)
         return t;
     };
     let g = info.tags;
+    t.meta = bl_net::api::TrackMeta::from_tags(&g);
     if let Some(title) = g.title.filter(|s| !s.trim().is_empty()) {
         t.title = title;
     }

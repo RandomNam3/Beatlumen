@@ -238,6 +238,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
+    let favorites = store.as_ref().map_or(&state.favorites, |s| &s.favorites);
+    let history = store.as_ref().map_or(&state.history, |s| &s.history);
+    let song_labels = store.as_ref().map_or(&state.labels, |s| &s.labels);
+    let login = crate::recommend::Login {
+        favorites,
+        history,
+        playlists,
+        labels: song_labels,
+    };
     // Devices see the devices of the same login: an account, or everyone
     // with the server password.
     if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
@@ -298,6 +307,20 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                     Response::new(204)
                 }
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
+        ["tracks", id, "labels"] => {
+            let idx = state.library();
+            if idx.track(id).is_none() {
+                return Response::error(404, "track not found");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &Value::from(song_labels.of(id))),
+                "PUT" => match song_labels.change(id, &req.body) {
+                    Ok(names) => json(200, &Value::from(names)),
+                    Err(e) => fail(e),
+                },
+                _ => not_allowed("GET, HEAD, PUT"),
             }
         }
         ["tracks", id, what] => {
@@ -387,6 +410,71 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
             }
         }
+        ["artist-info"] if get => {
+            let name = req.query("name").unwrap_or("");
+            let language = req.query("lang").unwrap_or("en");
+            let lib = state.library();
+            // The artist's id, when the tags of one of their songs name it.
+            let mbid = lib
+                .tracks()
+                .iter()
+                .map(|e| &e.track)
+                .find(|t| {
+                    t.artists.len() == 1
+                        && !t.meta.mb_artist.is_empty()
+                        && t.artists[0].eq_ignore_ascii_case(name)
+                })
+                .map(|t| t.meta.mb_artist.clone());
+            json(200, &state.artists.info(name, mbid, language))
+        }
+        ["artist-info"] => not_allowed("GET, HEAD"),
+        ["labels"] if get => json(200, &crate::recommend::labels(state, &login)),
+        ["labels"] => not_allowed("GET, HEAD"),
+        ["recommendations"] if get => json(200, &crate::recommend::recommendations(state, &login)),
+        ["recommendations"] => not_allowed("GET, HEAD"),
+        ["stats"] if get => {
+            let range = req.query("range").unwrap_or("all");
+            let offset = req
+                .query("utcOffset")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            json(200, &crate::recommend::stats(state, &login, range, offset))
+        }
+        ["stats"] => not_allowed("GET, HEAD"),
+        ["radio"] if m == "POST" => match crate::recommend::radio(state, &login, &req.body) {
+            Ok(v) => json(200, &v),
+            Err(e) => fail(e),
+        },
+        ["radio"] => not_allowed("POST"),
+        ["favorites"] if get => json(200, &favorites.list_json()),
+        ["favorites"] => not_allowed("GET, HEAD"),
+        ["favorites", id] => match m {
+            "PUT" => match favorites.add(id, &req.body) {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            "DELETE" => match favorites.remove(id) {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            _ => not_allowed("PUT, DELETE"),
+        },
+        ["history"] => match m {
+            "GET" | "HEAD" => {
+                let since = req.query("since").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let limit = size_param(req, 1000, 1, 10_000) as usize;
+                json(200, &history.list_json(since, limit))
+            }
+            "POST" => match history.add(&req.body) {
+                Ok(n) => json(200, &Value::object().with("added", n)),
+                Err(e) => fail(e),
+            },
+            "DELETE" => match history.clear() {
+                Ok(()) => Response::new(204),
+                Err(e) => fail(e),
+            },
+            _ => not_allowed("GET, HEAD, POST, DELETE"),
+        },
         ["images"] => match m {
             "GET" | "HEAD" => json(200, &state.images.list_json()),
             "POST" => match state.images.upload(req.header("x-filename"), &req.body) {

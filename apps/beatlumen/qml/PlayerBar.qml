@@ -10,6 +10,8 @@ import Beatlumen.Core
 Item {
     id: bar
     property string mode: "full"
+    // Little height (a phone held sideways).
+    property bool dense: false
     signal openNowPlaying()
     signal openQueue()
 
@@ -23,17 +25,17 @@ Item {
     readonly property color fg: overVisual ? "white" : Theme.text
     readonly property color fgDim: overVisual ? Qt.rgba(1, 1, 1, 0.75) : Theme.textDim
 
-    implicitHeight: mode === "mini" ? 72 : mode === "expanded" ? 196 : 92
+    implicitHeight: mode === "mini" ? (Theme.fingers ? 72 : 56) : mode === "expanded" ? 196 : dense ? 64 : 76
 
     component Transport: RowLayout {
         property int big: 56
-        spacing: bar.mode === "expanded" ? 12 : 4
+        spacing: bar.mode === "expanded" && bar.width >= 360 ? 12 : 4
         IconButton {
             iconName: "shuffle"; tip: Theme.tr("Shuffle"); active: Core.state.shuffle === true; iconColor: bar.fg
             onClicked: Core.call("shuffle")
         }
         IconButton {
-            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: 30; iconColor: bar.fg
+            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: Theme.fingers ? 30 : 24; iconColor: bar.fg
             onClicked: Core.call("prev")
         }
         RoundButton {
@@ -51,7 +53,7 @@ Item {
             onClicked: Core.call("toggle")
         }
         IconButton {
-            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: 30; iconColor: bar.fg
+            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: Theme.fingers ? 30 : 24; iconColor: bar.fg
             onClicked: Core.call("next")
         }
         IconButton {
@@ -75,7 +77,7 @@ Item {
             value: pressed ? value : Core.position
             onMoved: if (!pressed) Core.call("seek", { position: value })
             onPressedChanged: if (!pressed) Core.call("seek", { position: value })
-            Accessible.name: "Position"
+            Accessible.name: Theme.tr("Position in the song")
         }
         RowLayout {
             visible: parent.showTimes
@@ -92,6 +94,11 @@ Item {
     component TrackInfo: RowLayout {
         property int coverSize: 48
         spacing: 12
+        // Cover and title lead to the visual.
+        TapHandler {
+            enabled: bar.mode === "full"
+            onTapped: bar.openNowPlaying()
+        }
         CoverImage {
             Layout.preferredWidth: parent.coverSize
             Layout.preferredHeight: parent.coverSize
@@ -119,6 +126,11 @@ Item {
                 color: Theme.textDim
             }
         }
+        FavoriteButton {
+            trackId: bar.cur ? bar.cur.id : ""
+            visible: Favorites.canMark(trackId) && (bar.width >= 400 || on)
+            iconColor: Theme.textDim
+        }
     }
 
     Connections {
@@ -143,16 +155,21 @@ Item {
                 color: Theme.accent
             }
         }
-        MouseArea {
+        AbstractButton {
             anchors.fill: parent
+            focusPolicy: Qt.TabFocus
+            Accessible.role: Accessible.Button
+            Accessible.name: Theme.tr("Now playing") + (bar.cur ? ": " + bar.cur.title : "")
             onClicked: bar.openNowPlaying()
+            Keys.onReturnPressed: clicked()
+            Keys.onEnterPressed: clicked()
         }
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 12
             anchors.rightMargin: 4
             spacing: 4
-            TrackInfo { Layout.fillWidth: true; coverSize: 48 }
+            TrackInfo { Layout.fillWidth: true; coverSize: Theme.fingers ? 48 : 40 }
             IconButton {
                 iconName: bar.playing ? "pause" : "play_arrow"
                 iconSize: 32
@@ -185,7 +202,7 @@ Item {
         visible: bar.mode === "expanded"
         spacing: 4
         Seek { Layout.fillWidth: true }
-        Transport { Layout.alignment: Qt.AlignHCenter; big: 72 }
+        Transport { Layout.alignment: Qt.AlignHCenter; big: bar.width >= 360 ? 72 : 56 }
         RowLayout {
             Layout.fillWidth: true
             OutputButton { fg: bar.fg }
@@ -217,10 +234,14 @@ Item {
             anchors.rightMargin: 16
             spacing: 12
             TrackInfo {
+                Layout.fillWidth: true
                 Layout.preferredWidth: Math.min(360, bar.width * 0.3)
-                coverSize: 52
+                Layout.maximumWidth: 360
+                Layout.minimumWidth: 140
+                coverSize: bar.dense ? 40 : 44
             }
             Label {
+                visible: bar.width >= 1040
                 textFormat: Text.PlainText
                 text: Theme.fmtTime(Core.position) + " / " + (bar.duration > 0 || !bar.cur ? Theme.fmtTime(bar.duration) : Theme.tr("Live"))
                 color: Theme.textDim
@@ -228,7 +249,7 @@ Item {
                 font.features: { "tnum": 1 }
             }
             Item { Layout.fillWidth: true }
-            Transport { big: 52 }
+            Transport { big: bar.dense ? 40 : 44 }
             Item { Layout.fillWidth: true }
             OutputButton { }
             IconButton {
@@ -237,6 +258,7 @@ Item {
                 onClicked: Core.call("mute")
             }
             Slider {
+                visible: bar.width >= 940
                 Layout.preferredWidth: 120
                 from: 0; to: 1
                 value: Core.state.muted ? 0 : (Core.state.volume || 0)
@@ -246,6 +268,10 @@ Item {
             IconButton {
                 iconName: "queue_music"; tip: Theme.tr("Queue")
                 onClicked: bar.openQueue()
+            }
+            IconButton {
+                iconName: "graphic_eq"; tip: Theme.tr("Now playing")
+                onClicked: bar.openNowPlaying()
             }
         }
     }

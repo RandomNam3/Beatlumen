@@ -184,6 +184,8 @@ void AudioOutput::stop()
         d->watchdog.join();
 }
 
+void AudioOutput::setSuspended(bool) {}
+
 #elif defined(BL_HAVE_MULTIMEDIA)
 
 #include <QAudioDevice>
@@ -299,6 +301,7 @@ struct AudioOutput::Impl
     // when the output device does (the system mixer converts if needed).
     uint32_t rate = 0;
     int failures = 0;
+    bool suspended = false;
 
     // Runs on the audio thread.
     void open()
@@ -311,6 +314,8 @@ struct AudioOutput::Impl
         }
         if (device)
             device->sink = nullptr;
+        if (suspended)
+            return;
         const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
         if (dev.isNull()) {
             rate = rate ? rate : 48000;
@@ -372,7 +377,7 @@ struct AudioOutput::Impl
     // missing stream while a device exists is replaced.
     void check()
     {
-        if (reopenTimer->isActive())
+        if (suspended || reopenTimer->isActive())
             return;
         const bool stalled = sink && device && nowMs() - device->lastRead > 1500;
         const bool broken = sink ? sink->error() != QAudio::NoError || sink->state() == QAudio::StoppedState || stalled
@@ -443,6 +448,19 @@ void AudioOutput::stop()
     }, Qt::BlockingQueuedConnection);
     d->thread.quit();
     d->thread.wait();
+}
+
+void AudioOutput::setSuspended(bool suspended)
+{
+    if (!d)
+        return;
+    QMetaObject::invokeMethod(d->worker, [this, suspended]() {
+        d->suspended = suspended;
+        if (d->reopenTimer)
+            d->reopenTimer->stop();
+        d->failures = 0;
+        d->open();
+    }, Qt::BlockingQueuedConnection);
 }
 
 #elif defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
@@ -523,8 +541,21 @@ void AudioOutput::configure(BlCallbacks &cb)
 
 uint32_t AudioOutput::start() { return 48000; }
 void AudioOutput::stop() {}
+void AudioOutput::setSuspended(bool) {}
 
 #else
+
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <vector>
+
+// Built without Qt Multimedia: silent, but playback still advances, so the
+// clock and the visuals keep going (test runs on systems without its headers).
+namespace {
+std::atomic<bool> g_clockRun{false};
+std::thread g_clock;
+}
 
 AudioOutput *AudioOutput::instance()
 {
@@ -532,7 +563,34 @@ AudioOutput *AudioOutput::instance()
     return &out;
 }
 void AudioOutput::configure(BlCallbacks &) {}
-uint32_t AudioOutput::start() { return 0; }
-void AudioOutput::stop() {}
+uint32_t AudioOutput::start()
+{
+    const uint32_t rate = 48000;
+    if (!g_clockRun.exchange(true)) {
+        g_clock = std::thread([rate]() {
+            const size_t frames = rate / 100;
+            std::vector<float> buf(frames * 2);
+            auto next = std::chrono::steady_clock::now();
+            while (g_clockRun) {
+                bl_audio_render(buf.data(), frames, uint32_t(frames));
+                next += std::chrono::milliseconds(10);
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
+    return rate;
+}
+void AudioOutput::stop()
+{
+    if (g_clockRun.exchange(false) && g_clock.joinable())
+        g_clock.join();
+}
+void AudioOutput::setSuspended(bool suspended)
+{
+    if (suspended)
+        stop();
+    else
+        start();
+}
 
 #endif

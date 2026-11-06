@@ -23,12 +23,16 @@ pub mod log;
 pub mod admin;
 pub mod admin_web;
 pub mod analysis;
+pub mod artists;
 pub mod auth;
 pub mod config;
 pub mod covers;
 pub mod devices;
 pub mod extensions;
+pub mod favorites;
+pub mod history;
 pub mod images;
+pub mod labels;
 pub mod library;
 pub mod lyrics;
 pub mod lyrics_sync;
@@ -37,6 +41,7 @@ pub mod playlists;
 pub mod presets;
 pub mod push;
 pub mod random;
+pub mod recommend;
 pub mod release;
 pub mod routes;
 pub mod sha256;
@@ -69,6 +74,11 @@ pub struct DataPaths {
     pub library: PathBuf,
     pub tokens: PathBuf,
     pub playlists: PathBuf,
+    pub favorites: PathBuf,
+    pub history: PathBuf,
+    pub sound: PathBuf,
+    pub artists: PathBuf,
+    pub labels: PathBuf,
     pub presets: PathBuf,
     pub uploads: PathBuf,
     pub covers: PathBuf,
@@ -85,6 +95,11 @@ impl DataPaths {
             library: root.join("library.json"),
             tokens: root.join("tokens.json"),
             playlists: root.join("playlists.json"),
+            favorites: root.join("favorites.json"),
+            history: root.join("history.jsonl"),
+            sound: root.join("sound.jsonl"),
+            artists: root.join("artists.json"),
+            labels: root.join("labels.json"),
             presets: root.join("presets"),
             uploads: root.join("uploads"),
             covers: cache.join("covers"),
@@ -144,6 +159,12 @@ pub struct State {
     scan_cv: Condvar,
     pub auth: auth::Auth,
     pub playlists: playlists::Playlists,
+    pub favorites: favorites::Favorites,
+    pub history: history::History,
+    pub sound: Arc<labels::SoundIndex>,
+    pub artists: Arc<artists::ArtistIndex>,
+    pub labels: labels::SongLabels,
+    pub recommend: recommend::Cache,
     pub presets: presets::Presets,
     pub images: images::Images,
     pub lyrics: lyrics::Lyrics,
@@ -177,6 +198,8 @@ impl State {
         self.analyzer.set_max_minutes(cfg.analysis_max_minutes);
         self.lyrics_sync
             .configure(cfg.speech_model.clone(), cfg.auto_sync_lyrics);
+        self.sound.set_enabled(cfg.auto_labels);
+        self.artists.set_enabled(cfg.online_metadata);
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(cfg);
         if restart {
             self.restart_pending.store(true, Ordering::Relaxed);
@@ -657,6 +680,19 @@ pub fn start(config: Config) -> Result<Server, String> {
         models,
         devices: devices::Devices::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
+        favorites: favorites::Favorites::load(data.favorites.clone()),
+        history: history::History::load(data.history.clone()),
+        sound: Arc::new(labels::SoundIndex::new(
+            data.sound.clone(),
+            sources.clone(),
+            config.auto_labels,
+        )),
+        artists: Arc::new(artists::ArtistIndex::new(
+            data.artists.clone(),
+            config.online_metadata,
+        )),
+        labels: labels::SongLabels::load(data.labels.clone()),
+        recommend: recommend::Cache::default(),
         presets: presets::Presets::new(data.presets.clone()),
         images: images::Images::new(
             image_dirs.clone(),
@@ -695,6 +731,8 @@ pub fn start(config: Config) -> Result<Server, String> {
     });
     state.extensions.attach(&state);
     state.lyrics_sync.attach(&state);
+    state.sound.attach(&state);
+    state.artists.attach(&state);
 
     info!(
         "Beatlumen server {} listening on http://{addr}",

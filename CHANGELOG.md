@@ -1,5 +1,172 @@
 # Changelog
 
+## Unreleased
+
+### Sound
+
+- **Equalizer:** ten bands from 31 Hz to 16 kHz, a level control, a few starting
+  points and the curve that results (Settings, Playback). Boosts lower the level
+  by themselves so that nothing clips. It applies at once, also on speakers in
+  the network, and stays on this device. Switched off nothing is computed.
+- **Bit-perfect playback (Linux):** hands the music on exactly as it is in the file, at
+  its own rate (Settings, Playback; off by default). Songs of the same format stay
+  gapless, another rate means a short gap. Equalizer, normalizing, crossfade and
+  skipping silence are off meanwhile. Two ways:
+  - **Through PipeWire,** the default: other programs stay audible. The sound server
+    runs at each song's rate. Exact as long as nothing else makes sound.
+  - **A sound card alone:** the sound server is asked to let go of the card, and after
+    30 s of pause it gets it back. Other programs have no sound on it meanwhile. Exact
+    whatever else is going on.
+- **Signal path:** says what really happens to the music, from what opened and not
+  from the switch: the file, the output and whatever changes the samples, for
+  example a card that cannot do 44.1 kHz, a volume below 100 % or another program
+  making sound. Through PipeWire it looks at the graph and the card every few seconds.
+  "Bit-perfect" only appears when all of it holds. Lossy files never get that word. On Windows, Android
+  and in the browser the direct path does not exist yet, and the app says so.
+
+### Start page and favorites
+
+- **Start page:** the app opens on a start page with what you last played,
+  what is new in your library, your favorites and where you left off.
+  Started with songs or in fullscreen it still opens on the visual.
+- **Favorites:** a heart on every song (list, player, now playing, song
+  menu, Ctrl+L) and an automatic playlist. Favorites among the server's
+  songs follow your login to your other devices, also when set offline.
+- **Listening history:** kept on the device. A song counts after 30 s or
+  half of its length, less counts as skipped. Sending it to the server is
+  off until you agree (Settings); only the server's songs and only from
+  then on, local and encrypted files never leave the device. Can be deleted
+  at any time.
+
+### Smart playlists
+
+- **Rules instead of songs:** genre, mood, decade, tempo, key, language, record label,
+  your own labels, artist, year, rating, favorites, how often and when played, when
+  added; all rules or at least one, each also as "is not", with an order and a limit
+  (Library, Playlists). Worked out again whenever you open it, so new songs that fit
+  join by themselves. The rules follow your account like other settings.
+
+### Song texts
+
+- **TTML files** next to a song or added by hand work like LRC ones, with word times,
+  voices and backing voices.
+- **The most finely timed text wins:** word times beat line times beat plain text, no
+  matter whether they are in a file next to the song or in its tags. Extensions may
+  be written in any case (`.LRC`).
+- **A warning when a text does not fit:** when its lines go on well after the song
+  ends, or it says it was timed for another length.
+
+### Song metadata
+
+- **More from the tags:** ISRC, MusicBrainz ids, tempo, key (also Camelot and Open
+  Key), mood, record label, language, original year, composer and rating are read
+  from all tag formats, and from Navidrome and Jellyfin where they tell them. Tempo,
+  key, mood, language and label become labels, so devices without a server and
+  songs of other sources get them too. What the server hears wins over the tags.
+- **Genres meet:** "Hip-Hop", "hiphop" and "hip hop" are one genre now, and tags like
+  "favorites" or "seen live" are not genres. Clear ratings count for your taste.
+- **Analysis version:** when the sound analysis improves, the server works songs
+  out again by itself instead of keeping old results until the file changes.
+- The library is read once more after the update to find all this.
+- **Artist information from the internet (off by default):** the setup asks once, and
+  the settings can change it at any time. With it on, artist pages show a biography
+  (Wikipedia), a picture (Wikimedia Commons), where they come from, members, links and
+  similar artists (ListenBrainz), and the artists' genres (MusicBrainz) feed
+  recommendations and labels. Names of artists and your IP address go to those
+  services, nothing else; off, none of them is asked. An artist is only shown when the
+  match is certain, and marked when several share the name. Looked up in the background
+  at the pace the services ask for and kept for 30 days; "Forget what was found" deletes it.
+- **On the server** the same has its own switch in the admin area (`onlineMetadata`,
+  `--online-metadata`, off by default) for its whole library and for everybody on it.
+
+### Labels and recommendations
+
+- **Labels:** the server works out tempo, key, energy and a rough mood of the
+  songs in its music folders in the background (one song at a time on half of
+  one core; off with `--no-auto-labels` or in the admin page), and labels come
+  from genre tags and years too. Your own labels are given in the song menu,
+  per login. In the library under *Labels*.
+- **Recommendations from the server:** *For you*, *Because you listened to…*,
+  *New for you*, *Not heard for a while* on the start page, each suggestion
+  with its reason, from your favorites, playlists and, if you agreed to send
+  it, your listening history. Without a server the app does the same with
+  tags and the history of the device.
+- **Your mixes:** personal playlists per genre or artist you listen to, a
+  discovery mix and forgotten favorites, the same for a day.
+- **Radio:** from a song, album, artist, label, or *My radio* from your taste;
+  goes on by itself, close to where it started, with artists taking turns.
+- **Endless playback:** when the queue runs out, similar songs follow (a
+  switch on the queue page).
+
+### Statistics
+
+- **Statistics page:** listening time, songs played and skipped, days with
+  music, days in a row, top songs, artists, albums and genres, listening time
+  over the period, by time of day and by day of the week (each also as a
+  table), for 7 days, 30 days, a year or all time, and the library at a glance.
+  With the agreement to keep the history on the server also across all devices
+  (`GET /api/stats`).
+
+### Sizes and texts
+
+- **Compact with a mouse:** on a computer, rows, buttons, dropdowns, text fields, the
+  player bar, the navigation and the space between them are smaller. Dropdowns are as
+  wide as their longest entry. Phones and the web app keep the sizes for fingers.
+- **Shorter texts in the menus:** settings, setup and signal path say what matters in a
+  line. Where more needs saying, for example what goes out to online services, it is
+  behind a small info button.
+- **Wide windows:** settings and visuals options no longer stretch across the window.
+
+### Navigation
+
+- **Slimmer menu:** Home, Search, Library and Visuals; statistics, devices,
+  settings and help under *More*. The queue, the output and the visual are in
+  the player bar (or click the cover).
+- **Search has its own page:** artists, albums and songs, and labels to browse
+  before you type.
+- **Settings by category:** at the side on wide windows, the search looks
+  through all of them.
+- **Help:** the keyboard shortcuts at a glance.
+- **Phones held sideways:** the navigation fits, the player bar keeps the
+  title and hides the volume slider and the time instead.
+
+### Visuals and epilepsy mode
+
+- **Endless animations without pictures:** Flow, Tunnel, Stars, Aurora and
+  Waves, following the music, or a new one per song. The effects work on them
+  like on pictures.
+- **More displays:** frequency wave, mirrored bars and a circle next to
+  spectrum and waveform, as a strip below the title or filling the visual.
+- **Epilepsy mode:** brightness can only change slowly at every point of the
+  picture (at most 2.5 flashes per second are possible, WCAG 2.3.1 allows
+  three), saturated red is held back, flash, glitch and hue effects and hard
+  cuts are off, transitions only blend. This works for every preset. It lowers
+  the risk but cannot rule it out.
+
+### Setup and accessibility
+
+- **Setup at the first start:** language and epilepsy mode first, how it looks,
+  where the music comes from, the listening history (with a server), and a
+  short tour of the app. Every step can be skipped, and the whole can be left
+  at any time; under More → Help you can start it again. Who has used the app
+  before gets a hint on the start page instead.
+- **New options:** reduce motion, high contrast, keep the controls visible and
+  the size of everything, under Settings → Display.
+
+### Accessibility, checked in the running app
+
+- **Keyboard:** Tab reaches everything, also while the controls are hidden
+  (they come back), with a clear outline around the focus; Space and the arrow
+  keys go to the control reached by keyboard instead of pausing or seeking.
+- **Screen readers:** song rows, switches, chips and the small player have
+  roles and names, the position slider is no longer named in English only, and
+  a new song is announced.
+- **Readable:** the faintest text reaches 4.5:1 in both themes, accent colours
+  are adjusted for text, the title over the visual has a scrim.
+- **Reduce motion** also ends sliding and fading in all pages.
+- **Small windows:** phones held sideways get the small player instead of big
+  controls that covered the title; the window can be made lower.
+
 ## 0.11.1 (beta)
 
 Song texts are timed more reliably, and can be timed and corrected by hand.

@@ -77,7 +77,7 @@ impl Lyrics {
         if body.len() > MAX_IMPORT {
             return Err((413, "song text too large".into()));
         }
-        let text = bl_media::lyrics::decode_text(body);
+        let text = bl_media::lyrics::normalize_text(&bl_media::lyrics::decode_text(body));
         let text = text.trim();
         if text.is_empty() {
             return Err((400, "empty song text".into()));

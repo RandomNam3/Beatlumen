@@ -80,7 +80,7 @@ ScrollView {
             Layout.leftMargin: 16
             Layout.rightMargin: 16
             visible: view.items.length === 0
-            text: Theme.tr("No backgrounds yet. The album cover of the current song is used.")
+            text: Theme.tr("No backgrounds yet; the album cover is used.")
             wrapMode: Text.WordWrap
             color: Theme.textDim
         }

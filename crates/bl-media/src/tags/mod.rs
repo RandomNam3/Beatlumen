@@ -209,9 +209,89 @@ pub(crate) fn apply_common(tags: &mut Tags, key: &str, value: &str) -> bool {
         "REPLAYGAIN_TRACK_PEAK" => set_opt(&mut tags.replaygain_track_peak, parse_float(value)),
         "REPLAYGAIN_ALBUM_GAIN" => set_opt(&mut tags.replaygain_album_gain, parse_float(value)),
         "REPLAYGAIN_ALBUM_PEAK" => set_opt(&mut tags.replaygain_album_peak, parse_float(value)),
+        "ISRC" | "TSRC" => set_opt(&mut tags.isrc, parse_isrc(value)),
+        "MUSICBRAINZ_TRACKID" | "MUSICBRAINZ_TRACK_ID" | "MUSICBRAINZ_RECORDINGID" => {
+            set_opt(&mut tags.mb_recording, parse_mbid(value))
+        }
+        "MUSICBRAINZ_ARTISTID" | "MUSICBRAINZ_ARTIST_ID" => {
+            set_opt(&mut tags.mb_artist, parse_mbid(value))
+        }
+        "MUSICBRAINZ_ALBUMID" | "MUSICBRAINZ_ALBUM_ID" => {
+            set_opt(&mut tags.mb_album, parse_mbid(value))
+        }
+        "BPM" | "TEMPO" | "TBPM" | "TMPO" => set_opt(&mut tags.bpm, parse_bpm(value)),
+        "INITIALKEY" | "INITIAL_KEY" | "KEY" | "TKEY" => set_str(&mut tags.key, value),
+        "MOOD" | "TMOO" => set_str(&mut tags.mood, value),
+        "LABEL" | "ORGANIZATION" | "PUBLISHER" | "TPUB" => set_str(&mut tags.publisher, value),
+        "LANGUAGE" | "TLAN" => set_str(&mut tags.language, value),
+        "RATING" | "FMPS_RATING" | "RATE" => set_opt(&mut tags.rating, parse_rating(value)),
         _ => return false,
     }
+    if matches!(k.as_str(), "ORIGINALDATE" | "ORIGINALYEAR") {
+        set_opt(&mut tags.original_year, parse_year(value));
+    }
     true
+}
+
+/// `USRC17607839` also when written with hyphens; anything else is no ISRC.
+pub(crate) fn parse_isrc(s: &str) -> Option<String> {
+    let v: String = s
+        .chars()
+        .filter(|c| !matches!(c, '-' | ' ' | '\0'))
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    let b = v.as_bytes();
+    (b.len() == 12
+        && b[..2].iter().all(u8::is_ascii_alphabetic)
+        && b[2..5].iter().all(u8::is_ascii_alphanumeric)
+        && b[5..].iter().all(u8::is_ascii_digit))
+    .then_some(v)
+}
+
+/// A MusicBrainz id: the first of possibly several (multiple artists), in
+/// lower case. Anything else is not one.
+pub(crate) fn parse_mbid(s: &str) -> Option<String> {
+    let v = s
+        .split(['/', ';', '\0'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let b = v.as_bytes();
+    (b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                *c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        }))
+    .then_some(v)
+}
+
+/// Tempo, from values that can be one (some taggers write "120.00 BPM").
+pub(crate) fn parse_bpm(s: &str) -> Option<f32> {
+    let digits = s
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .replace(',', ".");
+    digits
+        .parse::<f32>()
+        .ok()
+        .filter(|b| (20.0..=400.0).contains(b))
+}
+
+/// A rating on any of the scales taggers use: 0..1, 0..5 or 0..100.
+pub(crate) fn parse_rating(s: &str) -> Option<f32> {
+    let v = s.trim().parse::<f32>().ok()?;
+    match v {
+        v if !(0.0..=100.0).contains(&v) => None,
+        v if v <= 1.0 => Some(v),
+        v if v <= 5.0 => Some(v / 5.0),
+        v => Some(v / 100.0),
+    }
 }
 
 /// Fills unset fields of `dst` from `src`.
@@ -233,6 +313,17 @@ pub(crate) fn merge_missing(dst: &mut Tags, src: &Tags) {
         disc_total,
         comment,
         lyrics,
+        original_year,
+        isrc,
+        mb_recording,
+        mb_artist,
+        mb_album,
+        bpm,
+        key,
+        mood,
+        publisher,
+        language,
+        rating,
         replaygain_track_gain,
         replaygain_track_peak,
         replaygain_album_gain,
@@ -553,6 +644,61 @@ pub(crate) fn base64_decode(s: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_tags_say_for_recommendations() {
+        let mut t = Tags::default();
+        for (k, v) in [
+            ("ISRC", "us-rc1-76-07839"),
+            (
+                "MUSICBRAINZ_TRACKID",
+                "B1A9C0E9-D987-4042-AE91-78D6A3267D69",
+            ),
+            (
+                "MusicBrainz Artist Id",
+                "a74b1b7f-71a5-4011-9441-d0b5e4122711; 00000000-0000-0000-0000-000000000000",
+            ),
+            ("MUSICBRAINZ_ALBUMID", "not an id"),
+            ("BPM", "128,5 BPM"),
+            ("INITIALKEY", "F#m"),
+            ("MOOD", "Calm; Dark"),
+            ("ORGANIZATION", "Warp"),
+            ("LANGUAGE", "deu"),
+            ("FMPS_RATING", "0.8"),
+            ("ORIGINALDATE", "1997-05-21"),
+        ] {
+            assert!(apply_common(&mut t, k, v), "{k}");
+        }
+        assert_eq!(t.isrc.as_deref(), Some("USRC17607839"));
+        assert_eq!(
+            t.mb_recording.as_deref(),
+            Some("b1a9c0e9-d987-4042-ae91-78d6a3267d69")
+        );
+        assert_eq!(
+            t.mb_artist.as_deref(),
+            Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
+        );
+        assert_eq!(t.mb_album, None);
+        assert_eq!(t.bpm, Some(128.5));
+        assert_eq!(t.key.as_deref(), Some("F#m"));
+        assert_eq!(t.mood.as_deref(), Some("Calm; Dark"));
+        assert_eq!(t.publisher.as_deref(), Some("Warp"));
+        assert_eq!(t.language.as_deref(), Some("deu"));
+        assert_eq!(t.rating, Some(0.8));
+        assert_eq!(t.original_year, Some(1997));
+    }
+
+    #[test]
+    fn values_that_cannot_be_what_they_claim_are_dropped() {
+        assert_eq!(parse_isrc("USRC1760783"), None);
+        assert_eq!(parse_isrc("12RC17607839"), None);
+        assert_eq!(parse_bpm("0"), None);
+        assert_eq!(parse_bpm("fast"), None);
+        assert_eq!(parse_bpm("1200"), None);
+        assert_eq!(parse_rating("-1"), None);
+        assert_eq!(parse_rating("3"), Some(0.6));
+        assert_eq!(parse_rating("80"), Some(0.8));
+    }
 
     #[test]
     fn genres() {

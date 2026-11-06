@@ -87,6 +87,90 @@ impl ServerInfo {
     }
 }
 
+/// What tags say about a song beyond what lists show: recommendations and
+/// automatic playlists work with it. All of it is optional.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TrackMeta {
+    pub composer: String,
+    pub original_year: Option<i32>,
+    pub isrc: String,
+    pub mb_recording: String,
+    pub mb_artist: String,
+    pub mb_album: String,
+    pub bpm: Option<f32>,
+    pub key: String,
+    pub mood: String,
+    pub publisher: String,
+    pub language: String,
+    /// (0..1)
+    pub rating: Option<f32>,
+}
+
+impl TrackMeta {
+    pub fn from_tags(t: &bl_media::Tags) -> TrackMeta {
+        let text = |v: &Option<String>| v.as_deref().unwrap_or("").trim().to_string();
+        TrackMeta {
+            composer: text(&t.composer),
+            original_year: t.original_year.filter(|y| (1..=9999).contains(y)),
+            isrc: text(&t.isrc),
+            mb_recording: text(&t.mb_recording),
+            mb_artist: text(&t.mb_artist),
+            mb_album: text(&t.mb_album),
+            bpm: t.bpm,
+            key: text(&t.key),
+            mood: text(&t.mood),
+            publisher: text(&t.publisher),
+            language: text(&t.language),
+            rating: t.rating,
+        }
+    }
+
+    /// Writes what is known into `m`: most songs have none of this.
+    pub fn write(&self, m: &mut Map) {
+        for (k, v) in [
+            ("composer", &self.composer),
+            ("isrc", &self.isrc),
+            ("mbRecording", &self.mb_recording),
+            ("mbArtist", &self.mb_artist),
+            ("mbAlbum", &self.mb_album),
+            ("key", &self.key),
+            ("mood", &self.mood),
+            ("publisher", &self.publisher),
+            ("language", &self.language),
+        ] {
+            if !v.is_empty() {
+                m.insert(k, v.as_str());
+            }
+        }
+        if let Some(y) = self.original_year {
+            m.insert("originalYear", y);
+        }
+        if let Some(b) = self.bpm {
+            m.insert("bpm", b);
+        }
+        if let Some(r) = self.rating {
+            m.insert("rating", r);
+        }
+    }
+
+    pub fn read(v: &Value) -> TrackMeta {
+        TrackMeta {
+            composer: s(v, "composer"),
+            original_year: v.get("originalYear").as_i64().map(|y| y as i32),
+            isrc: s(v, "isrc"),
+            mb_recording: s(v, "mbRecording"),
+            mb_artist: s(v, "mbArtist"),
+            mb_album: s(v, "mbAlbum"),
+            bpm: v.get("bpm").as_f32(),
+            key: s(v, "key"),
+            mood: s(v, "mood"),
+            publisher: s(v, "publisher"),
+            language: s(v, "language"),
+            rating: v.get("rating").as_f32(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Track {
     /// Stable id (hex string).
@@ -111,6 +195,7 @@ pub struct Track {
     pub has_cover: bool,
     /// Modification time (seconds since the Unix epoch).
     pub modified: u64,
+    pub meta: TrackMeta,
 }
 
 impl Track {
@@ -135,6 +220,7 @@ impl Track {
         m.insert("path", self.path.as_str());
         m.insert("hasCover", self.has_cover);
         m.insert("modified", self.modified);
+        self.meta.write(&mut m);
         Value::Object(m)
     }
     pub fn from_json(v: &Value) -> Track {
@@ -158,6 +244,7 @@ impl Track {
             path: s(v, "path"),
             has_cover: v.bool_or("hasCover", false),
             modified: u(v, "modified"),
+            meta: TrackMeta::read(v),
         }
     }
     /// "Artist 1, Artist 2" (or "Unknown Artist").
@@ -336,7 +423,20 @@ pub mod paths {
     pub const PLAYLISTS: &str = "/api/playlists";
     pub const IMAGES: &str = "/api/images";
     pub const PRESETS: &str = "/api/presets";
+    pub const FAVORITES: &str = "/api/favorites";
+    pub const HISTORY: &str = "/api/history";
+    pub const LABELS: &str = "/api/labels";
+    pub const ARTIST_INFO: &str = "/api/artist-info";
+    pub const RECOMMENDATIONS: &str = "/api/recommendations";
+    pub const RADIO: &str = "/api/radio";
+    pub const STATS: &str = "/api/stats";
 
+    pub fn track_labels(id: &str) -> String {
+        format!("/api/tracks/{id}/labels")
+    }
+    pub fn favorite(id: &str) -> String {
+        format!("/api/favorites/{id}")
+    }
     pub fn track_stream(id: &str) -> String {
         format!("/api/tracks/{id}/stream")
     }

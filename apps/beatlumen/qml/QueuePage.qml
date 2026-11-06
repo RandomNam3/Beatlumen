@@ -30,7 +30,8 @@ Item {
     onRevChanged: reload()
     Component.onCompleted: reload()
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
     TextPrompt {
         id: savePrompt
@@ -61,6 +62,36 @@ Item {
                 enabled: page.items.length > 0
                 onClicked: Core.call("queue.clear")
             }
+        }
+
+        // A radio goes on by itself; otherwise endless playback can.
+        RowLayout {
+            readonly property var radio: Core.state.radio || ({})
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 8
+            visible: radio.active === true
+            Icon { name: "radio"; color: Theme.accent }
+            Label {
+                textFormat: Text.PlainText
+                Layout.fillWidth: true
+                text: parent.radio.name ? Theme.tr("Radio plays") + ": " + parent.radio.name : Theme.tr("Radio plays")
+                color: Theme.text
+                elide: Text.ElideRight
+            }
+            Button {
+                flat: true
+                text: Theme.tr("Stop radio")
+                onClicked: Core.call("songs.radioStop")
+            }
+        }
+        SwitchRow {
+            Layout.fillWidth: true
+            visible: (Core.state.radio || {}).active !== true
+            title: Theme.tr("Endless playback")
+            detail: Theme.tr("When the queue runs out, similar songs follow.")
+            on: (Core.state.settings || {}).endless === true
+            onSwitched: (v) => Core.call("settings.set", { key: "endless", value: v })
         }
 
         Item {
@@ -101,6 +132,8 @@ Item {
                     padding: 0
                     readonly property bool isCurrent: index === page.current
                     highlighted: isCurrent
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: [modelData.title, modelData.artist, isCurrent ? Theme.tr("Now playing") : ""].filter(x => x).join(", ")
                     opacity: list.dragFrom === index ? 0.4 : 1
                     onClicked: Core.call("queue.play", { pos: modelData.pos })
                     onPressAndHold: songMenu.openFor([modelData.id], more, [{ text: Theme.tr("Remove from queue"), action: () => Core.call("queue.remove", { pos: modelData.pos }) }])

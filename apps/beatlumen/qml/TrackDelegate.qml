@@ -18,6 +18,11 @@ ItemDelegate {
     height: Theme.row
     padding: 0
     highlighted: current
+    Accessible.role: Accessible.ListItem
+    Accessible.name: [track.title, track.artist, track.album, current ? Theme.tr("Now playing") : ""].filter(x => x).join(", ")
+    Keys.onReturnPressed: play()
+    Keys.onEnterPressed: play()
+    Keys.onMenuPressed: if (showMenu) menu(track, menuButton)
     onClicked: play()
     onPressAndHold: if (showMenu) menu(track, menuButton)
 
@@ -46,8 +51,8 @@ ItemDelegate {
         }
         CoverImage {
             visible: d.showCover
-            Layout.preferredWidth: 44
-            Layout.preferredHeight: 44
+            Layout.preferredWidth: Theme.cover
+            Layout.preferredHeight: Theme.cover
             source: Covers.url(d.track.id, d.track.cover)
             seed: d.track.album || d.track.title || ""
             radius: 8
@@ -67,7 +72,7 @@ ItemDelegate {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: d.track.title || ""
-                color: d.current ? Theme.accent : Theme.text
+                color: d.current ? Theme.accentText : Theme.text
                 font.pixelSize: 15
                 font.weight: d.current ? Font.DemiBold : Font.Medium
                 elide: Text.ElideRight
@@ -94,6 +99,12 @@ ItemDelegate {
             color: Theme.textFaint
             font.pixelSize: 13
             font.features: { "tnum": 1 }
+        }
+        // On narrow screens the row needs the room; the menu has it too.
+        FavoriteButton {
+            trackId: d.track.id || ""
+            visible: d.showMenu && Favorites.canMark(trackId) && (d.width >= 420 || on)
+            iconColor: Theme.textDim
         }
         IconButton {
             id: menuButton

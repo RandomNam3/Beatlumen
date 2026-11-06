@@ -40,7 +40,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.textDim
-                text: Theme.tr("Play a song with a clear beat and tap the button on every beat you hear. The difference to the predicted beats is the delay of your speakers.")
+                text: Theme.tr("Play a song with a clear beat and tap on every beat you hear.")
             }
             Label {
                 textFormat: Text.PlainText
@@ -106,8 +106,43 @@ Item {
                     clip: true
                     contentWidth: availableWidth
                     ColumnLayout {
-                        width: fxScroll.availableWidth
-                        spacing: 16
+                        width: Math.min(fxScroll.availableWidth, 720)
+                        spacing: 8
+
+                        SwitchRow {
+                            Layout.fillWidth: true
+                            title: Theme.tr("Epilepsy mode")
+                            detail: Theme.tr("Fewer flashes and colour changes. Lowers the risk, cannot rule it out.")
+                            on: page.settings.photosensitive === true
+                            onSwitched: (v) => Core.call("settings.set", { key: "photosensitive", value: v })
+                        }
+
+                        SectionLabel { text: Theme.tr("Animation") }
+                        Flow {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            spacing: 8
+                            Repeater {
+                                model: [
+                                    { v: "", l: Theme.tr("Pictures") },
+                                    { v: "flow", l: Theme.tr("Flow") },
+                                    { v: "tunnel", l: Theme.tr("Tunnel") },
+                                    { v: "stars", l: Theme.tr("Stars") },
+                                    { v: "aurora", l: Theme.tr("Aurora") },
+                                    { v: "waves", l: Theme.tr("Waves") },
+                                    { v: "cycle", l: Theme.tr("A new one per song") }
+                                ]
+                                delegate: AccentButton {
+                                    text: modelData.l
+                                    checkable: true
+                                    checked: (page.settings.animation || "") === modelData.v
+                                    highlighted: checked
+                                    flat: !checked
+                                    onClicked: Core.call("settings.set", { key: "animation", value: modelData.v })
+                                }
+                            }
+                        }
 
                         SectionLabel { text: Theme.tr("Style") }
                         GridLayout {
@@ -167,7 +202,7 @@ Item {
                             Label {
                                 textFormat: Text.PlainText
                                 Layout.fillWidth: true
-                                text: (syncSlider.value > 0 ? "+" : "") + Math.round(syncSlider.value) + " ms · " + Theme.tr("Move the effects earlier if they come after the beat (e.g. with Bluetooth headphones).")
+                                text: (syncSlider.value > 0 ? "+" : "") + Math.round(syncSlider.value) + " ms · " + Theme.tr("Earlier if effects come after the beat (e.g. Bluetooth).")
                                 color: Theme.textFaint
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
@@ -182,14 +217,14 @@ Item {
                         SwitchRow {
                             Layout.fillWidth: true
                             title: Theme.tr("Predict the beat")
-                            detail: Theme.tr("Live music (radio, other apps, AirPlay, DLNA): effects land on the coming beats instead of following them.")
+                            detail: Theme.tr("For live music: effects land on the coming beats.")
                             on: page.settings.beatPrediction !== false
                             onSwitched: (on) => Core.call("settings.set", { key: "beatPrediction", value: on })
                         }
                         SwitchRow {
                             Layout.fillWidth: true
                             title: Theme.tr("Adaptive")
-                            detail: Theme.tr("Effects follow the energy of the song: calm in quiet parts, strong in drops.")
+                            detail: Theme.tr("Effects follow the energy of the song.")
                             on: page.settings.adaptive === true
                             onSwitched: (on) => Core.call("settings.set", { key: "adaptive", value: on })
                         }
@@ -201,7 +236,14 @@ Item {
                             Layout.rightMargin: 8
                             spacing: 8
                             Repeater {
-                                model: [{ v: "Spectrum", l: Theme.tr("Spectrum") }, { v: "Waveform", l: Theme.tr("Waveform") }, { v: "None", l: Theme.tr("Off") }]
+                                model: [
+                                    { v: "Spectrum", l: Theme.tr("Spectrum") },
+                                    { v: "Wave", l: Theme.tr("Frequency wave") },
+                                    { v: "Mirror", l: Theme.tr("Mirrored bars") },
+                                    { v: "Circle", l: Theme.tr("Circle") },
+                                    { v: "Waveform", l: Theme.tr("Waveform") },
+                                    { v: "None", l: Theme.tr("Off") }
+                                ]
                                 delegate: AccentButton {
                                     text: modelData.l
                                     checkable: true
@@ -213,7 +255,17 @@ Item {
                             }
                         }
 
+                        SwitchRow {
+                            Layout.fillWidth: true
+                            title: Theme.tr("Fill the visual")
+                            detail: Theme.tr("Full size instead of a strip below the title.")
+                            on: page.settings.overlayFull === true
+                            onSwitched: (v) => Core.call("settings.set", { key: "overlayFull", value: v })
+                        }
+
                         ItemDelegate {
+                            Accessible.role: Accessible.Button
+                            Accessible.name: Theme.tr("Advanced editor")
                             Layout.fillWidth: true
                             Layout.topMargin: 8
                             height: Theme.row + 8

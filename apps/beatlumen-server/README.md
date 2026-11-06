@@ -188,6 +188,18 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 | `GET /api/playlists/{id}` | `Playlist` |
 | `PUT /api/playlists/{id}` | partial update: `{"name"?, "items"?}` → updated `Playlist` |
 | `DELETE /api/playlists/{id}` | 204 |
+| `GET /api/labels` | `{"names": [...], "songs": {"<id>": [indexes into names]}, "given": [...]}`: automatic labels (`genre:rock`, `decade:1990`, `tempo:slow\|medium\|fast`, `energy:low\|medium\|high`, `key:Am`, `mood:...`, the moods being rough estimates) and those given by the login |
+| `GET /api/tracks/{id}/labels` | the labels the login gave this song |
+| `PUT /api/tracks/{id}/labels` | body `{"add"?: [...], "remove"?: [...]}` → the song's labels afterwards |
+| `GET /api/recommendations` | `{"shelves": [{"key": "for-you"\|"because"\|"new"\|"forgotten"\|"discover", "arg", "items": [{"id", "reason": {"key", "arg"}}]}], "mixes": [{"id", "key", "arg", "items": [ids]}]}`, from the login's favorites, playlists and listening history; the same for a day |
+| `GET /api/stats?range=week\|month\|year\|all&utcOffset=seconds` | listening statistics of what the login's devices sent: `plays`, `skips`, `seconds`, `activeDays`, `streak`, `longestStreak`, `since`, `topSongs`, `topArtists`, `topAlbums`, `topGenres`, `byHour`, `byWeekday` (Monday first), `timeline` |
+| `POST /api/radio` | body `{"seed": {"tracks": [...]} or {"artist"} or {"album"} or {"label"} or {"taste": true}, "recent"?: [ids to leave out], "count"?: 1..200, "random"?}` → `{"items": [ids]}` |
+| `GET /api/favorites` | `{"items": [{"id", "t"}]}`: the login's favorite songs, newest first |
+| `PUT /api/favorites/{id}` | marks a song; optional body `{"t": seconds since 1970}` → 204 |
+| `DELETE /api/favorites/{id}` | → 204, also when it is no favorite |
+| `GET /api/history?since=&size=` | `{"events": [{"id", "t", "ms", "skip"}]}`: what the login listened to, newest first. Only filled when the user agreed to it in the app |
+| `POST /api/history` | body `{"events": [{"id", "t", "ms", "skip"}]}` (up to 1000, a play already known is not added twice) → `{"added": n}` |
+| `DELETE /api/history` | deletes the login's listening history → 204 |
 | `GET /api/images` | `[ImageEntry]` from the image folders and uploads (jpg, jpeg, png, bmp, gif, webp) |
 | `GET /api/images/{id}` | original bytes (`Range` supported); `?size=N` → JPEG scaled to fit N×N (64..4096, cached) |
 | `POST /api/images` | raw image body, optional `X-Filename` header (may be percent-encoded) → 201 `ImageEntry`. Max 50 MB, must be JPEG/PNG/BMP/GIF/WebP by magic bytes; the stored name is sanitized, made unique and gets the extension of the detected format |

@@ -171,6 +171,16 @@ pub(crate) fn parse_ilst(
                     }
                 }
             }
+            b"tmpo" => {
+                for (t, b) in BoxIter::new(item) {
+                    if &t == b"data" && b.len() >= 10 {
+                        let bpm = u16::from_be_bytes([b[8], b[9]]);
+                        if tags.bpm.is_none() && bpm > 0 {
+                            tags.bpm = Some(bpm as f32);
+                        }
+                    }
+                }
+            }
             b"covr" => {
                 if let Some(p) = pictures.as_deref_mut() {
                     for (ty, v) in data_boxes(item) {

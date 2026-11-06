@@ -9,6 +9,10 @@ QtObject {
 
     // The song text editor takes Space, arrows and undo for itself.
     property bool lyricsEditing: false
+    // No sliding and fading where it is not needed.
+    readonly property bool reduceMotion: ui.reduceMotion === true
+    readonly property bool highContrast: ui.highContrast === true
+    readonly property bool keepControls: ui.keepControls === true
 
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
@@ -19,16 +23,48 @@ QtObject {
     // "" = system accent, otherwise "#rrggbb".
     readonly property color accent: (ui.accent && ui.accent.length > 0) ? ui.accent : Core.systemAccent
 
-    readonly property color surface: dark ? Qt.rgba(0.07, 0.07, 0.09, 0.86) : Qt.rgba(0.98, 0.97, 0.99, 0.90)
-    readonly property color surfaceStrong: dark ? Qt.rgba(0.09, 0.09, 0.11, 0.97) : Qt.rgba(1, 1, 1, 0.98)
-    readonly property color surfaceVariant: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.05)
-    readonly property color outline: dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.12)
-    readonly property color text: dark ? "#f2f1f5" : "#1b1a20"
-    readonly property color textDim: dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
-    readonly property color textFaint: dark ? Qt.rgba(1, 1, 1, 0.42) : Qt.rgba(0, 0, 0, 0.40)
+    readonly property color surface: highContrast ? (dark ? "#000000" : "#ffffff")
+        : dark ? Qt.rgba(0.07, 0.07, 0.09, 0.86) : Qt.rgba(0.98, 0.97, 0.99, 0.90)
+    readonly property color surfaceStrong: highContrast ? (dark ? "#000000" : "#ffffff")
+        : dark ? Qt.rgba(0.09, 0.09, 0.11, 0.97) : Qt.rgba(1, 1, 1, 0.98)
+    readonly property color surfaceVariant: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(0, 0, 0, 0.10))
+        : dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.05)
+    readonly property color outline: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.7) : Qt.rgba(0, 0, 0, 0.7))
+        : dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.12)
+    readonly property color text: highContrast ? (dark ? "#ffffff" : "#000000") : dark ? "#f2f1f5" : "#1b1a20"
+    readonly property color textDim: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.9) : Qt.rgba(0, 0, 0, 0.9))
+        : dark ? Qt.rgba(1, 1, 1, 0.66) : Qt.rgba(0, 0, 0, 0.62)
+    readonly property color textFaint: highContrast ? (dark ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(0, 0, 0, 0.85))
+        : dark ? Qt.rgba(1, 1, 1, 0.52) : Qt.rgba(0, 0, 0, 0.58)
     readonly property color danger: "#ef5350"
     // Text/icon colour on top of the accent colour.
     readonly property color onAccent: onColor(accent)
+    // The accent colour for text and thin marks on the surfaces: chosen
+    // accents may be too light or too dark to read there (4.5:1).
+    readonly property color accentText: readable(accent)
+
+    function luminance(c) {
+        const lin = (v) => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+        return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+    }
+    function contrast(a, b) {
+        const la = luminance(a), lb = luminance(b)
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+    }
+    // `c` moved towards white (dark theme) or black (light theme) until it
+    // can be read on the surface.
+    function readable(c) {
+        const base = dark ? "#121216" : "#fafafa"
+        const end = dark ? Qt.rgba(1, 1, 1, 1) : Qt.rgba(0, 0, 0, 1)
+        let out = Qt.rgba(c.r, c.g, c.b, 1)
+        for (let i = 1; i <= 10 && contrast(out, base) < 4.5; ++i)
+            out = Qt.tint(Qt.rgba(c.r, c.g, c.b, 1), Qt.rgba(end.r, end.g, end.b, i / 10))
+        return out
+    }
+    // How long an animation of the interface takes.
+    function ms(duration) {
+        return reduceMotion ? 0 : duration
+    }
 
     // Black or white, whichever contrasts more with `c` (WCAG luminance).
     function onColor(c) {
@@ -47,9 +83,14 @@ QtObject {
         return Qt.hsla(h / 360, dark ? 0.42 : 0.50, l, 1)
     }
 
-    // Touch friendly metrics (device independent pixels).
-    readonly property int touch: 48
-    readonly property int row: 64
+    // Fingers need more room than a mouse (device independent pixels).
+    readonly property bool fingers: Core.mobile || Core.platform === "web"
+    readonly property int touch: fingers ? 48 : 36
+    readonly property int row: fingers ? 64 : 52
+    readonly property int settingRow: fingers ? 56 : 44
+    readonly property int listRow: fingers ? 72 : 56
+    readonly property int lead: fingers ? 52 : 40
+    readonly property int cover: fingers ? 44 : 36
     readonly property int gap: 16
     readonly property int radius: 16
     readonly property int smallRadius: 10
@@ -62,6 +103,47 @@ QtObject {
 
     function icon(name) {
         return "qrc:/qt/qml/Beatlumen/icons/" + name + ".svg"
+    }
+
+    // Tags and names as written in lower case by the recommendations.
+    function capitalized(s) {
+        return String(s || "").replace(/(^|[\s-])(\S)/g, (m, a, b) => a + b.toUpperCase())
+    }
+
+    // What a label means, for those the server or the app works out.
+    function labelName(name) {
+        const i = name.indexOf(":")
+        if (i < 0)
+            return name
+        const kind = name.substring(0, i)
+        const value = name.substring(i + 1)
+        switch (kind) {
+        case "genre": return capitalized(value)
+        case "decade": return language === "de" ? value + "er" : value + "s"
+        case "key": return tr("Key of %1").arg(value)
+        case "tempo": return tr({ slow: "Slow", medium: "Medium tempo", fast: "Fast" }[value] || value)
+        case "energy": return tr({ low: "Quiet", medium: "Medium energy", high: "High energy" }[value] || value)
+        case "mood": return tr({ upbeat: "Upbeat", intense: "Intense", relaxed: "Relaxed", melancholic: "Melancholic", danceable: "Danceable" }[value] || capitalized(value))
+        case "publisher": return capitalized(value)
+        case "lang": return tr({ en: "English", de: "German", fr: "French", es: "Spanish", it: "Italian", nl: "Dutch", pt: "Portuguese", ru: "Russian", ja: "Japanese", ko: "Korean", zh: "Chinese", sv: "Swedish" }[value] || value)
+        default: return value
+        }
+    }
+    // The kind of a label, to sort them into groups (given by people: "").
+    function labelKind(name) {
+        const i = name.indexOf(":")
+        return i < 0 ? "" : name.substring(0, i)
+    }
+
+    // A length of time for people: "3 min", "12 h 5 min", "2 d 4 h".
+    function fmtDuration(sec) {
+        const m = Math.round((sec || 0) / 60)
+        if (m < 60)
+            return m + " min"
+        const h = Math.floor(m / 60)
+        if (h < 48)
+            return h + " h " + (m % 60) + " min"
+        return Math.floor(h / 24) + (language === "de" ? " T " : " d ") + (h % 24) + " h"
     }
 
     function fmtTime(sec) {
@@ -91,7 +173,7 @@ QtObject {
         "Now playing": "Wiedergabe",
         "Microphone test": "Mikrofontest",
         "Microphones": "Mikrofone",
-        "Opens inputs to check their levels. The sound stays on this device and is not saved; the inputs close when you leave this check.": "Öffnet Eingänge, um ihre Pegel zu prüfen. Der Ton bleibt auf diesem Gerät und wird nicht gespeichert; die Eingänge schließen sich, wenn du diese Prüfung verlässt.",
+        "Check input levels. Nothing is saved.": "Prüft die Eingangspegel. Nichts wird gespeichert.",
         "No microphones found": "Keine Mikrofone gefunden",
         "peak": "Spitze",
         "default": "Standard",
@@ -116,11 +198,10 @@ QtObject {
         "In library": "In der Bibliothek",
         "Song": "Lied",
         "Lyric video": "Lyrics-Video",
-        "Song text": "Songtext",
         "Keep offline": "Offline verfügbar machen",
         "Remove offline copy": "Offline-Kopie entfernen",
         "Offline": "Offline",
-        "Songs kept on this device play without a connection to the server, with their song text and visuals.": "Auf diesem Gerät gespeicherte Titel laufen ohne Verbindung zum Server, mit Songtext und Visuals.",
+        "Songs kept here play without a connection.": "Hier gespeicherte Titel laufen ohne Verbindung.",
         "Remove all offline copies": "Alle Offline-Kopien entfernen",
         "Saving": "Wird gespeichert",
         "Public link…": "Öffentlicher Link …",
@@ -129,10 +210,7 @@ QtObject {
         "Copy it now: the link cannot be shown again later.": "Jetzt kopieren: Der Link kann später nicht noch einmal angezeigt werden.",
         "Valid for": "Gültig für",
         "1 day": "1 Tag",
-        "7 days": "7 Tage",
-        "30 days": "30 Tage",
         "No expiry": "Unbegrenzt",
-        "Password (optional)": "Passwort (optional)",
         "Creating…": "Wird erstellt …",
         "Create link": "Link erstellen",
         "Active links": "Aktive Links",
@@ -149,15 +227,14 @@ QtObject {
         "Devices": "Geräte",
         "This device:": "Dieses Gerät:",
         "Browser": "Browser",
-        "Connect to a server: the apps logged in to it see each other, can control each other and take over each other's playback.": "Verbinde dich mit einem Server: Die dort angemeldeten Apps sehen einander, können sich gegenseitig steuern und die Wiedergabe übernehmen.",
+        "Connect to a server to control your other devices from here.": "Verbinde dich mit einem Server, um deine anderen Geräte von hier zu steuern.",
         "No other devices yet": "Noch keine anderen Geräte",
-        "Open Beatlumen on another phone, computer or in the browser and connect it to this server.": "Öffne Beatlumen auf einem anderen Handy, Computer oder im Browser und verbinde es mit diesem Server.",
+        "Open Beatlumen on another device and connect it to this server.": "Öffne Beatlumen auf einem anderen Gerät und verbinde es mit diesem Server.",
         "Playing": "Spielt",
         "Paused": "Pausiert",
         "Online": "Online",
         "Position": "Position",
         "Previous": "Zurück",
-        "Next": "Weiter",
         "Remote control is turned off on this device.": "Auf diesem Gerät ist die Fernsteuerung ausgeschaltet.",
         "Play here": "Hier abspielen",
         "Move my music there": "Meine Musik dorthin verschieben",
@@ -165,11 +242,10 @@ QtObject {
         "Refresh": "Aktualisieren",
         "Name": "Name",
         "Play on": "Abspielen auf",
-        "This device": "Dieses Gerät",
         "Device name": "Gerätename",
         "Allow remote control": "Fernsteuerung erlauben",
-        "Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).": "Darstellung, Stile und Wiedergabe-Optionen folgen deinem Konto auf deine anderen Geräte (Ende-zu-Ende verschlüsselt).",
-        "Your other devices on this server may control the playback here and move music to this device.": "Deine anderen Geräte an diesem Server dürfen die Wiedergabe hier steuern und Musik auf dieses Gerät verschieben.",
+        "Appearance and playback options follow your account (end-to-end encrypted).": "Darstellung und Wiedergabe-Optionen folgen deinem Konto (Ende-zu-Ende-verschlüsselt).",
+        "Your other devices may control playback here.": "Deine anderen Geräte dürfen die Wiedergabe hier steuern.",
         "Sync automatically": "Automatisch synchronisieren",
         "Timing the song text…": "Songtext wird synchronisiert …",
         "Waiting for the server…": "Warte auf den Server …",
@@ -178,7 +254,7 @@ QtObject {
         "Audio": "Audio",
         "Radio edit": "Radio Edit",
         "Where to save songs?": "Wohin speichern?",
-        "The song plays right away while the server stores it. Your choice is remembered; you can change it in the settings.": "Das Lied spielt sofort, während der Server es speichert. Deine Wahl wird gemerkt; du kannst sie in den Einstellungen ändern.",
+        "It plays right away while the server stores it.": "Das Lied spielt sofort, während der Server es speichert.",
         "Library on the server": "Bibliothek auf dem Server",
         "Everyone who uses this server can play it.": "Alle, die diesen Server nutzen, können es abspielen.",
         "My encrypted files": "Meine verschlüsselten Dateien",
@@ -187,26 +263,25 @@ QtObject {
         "Songs from": "Lieder von",
         "Save in": "Speichern in",
         "Ask": "Fragen",
-        "Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.": "Zeigt Effekte zur Musik, die andere Apps abspielen (Spotify, YouTube, Radio-Apps, …), und steuert sie von hier aus. Android fragt jedes Mal nach der Erlaubnis, den Bildschirm aufzunehmen; genutzt wird nur der Ton. Manche Apps erlauben keine Aufnahme, dann werden nur ihr Titel und die Steuerung angezeigt.",
+        "Visuals for music in other apps. Only the sound is used.": "Visuals zur Musik anderer Apps. Genutzt wird nur der Ton.",
         "Visualizing": "Visualisiert",
         "Stop": "Beenden",
         "Visualizing other apps": "Visualisiert andere Apps",
         "Visualizing and controlling": "Visualisiert und steuert",
-        "Shows visuals for what the computer plays (Spotify, the browser, any player) and controls the playing app from here. Only the sound is used.": "Zeigt Effekte zu dem, was der Computer abspielt (Spotify, Browser, jeder Player), und steuert die spielende App von hier aus. Genutzt wird nur der Ton.",
+        "Visuals for what the computer plays. Only the sound is used.": "Visuals zu dem, was der Computer abspielt. Genutzt wird nur der Ton.",
         "Visualizing other apps; no playing app found to control": "Visualisiert andere Apps; keine spielende App zum Steuern gefunden",
         "Visualizing other apps; controlling them needs notification access": "Visualisiert andere Apps; zum Steuern fehlt der Zugriff auf Benachrichtigungen",
         "Visualize other apps": "Andere Apps visualisieren",
         "Stop visualizing other apps": "Andere Apps nicht mehr visualisieren",
         "Allow control of other apps": "Steuerung anderer Apps erlauben",
         "For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.": "Für Titel, Cover und Steuerung braucht Beatlumen unter Android Zugriff auf Benachrichtigungen. Benachrichtigungen werden nicht gelesen.",
-        "Windows (\"Play to\"), TVs and apps like BubbleUPnP can send music to this device.": "Windows („Wiedergeben auf“), Fernseher und Apps wie BubbleUPnP können Musik an dieses Gerät senden.",
+        "Windows, TVs and apps like BubbleUPnP can send music here.": "Windows, Fernseher und Apps wie BubbleUPnP können Musik hierher senden.",
         "not available": "nicht verfügbar",
         "playing what a device sent": "spielt, was ein Gerät gesendet hat",
         "DLNA has no password.": "DLNA hat kein Passwort.",
         "Play on…": "Wiedergabe auf …",
         "Searching for speakers…": "Suche Lautsprecher …",
         "No speakers found": "Keine Lautsprecher gefunden",
-        "Connecting…": "Verbinde …",
         "Password for": "Passwort für",
         "Stay unlocked on this device": "Auf diesem Gerät entsperrt bleiben",
         "The keys are kept in this device's protected storage, so you sign in only once here. Anyone who can use this device unlocked can then open your files.": "Die Schlüssel liegen im geschützten Speicher dieses Geräts, du meldest dich hier also nur einmal an. Wer das Gerät entsperrt benutzen kann, kann dann auch deine Dateien öffnen.",
@@ -279,9 +354,8 @@ QtObject {
         "Upload failed:": "Hochladen fehlgeschlagen:",
         "Upload files": "Dateien hochladen",
         "Upload not finished": "Hochladen nicht abgeschlossen",
-        "User name": "Benutzername",
         "Verified": "Überprüft",
-        "With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them.": "Mit einem Konto speicherst du Ende-zu-Ende-verschlüsselte Dateien auf dem Server und teilst sie; der Server kann sie nicht lesen.",
+        "Store and share end-to-end encrypted files; the server cannot read them.": "Speichere und teile Ende-zu-Ende-verschlüsselte Dateien; der Server kann sie nicht lesen.",
         "Write this code down and keep it in a safe place. If you forget your password, it is the only way to get your files back. It is shown only once.": "Schreibe diesen Code auf und bewahre ihn sicher auf. Wenn du dein Passwort vergisst, ist er der einzige Weg zurück zu deinen Dateien. Er wird nur einmal angezeigt.",
         "You lose access; the owner keeps the file.": "Du verlierst den Zugriff; die Datei bleibt beim Besitzer.",
         "You need an invitation code from the server's admin. Choose a long password: nobody, not even the admin, can reset it without your recovery code.": "Du brauchst einen Einladungscode vom Admin des Servers. Wähle ein langes Passwort: Niemand, auch nicht der Admin, kann es ohne deinen Wiederherstellungscode zurücksetzen.",
@@ -312,7 +386,7 @@ QtObject {
         "Clear": "Leeren",
         "No results": "Keine Treffer",
         "Receive AirPlay": "AirPlay empfangen",
-        "This device appears as a speaker on iPhone, iPad and Mac; what they play is shown with visuals here.": "Dieses Gerät erscheint auf iPhone, iPad und Mac als Lautsprecher; was dort läuft, wird hier mit Visuals wiedergegeben.",
+        "This device appears as a speaker on iPhone, iPad and Mac.": "Dieses Gerät erscheint auf iPhone, iPad und Mac als Lautsprecher.",
         "AirPlay is not available": "AirPlay ist nicht verfügbar",
         "Receiving from": "Empfängt von",
         "Ready, visible as": "Bereit, sichtbar als",
@@ -322,7 +396,7 @@ QtObject {
         "Password (optional)": "Passwort (optional)",
         "Set password": "Passwort setzen",
         "Remove password": "Passwort entfernen",
-        "Only reachable in the local network. Without a password anyone in this network can play music on this device.": "Nur im lokalen Netzwerk erreichbar. Ohne Passwort kann jeder in diesem Netzwerk Musik auf diesem Gerät abspielen.",
+        "Without a password, anyone in your network can play here.": "Ohne Passwort kann jeder in deinem Netzwerk hier abspielen.",
         "Try a different title, artist or album.": "Versuche einen anderen Titel, Interpreten oder ein anderes Album.",
         "Collect songs with “Add to playlist…” in a song's menu.": "Sammle Titel über „Zur Playlist hinzufügen…“ im Menü eines Titels.",
         "Clear queue": "Warteschlange leeren",
@@ -349,7 +423,6 @@ QtObject {
         "Create": "Erstellen",
         "Cancel": "Abbrechen",
         "Save": "Speichern",
-        "Delete": "Löschen",
         "Rename": "Umbenennen",
         "OK": "OK",
         "Back": "Zurück",
@@ -364,8 +437,8 @@ QtObject {
         "Sync with the music": "Synchron zur Musik",
         "Later": "Später",
         "Earlier": "Früher",
-        "Move the effects earlier if they come after the beat (e.g. with Bluetooth headphones).": "Effekte früher stellen, wenn sie nach dem Beat kommen (z. B. mit Bluetooth-Kopfhörern).",
-        "Effects follow the energy of the song: calm in quiet parts, strong in drops.": "Effekte folgen der Energie des Songs: ruhig in leisen Passagen, kräftig bei Drops.",
+        "Earlier if effects come after the beat (e.g. Bluetooth).": "Früher, wenn Effekte nach dem Beat kommen (z. B. Bluetooth).",
+        "Effects follow the energy of the song.": "Effekte folgen der Energie des Songs.",
         "Overlay": "Overlay",
         "Spectrum": "Spektrum",
         "Waveform": "Wellenform",
@@ -387,7 +460,6 @@ QtObject {
         "Move down": "Nach unten",
         "Analysis": "Analyse",
         "Reset to defaults": "Standardwerte",
-        "Energy": "Energie",
         "Beats (lows · mids · highs)": "Beats (Tiefen · Mitten · Höhen)",
         "Sections": "Abschnitte",
         "No analysis yet": "Noch keine Analyse",
@@ -401,7 +473,7 @@ QtObject {
         "When a song ends": "Wenn ein Titel endet",
         "On every song change": "Bei jedem Titelwechsel",
         "Use album cover when empty": "Albumcover verwenden, wenn leer",
-        "No backgrounds yet. The album cover of the current song is used.": "Noch keine Hintergründe. Das Albumcover des aktuellen Titels wird verwendet.",
+        "No backgrounds yet; the album cover is used.": "Noch keine Hintergründe; das Albumcover wird verwendet.",
         "Appearance": "Darstellung",
         "Theme": "Design",
         "System": "System",
@@ -418,13 +490,13 @@ QtObject {
         "Music on this device": "Musik auf diesem Gerät",
         "Add a folder with your songs.": "Füge einen Ordner mit deinen Songs hinzu.",
         "A Beatlumen server": "Ein Beatlumen-Server",
-        "Your library at home, analysed for the visuals, with accounts and encrypted files.": "Deine Bibliothek zu Hause, für die Visuals analysiert, mit Konten und verschlüsselten Dateien.",
+        "Your library at home, with accounts and encrypted files.": "Deine Bibliothek zu Hause, mit Konten und verschlüsselten Dateien.",
         "Navidrome, Jellyfin, Nextcloud, a NAS …": "Navidrome, Jellyfin, Nextcloud, ein NAS …",
         "Play the music of other servers and storage directly.": "Spiele die Musik anderer Server und Speicher direkt ab.",
         "Use this device as a speaker": "Dieses Gerät als Lautsprecher nutzen",
-        "iPhones, Macs, Windows and DLNA apps play here (AirPlay, DLNA) with visuals.": "iPhones, Macs, Windows und DLNA-Apps spielen hier ab (AirPlay, DLNA) – mit Visuals.",
+        "iPhones, Macs and DLNA apps play here.": "iPhones, Macs und DLNA-Apps spielen hier ab.",
         "AirPlay 2 (experimental)": "AirPlay 2 (experimentell)",
-        "Also offers AirPlay 2 to newer iPhones and Macs. If they cannot connect, turn it off: AirPlay 1 keeps working.": "Bietet neueren iPhones und Macs auch AirPlay 2 an. Wenn sie sich nicht verbinden können, schalte es aus: AirPlay 1 funktioniert weiter.",
+        "For newer iPhones and Macs. If they cannot connect, turn it off.": "Für neuere iPhones und Macs. Wenn sie sich nicht verbinden können, schalte es aus.",
         "Search settings": "Einstellungen durchsuchen",
         "No setting matches.": "Keine Einstellung passt.",
         "All": "Alle",
@@ -448,7 +520,7 @@ QtObject {
         "Timing the song text on this device…": "Songtext wird auf diesem Gerät abgestimmt …",
         "Time word by word": "Wortgenau timen",
         "Time all songs on this device": "Alle Songs auf diesem Gerät timen",
-        "Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.": "Songs mit Text bekommen Wortzeiten, bei den anderen wird der Gesang aufgeschrieben. Fertige Songs werden übersprungen, außer das Sprachmodell ist besser.",
+        "Songs already done are skipped unless the model is better.": "Fertige Songs werden übersprungen, außer das Modell ist besser.",
         "songs left": "Songs übrig",
         "Computed on the graphics card: %1": "Berechnet auf der Grafikkarte: %1",
         "Translate song texts": "Songtexte übersetzen",
@@ -465,10 +537,10 @@ QtObject {
         "All lines timed": "Alle Zeilen getimt",
         "Paste text and tap along…": "Text einfügen und mittippen …",
         "Correct the timing by hand": "Timing von Hand korrigieren",
-        "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.": "Zeigt jede Zeile eines Songtexts zusätzlich in der Sprache dieser App. Das Übersetzungsmodell für die Sprache des Songs (etwa 300 MB) wird beim ersten Bedarf geladen; Übersetzungen bleiben auf diesem Gerät.",
+        "Shows each line in this app's language too (about 300 MB once, stays on this device).": "Zeigt jede Zeile auch in der Sprache dieser App (einmalig etwa 300 MB, bleibt auf diesem Gerät).",
         "Translation": "Übersetzung",
         "Recognise and time song texts": "Songtexte erkennen und timen",
-        "A speech model times song texts word by word and writes down the singing of songs without a text. A server with a model does this for its songs itself.": "Ein Sprachmodell timt Songtexte Wort für Wort und schreibt bei Songs ohne Text den Gesang auf. Ein Server mit Modell macht das für seine Songs selbst.",
+        "A speech model times song texts and writes down songs without one.": "Ein Sprachmodell timt Songtexte und schreibt Songs ohne Text auf.",
         "Translate song text": "Songtext übersetzen",
         "Hide translation": "Übersetzung ausblenden",
         "Loading the translation model…": "Übersetzungsmodell wird geladen …",
@@ -487,16 +559,16 @@ QtObject {
         "Original": "Original",
         "On Wi-Fi": "Im WLAN",
         "On mobile data": "Mit mobilen Daten",
-        "Smaller streams save data: the server converts songs to Opus while sending them. Offline copies stay originals.": "Kleinere Streams sparen Daten: Der Server wandelt Songs beim Senden in Opus um. Offline-Kopien bleiben Originale.",
+        "Smaller streams save data. Offline copies stay originals.": "Kleinere Streams sparen Daten. Offline-Kopien bleiben Originale.",
         "Now on mobile data": "Gerade mit mobilen Daten",
         "Unknown Album": "Unbekanntes Album",
         "No limit": "Kein Limit",
         "of": "von",
         "Measure by tapping along…": "Durch Mittippen messen …",
         "Predict the beat": "Beat vorhersagen",
-        "Live music (radio, other apps, AirPlay, DLNA): effects land on the coming beats instead of following them.": "Live-Musik (Radio, andere Apps, AirPlay, DLNA): Effekte treffen die kommenden Beats, statt ihnen zu folgen.",
+        "For live music: effects land on the coming beats.": "Für Live-Musik: Effekte treffen die kommenden Beats.",
         "Tap along to the beat": "Im Takt mittippen",
-        "Play a song with a clear beat and tap the button on every beat you hear. The difference to the predicted beats is the delay of your speakers.": "Spiele einen Song mit deutlichem Beat und tippe bei jedem Beat, den du hörst, auf die Schaltfläche. Der Unterschied zu den vorhergesagten Beats ist die Verzögerung deiner Lautsprecher.",
+        "Play a song with a clear beat and tap on every beat you hear.": "Spiele einen Song mit deutlichem Beat und tippe bei jedem Beat, den du hörst.",
         "Listening for the beat…": "Höre auf den Beat …",
         "%1 of %2 taps": "%1 von %2 Tipps",
         "Tap": "Tippen",
@@ -518,7 +590,7 @@ QtObject {
         "Add radio station": "Radiosender hinzufügen",
         "Edit": "Bearbeiten",
         "No stations yet": "Noch keine Sender",
-        "Add an internet radio station with its stream address or station file (.pls, .m3u). The visuals follow the music live.": "Füge einen Internetradio-Sender mit seiner Stream-Adresse oder Senderdatei (.pls, .m3u) hinzu. Die Visuals folgen der Musik live.",
+        "Add a station by its stream address or a .pls or .m3u file.": "Füge einen Sender über seine Stream-Adresse oder eine .pls- oder .m3u-Datei hinzu.",
         "Add station": "Sender hinzufügen",
         "Edit station": "Sender bearbeiten",
         "Stream address or station file": "Stream-Adresse oder Senderdatei",
@@ -526,9 +598,8 @@ QtObject {
         "A folder on a web server with a directory listing, or a link to one audio file.": "Ein Ordner auf einem Webserver mit Verzeichnisliste oder ein Link auf eine Audiodatei.",
         "New server key %1: compare it with the server's before trusting it": "Neuer Server-Schlüssel %1: vor dem Vertrauen mit dem des Servers vergleichen",
         "A folder on a computer reachable with SSH (password login).": "Ein Ordner auf einem per SSH erreichbaren Rechner (Anmeldung mit Passwort).",
-        "Play the music of a Subsonic, Navidrome or Jellyfin server, a WebDAV or Nextcloud folder or a DLNA media server directly on this device.": "Spiele die Musik eines Subsonic-, Navidrome- oder Jellyfin-Servers, eines WebDAV- oder Nextcloud-Ordners oder eines DLNA-Medienservers direkt auf diesem Gerät.",
+        "Subsonic, Navidrome, Jellyfin, WebDAV, Nextcloud or DLNA, directly on this device.": "Subsonic, Navidrome, Jellyfin, WebDAV, Nextcloud oder DLNA, direkt auf diesem Gerät.",
         "Listing songs…": "Songs werden gelistet …",
-        "%1 songs": "%1 Songs",
         "Sync now": "Jetzt abgleichen",
         "Add music source": "Musikquelle hinzufügen",
         "Edit source": "Quelle bearbeiten",
@@ -544,7 +615,6 @@ QtObject {
         "Password (unchanged)": "Passwort (unverändert)",
         "Folder (empty: all)": "Ordner (leer: alle)",
         "Rescan": "Neu einlesen",
-        "Server address": "Serveradresse",
         "Connect": "Verbinden",
         "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:": "Das Zertifikat des Servers ist auf diesem Gerät nicht vertrauenswürdig. Vertraue ihm nur, wenn dieser Fingerabdruck (SHA-256) mit dem Zertifikat deines Servers übereinstimmt:",
         "Trust this certificate": "Diesem Zertifikat vertrauen",
@@ -554,11 +624,10 @@ QtObject {
         "Log out": "Abmelden",
         "Password": "Passwort",
         "Connected to": "Verbunden mit",
-        "Connecting…": "Verbinde…",
         "Not connected": "Nicht verbunden",
         "Login required": "Anmeldung erforderlich",
         "Connection failed": "Verbindung fehlgeschlagen",
-        "Only connections to this server are made. Outside your home network, use an https:// address or a VPN.": "Es wird nur zu diesem Server verbunden. Nutze außerhalb deines Heimnetzes eine https://-Adresse oder ein VPN.",
+        "Outside your home network, use https:// or a VPN.": "Nutze außerhalb deines Heimnetzes https:// oder ein VPN.",
         "Performance": "Leistung",
         "Render resolution": "Render-Auflösung",
         "About": "Über",
@@ -567,16 +636,305 @@ QtObject {
         "Playback": "Wiedergabe",
         "Normalize volume": "Lautstärke angleichen",
         "Crossfade": "Überblendung",
-        "The next song fades in while the current one fades out.": "Der nächste Titel wird eingeblendet, während der aktuelle ausklingt.",
+        "Artist information": "Infos zu Interpreten",
+        "Artist information from the internet?": "Infos zu Interpreten aus dem Internet?",
+        "For artist pages and better recommendations. Everything else works without it.": "Für Interpretenseiten und bessere Empfehlungen. Alles andere funktioniert auch ohne.",
+        "Look artists up on the internet": "Interpreten im Internet nachschlagen",
+        "Artist names and your IP address go to MusicBrainz, Wikimedia and ListenBrainz.": "Interpretennamen und deine IP-Adresse gehen an MusicBrainz, Wikimedia und ListenBrainz.",
+        "A server has its own switch in its admin area.": "Ein Server hat einen eigenen Schalter im Admin-Bereich.",
+        "%1 artists known, %2 still to ask": "%1 Interpreten bekannt, %2 noch offen",
+        "Forget what was found": "Gefundenes vergessen",
+        "More about artists: switch it on in the settings.": "Mehr über Interpreten: in den Einstellungen einschaltbar.",
+        "Looking for information about this artist…": "Suche Infos zu diesem Interpreten …",
+        "Nothing certain was found about this artist.": "Zu diesem Interpreten wurde nichts Sicheres gefunden.",
+        "Several artists have this name; this may be another one.": "Mehrere Interpreten heißen so; das kann ein anderer sein.",
+        "Person": "Person",
+        "Band": "Band",
+        "Orchestra": "Orchester",
+        "Choir": "Chor",
+        "since %1": "seit %1",
+        "until %1": "bis %1",
+        "Website": "Website",
+        "Show more": "Mehr anzeigen",
+        "Show less": "Weniger anzeigen",
+        "Wikipedia (CC BY-SA)": "Wikipedia (CC BY-SA)",
+        "Members": "Mitglieder",
+        "Part of": "Gehört zu",
+        "Similar artists": "Ähnliche Interpreten",
+        "Data: MusicBrainz, Wikidata, Wikipedia, ListenBrainz.": "Daten: MusicBrainz, Wikidata, Wikipedia, ListenBrainz.",
+        "Picture": "Bild",
+        "Picture on Wikimedia Commons": "Bild auf Wikimedia Commons",
+        "New smart playlist": "Neue intelligente Playlist",
+        "Edit smart playlist": "Intelligente Playlist bearbeiten",
+        "Fills itself by rules.": "Füllt sich selbst nach Regeln.",
+        "Smart": "Intelligent",
+        "Edit rules": "Regeln bearbeiten",
+        "Genre, mood, label…": "Genre, Stimmung, Label …",
+        "Tempo (BPM)": "Tempo (BPM)",
+        "Rated at least (stars)": "Mindestens bewertet (Sterne)",
+        "Favorite": "Favorit",
+        "Played at least (times)": "Mindestens gespielt (mal)",
+        "Played within (days)": "Gespielt in den letzten (Tagen)",
+        "Added within (days)": "Hinzugefügt in den letzten (Tagen)",
+        "By artist and album": "Nach Interpret und Album",
+        "Newest first": "Neueste zuerst",
+        "Most played first": "Am meisten gespielt zuerst",
+        "Not heard for the longest time first": "Am längsten nicht gehört zuerst",
+        "Random": "Zufällig",
+        "Songs that fit": "Titel, die passen zu",
+        "all rules": "allen Regeln",
+        "at least one rule": "mindestens einer Regel",
+        "Rule": "Regel",
+        "is": "ist",
+        "is not": "ist nicht",
+        "to": "bis",
+        "Artist": "Interpret",
+        "Add rule": "Regel hinzufügen",
+        "Order": "Reihenfolge",
+        "At most (songs, 0: all)": "Höchstens (Titel, 0: alle)",
+        "%1 songs fit right now": "%1 Titel passen gerade",
+        "Languages": "Sprachen",
+        "Record labels": "Plattenfirmen",
+        "Portuguese": "Portugiesisch",
+        "Japanese": "Japanisch",
+        "Korean": "Koreanisch",
+        "Chinese": "Chinesisch",
+        "Swedish": "Schwedisch",
+        "Bit-perfect playback": "Bit-perfekte Wiedergabe",
+        "Plays the file exactly as it is. Equalizer and volume leveling are off.": "Spielt die Datei unverändert ab. Equalizer und Lautstärke-Angleichung sind aus.",
+        "Equalizer, normalizing, crossfade and skipping silence are off. Set the volume to 100 % and turn it down on your amplifier.": "Equalizer, Lautstärke angleichen, Überblendung und Stille überspringen sind aus. Stell die Lautstärke auf 100 % und regle sie am Verstärker.",
+        "For artist pages and better recommendations. Nothing else goes out. Off, none of them is asked and nothing found earlier is shown.": "Für Interpretenseiten und bessere Empfehlungen. Sonst geht nichts raus. Ist der Schalter aus, wird keiner von ihnen gefragt und früher Gefundenes nicht gezeigt.",
+        "Only the server's songs, and only from now on: local and encrypted files never leave this device.": "Nur Songs des Servers und erst ab jetzt: Lokale und verschlüsselte Dateien verlassen dieses Gerät nie.",
+        "Android asks for permission to record the screen each time. Some apps do not allow recording: then only their title and controls are shown.": "Android fragt jedes Mal nach der Erlaubnis, den Bildschirm aufzunehmen. Manche Apps erlauben keine Aufnahme, dann werden nur ihr Titel und die Steuerung angezeigt.",
+        "More about this": "Mehr dazu",
+        "%1: other programs stay audible": "%1: andere Programme bleiben hörbar",
+        "%1 alone": "%1 allein (exklusiv)",
+        "Exact as long as nothing else makes sound.": "Exakt, solange nichts anderes Ton macht.",
+        "Other programs have no sound on this card until you pause for 30 s.": "Andere Programme haben auf dieser Karte keinen Ton, bis du 30 s pausierst.",
+        "Direct, cannot be verified": "Direkt, aber nicht überprüfbar",
+        "Exact, as long as no other program makes sound.": "Exakt, solange kein anderes Programm Ton macht.",
+        "What happens after the sound server could not be found out.": "Was nach dem Sound-Server passiert, ließ sich nicht herausfinden.",
+        "System volume below 100 %": "Systemlautstärke unter 100 %",
+        "Mixed with other programs (%1)": "Mit anderen Programmen gemischt (%1)",
+        "Not a sound card (Bluetooth, a filter or similar)": "Keine Soundkarte (Bluetooth, ein Filter oder Ähnliches)",
+        "Sound card": "Soundkarte",
+        "Please choose": "Bitte wählen",
+        "No sound card found.": "Keine Soundkarte gefunden.",
+        "Signal path": "Signalweg",
+        "Signal path…": "Signalweg …",
+        "Signal path: bit-perfect": "Signalweg: bit-perfekt",
+        "Nothing is playing.": "Gerade läuft nichts.",
+        "Bit-perfect": "Bit-perfekt",
+        "Direct, nothing changed": "Direkt, nichts verändert",
+        "Direct, but not bit-perfect": "Direkt, aber nicht bit-perfekt",
+        "On a speaker in the network": "Auf einem Lautsprecher im Netzwerk",
+        "Through the system's mixer": "Über den Mixer des Systems",
+        "Every sample arrives as it is in the file.": "Jeder Abtastwert kommt an, wie er in der Datei steht.",
+        "A lossy or float file has no exact samples to keep.": "Eine verlustbehaftete oder Gleitkomma-Datei hat keine exakten Werte, die sich erhalten ließen.",
+        "The speaker takes a stream at its own rate.": "Der Lautsprecher bekommt einen Datenstrom in seiner eigenen Rate.",
+        "The system may mix and convert it.": "Das System kann sie mischen und umrechnen.",
+        "bit": "Bit",
+        "Mono": "Mono",
+        "Stereo": "Stereo",
+        "%1 channels": "%1 Kanäle",
+        "music on channels 1 and 2 of %1": "Musik auf Kanal 1 und 2 von %1",
+        "Converted from %1 to %2": "Von %1 auf %2 umgerechnet",
+        "%1 channels mixed down to stereo": "%1 Kanäle auf Stereo heruntergemischt",
+        "%1 bits reduced to %2": "%1 Bit auf %2 verkürzt",
+        "Volume below 100 %": "Lautstärke unter 100 %",
+        "Normalized volume": "Angeglichene Lautstärke",
+        "File": "Datei",
+        "Output": "Ausgabe",
+        "Changes the samples": "Verändert die Abtastwerte",
+        "Not applied during bit-perfect playback.": "Wirkt nicht während der bit-perfekten Wiedergabe.",
+        "Equalizer": "Equalizer",
+        "Bass, mids and treble.": "Bässe, Mitten und Höhen.",
+        "Sound": "Klang",
+        "Flat": "Neutral",
+        "More bass": "Mehr Bass",
+        "More treble": "Mehr Höhen",
+        "Voices": "Stimmen",
+        "Warm": "Warm",
+        "Bright and full": "Hell und voll",
+        "Quiet listening": "Leise hören",
+        "Your own": "Eigene",
+        "Level": "Pegel",
+        "Reset": "Zurücksetzen",
         "Skip silence": "Stille überspringen",
-        "Moves on to the next song as soon as the current one has ended, without silent gaps.": "Wechselt zum nächsten Titel, sobald der aktuelle zu Ende ist – ohne stille Pausen.",
-        "Plays all songs at a similar loudness. Each song is measured once when it is first played.": "Spielt alle Titel ähnlich laut ab. Jeder Titel wird beim ersten Abspielen einmal vermessen.",
+        "No silent gaps between songs.": "Keine stillen Pausen zwischen Titeln.",
+        "Plays all songs at a similar loudness.": "Spielt alle Titel ähnlich laut ab.",
         "Copy link": "Link kopieren",
         "Choose folder": "Ordner wählen",
         "No matching files here": "Keine passenden Dateien hier",
         "No folders here": "Keine Ordner hier",
         "%1 selected": "%1 ausgewählt",
-        "Home": "Persönlicher Ordner",
+        "Home folder": "Persönlicher Ordner",
+        "Home": "Start",
+        "Favorites": "Favoriten",
+        "Position in the song": "Position im Titel",
+        "Less": "Weniger",
+        "Link": "Link",
+        "Song text": "Songtext",
+        "Setup": "Einrichtung",
+        "Tour": "Tour",
+        "Step %1 of %2": "Schritt %1 von %2",
+        "Skip setup": "Einrichtung überspringen",
+        "Skip": "Überspringen",
+        "Next": "Weiter",
+        "Done": "Fertig",
+        "How should it look?": "Wie soll es aussehen?",
+        "Where does your music come from?": "Woher kommt deine Musik?",
+        "Personal recommendations?": "Persönliche Empfehlungen?",
+        "Ready": "Fertig eingerichtet",
+        "A few questions; all can be skipped.": "Ein paar Fragen; alle lassen sich überspringen.",
+        "The visuals can flash with the music. If that is a problem for you, turn this on:": "Die Visuals können mit der Musik blitzen. Wenn das für dich ein Problem ist, schalte das ein:",
+        "You can change and add everything later in the settings.": "Alles lässt sich später in den Einstellungen ändern und ergänzen.",
+        "%1 songs so far": "Bisher %1 Titel",
+        "Server address": "Server-Adresse",
+        "Connected": "Verbunden",
+        "Could not connect": "Verbindung fehlgeschlagen",
+        "Connecting…": "Verbinde …",
+        "This server needs a password; log in in the settings.": "Dieser Server braucht ein Passwort; melde dich in den Einstellungen an.",
+        "The server suggests better if it knows what you listen to.": "Der Server schlägt besser vor, wenn er weiß, was du hörst.",
+        "A half-minute tour of where everything is?": "Eine halbminütige Tour, wo was zu finden ist?",
+        "Show me around": "Tour starten",
+        "Repeat the setup": "Einrichtung wiederholen",
+        "What you last played, what is new, and suggestions.": "Was du zuletzt gehört hast, was neu ist, und Vorschläge.",
+        "Find songs, albums and artists, or browse by genre and mood.": "Finde Titel, Alben und Interpreten oder stöbere nach Genre und Stimmung.",
+        "All your music: songs, albums, artists, folders, playlists and labels.": "Deine ganze Musik: Titel, Alben, Interpreten, Ordner, Playlists und Labels.",
+        "Styles, animations and backgrounds. The epilepsy mode is here too.": "Stile, Animationen und Hintergründe. Auch der Epilepsie-Modus ist hier.",
+        "Player": "Player",
+        "Heart: favorite. Cover: the visual. Right: output, volume, queue.": "Herz: Favorit. Cover: das Visual. Rechts: Ausgabe, Lautstärke, Warteschlange.",
+        "Statistics, devices, settings and help. You can start this tour again under Help.": "Statistik, Geräte, Einstellungen und Hilfe. Unter Hilfe kannst du diese Tour wieder starten.",
+        "New: start page, recommendations, statistics and more visuals.": "Neu: Startseite, Empfehlungen, Statistik und mehr Visuals.",
+        "Got it": "Verstanden",
+        "Accessibility": "Barrierefreiheit",
+        "Reduce motion": "Weniger Bewegung",
+        "Less sliding and fading in the interface.": "Weniger Gleiten und Überblenden in der Oberfläche.",
+        "High contrast": "Hoher Kontrast",
+        "Stronger text and solid backgrounds.": "Kräftigere Schrift und deckende Hintergründe.",
+        "Keep the controls visible": "Bedienelemente eingeblendet lassen",
+        "Controls stay visible during playback.": "Bedienelemente bleiben während der Wiedergabe sichtbar.",
+        "Size of everything": "Größe von allem",
+        "Takes effect at the next start of the app.": "Wirkt beim nächsten Start der App.",
+        "Epilepsy mode": "Epilepsie-Modus",
+        "Fewer flashes and colour changes. Lowers the risk, cannot rule it out.": "Weniger Blitze und Farbwechsel. Senkt das Risiko, schließt es aber nicht aus.",
+        "Animation": "Animation",
+        "Flow": "Fluss",
+        "Tunnel": "Tunnel",
+        "Stars": "Sterne",
+        "Aurora": "Polarlicht",
+        "Waves": "Wellen",
+        "A new one per song": "Pro Song eine neue",
+        "Frequency wave": "Frequenz-Welle",
+        "Mirrored bars": "Spiegel-Balken",
+        "Circle": "Kreis",
+        "Fill the visual": "Visual ausfüllen",
+        "Full size instead of a strip below the title.": "Volle Größe statt eines Streifens unter dem Titel.",
+        "Search": "Suche",
+        "Help": "Hilfe",
+        "Keyboard shortcuts": "Tastenkürzel",
+        "Play or pause": "Abspielen oder anhalten",
+        "Next or previous song": "Nächster oder vorheriger Titel",
+        "Forward or back 5 seconds": "5 Sekunden vor oder zurück",
+        "Louder or quieter": "Lauter oder leiser",
+        "Mark the song as a favorite": "Titel als Favorit markieren",
+        "Next or previous background": "Nächster oder vorheriger Hintergrund",
+        "Back, or show the visual": "Zurück, oder das Visual zeigen",
+        "Next control (Shift + Tab: previous)": "Nächstes Bedienelement (Umschalt + Tab: voriges)",
+        "Statistics": "Statistik",
+        "7 days": "7 Tage",
+        "30 days": "30 Tage",
+        "Year": "Jahr",
+        "All time": "Gesamt",
+        "This device": "Dieses Gerät",
+        "All devices": "Alle Geräte",
+        "Listening time": "Hörzeit",
+        "Songs played": "Gespielte Titel",
+        "Days with music": "Tage mit Musik",
+        "Days in a row (best: %1)": "Tage in Folge (Rekord: %1)",
+        "Songs skipped": "Übersprungene Titel",
+        "Listening time over the period": "Hörzeit im Zeitraum",
+        "By time of day": "Nach Tageszeit",
+        "By day of the week": "Nach Wochentag",
+        "Top songs": "Top-Titel",
+        "Top artists": "Top-Interpreten",
+        "Top albums": "Top-Alben",
+        "Top genres": "Top-Genres",
+        "Your library": "Deine Bibliothek",
+        "Total length": "Gesamtlänge",
+        "Show as table": "Als Tabelle",
+        "Show as chart": "Als Diagramm",
+        "%1 plays": "%1-mal gespielt",
+        "Nothing played in this period": "In diesem Zeitraum nichts gehört",
+        "Statistics fill up as you listen. They stay on this device unless you allow otherwise.": "Die Statistik füllt sich beim Hören. Sie bleibt auf diesem Gerät, außer du erlaubst es anders.",
+        "Mon": "Mo",
+        "Tue": "Di",
+        "Wed": "Mi",
+        "Thu": "Do",
+        "Fri": "Fr",
+        "Sat": "Sa",
+        "Sun": "So",
+        "For you": "Für dich",
+        "Because you listened to %1": "Weil du %1 gehört hast",
+        "New for you": "Neu für dich",
+        "Not heard for a while": "Lange nicht gehört",
+        "To discover": "Zum Entdecken",
+        "You listen to %1": "Du hörst %1",
+        "You like %1": "Du magst %1",
+        "Often heard with %1": "Oft mit %1 gehört",
+        "%1 mix": "%1-Mix",
+        "Discovery mix": "Entdeckungs-Mix",
+        "Forgotten favorites": "Vergessene Lieblinge",
+        "%1 songs": "%1 Titel",
+        "My radio": "Mein Radio",
+        "Your mixes": "Deine Mixes",
+        "Start radio": "Radio starten",
+        "Labels…": "Labels …",
+        "Labels": "Labels",
+        "Key of %1": "Tonart %1",
+        "Slow": "Langsam",
+        "Medium tempo": "Mittleres Tempo",
+        "Fast": "Schnell",
+        "Quiet": "Ruhig",
+        "Medium energy": "Mittlere Energie",
+        "High energy": "Viel Energie",
+        "Upbeat": "Fröhlich",
+        "Intense": "Intensiv",
+        "Relaxed": "Entspannt",
+        "Melancholic": "Melancholisch",
+        "Danceable": "Tanzbar",
+        "New label": "Neues Label",
+        "Your labels": "Deine Labels",
+        "Worked out from tags and sound (mood is an estimate)": "Aus Tags und Klang ermittelt (Stimmung ist eine Schätzung)",
+        "No labels yet": "Noch keine Labels",
+        "Labels come from tags and the sound. Add your own in the song menu.": "Labels kommen aus Tags und dem Klang. Eigene vergibst du im Songmenü.",
+        "Genres": "Genres",
+        "Decades": "Jahrzehnte",
+        "Mood": "Stimmung",
+        "Tempo": "Tempo",
+        "Energy": "Energie",
+        "Keys": "Tonarten",
+        "Endless playback": "Endlos-Wiedergabe",
+        "When the queue runs out, similar songs follow.": "Wenn die Warteschlange zu Ende geht, folgen ähnliche Titel.",
+        "Radio plays": "Radio läuft",
+        "Stop radio": "Radio beenden",
+        "Add to favorites": "Zu Favoriten hinzufügen",
+        "Remove from favorites": "Aus Favoriten entfernen",
+        "Recently played": "Zuletzt gehört",
+        "New in your library": "Neu in deiner Bibliothek",
+        "Continue listening": "Weiterhören",
+        "Scroll back": "Zurückblättern",
+        "Scroll on": "Weiterblättern",
+        "Listening history": "Hörverlauf",
+        "Also keep it on the server": "Auch auf dem Server speichern",
+        "Also for recommendations across devices. The server's admin could read it.": "Auch für Empfehlungen über alle Geräte. Der Admin des Servers könnte es lesen.",
+        "Kept on this device for the start page and statistics.": "Bleibt auf diesem Gerät, für Startseite und Statistik.",
+        "Delete listening history": "Hörverlauf löschen",
+        "Delete what you played on this device?": "Hörverlauf dieses Geräts löschen?",
+        "Delete what you played on this device and on the server?": "Hörverlauf dieses Geräts und des Servers löschen?",
+        "Listening history deleted": "Hörverlauf gelöscht",
+        "Delete": "Löschen",
         "Music": "Musik",
         "Pictures": "Bilder",
         "Documents": "Dokumente",

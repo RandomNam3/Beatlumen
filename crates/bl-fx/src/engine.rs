@@ -340,6 +340,8 @@ pub struct Engine {
     particle_key: Vec<ParticleConfig>,
     /// Global strength multiplier for audio driven effects.
     intensity: f32,
+    /// Calmer effects (see `set_photosensitive`).
+    photosensitive: bool,
     /// Scale effect strength with the loudness of the current section.
     adaptive: bool,
     /// Slowly decaying loudness peak used to normalise the energy.
@@ -418,6 +420,7 @@ impl Engine {
             view_aspect: 16.0 / 9.0,
             particle_key: Vec::new(),
             intensity: 1.0,
+            photosensitive: false,
             adaptive: false,
             energy_peak: 0.0,
             energy_level: 0.5,
@@ -451,8 +454,16 @@ impl Engine {
         self.energy_level
     }
 
+    /// Photosensitive mode: no flashes and hard cuts, effects at half strength.
+    pub fn set_photosensitive(&mut self, on: bool) {
+        self.photosensitive = on;
+    }
+
     /// Trigger gain from intensity and (when adaptive) section loudness.
     fn gain(&self) -> f32 {
+        if self.photosensitive {
+            return self.intensity.min(1.0) * 0.5;
+        }
         let adapt = if self.adaptive {
             0.45 + 0.85 * self.energy_level
         } else {
@@ -766,7 +777,13 @@ impl Engine {
 
     fn start_visual(&mut self, e: &Effect, duration: f64, delay: f64, image: Option<ImageRef>) {
         let c = &e.config;
+        let duration = if self.photosensitive {
+            duration.max(1.5)
+        } else {
+            duration
+        };
         let kind = match e.ty.as_str() {
+            _ if self.photosensitive => TransitionKind::Blend,
             "Blend" => TransitionKind::Blend,
             "Blur" => TransitionKind::Blur {
                 intensity: e.cfg("intensity"),
@@ -840,6 +857,8 @@ impl Engine {
                 }
                 self.rng = rng;
             }
+            // A hard cut changes the whole picture at once.
+            "CameraSwitch" if self.photosensitive => {}
             "CameraSwitch" => {
                 let spec = PosSpec::parse(&e.config, "type", &BASE_KEYS, easing);
                 let finish = PosSpec::parse(&e.config, "finishType", &FINISH_KEYS, easing);
@@ -1180,6 +1199,15 @@ impl Engine {
         let mut filters = Vec::with_capacity(self.chain.len() + 1);
         let mut has_blur = false;
         for ty in &self.chain {
+            // What changes the whole picture quickly stays out in this mode.
+            if self.photosensitive
+                && matches!(
+                    ty.as_str(),
+                    "Flash" | "Glitch" | "HueShift" | "RgbShift" | "ZoomBlur"
+                )
+            {
+                continue;
+            }
             let Some(st) = self.filters.iter().find(|(t, _)| t == ty).map(|(_, s)| *s) else {
                 continue;
             };

@@ -78,7 +78,10 @@ const STATIONS_KEY: &str = "radio.json";
 const MAX_STATIONS: usize = 500;
 
 fn track_json(t: &RemoteTrack) -> Value {
+    let mut meta = bl_json::Map::new();
+    t.meta.write(&mut meta);
     Value::object()
+        .with("meta", Value::Object(meta))
         .with("key", t.key.as_str())
         .with("title", t.title.as_str())
         .with("artists", t.artists.clone())
@@ -117,6 +120,7 @@ fn track_from(v: &Value) -> Option<RemoteTrack> {
         modified: v.get("modified").as_u64().unwrap_or(0),
         ext: v.str_or("ext", "").to_string(),
         has_cover: v.bool_or("cover", false),
+        meta: bl_net::api::TrackMeta::read(v.get("meta")),
     })
 }
 
@@ -180,6 +184,7 @@ fn library_track(s: &AppSource, t: &RemoteTrack) -> Track {
         path,
         modified: t.modified,
         has_cover: t.has_cover,
+        meta: t.meta.clone(),
         ..Default::default()
     }
 }

@@ -29,7 +29,12 @@ pub(crate) const SYNCED: &[&str] = &[
     "coverFallback",
     "backgroundMode",
     "extensionTarget",
+    "endless",
+    "animation",
+    "overlayFull",
+    "photosensitive",
     "notifications",
+    "smartLists",
     "ui",
 ];
 

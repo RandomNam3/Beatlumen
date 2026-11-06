@@ -22,12 +22,7 @@ Item {
     property var albums: []
     property var artists: []
     property var playlists: []
-    property var results: []
     property bool loaded: false
-    // Server extensions that search (e.g. YouTube) and the search's source.
-    readonly property var extList: (Core.state.extensions || {}).list || []
-    property string searchSource: "library"
-    onExtListChanged: if (searchSource !== "library" && !extList.some(e => e.id === searchSource)) searchSource = "library"
 
     function reload() {
         tracks = Core.call("library.tracks") || []
@@ -49,6 +44,24 @@ Item {
         }
         return false
     }
+    function openAlbum(album) {
+        stack.pop(null)
+        stack.push(albumView, { album: album })
+    }
+    function openArtist(name) {
+        stack.pop(null)
+        stack.push(artistView, { artist: name })
+    }
+    function openLabel(name) {
+        stack.pop(null)
+        stack.push(labelView, { label: name })
+    }
+    function openFavorites() {
+        const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
+        stack.pop(null)
+        if (fav)
+            stack.push(playlistView, { playlist: fav })
+    }
     function play(ids, shuffle) {
         if (ids.length === 0)
             return
@@ -64,7 +77,8 @@ Item {
     Component.onCompleted: { reload(); reloadPlaylists() }
     Timer { id: reloadTimer; interval: 400; onTriggered: page.reload() }
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids) }
+    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
     StationDialog { id: stationDialog }
     TextPrompt {
@@ -119,13 +133,13 @@ Item {
         default property alias trailing: trail.data
         property alias lead: leadBox.data
         width: ListView.view ? ListView.view.width : implicitWidth
-        height: 72
-        leftPadding: 16
+        height: Theme.listRow
+        leftPadding: 12
         rightPadding: 8
         Accessible.name: title
         contentItem: RowLayout {
-            spacing: 14
-            Item { id: leadBox; Layout.preferredWidth: 52; Layout.preferredHeight: 52 }
+            spacing: 12
+            Item { id: leadBox; Layout.preferredWidth: Theme.lead; Layout.preferredHeight: Theme.lead }
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
@@ -143,7 +157,6 @@ Item {
             id: main
             spacing: 0
             property int section: 0
-            readonly property bool searching: search.text.trim().length > 0
 
             PageHeader {
                 Layout.fillWidth: true
@@ -179,66 +192,6 @@ Item {
                 }
             }
 
-            // Search: a filled pill instead of an outlined form field.
-            TextField {
-                id: search
-                Layout.fillWidth: true
-                Layout.leftMargin: 12
-                Layout.rightMargin: 12
-                Layout.topMargin: 4
-                visible: page.trackCount > 0 || page.extList.length > 0
-                implicitHeight: 46
-                leftPadding: 46
-                rightPadding: clearButton.visible ? 46 : 16
-                topPadding: 0
-                bottomPadding: 0
-                verticalAlignment: TextInput.AlignVCenter
-                font.pixelSize: 15
-                color: Theme.text
-                inputMethodHints: Qt.ImhNoPredictiveText
-                Accessible.name: Theme.tr("Search music")
-                background: Rectangle {
-                    radius: height / 2
-                    color: Theme.surfaceVariant
-                    border.width: search.activeFocus ? 2 : 1
-                    border.color: search.activeFocus ? Theme.accent : Theme.outline
-                }
-                Icon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: 14
-                    name: "search"
-                    size: 22
-                    color: search.activeFocus ? Theme.accent : Theme.textDim
-                }
-                Label {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: search.leftPadding
-                    width: search.width - search.leftPadding - 16
-                    visible: search.text.length === 0
-                    text: Theme.tr("Search music")
-                    color: Theme.textFaint
-                    font.pixelSize: 15
-                    elide: Text.ElideRight
-                }
-                IconButton {
-                    id: clearButton
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: search.text.length > 0
-                    iconName: "close"
-                    iconSize: 20
-                    tip: Theme.tr("Clear")
-                    onClicked: { search.clear(); search.focus = false }
-                }
-                onTextChanged: searchTimer.restart()
-                Timer {
-                    id: searchTimer
-                    interval: 180
-                    onTriggered: page.results = main.searching ? (Core.call("library.search", { query: search.text }) || []) : []
-                }
-            }
-
             // Sections as filter chips (scroll sideways on narrow screens).
             Flickable {
                 id: chips
@@ -246,7 +199,7 @@ Item {
                 Layout.preferredHeight: 36
                 Layout.topMargin: 10
                 Layout.bottomMargin: 6
-                visible: !main.searching && page.hasContent
+                visible: page.hasContent
                 contentWidth: chipRow.width + 24
                 flickableDirection: Flickable.HorizontalFlick
                 boundsBehavior: Flickable.StopAtBounds
@@ -265,7 +218,7 @@ Item {
                     x: 12
                     spacing: 6
                     Repeater {
-                        model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists")]
+                        model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists"), Theme.tr("Labels")]
                                .concat((Core.state.sources || {}).available === true ? [Theme.tr("Radio")] : [])
                         Chip {
                             required property string modelData
@@ -300,7 +253,7 @@ Item {
                 EmptyState {
                     anchors.centerIn: parent
                     width: Math.min(parent.width - 48, 420)
-                    visible: page.loaded && !page.hasContent && !main.searching
+                    visible: page.loaded && !page.hasContent
                     iconName: "library_music"
                     title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
                     text: Theme.tr("Add a music folder or connect to a Beatlumen server.")
@@ -323,70 +276,9 @@ Item {
                     }
                 }
 
-                // Search results: the library or a server extension.
-                Item {
-                    anchors.fill: parent
-                    visible: main.searching
-                    Row {
-                        id: sourceChips
-                        x: 12
-                        y: 8
-                        spacing: 6
-                        visible: page.extList.length > 0
-                        Chip {
-                            text: Theme.tr("Library")
-                            checked: page.searchSource === "library"
-                            onClicked: page.searchSource = "library"
-                        }
-                        Repeater {
-                            model: page.extList
-                            Chip {
-                                required property var modelData
-                                text: modelData.name
-                                checked: page.searchSource === modelData.id
-                                onClicked: page.searchSource = modelData.id
-                            }
-                        }
-                    }
-                    Item {
-                        anchors.fill: parent
-                        anchors.topMargin: sourceChips.visible ? sourceChips.height + 12 : 0
-                        TrackListView {
-                            anchors.fill: parent
-                            anchors.topMargin: 8
-                            visible: page.searchSource === "library"
-                            tracks: page.results
-                            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
-                        }
-                        EmptyState {
-                            anchors.centerIn: parent
-                            width: Math.min(parent.width - 48, 420)
-                            visible: page.searchSource === "library" && page.results.length === 0 && !searchTimer.running
-                            iconName: "search"
-                            title: Theme.tr("No results")
-                            text: Theme.tr("Try a different title, artist or album.")
-                            Repeater {
-                                model: page.extList
-                                AccentButton {
-                                    required property var modelData
-                                    text: Theme.tr("Search on") + " " + modelData.name
-                                    highlighted: true
-                                    icon.source: Theme.icon("search")
-                                    onClicked: page.searchSource = modelData.id
-                                }
-                            }
-                        }
-                        Loader {
-                            anchors.fill: parent
-                            active: main.searching && page.searchSource !== "library"
-                            sourceComponent: ExtensionSearch { query: search.text }
-                        }
-                    }
-                }
-
                 StackLayout {
                     anchors.fill: parent
-                    visible: !main.searching && page.hasContent
+                    visible: page.hasContent
                     currentIndex: main.section
 
                     // Songs: play/shuffle scroll away with the list.
@@ -401,11 +293,15 @@ Item {
                                 anchors.leftMargin: 12
                                 anchors.rightMargin: 12
                                 spacing: 8
+                                // Narrow windows: the shuffle button keeps its icon only.
+                                readonly property bool narrow: width < 340
                                 AccentButton {
                                     text: Theme.tr("Play all"); icon.source: Theme.icon("play_arrow"); highlighted: true
                                     onClicked: page.play(page.tracks.map(t => t.id), false)
                                 }
                                 Button {
+                                    display: parent.narrow ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
+                                    Accessible.name: Theme.tr("Shuffle all")
                                     text: Theme.tr("Shuffle all"); icon.source: Theme.icon("shuffle"); flat: true
                                     onClicked: page.play(page.tracks.map(t => t.id), true)
                                 }
@@ -424,7 +320,7 @@ Item {
                         bottomMargin: 8
                         boundsBehavior: Flickable.StopAtBounds
                         readonly property real avail: width - leftMargin - rightMargin
-                        readonly property int cols: Math.max(2, Math.floor(avail / 172))
+                        readonly property int cols: Math.max(2, Math.floor(avail / 150))
                         cellWidth: Math.floor(avail / cols)
                         cellHeight: cellWidth + 52
                         model: page.albums
@@ -519,28 +415,46 @@ Item {
                             visible: page.playlists.length > 0
                             model: page.playlists
                             ScrollBar.vertical: ScrollBar { }
-                            header: ListRow {
-                                title: Theme.tr("New playlist")
-                                onClicked: newPlaylist.open()
-                                lead: Rectangle {
-                                    anchors.fill: parent
-                                    radius: 12
-                                    color: "transparent"
-                                    border.width: 1.5
-                                    border.color: Theme.outline
-                                    Icon { anchors.centerIn: parent; name: "add"; color: Theme.accent }
+                            header: Column {
+                                width: ListView.view ? ListView.view.width : 0
+                                ListRow {
+                                    width: parent.width
+                                    title: Theme.tr("New playlist")
+                                    onClicked: newPlaylist.open()
+                                    lead: Rectangle {
+                                        anchors.fill: parent
+                                        radius: 12
+                                        color: "transparent"
+                                        border.width: 1.5
+                                        border.color: Theme.outline
+                                        Icon { anchors.centerIn: parent; name: "add"; color: Theme.accent }
+                                    }
+                                }
+                                ListRow {
+                                    width: parent.width
+                                    title: Theme.tr("New smart playlist")
+                                    subtitle: Theme.tr("Fills itself by rules.")
+                                    onClicked: smartDialog.edit(null)
+                                    lead: Rectangle {
+                                        anchors.fill: parent
+                                        radius: 12
+                                        color: "transparent"
+                                        border.width: 1.5
+                                        border.color: Theme.outline
+                                        Icon { anchors.centerIn: parent; name: "smart_playlist"; color: Theme.accent }
+                                    }
                                 }
                             }
                             delegate: ListRow {
                                 id: playlistRow
                                 required property var modelData
                                 title: modelData.name
-                                subtitle: page.count(modelData.count, "song", "songs") + (modelData.server ? " · " + Theme.tr("Server") : "")
+                                subtitle: page.count(modelData.count, "song", "songs") + (modelData.server ? " · " + Theme.tr("Server") : "") + (modelData.smart ? " · " + Theme.tr("Smart") : "")
                                 onClicked: stack.push(playlistView, { playlist: modelData })
                                 lead: CoverImage {
                                     anchors.fill: parent
                                     radius: 12
-                                    placeholder: "queue_music"
+                                    placeholder: playlistRow.modelData.fixed ? "favorite" : playlistRow.modelData.smart ? "smart_playlist" : "queue_music"
                                     seed: playlistRow.modelData.name || ""
                                     source: playlistRow.modelData.cover || ""
                                 }
@@ -555,6 +469,71 @@ Item {
                         }
                     }
 
+                    // Labels
+                    Item {
+                        id: labelsPane
+                        readonly property int rev: Core.state.labelsRev || 0
+                        property var all: []
+                        function reload() { all = Core.call("labels.list") || [] }
+                        onRevChanged: if (visible) reload()
+                        onVisibleChanged: if (visible) reload()
+                        function ofKind(kind) { return all.filter(l => Theme.labelKind(l.name) === kind) }
+                        EmptyState {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 48, 420)
+                            visible: labelsPane.all.length === 0
+                            iconName: "label"
+                            title: Theme.tr("No labels yet")
+                            text: Theme.tr("Labels come from tags and the sound. Add your own in the song menu.")
+                        }
+                        ScrollView {
+                            id: labelsScroll
+                            anchors.fill: parent
+                            clip: true
+                            contentWidth: availableWidth
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ColumnLayout {
+                                width: labelsScroll.availableWidth
+                                spacing: 8
+                                Repeater {
+                                    model: [
+                                        { kind: "", title: Theme.tr("Your labels") },
+                                        { kind: "mood", title: Theme.tr("Mood") },
+                                        { kind: "genre", title: Theme.tr("Genres") },
+                                        { kind: "decade", title: Theme.tr("Decades") },
+                                        { kind: "lang", title: Theme.tr("Languages") },
+                                        { kind: "publisher", title: Theme.tr("Record labels") },
+                                        { kind: "tempo", title: Theme.tr("Tempo") },
+                                        { kind: "energy", title: Theme.tr("Energy") },
+                                        { kind: "key", title: Theme.tr("Keys") }
+                                    ]
+                                    ColumnLayout {
+                                        required property var modelData
+                                        readonly property var labels: labelsPane.ofKind(modelData.kind)
+                                        Layout.fillWidth: true
+                                        visible: labels.length > 0
+                                        spacing: 8
+                                        SectionLabel { text: modelData.title }
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: 16
+                                            Layout.rightMargin: 16
+                                            spacing: 6
+                                            Repeater {
+                                                model: labels
+                                                Chip {
+                                                    required property var modelData
+                                                    text: Theme.labelName(modelData.name) + "  " + modelData.count
+                                                    onClicked: stack.push(labelView, { label: modelData.name })
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Internet radio
                     Item {
                         readonly property var stations: (Core.state.sources || {}).stations || []
@@ -564,7 +543,7 @@ Item {
                             visible: parent.stations.length === 0
                             iconName: "graphic_eq"
                             title: Theme.tr("No stations yet")
-                            text: Theme.tr("Add an internet radio station with its stream address or station file (.pls, .m3u). The visuals follow the music live.")
+                            text: Theme.tr("Add a station by its stream address or a .pls or .m3u file.")
                             AccentButton { text: Theme.tr("Add station"); highlighted: true; icon.source: Theme.icon("add"); onClicked: stationDialog.openFor(null) }
                         }
                         ListView {
@@ -630,6 +609,8 @@ Item {
         property bool round: false
         // Additional entries for the ⋮ menu: [{text, action}].
         property var menuItems: []
+        // Shown between the header and the songs.
+        property Component extra: null
         signal trackMenu(var track, Item anchor)
         readonly property var ids: tracks.map(t => t.id)
         readonly property bool wide: width >= 640
@@ -646,7 +627,7 @@ Item {
             header: Item {
                 id: hero
                 width: ListView.view.width
-                height: content.implicitHeight + 64
+                height: content.implicitHeight + 52 + (extraHolder.item ? extraHolder.item.implicitHeight + 16 : 0)
 
                 // Ambient backdrop: the cover, blurred and fading out.
                 Image {
@@ -699,14 +680,14 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.topMargin: 56
+                    anchors.topMargin: 44
                     anchors.leftMargin: 20
                     anchors.rightMargin: 20
                     columns: dp.wide ? 2 : 1
-                    columnSpacing: 24
-                    rowSpacing: 16
+                    columnSpacing: 20
+                    rowSpacing: 12
                     CoverImage {
-                        readonly property real side: dp.wide ? 200 : Math.min(hero.width * 0.58, 240)
+                        readonly property real side: dp.wide ? 150 : Math.min(hero.width * 0.5, 200)
                         Layout.preferredWidth: side
                         Layout.preferredHeight: side
                         Layout.alignment: dp.wide ? Qt.AlignTop : Qt.AlignHCenter
@@ -724,7 +705,7 @@ Item {
                             Layout.fillWidth: true
                             text: dp.title
                             horizontalAlignment: dp.wide ? Text.AlignLeft : Text.AlignHCenter
-                            font.pixelSize: dp.wide ? 32 : 24
+                            font.pixelSize: dp.wide ? 26 : 22
                             font.weight: Font.Bold
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2
@@ -762,6 +743,16 @@ Item {
                         }
                     }
                 }
+                Loader {
+                    id: extraHolder
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: content.bottom
+                    anchors.topMargin: 16
+                    anchors.leftMargin: 20
+                    anchors.rightMargin: 20
+                    sourceComponent: dp.extra
+                }
             }
         }
 
@@ -769,10 +760,10 @@ Item {
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 52
+            height: 44
             readonly property bool solid: list.contentY - list.originY > 200
             color: solid ? Theme.surfaceStrong : "transparent"
-            Behavior on color { ColorAnimation { duration: 150 } }
+            Behavior on color { ColorAnimation { duration: Theme.ms(150) } }
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 2
@@ -787,7 +778,7 @@ Item {
                     Layout.fillWidth: true
                     text: dp.title
                     opacity: parent.parent.solid ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                    Behavior on opacity { NumberAnimation { duration: Theme.ms(150) } }
                     font.pixelSize: 17
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
@@ -798,6 +789,24 @@ Item {
     }
 
     Component {
+        id: labelView
+        DetailPage {
+            id: lv
+            property string label
+            tracks: Core.call("labels.tracks", { name: label }) || []
+            title: Theme.labelName(label)
+            subtitle: page.count(tracks.length, "song", "songs")
+            placeholder: "label"
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) }
+            ]
+            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+        }
+    }
+
+    SmartListDialog { id: smartDialog }
+
+    Component {
         id: albumView
         DetailPage {
             property var album: ({})
@@ -806,6 +815,9 @@ Item {
             subtitle: [page.artistName(album.artist), album.year, page.count(tracks.length, "song", "songs")].filter(x => x).join(" · ")
             cover: album.coverTrack ? Covers.url(album.coverTrack, album.cover) : (album.cover || "")
             numbered: true
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { album: album.id }, name: page.albumTitle(album) }) }
+            ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }
@@ -817,9 +829,23 @@ Item {
             tracks: Core.call("library.artist", { name: artist }) || []
             title: page.artistName(artist)
             subtitle: page.count(tracks.length, "song", "songs")
+            id: artistPage
             placeholder: "person"
             round: true
-            cover: tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
+            // Its picture from the internet, where allowed and found.
+            property string picture: ""
+            cover: picture !== "" ? picture : tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
+            extra: Component {
+                ArtistInfoPanel {
+                    name: artistPage.artist
+                    known: page.artists
+                    onImageChanged: artistPage.picture = image
+                    onOpenArtist: (n) => stack.push(artistView, { artist: n })
+                }
+            }
+            menuItems: [
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { artist: artist }, name: page.artistName(artist) }) }
+            ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }
@@ -840,14 +866,21 @@ Item {
             Connections { target: page; function onPlaylistsRevChanged() { pv.reload() } }
             title: playlist.name || ""
             subtitle: page.count(tracks.length, "song", "songs")
-            placeholder: "queue_music"
+            placeholder: playlist.fixed ? "favorite" : playlist.smart ? "smart_playlist" : "queue_music"
             cover: playlist.cover || ""
-            menuItems: [
+            menuItems: playlist.smart ? [
+                { text: Theme.tr("Edit rules"), action: () => smartDialog.edit(pv.playlist.rules) },
+                { text: Theme.tr("Delete"), action: () => { Core.call("smart.delete", { id: pv.playlist.id }); stack.pop() } }
+            ] : playlist.fixed ? [
+                { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) }
+            ] : [
                 { text: Theme.tr("Rename"), action: () => renamePrompt.open() },
                 { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) },
                 { text: Theme.tr("Delete"), action: () => { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() } }
             ]
             onTrackMenu: (t, a) => {
+                if (pv.playlist.smart)
+                    return songMenu.openFor([t.id], a)
                 const i = pv.tracks.indexOf(t)
                 songMenu.openFor([t.id], a, [{ text: Theme.tr("Remove"), action: () => Core.call("playlist.removeItem", { id: pv.playlist.id, index: i }) }])
             }

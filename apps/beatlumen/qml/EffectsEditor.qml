@@ -146,6 +146,7 @@ Item {
                 subtitle: fv.form.description || ""
                 onBackClicked: stack.pop()
                 Switch {
+                    Accessible.name: Theme.tr("Enabled")
                     checked: fv.form.enabled === true
                     onToggled: Core.call("effect.toggle", { id: fv.effectId, enabled: checked })
                 }

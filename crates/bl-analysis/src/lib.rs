@@ -3,6 +3,8 @@
 //! * [`fft`]: real FFT and windows.
 //! * [`track`]: offline whole-track analysis (energy, novelty curves,
 //!   structural transitions) that drives effect triggers.
+//! * [`features`]: what a whole song sounds like (tempo, key, energy, ...),
+//!   for labels and recommendations.
 //! * [`loudness`]: integrated loudness (EBU R128) for volume normalization.
 //! * [`realtime`]: streaming spectrum/novelty used while the offline analysis
 //!   is not available yet and for live spectrum displays.
@@ -12,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod beat;
+pub mod features;
 pub mod fft;
 pub mod loudness;
 pub mod realtime;

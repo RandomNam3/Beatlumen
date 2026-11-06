@@ -63,6 +63,12 @@ pub struct Config {
     pub speech_model: Option<PathBuf>,
     /// Time the song texts of the whole library in the background.
     pub auto_sync_lyrics: bool,
+    /// Work out how the library's songs sound in the background (labels and
+    /// recommendations).
+    pub auto_labels: bool,
+    /// Look the library's artists up in public databases (their names go out).
+    /// Off until the admin agrees.
+    pub online_metadata: bool,
     /// Admin password from a file (setups without a browser).
     pub admin_password_file: Option<PathBuf>,
     /// Where speech models are downloaded from (a mirror of the files of
@@ -120,6 +126,8 @@ impl Default for Config {
             extension_token_file: None,
             speech_model: None,
             auto_sync_lyrics: false,
+            auto_labels: true,
+            online_metadata: false,
             admin_password_file: None,
             model_source: None,
             origins: Vec::new(),
@@ -202,6 +210,14 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "autoLabels",
+        live: true,
+    },
+    AdminSetting {
+        key: "onlineMetadata",
+        live: true,
+    },
+    AdminSetting {
         key: "verbose",
         live: true,
     },
@@ -250,6 +266,8 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
             .as_ref()
             .map_or(Value::Null, |p| Value::from(p.display().to_string())),
         "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
+        "autoLabels" => Value::from(cfg.auto_labels),
+        "onlineMetadata" => Value::from(cfg.online_metadata),
         "verbose" => Value::from(cfg.verbose),
         _ => Value::Null,
     }
@@ -280,6 +298,8 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_REGISTRATION", "registration"),
     ("BEATLUMEN_SPEECH_MODEL", "speechModel"),
     ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
+    ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
+    ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
     ("BEATLUMEN_VERBOSE", "verbose"),
     ("BEATLUMEN_ADMIN_PASSWORD_FILE", "adminPassword"),
 ];
@@ -310,6 +330,8 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--extension-token-file" => "extensionTokenFile",
         "--speech-model" => "speechModel",
         "--auto-sync-lyrics" => "autoSyncLyrics",
+        "--no-auto-labels" => "autoLabels",
+        "--online-metadata" => "onlineMetadata",
         _ => return None,
     })
 }
@@ -450,6 +472,10 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "true: time the song texts of the whole library in the background",
     ),
     (
+        "BEATLUMEN_AUTO_LABELS",
+        "false: do not work out how the library's songs sound (labels, recommendations)",
+    ),
+    (
         "BEATLUMEN_ADMIN_PASSWORD_FILE",
         "file containing the admin password (instead of the setup link)",
     ),
@@ -582,6 +608,18 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "1" | "true" | "yes" | "on"
         );
     }
+    if let Some(v) = get("BEATLUMEN_AUTO_LABELS") {
+        cfg.auto_labels = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Some(v) = get("BEATLUMEN_ONLINE_METADATA") {
+        cfg.online_metadata = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_VERBOSE") {
         cfg.verbose = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -647,7 +685,7 @@ OPTIONS:
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
                             androidCerts, extensions, extensionTokenFile, speechModel,
-                            autoSyncLyrics, verbose)
+                            autoSyncLyrics, autoLabels, onlineMetadata, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -665,6 +703,11 @@ OPTIONS:
                             ggml-base.bin) for timing song texts on request
     --auto-sync-lyrics      Also time the song texts of the whole library in the
                             background (needs --speech-model)
+    --no-auto-labels        Do not work out how the library's songs sound (tempo,
+                            key, energy) for labels and recommendations
+    --online-metadata       Look the library's artists up in public databases, for
+                            artist pages and recommendations: their names go to
+                            MusicBrainz, Wikimedia and ListenBrainz
     --model-source URL      Mirror of the speech model files offered in the admin
                             interface [default: the whisper.cpp models on huggingface.co]
     --public-url URL        The server's https:// address as users reach it (e.g. the
@@ -840,6 +883,12 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoSyncLyrics" => {
                 cfg.auto_sync_lyrics = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "autoLabels" => {
+                cfg.auto_labels = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
+            "onlineMetadata" => {
+                cfg.online_metadata = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "vaultPepperFile" => {
                 cfg.vault_pepper_file = Some(resolve(
                     base,
@@ -962,6 +1011,8 @@ fn build(
             "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
             "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
             "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
+            "--no-auto-labels" => cfg.auto_labels = false,
+            "--online-metadata" => cfg.online_metadata = true,
             "--model-source" => cfg.model_source = Some(model_source(&v)?),
             "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
             "--days" => return Err("--days only applies to `invite`".into()),
@@ -1043,9 +1094,12 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         match flag.as_str() {
             "-h" | "--help" => return Ok(Action::Help),
             "-V" | "--version" => return Ok(Action::Version),
-            "--verbose" | "--health-check" | "--push-allow-private" | "--auto-sync-lyrics" => {
-                items.push((flag, None))
-            }
+            "--verbose"
+            | "--health-check"
+            | "--push-allow-private"
+            | "--auto-sync-lyrics"
+            | "--no-auto-labels"
+            | "--online-metadata" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {
                     Some(v) => v,

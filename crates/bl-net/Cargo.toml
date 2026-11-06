@@ -7,3 +7,4 @@ license.workspace = true
 
 [dependencies]
 bl-json = { path = "../bl-json" }
+bl-media = { path = "../bl-media" }

@@ -7,10 +7,14 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use bl_core::host::{AudioDeviceInfo, AudioSource, DirEntry, Host, HttpRequest, HttpResponse};
+use bl_core::host::{
+    AudioDeviceInfo, AudioSource, DirEntry, DirectDevice, DirectOpened, DirectSink, Host,
+    HttpRequest, HttpResponse,
+};
 use bl_core::{Core, LaunchArgs};
 use bl_gl::{Flavor, Gl};
 use bl_json::Value;
+use bl_media::{pack_pcm, PcmFormat};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -116,6 +120,96 @@ pub struct BlCallbacks {
     pub mic_request: Option<
         unsafe extern "C" fn(user: *mut c_void, kind: *const c_char, json: *const c_char) -> i32,
     >,
+    /// Stops the normal audio output while a sound card is used directly
+    /// (non-zero), or brings it back.
+    pub audio_suspend: Option<unsafe extern "C" fn(user: *mut c_void, suspended: i32)>,
+    /// The sound cards that can be used directly, as a JSON array of {id,
+    /// name}; returns the bytes written (0: none fit). Null where the platform
+    /// has no such thing.
+    pub direct_list:
+        Option<unsafe extern "C" fn(user: *mut c_void, json: *mut c_char, len: usize) -> usize>,
+    /// Opens a card at `rate` with the first of `formats` (`PcmFormat`
+    /// values) it takes, from any thread: 1 with `opened` filled in, 0 with a
+    /// message in `err`. The samples come through [`bl_audio_render_pcm`].
+    pub direct_open: Option<
+        unsafe extern "C" fn(
+            user: *mut c_void,
+            device: *const c_char,
+            rate: u32,
+            formats: *const u32,
+            count: usize,
+            opened: *mut BlDirectOpened,
+            err: *mut c_char,
+            err_len: usize,
+        ) -> i32,
+    >,
+    pub direct_close: Option<unsafe extern "C" fn(user: *mut c_void)>,
+    /// Gives the card back for now (non-zero) or takes it again.
+    pub direct_idle: Option<unsafe extern "C" fn(user: *mut c_void, idle: i32)>,
+}
+
+/// What a sound card opened with (see [`BlCallbacks::direct_open`]).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct BlDirectOpened {
+    pub rate: u32,
+    pub format: u32,
+    pub channels: u32,
+}
+
+/// A sound card in direct use, through the UI's callbacks.
+struct UiDirect {
+    cb: BlCallbacks,
+    device: CString,
+}
+
+// SAFETY: the callbacks are documented as callable from any thread.
+unsafe impl Send for UiDirect {}
+unsafe impl Sync for UiDirect {}
+
+impl DirectSink for UiDirect {
+    fn open(&self, rate: u32, formats: &[PcmFormat]) -> Result<DirectOpened, String> {
+        let Some(f) = self.cb.direct_open else {
+            return Err("The sound card is not available".into());
+        };
+        let wanted: Vec<u32> = formats.iter().map(|x| *x as u32).collect();
+        let mut opened = BlDirectOpened::default();
+        let mut err = vec![0u8; 512];
+        // SAFETY: valid for the call; UI callback contract.
+        let ok = unsafe {
+            f(
+                self.cb.user,
+                self.device.as_ptr(),
+                rate,
+                wanted.as_ptr(),
+                wanted.len(),
+                &mut opened,
+                err.as_mut_ptr() as *mut c_char,
+                err.len(),
+            )
+        };
+        if ok == 0 {
+            let end = err.iter().position(|b| *b == 0).unwrap_or(err.len());
+            return Err(String::from_utf8_lossy(&err[..end]).into_owned());
+        }
+        Ok(DirectOpened {
+            rate: opened.rate,
+            format: PcmFormat::from_index(opened.format).ok_or("unknown format")?,
+            channels: opened.channels,
+        })
+    }
+    fn close(&self) {
+        if let Some(f) = self.cb.direct_close {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user) }
+        }
+    }
+    fn set_idle(&self, idle: bool) {
+        if let Some(f) = self.cb.direct_idle {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user, idle as i32) }
+        }
+    }
 }
 
 /// TLS connections provided by the UI (native platforms; the browser does
@@ -544,6 +638,49 @@ impl Host for UiHost {
             sample_rate: rate,
             channels: 2,
         })
+    }
+    fn audio_suspend(&mut self, suspended: bool) {
+        if let Some(f) = self.cb.audio_suspend {
+            // SAFETY: UI callback contract.
+            unsafe { f(self.cb.user, suspended as i32) }
+        }
+    }
+    fn has_direct(&self) -> bool {
+        self.cb.direct_open.is_some()
+    }
+    fn direct_devices(&self) -> Vec<DirectDevice> {
+        let Some(f) = self.cb.direct_list else {
+            return Vec::new();
+        };
+        let mut json = vec![0u8; 64 * 1024];
+        // SAFETY: valid for the call; UI callback contract.
+        let len = unsafe { f(self.cb.user, json.as_mut_ptr() as *mut c_char, json.len()) };
+        let parsed = bl_json::parse_bytes(&json[..len.min(json.len())]).unwrap_or_default();
+        parsed
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|d| DirectDevice {
+                        id: d.str_or("id", "").to_string(),
+                        name: d.str_or("name", "").to_string(),
+                        shared: d.bool_or("shared", false),
+                    })
+                    .filter(|d| !d.id.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    fn direct_sink(
+        &mut self,
+        device: &str,
+        source: Arc<dyn AudioSource>,
+    ) -> Option<Arc<dyn DirectSink>> {
+        self.cb.direct_open?;
+        *AUDIO.lock().ok()? = Some(source);
+        Some(Arc::new(UiDirect {
+            cb: self.cb,
+            device: CString::new(device.replace('\0', "")).unwrap_or_default(),
+        }))
     }
     fn audio_push(&mut self, samples: &[f32]) {
         if let Some(f) = self.cb.audio_push {
@@ -1009,6 +1146,39 @@ pub unsafe extern "C" fn bl_audio_render(out: *mut f32, frames: usize, latency_f
         Some(s) => s.render(buf, latency_frames),
         None => buf.fill(0.0),
     }
+}
+
+/// The same for a sound card in direct use: `frames` frames of `channels`
+/// channels in `format` (`PcmFormat`) at `out`; the music is on the first two.
+#[no_mangle]
+pub unsafe extern "C" fn bl_audio_render_pcm(
+    out: *mut u8,
+    frames: usize,
+    format: u32,
+    channels: u32,
+    latency_frames: u32,
+) {
+    thread_local! {
+        static STEREO: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    let Some(format) = PcmFormat::from_index(format) else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+    let channels = channels.max(2) as usize;
+    let out = std::slice::from_raw_parts_mut(out, frames * channels * format.bytes());
+    STEREO.with(|stereo| {
+        let mut stereo = stereo.borrow_mut();
+        stereo.clear();
+        stereo.resize(frames * 2, 0.0);
+        let src = AUDIO.lock().ok().and_then(|a| a.clone());
+        if let Some(s) = src {
+            s.render(&mut stereo, latency_frames);
+        }
+        pack_pcm(&stereo, format, channels, out);
+    });
 }
 
 #[no_mangle]

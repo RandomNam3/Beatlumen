@@ -333,31 +333,7 @@ impl Core {
                 self.library
                     .albums
                     .iter()
-                    .map(|a| {
-                        let cover = a
-                            .cover_track
-                            .as_ref()
-                            .or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id))
-                            .and_then(|id| self.library.track(id))
-                            .map(|t| self.cover_url_cached(t))
-                            .unwrap_or_default();
-                        Value::object()
-                            .with("id", a.id.as_str())
-                            .with("title", a.name.as_str())
-                            .with("artist", a.artist.as_str())
-                            .with("year", a.year)
-                            .with("tracks", a.track_count)
-                            .with("cover", cover)
-                            .with(
-                                "coverTrack",
-                                a.cover_track.clone().or_else(|| {
-                                    self.library
-                                        .album_tracks(&a.id)
-                                        .first()
-                                        .map(|t| t.id.clone())
-                                }),
-                            )
-                    })
+                    .map(|a| self.album_json(a))
                     .collect(),
             ),
             "library.album" => {
@@ -518,12 +494,60 @@ impl Core {
                 Value::from(parent)
             }
 
+            // ---- favorites and what was played ------------------------------
+            "favorites.list" => Value::Array(
+                self.favorites
+                    .ids()
+                    .map(|id| self.track_json(&self.track_for(id)))
+                    .collect(),
+            ),
+            "favorites.ids" => Value::Array(self.favorites.ids().map(Value::from).collect()),
+            "favorites.set" => {
+                let ids = strs(c.get("ids"));
+                let on = b("value");
+                for id in ids {
+                    self.set_favorite(host, &id, on);
+                }
+                ok()
+            }
+            "history.recent" => self.history_recent(n("limit").clamp(1.0, 500.0) as usize),
+            "history.clear" => {
+                self.history_clear(host, b("server"));
+                ok()
+            }
+            "home.overview" => self.home_overview(host),
+            "stats.overview" => self.history_stats(host, &s("range"), n("utcOffset") as i64),
+            "stats.fetch" => {
+                self.stats_fetch(host, &s("range"), n("utcOffset") as i64);
+                ok()
+            }
+            "stats.server" => self.history.server_stats.clone(),
+            "stats.library" => self.library_stats(),
+
+            // ---- radio, mixes and labels --------------------------------------
+            "songs.radio" => {
+                let seed = c.get("seed").clone();
+                let name = s("name");
+                self.radio_start(host, seed, name)
+            }
+            "songs.radioStop" => {
+                self.radio_stop();
+                ok()
+            }
+            "mix.play" => self.mix_play(host, &s("id"), b("shuffle")),
+            "labels.list" => self.labels_list(),
+            "labels.tracks" => self.labels_tracks(&s("name")),
+            "labels.of" => self.labels_of(&s("id")),
+            "labels.change" => {
+                let add = strs(c.get("add"));
+                let remove = strs(c.get("remove"));
+                self.labels_change(host, &s("id"), add, remove)
+            }
+
             // ---- playlists ------------------------------------------------
             "playlists.list" => {
-                let all: Vec<Value> = self
-                    .local_playlists
-                    .iter()
-                    .map(|p| (p, false))
+                let all: Vec<Value> = std::iter::once((self.favorites.playlist(), false))
+                    .chain(self.local_playlists.iter().map(|p| (p, false)))
                     .chain(self.server_playlists.iter().map(|p| (p, true)))
                     .map(|(p, srv)| {
                         let cover = p
@@ -533,16 +557,69 @@ impl Core {
                             .find_map(|id| self.library.track(id))
                             .map(|t| self.cover_url_cached(t))
                             .unwrap_or_default();
+                        let fixed = p.id == crate::favorites::PLAYLIST_ID;
                         Value::object()
                             .with("id", p.id.as_str())
-                            .with("name", p.name.as_str())
+                            .with(
+                                "name",
+                                if fixed {
+                                    self.tr("Favorites").to_string()
+                                } else {
+                                    p.name.clone()
+                                },
+                            )
                             .with("kind", p.kind.name())
                             .with("count", p.items.len())
                             .with("server", srv)
+                            .with("fixed", fixed)
                             .with("cover", cover)
                     })
                     .collect();
+                let mut all = all;
+                for list in self.smart_lists() {
+                    let songs = self.smart_songs(host, &list);
+                    let cover = songs
+                        .iter()
+                        .find_map(|id| self.library.track(id))
+                        .map(|t| self.cover_url_cached(t))
+                        .unwrap_or_default();
+                    all.push(
+                        Value::object()
+                            .with("id", format!("{}{}", crate::smart::PREFIX, list.id))
+                            .with("name", list.name.as_str())
+                            .with("kind", "track")
+                            .with("count", songs.len())
+                            .with("server", false)
+                            .with("fixed", false)
+                            .with("smart", true)
+                            .with("rules", list.to_json())
+                            .with("cover", cover),
+                    );
+                }
                 Value::Array(all)
+            }
+            "smart.save" => match self.smart_save(host, c.get("list")) {
+                Ok(id) => Value::object().with("id", id),
+                Err(e) => Value::object().with("error", e),
+            },
+            "smart.delete" => {
+                self.smart_delete(host, &s("id"));
+                ok()
+            }
+            "smart.preview" => self.smart_preview(host, c.get("list")),
+            "playlist.items" if s("id").starts_with(crate::smart::PREFIX) => {
+                match self.smart_find(&s("id")) {
+                    Some(list) => {
+                        let songs = self.smart_songs(host, &list);
+                        Value::Array(
+                            songs
+                                .iter()
+                                .map(|id| self.track_json(&self.track_for(id)))
+                                .collect(),
+                        )
+                    }
+                    None => err("unknown playlist"),
+                }
             }
             "playlist.items" => match self.find_playlist(&s("id")) {
                 Some(p) if p.kind == PlaylistKind::Track => Value::Array(
@@ -577,8 +654,13 @@ impl Core {
                 if let Some(mut p) = self.find_playlist(&s("id")).cloned() {
                     p.items.extend(strs(c.get("items")));
                     self.update_playlist(host, &p);
+                    let name = if p.id == crate::favorites::PLAYLIST_ID {
+                        self.tr("Favorites")
+                    } else {
+                        p.name.as_str()
+                    };
                     self.toast(
-                        format!("{} \"{}\"", self.tr("Added to playlist"), p.name),
+                        format!("{} \"{name}\"", self.tr("Added to playlist")),
                         false,
                     );
                 }
@@ -604,6 +686,13 @@ impl Core {
             "playlist.export" => self.export_playlist(&s("id"), &s("folder")),
             "playlist.delete" => {
                 self.delete_playlist(host, &s("id"));
+                ok()
+            }
+            "playlist.play" if s("id").starts_with(crate::smart::PREFIX) => {
+                if let Some(list) = self.smart_find(&s("id")) {
+                    let songs = self.smart_songs(host, &list);
+                    self.play_tracks(host, songs, idx("start"));
+                }
                 ok()
             }
             "playlist.play" => {
@@ -943,6 +1032,39 @@ impl Core {
                 self.set_setting(host, &s("key"), c.get("value").clone());
                 ok()
             }
+            "artist.info" => self.artist_info(host, &s("name")),
+            "artists.clear" => {
+                self.artists_clear(host);
+                ok()
+            }
+            "audio.devices" => host
+                .direct_devices()
+                .iter()
+                .map(|d| {
+                    Value::object()
+                        .with("id", d.id.as_str())
+                        .with("name", d.name.as_str())
+                        .with("shared", d.shared)
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            // The platform lost the card in direct use, or was asked for it.
+            "audio.directFailed" => {
+                self.direct_failed(host, s("error"));
+                ok()
+            }
+            // The equalizer's curve in dB for the display.
+            "eq.curve" => {
+                let columns = idx("columns").clamp(8, 256);
+                let freqs: Vec<f32> = (0..columns)
+                    .map(|i| 20.0 * 1000f32.powf(i as f32 / (columns - 1) as f32))
+                    .collect();
+                bl_media::eq_response_db(&self.settings.eq, &freqs, self.player.device_rate())
+                    .into_iter()
+                    .map(Value::from)
+                    .collect::<Vec<_>>()
+                    .into()
+            }
 
             // ---- server ------------------------------------------------------
             "server.connect" => {
@@ -1059,6 +1181,12 @@ impl Core {
             self.airplay.error = None;
             self.dlna.error = None;
         }
+        if old.photosensitive != self.settings.photosensitive {
+            self.engine.set_photosensitive(self.settings.photosensitive);
+        }
+        if old.history_sync != self.settings.history_sync {
+            self.history_sync_changed();
+        }
         if old.notifications != self.settings.notifications {
             if self.settings.notifications {
                 if self.vault_unlocked() {
@@ -1089,6 +1217,16 @@ impl Core {
         {
             self.player
                 .set_transition(self.settings.crossfade, self.settings.skip_silence);
+        }
+        if old.eq != self.settings.eq {
+            self.player.set_eq(&self.settings.eq);
+        }
+        if old.online_metadata != self.settings.online_metadata {
+            self.artists_switched();
+        }
+        if old.direct_device() != self.settings.direct_device() {
+            self.direct_error = None;
+            self.apply_direct(host);
         }
         if old.library_folders != self.settings.library_folders {
             self.rescan_local();
@@ -1379,9 +1517,35 @@ impl Core {
             .with("tracks", Value::Array(tracks))
     }
 
+    pub(crate) fn album_json(&self, a: &bl_net::api::Album) -> Value {
+        let cover = a
+            .cover_track
+            .as_ref()
+            .or_else(|| self.library.album_tracks(&a.id).first().map(|t| &t.id))
+            .and_then(|id| self.library.track(id))
+            .map(|t| self.cover_url_cached(t))
+            .unwrap_or_default();
+        Value::object()
+            .with("id", a.id.as_str())
+            .with("title", a.name.as_str())
+            .with("artist", a.artist.as_str())
+            .with("year", a.year)
+            .with("tracks", a.track_count)
+            .with("cover", cover)
+            .with(
+                "coverTrack",
+                a.cover_track.clone().or_else(|| {
+                    self.library
+                        .album_tracks(&a.id)
+                        .first()
+                        .map(|t| t.id.clone())
+                }),
+            )
+    }
+
     pub(crate) fn find_playlist(&self, id: &str) -> Option<&Playlist> {
-        self.local_playlists
-            .iter()
+        std::iter::once(self.favorites.playlist())
+            .chain(self.local_playlists.iter())
             .chain(self.server_playlists.iter())
             .find(|p| p.id == id)
     }
@@ -1431,7 +1595,9 @@ impl Core {
     }
 
     pub(crate) fn update_playlist(&mut self, host: &mut dyn Host, pl: &Playlist) {
-        if pl.id.starts_with("local-") {
+        if pl.id == crate::favorites::PLAYLIST_ID {
+            self.favorites_replace(host, &pl.items);
+        } else if pl.id.starts_with("local-") {
             if let Some(p) = self.local_playlists.iter_mut().find(|p| p.id == pl.id) {
                 *p = pl.clone();
             }
@@ -1458,7 +1624,9 @@ impl Core {
     }
 
     pub(crate) fn delete_playlist(&mut self, host: &mut dyn Host, id: &str) {
-        if id.starts_with("local-") {
+        if id == crate::favorites::PLAYLIST_ID {
+            // Always there; emptied song by song.
+        } else if id.starts_with("local-") {
             self.local_playlists.retain(|p| p.id != id);
             self.save_local_playlists(host);
         } else {

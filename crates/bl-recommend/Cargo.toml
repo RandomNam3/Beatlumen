@@ -1,0 +1,10 @@
+[package]
+name = "bl-recommend"
+description = "Labels from song features, taste profiles, recommendations, radio and mixes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }

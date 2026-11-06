@@ -15,6 +15,9 @@ public:
     // Opens the default output; returns the sample rate (0 on failure).
     uint32_t start();
     void stop();
+    // Lets go of the device while a sound card is used directly, without
+    // forgetting the rate; nothing is rendered until it comes back.
+    void setSuspended(bool suspended);
 
 private:
     AudioOutput() = default;

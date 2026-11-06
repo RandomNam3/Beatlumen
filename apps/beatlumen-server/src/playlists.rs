@@ -108,6 +108,17 @@ impl Playlists {
         )
     }
 
+    /// The songs of all song playlists (for the recommendations).
+    pub fn track_items(&self) -> Vec<Vec<String>> {
+        self.list
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|p| p.kind == PlaylistKind::Track)
+            .map(|p| p.items.clone())
+            .collect()
+    }
+
     pub fn get(&self, id: &str) -> Option<Playlist> {
         self.list
             .read()

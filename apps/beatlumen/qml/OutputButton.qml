@@ -24,6 +24,7 @@ IconButton {
         }
     }
     property int devicesRev: -1
+    readonly property bool bitPerfect: ((Core.state.audio || {}).route || {}).verdict === "bitperfect"
     iconName: remote ? "speaker" : "cast"
     iconColor: fg
     active: remote
@@ -78,6 +79,21 @@ IconButton {
             height: visible ? implicitHeight : 0
             text: Theme.tr("Connecting…")
         }
+        MenuSeparator { }
+        MenuItem {
+            text: btn.bitPerfect ? Theme.tr("Signal path: bit-perfect") : Theme.tr("Signal path…")
+            onTriggered: signalDialog.open()
+        }
+    }
+
+    AppDialog {
+        id: signalDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(440, parent ? parent.width - 32 : 440)
+        title: Theme.tr("Signal path")
+        standardButtons: Dialog.Close
+        SignalPath { width: parent.width }
     }
 
     TextPrompt {

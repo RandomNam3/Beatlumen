@@ -59,6 +59,9 @@ impl LaunchArgs {
 /// HTTP request purposes, for dispatching responses.
 #[derive(Debug, Clone)]
 pub(crate) enum Req {
+    Artist,
+    ArtistServer,
+    ArtistImage,
     Info,
     Login,
     Library,
@@ -87,6 +90,19 @@ pub(crate) enum Req {
     BgImage(String),
     Upload(String),
     Rescan,
+    Favorites,
+    FavoriteSaved,
+    /// Plays sent to the server (how many are done with that).
+    HistorySent(u64),
+    HistoryCleared,
+    Stats,
+    Recommendations,
+    Labels,
+    LabelsSaved,
+    /// Songs for a radio: its start (replaces the queue) or more of it.
+    Radio {
+        start: bool,
+    },
     /// A vault request and the session it was sent with.
     Vault(crate::vault::VaultReq, String),
     WebCheck(crate::webcheck::WebReq),
@@ -170,6 +186,10 @@ pub(crate) struct Revisions {
     pub settings: u64,
     pub lyrics: u64,
     pub devices: u64,
+    pub favorites: u64,
+    pub history: u64,
+    pub labels: u64,
+    pub stats: u64,
 }
 
 pub const DEFAULT_BG: &str = "builtin:default";
@@ -194,7 +214,9 @@ pub struct Core {
     pub settings: Settings,
     pub(crate) settings_dirty_at: Option<f64>,
     /// Position in the restored current track, used by the first play.
-    resume_at: Option<f64>,
+    pub(crate) resume_at: Option<f64>,
+    /// Why the sound card in direct use cannot be used.
+    pub(crate) direct_error: Option<String>,
     position_saved_at: f64,
     pub(crate) rng: Rng,
     pub(crate) gfx: Option<Gfx>,
@@ -244,6 +266,10 @@ pub struct Core {
     pub(crate) sync_taps: Vec<f64>,
     live_buf: Vec<f32>,
     last_live_pos: f64,
+    /// How far the endless animation has run, and what it follows (bass,
+    /// middle, high, energy; smoothed).
+    animation_time: f64,
+    animation_levels: [f32; 4],
     pub(crate) spectrum: Vec<f32>,
     pub(crate) waveform: Vec<f32>,
     next_image_id: u64,
@@ -257,6 +283,9 @@ pub struct Core {
     pub(crate) requests: HashMap<u64, Req>,
     pub(crate) server_playlists: Vec<Playlist>,
     pub(crate) local_playlists: Vec<Playlist>,
+    pub(crate) favorites: crate::favorites::FavoritesState,
+    pub(crate) history: crate::history::HistoryState,
+    pub(crate) recommend: crate::recommend::RecommendState,
     pub(crate) server_images: Vec<ImageEntry>,
     pub(crate) server_presets: Vec<String>,
     /// Files handed over as bytes (browser), by name.
@@ -271,11 +300,14 @@ pub struct Core {
     menu_blur: f32,
     pub(crate) overlay: Overlay,
     launch: LaunchArgs,
+    launched_with_files: bool,
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) outputs: crate::outputs::Outputs,
+    pub(crate) artists: crate::artists::Artists,
+    pub(crate) shared_probe: crate::route::SharedProbe,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) mic: crate::mic::MicState,
@@ -363,6 +395,8 @@ impl Core {
         let mut player = Player::new();
         player.set_volume(if settings.muted { 0.0 } else { settings.volume });
         player.set_transition(settings.crossfade, settings.skip_silence);
+        player.set_eq(&settings.eq);
+        player.prefer_direct(settings.direct_device());
         let queue = Queue::new(
             settings.audio_queue.clone(),
             settings.audio_index,
@@ -438,6 +472,8 @@ impl Core {
             sync_taps: Vec::new(),
             live_buf: vec![0.0; 2048],
             last_live_pos: 0.0,
+            animation_time: 0.0,
+            animation_levels: [0.0; 4],
             spectrum: Vec::new(),
             waveform: Vec::new(),
             next_image_id: 10,
@@ -450,6 +486,9 @@ impl Core {
             requests: HashMap::new(),
             server_playlists: Vec::new(),
             local_playlists,
+            favorites: Default::default(),
+            history: Default::default(),
+            recommend: Default::default(),
             server_images: Vec::new(),
             server_presets: Vec::new(),
             memory_files: HashMap::new(),
@@ -461,12 +500,16 @@ impl Core {
             blur_target: 0.0,
             menu_blur: 0.0,
             overlay: Overlay::default(),
+            launched_with_files: !launch.files.is_empty(),
             launch,
             last_dt: 0.0,
             time: 0.0,
             download_progress: None,
             airplay: Default::default(),
             outputs: Default::default(),
+            artists: Default::default(),
+            shared_probe: Default::default(),
+            direct_error: None,
             dlna: Default::default(),
             capture: Default::default(),
             mic: Default::default(),
@@ -480,6 +523,10 @@ impl Core {
             push: Default::default(),
             started: false,
         };
+        core.load_favorites(host);
+        core.load_history(host);
+        core.load_recommend(host);
+        core.engine.set_photosensitive(core.settings.photosensitive);
         core.engine.set_intensity(core.settings.intensity);
         core.engine.set_adaptive(core.settings.adaptive);
         // Native apps load server images through the core's HTTP client.
@@ -627,6 +674,7 @@ impl Core {
             .unwrap_or(Value::Null);
         Value::object()
             .with("platform", host.platform())
+            .with("launchedWithFiles", self.launched_with_files)
             .with("metered", self.metered)
             .with("play", play)
             .with(
@@ -676,10 +724,18 @@ impl Core {
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
             .with("devicesRev", self.revs.devices)
+            .with("favoritesRev", self.revs.favorites)
+            .with("historyRev", self.revs.history)
+            .with("labelsRev", self.revs.labels)
+            .with("statsRev", self.revs.stats)
+            .with("recommendRev", self.recommend.rev)
+            .with("radio", self.radio_json())
             .with("deviceName", self.device_name(host))
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
+            .with("audio", self.audio_json(host))
+            .with("artists", self.artists_json())
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
             .with(
@@ -721,6 +777,7 @@ impl Core {
             .with("local", library::is_local(&t.id))
             .with("source", t.id.starts_with(crate::sources::ID_PREFIX))
             .with("offline", self.is_offline(&t.id))
+            .with("favorite", self.is_favorite(&t.id))
             .with("cover", self.cover_url_cached(t))
     }
 
@@ -787,6 +844,12 @@ impl Core {
                 _ => None,
             }
         };
+        match req {
+            Req::Artist => return self.artist_http(host, res),
+            Req::ArtistImage => return self.artist_image_http(host, res),
+            Req::ArtistServer => return self.artist_server_http(host, res),
+            _ => {}
+        }
         if let Req::Vault(v, token) = req {
             return self.vault_http(host, v, &token, res);
         }
@@ -852,6 +915,15 @@ impl Core {
                 let id = self.server.get(host, bl_net::api::paths::PLAYLISTS);
                 self.requests.insert(id, Req::Playlists);
             }
+            Req::Favorites => self.favorites_fetched(host, &res),
+            Req::FavoriteSaved => self.favorite_saved(host, &res),
+            Req::HistorySent(done) => self.history_sent(host, &res, done),
+            Req::HistoryCleared => {}
+            Req::Stats => self.stats_fetched(&res),
+            Req::Recommendations => self.recommendations_fetched(&res),
+            Req::Labels => self.labels_fetched(&res),
+            Req::LabelsSaved => self.labels_saved(&res),
+            Req::Radio { start } => self.radio_answer(host, &res, start),
             Req::Images => {
                 if let Some(v) = ok_json(&res) {
                     self.server_images = v
@@ -987,7 +1059,12 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
-            Req::Vault(..) | Req::WebCheck(_) | Req::Ext(_) => {}
+            Req::Vault(..)
+            | Req::WebCheck(_)
+            | Req::Ext(_)
+            | Req::Artist
+            | Req::ArtistServer
+            | Req::ArtistImage => {}
         }
     }
 
@@ -1688,6 +1765,7 @@ impl Core {
         if ids.is_empty() {
             return;
         }
+        self.radio_end();
         let shuffle = self.queue.shuffle;
         self.queue.shuffle = false;
         self.queue.replace(ids, start, &mut self.rng);
@@ -2411,7 +2489,7 @@ impl Core {
         let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
         if let Some(p) = paths.iter().find(|p| {
             let ext = extension(p).unwrap_or_default();
-            ext == "lrc" || (expect_lyrics && ext == "txt")
+            ext == "lrc" || ext == "ttml" || (expect_lyrics && ext == "txt")
         }) {
             if let Ok(d) = host.fs_read(p) {
                 self.lyrics_import_bytes(host, &d);
@@ -2577,6 +2655,9 @@ impl Core {
         self.poll_lyrics_sync(host);
         self.poll_devices(host);
         self.poll_account_sync(host);
+        self.poll_favorites(host);
+        self.poll_history(host);
+        self.poll_recommend(host);
         self.poll_offline(host);
         self.poll_scan(host);
         self.poll_sources(host);
@@ -2589,6 +2670,8 @@ impl Core {
         self.update_airplay(host);
         self.update_dlna(host);
         self.update_extensions(host);
+        self.poll_artists(host);
+        self.poll_shared_probe(host);
         self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
@@ -2599,7 +2682,11 @@ impl Core {
                 PlayerEvent::Ended if self.playing_dlna() => self.dlna_track_ended(host),
                 PlayerEvent::Ended if self.playing_capture() => self.capture_stream_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
-                PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
+                PlayerEvent::Advanced { .. } => {
+                    self.shared_probe_soon();
+                    self.follow_device_rate();
+                    self.on_track_advanced(host);
+                }
                 PlayerEvent::Reload(at) => {
                     let playing = self.player.state() == PlayState::Playing;
                     self.play_current(host, playing);
@@ -2609,18 +2696,16 @@ impl Core {
                     let msg = format!("{}: {e}", self.tr("Playback error"));
                     self.toast(msg, true);
                 }
+                PlayerEvent::DeviceError(e) => self.direct_failed(host, e),
                 PlayerEvent::Loaded { .. } => {
-                    if self.live.sample_rate() != self.player.device_rate() {
-                        self.live = RealtimeAnalyzer::new(
-                            self.player.device_rate(),
-                            &self.preset.analysis_config(),
-                        );
-                        self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
-                    }
+                    self.shared_probe_soon();
+                    self.direct_error = None;
+                    self.follow_device_rate();
                 }
             }
         }
         self.sync_preload(host);
+        self.track_listening(host);
         self.mic_tick(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
@@ -2659,6 +2744,16 @@ impl Core {
     pub fn gl_lost(&mut self) {
         self.gfx = None;
         self.bg_source = None;
+    }
+
+    /// The live analysis works at the rate of the output, and on a sound card
+    /// in direct use that changes with the song.
+    fn follow_device_rate(&mut self) {
+        if self.live.sample_rate() != self.player.device_rate() {
+            self.live =
+                RealtimeAnalyzer::new(self.player.device_rate(), &self.preset.analysis_config());
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
+        }
     }
 
     /// Renders the visualizer into framebuffer `fbo` (size in physical
@@ -2707,8 +2802,12 @@ impl Core {
             analysis: analysis.as_deref(),
             ..frame_input
         };
+        let animation = self.next_animation(live, dt, playing);
+        let photosensitive = self.settings.photosensitive;
         let frame = self.engine.update(&frame_input);
         let Some(gfx) = &mut self.gfx else { return };
+        gfx.vis.set_animation(animation);
+        gfx.vis.set_flash_limit(gl, photosensitive, dt);
         gfx.vis.render(
             gl,
             &frame,
@@ -2742,7 +2841,56 @@ impl Core {
         }
     }
 
+    /// The endless animation of this frame, if one is chosen.
+    fn next_animation(
+        &mut self,
+        live: [f32; 3],
+        dt: f64,
+        playing: bool,
+    ) -> Option<bl_render::SceneInput> {
+        let kind = if self.settings.animation == "cycle" {
+            let all = bl_render::SceneKind::ALL;
+            Some(all[(self.play_generation % all.len() as u64) as usize])
+        } else {
+            bl_render::SceneKind::parse(&self.settings.animation)
+        }?;
+        let target = [live[0], live[1], live[2], self.live.energy() * 3.0];
+        // Beats come through quickly, and slowly with the calm settings.
+        let rise = if self.settings.photosensitive {
+            0.8
+        } else {
+            10.0
+        };
+        let fall = if self.settings.photosensitive {
+            0.8
+        } else {
+            2.5
+        };
+        for (v, t) in self.animation_levels.iter_mut().zip(target) {
+            let t = if playing { t.clamp(0.0, 1.0) } else { 0.0 };
+            let rate = if t > *v { rise } else { fall };
+            *v += (t - *v) * (1.0 - (-rate * dt as f32).exp());
+        }
+        let [bass, mid, high, energy] = self.animation_levels;
+        let speed = if self.settings.photosensitive {
+            0.5
+        } else {
+            0.5 + energy as f64
+        };
+        self.animation_time = (self.animation_time + dt * speed) % 36_000.0;
+        Some(bl_render::SceneInput {
+            kind,
+            time: self.animation_time as f32,
+            bass,
+            mid,
+            high,
+            energy,
+        })
+    }
+
     pub fn shutdown(&mut self, host: &mut dyn Host) {
+        self.finish_listening(host);
+        self.save_history(host);
         self.save_settings(host);
         self.player.stop(host);
         self.close_mics(host);

@@ -74,9 +74,11 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-meta",
  "bl-net",
  "bl-offline",
  "bl-opus-enc",
+ "bl-recommend",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -144,9 +146,11 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-meta",
  "bl-mt",
  "bl-net",
  "bl-offline",
+ "bl-recommend",
  "bl-render",
  "bl-sources",
  "bl-upnp",
@@ -210,6 +214,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bl-meta"
+version = "0.11.1"
+dependencies = [
+ "bl-json",
+]
+
+[[package]]
 name = "bl-mp3"
 version = "0.11.1"
 
@@ -226,6 +237,7 @@ name = "bl-net"
 version = "0.11.1"
 dependencies = [
  "bl-json",
+ "bl-media",
 ]
 
 [[package]]
@@ -260,6 +272,13 @@ name = "bl-pitch"
 version = "0.11.1"
 dependencies = [
  "bl-hyph",
+ "bl-json",
+]
+
+[[package]]
+name = "bl-recommend"
+version = "0.11.1"
+dependencies = [
  "bl-json",
 ]
 

@@ -7,9 +7,11 @@
 pub mod batch2d;
 pub mod gpu;
 pub mod math;
+pub mod scenes;
 pub mod shaders;
 pub mod visualizer;
 
 pub use batch2d::{Batch2d, Color, Rect};
 pub use gpu::{RenderTarget, Target, Texture};
+pub use scenes::{SceneInput, SceneKind};
 pub use visualizer::Visualizer;

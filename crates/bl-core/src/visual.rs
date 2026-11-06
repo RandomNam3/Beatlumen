@@ -23,7 +23,10 @@ fn bar_count(s: &Settings, width: f32) -> usize {
 pub(crate) fn update_overlay(core: &mut Core, width: f32) {
     match core.settings.visualizer {
         VisualizerKind::None => {}
-        VisualizerKind::Spectrum => update_spectrum(core, width),
+        VisualizerKind::Spectrum
+        | VisualizerKind::Wave
+        | VisualizerKind::Mirror
+        | VisualizerKind::Circle => update_spectrum(core, width),
         VisualizerKind::Waveform => update_waveform(core, width),
     }
 }
@@ -100,6 +103,12 @@ fn update_spectrum(core: &mut Core, width: f32) {
         })
         .collect();
     let smooth = s.spectrum_smoothing.clamp(0.0, 0.99);
+    // No jumping shapes in photosensitive mode.
+    let smooth = if s.photosensitive {
+        smooth.max(0.93)
+    } else {
+        smooth
+    };
     if core.spectrum.len() != n {
         core.spectrum = vec![0.0; n];
     }
@@ -129,6 +138,117 @@ fn update_waveform(core: &mut Core, width: f32) {
     }
 }
 
+/// A quiet line for the oscilloscope in photosensitive mode: its trace jumps
+/// from frame to frame.
+fn draw_flat_line(batch: &mut Batch2d, r: Rect, alpha: f32) {
+    batch.rect(
+        Rect::new(r.x, r.y + r.h / 2.0 - 1.0, r.w, 2.0),
+        Color(1.0, 1.0, 1.0, 0.5 * alpha),
+        1.0,
+    );
+}
+
+/// The height of a smooth curve through `values` at `x` (0..1), Catmull-Rom.
+fn curve_at(values: &[f32], x: f32) -> f32 {
+    let n = values.len();
+    if n < 2 {
+        return values.first().copied().unwrap_or(0.0);
+    }
+    let f = x.clamp(0.0, 1.0) * (n - 1) as f32;
+    let i = (f as usize).min(n - 2);
+    let t = f - i as f32;
+    let at = |k: isize| values[k.clamp(0, n as isize - 1) as usize];
+    let (p0, p1, p2, p3) = (
+        at(i as isize - 1),
+        at(i as isize),
+        at(i as isize + 1),
+        at(i as isize + 2),
+    );
+    let v = 0.5
+        * (2.0 * p1
+            + (p2 - p0) * t
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
+            + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t);
+    v.clamp(0.0, 1.0)
+}
+
+/// A filled curve of the frequencies with a brighter edge.
+fn draw_wave(spectrum: &[f32], batch: &mut Batch2d, r: Rect, alpha: f32) {
+    let step = 2.0f32;
+    let columns = (r.w / step) as usize;
+    for c in 0..columns {
+        let x = c as f32 / columns.max(1) as f32;
+        let v = curve_at(spectrum, x);
+        let h = (0.99 * v + 0.01) * r.h;
+        // Fades towards both ends.
+        let edge = (x.min(1.0 - x) * 14.0).min(1.0);
+        let px = r.x + c as f32 * step;
+        let top = r.y + r.h - h;
+        batch.rect(
+            Rect::new(px, top, step, h),
+            Color(1.0, 1.0, 1.0, 0.28 * alpha * edge),
+            0.0,
+        );
+        batch.rect(
+            Rect::new(px, top, step, 2.0),
+            Color(1.0, 1.0, 1.0, 0.95 * alpha * edge),
+            0.0,
+        );
+    }
+}
+
+/// Bars growing from the middle to both sides.
+fn draw_mirror(s: &Settings, spectrum: &[f32], batch: &mut Batch2d, r: Rect, alpha: f32) {
+    let bw = s.bar_width.max(1.0);
+    let gap = s.bar_gap.max(0.0);
+    let middle = r.y + r.h / 2.0;
+    for (i, v) in spectrum.iter().enumerate() {
+        let h = (0.99 * v + 0.01) * r.h;
+        let x = r.x + i as f32 * (bw + gap);
+        if x + bw > r.x + r.w + 0.5 {
+            break;
+        }
+        batch.rect(
+            Rect::new(x, middle - h / 2.0, bw, h),
+            Color(1.0, 1.0, 1.0, 0.92 * alpha),
+            bw.min(2.0) / 2.0,
+        );
+    }
+}
+
+/// The frequencies around a circle (left and right mirror each other), as
+/// rows of dots since the batch only draws upright rectangles.
+fn draw_circle(spectrum: &[f32], batch: &mut Batch2d, r: Rect, alpha: f32) {
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let size = r.w.min(r.h);
+    let base = size * 0.24;
+    let reach = size * 0.24;
+    let dot = (size / 90.0).clamp(1.5, 4.0);
+    let spokes = 72usize;
+    for k in 0..spokes {
+        let a = k as f32 / spokes as f32 * std::f32::consts::TAU;
+        // 0 at the bottom, 1 at the top, the same on both sides.
+        let side = (a / std::f32::consts::PI - 1.0).abs();
+        let v = curve_at(spectrum, 1.0 - side);
+        let (sin, cos) = a.sin_cos();
+        let length = (0.04 + 0.96 * v) * reach;
+        let count = ((length / (dot * 1.6)) as usize).max(1);
+        for j in 0..count {
+            let radius = base + j as f32 * dot * 1.6;
+            batch.rect(
+                Rect::new(
+                    cx + sin * radius - dot / 2.0,
+                    cy - cos * radius - dot / 2.0,
+                    dot,
+                    dot,
+                ),
+                Color(1.0, 1.0, 1.0, 0.9 * alpha),
+                dot / 2.0,
+            );
+        }
+    }
+}
+
 /// Draws the overlay into `r` (logical pixels).
 pub(crate) fn draw(
     s: &Settings,
@@ -140,6 +260,9 @@ pub(crate) fn draw(
 ) {
     match s.visualizer {
         VisualizerKind::None => {}
+        VisualizerKind::Wave => draw_wave(spectrum, batch, r, alpha),
+        VisualizerKind::Mirror => draw_mirror(s, spectrum, batch, r, alpha),
+        VisualizerKind::Circle => draw_circle(spectrum, batch, r, alpha),
         VisualizerKind::Spectrum => {
             let bw = s.bar_width.max(1.0);
             let gap = s.bar_gap.max(0.0);
@@ -160,6 +283,9 @@ pub(crate) fn draw(
             let points = waveform.len();
             if points < 2 {
                 return;
+            }
+            if s.photosensitive {
+                return draw_flat_line(batch, r, alpha);
             }
             let step = r.w / points as f32;
             for i in 1..points {

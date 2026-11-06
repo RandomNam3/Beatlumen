@@ -10,7 +10,7 @@ ApplicationWindow {
     width: 1280
     height: 800
     minimumWidth: 320
-    minimumHeight: 480
+    minimumHeight: 360
     visible: true
     title: Core.state.current ? Core.state.current.title + " – Beatlumen" : "Beatlumen"
     color: "black"
@@ -24,15 +24,32 @@ ApplicationWindow {
 
     readonly property bool compact: width < 760
     readonly property bool playing: Core.state.play === "playing"
-    // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings
+    // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings,
+    // 4 devices, 5 start page, 6 statistics, 7 search
     property int page: -1
+    // Where the player's button returns to from the visual.
+    property int lastPage: 5
+    function toggleVisual() {
+        page = page >= 0 ? -1 : lastPage
+    }
+    function openSearch() {
+        page = 7
+        Qt.callLater(() => searchLoader.item && searchLoader.item.focusField())
+    }
+    // Little height: a phone held sideways.
+    readonly property bool dense: height < 520
+    // The big phone controls need room.
+    readonly property bool bigPlayer: compact && page < 0 && height >= 560
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
-    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing
+    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing || Theme.keepControls
 
     Component.onCompleted: {
         if (startFullscreen)
             showFullScreen()
+        // Songs given on the command line play with their visual right away.
+        else if (!Core.call("state").launchedWithFiles)
+            page = 5
         welcomeTimer.start()
         if (Core.platform === "android" && !(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.askedPermission)) {
             Core.call("settings.set", { key: "ui.askedPermission", value: true })
@@ -42,7 +59,17 @@ ApplicationWindow {
     // Android's status and navigation bars go with the controls (a swipe
     // from the edge shows them briefly).
     onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
+    // The keyboard brings the controls back like the mouse does.
+    onActiveFocusItemChanged: {
+        poke()
+        focusRing.target = activeFocusItem
+    }
+    // Space and the arrow keys belong to a control reached by keyboard.
+    readonly property bool keyOnControl: !!activeFocusItem && activeFocusItem.visualFocus === true
+    readonly property bool playerKeys: !Theme.lyricsEditing && !keyOnControl
     onPageChanged: {
+        if (page >= 0)
+            lastPage = page
         Core.call("ui.blur", { value: page >= 0 ? 2.0 : 0.0 })
         poke()
     }
@@ -105,17 +132,22 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Space"; onActivated: Core.call("toggle") }
+    Shortcut { enabled: win.playerKeys; sequence: "Space"; onActivated: { win.poke(); Core.call("toggle") } }
     Shortcut { sequences: ["Media Play", "Toggle Media Play/Pause"]; onActivated: Core.call("toggle") }
     Shortcut { sequences: ["Ctrl+Right", "Media Next"]; onActivated: Core.call("next") }
     Shortcut { sequences: ["Ctrl+Left", "Media Previous"]; onActivated: Core.call("prev") }
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Right"; onActivated: Core.call("seekBy", { delta: 5 }) }
-    Shortcut { enabled: !Theme.lyricsEditing; sequence: "Left"; onActivated: Core.call("seekBy", { delta: -5 }) }
+    Shortcut { enabled: win.playerKeys; sequence: "Right"; onActivated: { win.poke(); Core.call("seekBy", { delta: 5 }) } }
+    Shortcut { enabled: win.playerKeys; sequence: "Left"; onActivated: { win.poke(); Core.call("seekBy", { delta: -5 }) } }
     Shortcut { sequence: "Ctrl+Up"; onActivated: Core.call("volume", { value: Math.min(1, (Core.state.volume || 0) + 0.05) }) }
     Shortcut { sequence: "Ctrl+Down"; onActivated: Core.call("volume", { value: Math.max(0, (Core.state.volume || 0) - 0.05) }) }
     Shortcut { sequences: ["F11", "Alt+Return"]; onActivated: win.toggleFullscreen() }
     Shortcut { sequence: "Escape"; onActivated: if (!win.goBack() && win.visibility === Window.FullScreen) win.showNormal() }
-    Shortcut { sequence: "Ctrl+F"; onActivated: win.page = 0 }
+    Shortcut { sequence: "Ctrl+F"; onActivated: win.openSearch() }
+    Shortcut {
+        sequence: "Ctrl+L"
+        enabled: !!Core.state.current && Favorites.canMark(Core.state.current.id)
+        onActivated: Favorites.toggle(Core.state.current.id)
+    }
     Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Z"; onActivated: Core.call("preset.undo") }
     Shortcut { enabled: !Theme.lyricsEditing; sequence: "Ctrl+Shift+Z"; onActivated: Core.call("preset.redo") }
     Shortcut { sequence: "Ctrl+Alt+Right"; onActivated: Core.call("backgrounds.next") }
@@ -126,16 +158,17 @@ ApplicationWindow {
         id: rail
         visible: !win.compact
         rail: true
+        dense: win.dense
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: playerBar.top
-        width: 88
+        width: implicitWidth
         current: win.page
         // The page floats over the visual: its entry closes it again.
         onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
-        enabled: win.chromeVisible
+        onShowHelp: help.open()
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
 
     // Tapping the visual toggles the controls (and closes pages on phones).
@@ -155,10 +188,9 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 8
-        visible: win.page < 0 || !win.compact
-        enabled: win.chromeVisible
+        visible: win.page < 0
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         IconButton {
             iconName: "lyrics"; iconColor: "white"
             active: win.showLyrics
@@ -186,9 +218,10 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         // Slides down when the controls fade out.
         anchors.bottomMargin: !win.chromeVisible ? 8
-                              : win.compact ? expanded.height + nav.height
+                              : win.bigPlayer ? expanded.height + nav.height
+                              : win.compact ? playerBar.height + nav.height
                               : playerBar.height
-        Behavior on anchors.bottomMargin { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.ms(450); easing.type: Easing.OutCubic } }
         visible: win.page < 0
         showSpectrum: true
         showLyrics: win.showLyrics
@@ -209,14 +242,13 @@ ApplicationWindow {
     PlayerBar {
         id: expanded
         mode: "expanded"
-        visible: win.compact && win.page < 0
-        enabled: win.chromeVisible
+        visible: win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: nav.top
         height: implicitHeight
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         onOpenQueue: win.page = 1
     }
 
@@ -225,13 +257,10 @@ ApplicationWindow {
         id: panel
         visible: win.page >= 0
         color: Theme.surface
-        radius: win.compact ? 0 : Theme.radius
         anchors.left: win.compact ? parent.left : rail.right
         anchors.top: parent.top
         anchors.bottom: playerBar.top
-        anchors.topMargin: win.compact ? 0 : 12
-        anchors.bottomMargin: win.compact ? 0 : 12
-        width: win.compact ? parent.width : Math.min(680, Math.max(420, (parent.width - rail.width) * 0.5))
+        anchors.right: parent.right
 
         StackLayout {
             anchors.fill: parent
@@ -276,21 +305,60 @@ ApplicationWindow {
                     onOpenSettings: win.page = 3
                 }
             }
+            Loader {
+                active: win.page === 5 || item !== null
+                sourceComponent: HomePage {
+                    onStartTour: win.startTour()
+                    onAddFolder: win.addFolder()
+                    onOpenFiles: dialogs.openAudio()
+                    onConnectServer: win.page = 3
+                    onOpenAlbum: (album) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openAlbum(album))
+                    }
+                    onOpenFavorites: {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openFavorites())
+                    }
+                }
+            }
+            Loader {
+                active: win.page === 6 || item !== null
+                sourceComponent: StatsPage { }
+            }
+            Loader {
+                id: searchLoader
+                active: win.page === 7 || item !== null
+                sourceComponent: SearchPage {
+                    onOpenAlbum: (album) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openAlbum(album))
+                    }
+                    onOpenArtist: (name) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openArtist(name))
+                    }
+                    onOpenLabel: (name) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openLabel(name))
+                    }
+                }
+            }
         }
     }
 
     PlayerBar {
         id: playerBar
         mode: win.compact ? "mini" : "full"
-        visible: !win.compact || win.page >= 0
+        dense: win.dense
+        visible: !win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: win.compact ? nav.top : parent.bottom
         height: visible ? implicitHeight : 0
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
-        enabled: win.chromeVisible
-        onOpenNowPlaying: win.page = -1
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
+        onOpenNowPlaying: win.compact ? win.page = -1 : win.toggleVisual()
         onOpenQueue: win.page = win.page === 1 ? -1 : 1
     }
 
@@ -303,15 +371,15 @@ ApplicationWindow {
         height: visible ? implicitHeight : 0
         current: win.page
         onSelected: (i) => win.page = i
-        enabled: win.chromeVisible
+        onShowHelp: help.open()
         opacity: win.chromeVisible ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 400 } }
+        Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
 
     // ---- toasts -------------------------------------------------------------
     Column {
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: (win.compact ? (win.page < 0 ? expanded : playerBar) : playerBar).top
+        anchors.bottom: (win.bigPlayer ? expanded : playerBar).top
         anchors.bottomMargin: 12
         spacing: 8
         z: 50
@@ -352,6 +420,18 @@ ApplicationWindow {
     function addFolder() { dialogs.addMusicFolder() }
     function addImageFolder() { dialogs.addImageFolder() }
     PlatformDialogs { id: dialogs }
+    FocusHighlight { id: focusRing }
+    // A screen reader hears when another song starts.
+    readonly property string currentTitle: Core.state.current ? Core.state.current.title + ", " + (Core.state.current.artist || "") : ""
+    onCurrentTitleChanged: {
+        if (currentTitle !== "" && Accessible.announce)
+            Accessible.announce(Theme.tr("Now playing") + ": " + currentTitle)
+    }
+    HelpDialog {
+        id: help
+        onStartTour: win.startTour()
+        onStartSetup: setup.open()
+    }
     TextPrompt {
         id: loginPrompt
         title: Theme.tr("Log in")
@@ -362,89 +442,41 @@ ApplicationWindow {
     }
     // Visualising other apps without access to their media sessions: the
     // title, cover and full control need it; offered once per start.
-    // First start: where the music comes from.
+    // First start: the setup. Not over songs someone just opened.
     Timer {
         id: welcomeTimer
-        interval: 1500
+        interval: 600
         onTriggered: {
             const s = Core.state.settings || {}
+            const ui = s.ui || {}
             const nothing = (Core.state.libraryTracks || 0) === 0 && (s.libraryFolders || []).length === 0
                 && (Core.state.server || "disabled") === "disabled"
-            if (!(s.ui && s.ui.welcomed) && nothing && Core.platform !== "web")
-                welcome.open()
+            if (!ui.setupDone && !ui.welcomed && nothing && Core.platform !== "web" && !Core.call("state").launchedWithFiles)
+                setup.open()
         }
     }
-    AppDialog {
-        id: welcome
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(480, win.width - 32)
-        title: Theme.tr("Welcome to Beatlumen")
-        standardButtons: Dialog.NoButton
-        onClosed: Core.call("settings.set", { key: "ui.welcomed", value: true })
-        function openSettings(category) {
-            welcome.close()
+    SetupWizard {
+        id: setup
+        onAddFolder: win.addFolder()
+        onOpenSettings: (category) => {
             win.page = 3
             Qt.callLater(() => { if (settingsLoader.item) settingsLoader.item.category = category })
         }
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: 6
-            Label {
-                textFormat: Text.PlainText
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.textDim
-                text: Theme.tr("Where does your music come from? You can change and add everything later in the settings.")
-            }
-            component Choice: ItemDelegate {
-                property string iconName
-                property string detail
-                Layout.fillWidth: true
-                contentItem: RowLayout {
-                    spacing: 14
-                    Icon { name: parent.parent.iconName; color: Theme.accent }
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 0
-                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.text; color: Theme.text; wrapMode: Text.WordWrap }
-                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: parent.parent.parent.detail; color: Theme.textDim; font.pixelSize: 12; wrapMode: Text.WordWrap }
-                    }
-                }
-            }
-            Choice {
-                visible: Core.platform !== "web"
-                iconName: "create_new_folder"
-                text: Theme.tr("Music on this device")
-                detail: Theme.tr("Add a folder with your songs.")
-                onClicked: { welcome.close(); win.addFolder() }
-            }
-            Choice {
-                iconName: "cloud"
-                text: Theme.tr("A Beatlumen server")
-                detail: Theme.tr("Your library at home, analysed for the visuals, with accounts and encrypted files.")
-                onClicked: welcome.openSettings("server")
-            }
-            Choice {
-                visible: (Core.state.sources || {}).available === true
-                iconName: "storage"
-                text: Theme.tr("Navidrome, Jellyfin, Nextcloud, a NAS …")
-                detail: Theme.tr("Play the music of other servers and storage directly.")
-                onClicked: welcome.openSettings("library")
-            }
-            Choice {
-                visible: Core.platform !== "web"
-                iconName: "speaker"
-                text: Theme.tr("Use this device as a speaker")
-                detail: Theme.tr("iPhones, Macs, Windows and DLNA apps play here (AirPlay, DLNA) with visuals.")
-                onClicked: welcome.openSettings("receive")
-            }
-            Button {
-                Layout.alignment: Qt.AlignRight
-                text: Theme.tr("Later")
-                flat: true
-                onClicked: welcome.close()
-            }
-        }
+        onStartTour: win.startTour()
+    }
+    Tour { id: tourPopup }
+    function startTour() {
+        win.page = 5
+        win.poke()
+        const bar = win.compact ? nav : rail
+        tourPopup.start([
+            { item: bar.button(0), title: Theme.tr("Home"), text: Theme.tr("What you last played, what is new, and suggestions.") },
+            { item: bar.button(1), title: Theme.tr("Search"), text: Theme.tr("Find songs, albums and artists, or browse by genre and mood.") },
+            { item: bar.button(2), title: Theme.tr("Library"), text: Theme.tr("All your music: songs, albums, artists, folders, playlists and labels.") },
+            { item: bar.button(3), title: Theme.tr("Visuals"), text: Theme.tr("Styles, animations and backgrounds. The epilepsy mode is here too.") },
+            { item: playerBar, title: Theme.tr("Player"), text: Theme.tr("Heart: favorite. Cover: the visual. Right: output, volume, queue.") },
+            { item: bar.button(4), title: Theme.tr("More"), text: Theme.tr("Statistics, devices, settings and help. You can start this tour again under Help.") }
+        ])
     }
 
     // Songs or a link shared with the app by another app.

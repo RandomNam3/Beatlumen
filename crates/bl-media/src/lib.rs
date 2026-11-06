@@ -27,16 +27,19 @@ mod adts;
 mod aiff;
 mod alac;
 mod downmix;
+mod eq;
 mod flac;
 pub mod lyrics;
 mod mkv;
 mod mp3;
 mod mp4;
 mod ogg;
+mod pack;
 mod pcm;
 mod probe;
 mod resample;
 mod tags;
+mod ttml;
 mod util;
 mod wav;
 mod window;
@@ -130,6 +133,11 @@ pub trait Decoder: Send {
     fn seek(&mut self, frame: u64) -> Result<u64, Error>;
     /// Short codec name, e.g. "mp3", "flac", "aac", "opus", "vorbis", "alac", "pcm".
     fn codec_name(&self) -> &'static str;
+    /// Bits of the file's integer samples; `None` when it has none to keep
+    /// (lossy codecs, floats).
+    fn bits_per_sample(&self) -> Option<u8> {
+        None
+    }
 }
 
 /// Textual tags normalised across tag formats.
@@ -155,6 +163,24 @@ pub struct Tags {
     pub replaygain_track_peak: Option<f32>,
     pub replaygain_album_gain: Option<f32>,
     pub replaygain_album_peak: Option<f32>,
+    /// The year it first came out, when the tags tell it apart from `year`.
+    pub original_year: Option<i32>,
+    /// International Standard Recording Code (12 characters, no hyphens).
+    pub isrc: Option<String>,
+    /// MusicBrainz ids of the recording, the artist and the release.
+    pub mb_recording: Option<String>,
+    pub mb_artist: Option<String>,
+    pub mb_album: Option<String>,
+    /// Tempo as tagged (beats per minute).
+    pub bpm: Option<f32>,
+    /// Musical key as tagged ("Am", "F#", "8A", ...).
+    pub key: Option<String>,
+    pub mood: Option<String>,
+    /// Record label or publisher.
+    pub publisher: Option<String>,
+    pub language: Option<String>,
+    /// Rating (0..1).
+    pub rating: Option<f32>,
 }
 
 /// An embedded picture (cover art).
@@ -240,7 +266,10 @@ pub fn downmix_to_stereo(input: &[f32], channels: u16, out: &mut Vec<f32>) {
     downmix::downmix_to_stereo(input, channels, out)
 }
 
+pub use eq::{eq_response_db, EqSettings, Equalizer, EQ_BANDS, EQ_MAX_DB};
+pub use pack::{pack_pcm, pcm_preference, PcmFormat};
 pub use resample::Resampler;
+pub use ttml::{is_ttml, ttml_to_lrc};
 
 /// Decodes a whole file to mono at `rate` Hz (the channels averaged), at
 /// most `max_secs` seconds. `keep_going` is asked between chunks.

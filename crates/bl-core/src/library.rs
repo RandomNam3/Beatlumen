@@ -269,10 +269,11 @@ impl LibraryState {
     }
 
     pub fn load_local_cache(&mut self, data: &[u8]) {
-        // Version 2: artist/title guessed from file names without tags.
+        // Version 3: with what tags say for recommendations and playlists;
+        // anything older is read again.
         if let Some(v) = bl_json::parse_bytes(data)
             .ok()
-            .filter(|v| v.get("version").as_u64() == Some(2))
+            .filter(|v| v.get("version").as_u64() == Some(3))
         {
             self.local = v
                 .get("tracks")
@@ -285,7 +286,7 @@ impl LibraryState {
 
     pub fn local_cache_json(&self) -> String {
         bl_json::Value::object()
-            .with("version", 2u32)
+            .with("version", 3u32)
             .with(
                 "tracks",
                 bl_json::Value::Array(self.local.iter().map(Track::to_json).collect()),
@@ -335,6 +336,7 @@ pub fn local_track(
         t.channels = i.channels;
         t.bitrate_kbps = i.bitrate_kbps;
         t.has_cover = true;
+        t.meta = bl_net::api::TrackMeta::from_tags(tags);
     }
     if t.artists.is_empty() || t.title == file_name {
         let (artist, title) = bl_net::api::guess_from_file_name(&file_name);

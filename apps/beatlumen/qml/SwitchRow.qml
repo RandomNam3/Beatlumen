@@ -7,21 +7,38 @@ ItemDelegate {
     id: r
     property string title
     property string detail: ""
+    // The longer explanation, behind a small button.
+    property string info: ""
     property bool on: false
     signal switched(bool on)
-    implicitHeight: Math.max(Theme.row, col.implicitHeight + 20)
+    implicitHeight: Math.max(Theme.settingRow, col.implicitHeight + 12)
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: title
+    Accessible.description: info !== "" ? detail + " " + info : detail
+    Accessible.checkable: true
+    Accessible.checked: on
     onClicked: r.switched(!r.on)
+    Keys.onReturnPressed: r.switched(!r.on)
+    Keys.onEnterPressed: r.switched(!r.on)
     contentItem: RowLayout {
         spacing: 12
         ColumnLayout {
             id: col
             Layout.fillWidth: true
             spacing: 2
-            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: r.title; font.pixelSize: 15; color: Theme.text; wrapMode: Text.WordWrap }
-            Label { textFormat: Text.PlainText; Layout.fillWidth: true; visible: r.detail !== ""; text: r.detail; font.pixelSize: 13; color: Theme.textDim; wrapMode: Text.WordWrap }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                Label { textFormat: Text.PlainText; Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth) + 1; text: r.title; font.pixelSize: 14; color: Theme.text; wrapMode: Text.WordWrap }
+                InfoButton { visible: r.info !== ""; info: r.info }
+                Item { Layout.fillWidth: true }
+            }
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; visible: r.detail !== ""; text: r.detail; font.pixelSize: 12; color: Theme.textDim; wrapMode: Text.WordWrap }
         }
         Switch {
             checked: r.on
+            // The row is the control; this only shows its state.
+            focusPolicy: Qt.NoFocus
             onToggled: r.switched(checked)
             Accessible.name: r.title
         }

@@ -1391,6 +1391,14 @@ impl Decoder for MkvDecoder {
     fn codec_name(&self) -> &'static str {
         self.codec
     }
+    fn bits_per_sample(&self) -> Option<u8> {
+        match &self.dec {
+            PacketDecoder::Flac(d) => Some(d.bits_per_sample() as u8),
+            PacketDecoder::Alac(d) => Some(d.bit_depth() as u8),
+            PacketDecoder::Pcm(f) => f.int_bits(),
+            _ => None,
+        }
+    }
 }
 
 /// What the elementary stream learned about the frames pulled since the

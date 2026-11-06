@@ -846,6 +846,12 @@ impl Decoder for Mp4Decoder {
     fn codec_name(&self) -> &'static str {
         self.codec
     }
+    fn bits_per_sample(&self) -> Option<u8> {
+        match &self.dec {
+            PacketDecoder::Alac(d) => Some(d.bit_depth() as u8),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
