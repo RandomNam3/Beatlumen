@@ -21,6 +21,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Bit-perfect playback: asking for a USB sound card's bit-perfect mixer
+         (Android 14 and newer). Granted at install, not asked for. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Visualising other apps' playback (only after the user starts it):
          recording what they play (playback capture, no microphone) in a
          foreground service of type mediaProjection.

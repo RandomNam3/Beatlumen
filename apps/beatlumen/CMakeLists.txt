@@ -154,6 +154,10 @@ if(WIN32)
     # Microphones (karaoke): WASAPI capture endpoints.
     target_sources(beatlumen PRIVATE src/mic_input_win.cpp src/mic_input.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
+    # Bit-perfect playback: WASAPI in exclusive mode.
+    target_sources(beatlumen PRIVATE src/audio_direct_win.cpp src/audio_direct.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DIRECT_AUDIO)
+    target_link_libraries(beatlumen PRIVATE avrt)
 elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
     # Microphones (karaoke): PulseAudio / PipeWire sources (libpulse,
     # loaded at run time).
@@ -192,6 +196,10 @@ elseif(ANDROID)
     # Microphones (karaoke): AudioRecord (android/src/.../MicRecorder.java).
     target_sources(beatlumen PRIVATE src/android_mic.cpp src/mic_input.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
+    # Bit-perfect playback on USB sound cards, Android 14 and newer
+    # (android/src/.../DirectOutput.java).
+    target_sources(beatlumen PRIVATE src/audio_direct_android.cpp src/audio_direct.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DIRECT_AUDIO)
     # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
     # through AAudio), no QML debugging, TLS or network information.
     qt_import_plugins(beatlumen

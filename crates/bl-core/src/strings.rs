@@ -308,6 +308,7 @@ fn de(s: &str) -> Option<&'static str> {
         "The sound server would not let go of the sound card" => "Der Sound-Server gibt die Soundkarte nicht frei",
         "The sound card does not take this music" => "Die Soundkarte nimmt diese Musik nicht an",
         "Another program asked for the sound card" => "Ein anderes Programm hat die Soundkarte angefordert",
+        "Windows does not allow exclusive use of this sound card (sound settings, device properties, Advanced)" => "Windows erlaubt die exklusive Nutzung dieser Soundkarte nicht (Sound-Einstellungen, Geräteeigenschaften, Erweitert)",
         "Server image" => "Serverbild",
         "Server images" => "Serverbilder",
         "Server library rescan started" => "Server liest die Bibliothek neu ein",

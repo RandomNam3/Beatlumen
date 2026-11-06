@@ -45,6 +45,8 @@ struct AudioOutput::Impl
     std::atomic<bool> broken{false};
     std::atomic<uint32_t> latency{0};
     bool quit = false;
+    // A sound card in direct use pulls the samples: no stream, not even a silent one.
+    bool suspended = false;
     uint32_t rate = 48000;
 
     static aaudio_data_callback_result_t onData(AAudioStream *, void *user, void *audio, int32_t frames)
@@ -132,6 +134,8 @@ struct AudioOutput::Impl
             cv.wait_for(lock, std::chrono::milliseconds(failures ? 250 * failures : 500));
             if (quit)
                 break;
+            if (suspended)
+                continue;
             const bool dead = !stream || broken
                 || AAudioStream_getState(stream) == AAUDIO_STREAM_STATE_DISCONNECTED;
             if (dead) {
@@ -141,6 +145,8 @@ struct AudioOutput::Impl
                 lock.lock();
                 if (quit)
                     break;
+                if (suspended)
+                    continue;
                 failures = open() ? 0 : std::min(failures + 1, 8);
             } else {
                 measureLatency();
@@ -184,7 +190,18 @@ void AudioOutput::stop()
         d->watchdog.join();
 }
 
-void AudioOutput::setSuspended(bool) {}
+void AudioOutput::setSuspended(bool suspended)
+{
+    if (!d)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(d->mutex);
+        d->suspended = suspended;
+        if (suspended)
+            d->close();
+    }
+    d->cv.notify_all(); // Coming back, the watchdog opens it.
+}
 
 #elif defined(BL_HAVE_MULTIMEDIA)
 

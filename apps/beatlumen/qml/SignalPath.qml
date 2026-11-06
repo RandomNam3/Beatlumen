@@ -29,6 +29,8 @@ ColumnLayout {
         switch (path.verdict) {
         case "bitperfect": return route.shared
             ? Theme.tr("Every sample reaches the sound card with the value it has in the file, as long as no other program makes sound.")
+            : Core.platform === "android"
+            ? Theme.tr("Every sample reaches the USB device with the value it has in the file, as far as Android tells: its bit-perfect mixer is set, and the music plays on this device in that mixer's format.")
             : Theme.tr("Every sample reaches the sound card with the value it has in the file.")
         case "unverified": return Theme.tr("It goes to the sound server unchanged, but what happens after that could not be found out.")
         case "unprocessed": return Theme.tr("This file has no exact samples to keep (lossy or float): it reaches the card as it was decoded, and is not called bit-perfect.")
