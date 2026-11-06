@@ -25,7 +25,7 @@ Item {
     readonly property color fg: overVisual ? "white" : Theme.text
     readonly property color fgDim: overVisual ? Qt.rgba(1, 1, 1, 0.75) : Theme.textDim
 
-    implicitHeight: mode === "mini" ? 72 : mode === "expanded" ? 196 : dense ? 72 : 92
+    implicitHeight: mode === "mini" ? (Theme.fingers ? 72 : 56) : mode === "expanded" ? 196 : dense ? 64 : 76
 
     component Transport: RowLayout {
         property int big: 56
@@ -35,7 +35,7 @@ Item {
             onClicked: Core.call("shuffle")
         }
         IconButton {
-            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: 30; iconColor: bar.fg
+            iconName: "skip_previous"; tip: Theme.tr("Previous"); iconSize: Theme.fingers ? 30 : 24; iconColor: bar.fg
             onClicked: Core.call("prev")
         }
         RoundButton {
@@ -53,7 +53,7 @@ Item {
             onClicked: Core.call("toggle")
         }
         IconButton {
-            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: 30; iconColor: bar.fg
+            iconName: "skip_next"; tip: Theme.tr("Next"); iconSize: Theme.fingers ? 30 : 24; iconColor: bar.fg
             onClicked: Core.call("next")
         }
         IconButton {
@@ -169,7 +169,7 @@ Item {
             anchors.leftMargin: 12
             anchors.rightMargin: 4
             spacing: 4
-            TrackInfo { Layout.fillWidth: true; coverSize: 48 }
+            TrackInfo { Layout.fillWidth: true; coverSize: Theme.fingers ? 48 : 40 }
             IconButton {
                 iconName: bar.playing ? "pause" : "play_arrow"
                 iconSize: 32
@@ -238,7 +238,7 @@ Item {
                 Layout.preferredWidth: Math.min(360, bar.width * 0.3)
                 Layout.maximumWidth: 360
                 Layout.minimumWidth: 140
-                coverSize: bar.dense ? 44 : 52
+                coverSize: bar.dense ? 40 : 44
             }
             Label {
                 visible: bar.width >= 1040
@@ -249,7 +249,7 @@ Item {
                 font.features: { "tnum": 1 }
             }
             Item { Layout.fillWidth: true }
-            Transport { big: bar.dense ? 44 : 52 }
+            Transport { big: bar.dense ? 40 : 44 }
             Item { Layout.fillWidth: true }
             OutputButton { }
             IconButton {

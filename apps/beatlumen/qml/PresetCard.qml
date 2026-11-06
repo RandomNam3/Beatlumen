@@ -10,7 +10,7 @@ AbstractButton {
     property bool active: false
     signal deleteRequested()
 
-    implicitHeight: 112
+    implicitHeight: 84
     Accessible.name: name
     onPressAndHold: if (origin !== "builtin") menu.popup()
 

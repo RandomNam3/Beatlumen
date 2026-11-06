@@ -15,7 +15,7 @@ AbstractButton {
     property string seed: title
     property string placeholder: "music_note"
     property bool hasPlay: false
-    property int side: 148
+    property int side: 136
     signal playClicked()
     signal menuRequested(Item anchor)
 

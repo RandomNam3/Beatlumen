@@ -232,13 +232,13 @@ Item {
 
             EmptyState {
                 Layout.fillWidth: true
-                Layout.leftMargin: 24
+                Layout.leftMargin: 16
                 Layout.rightMargin: 24
-                Layout.topMargin: 32
+                Layout.topMargin: 16
                 visible: !page.loading && (page.stats.seconds || 0) === 0
                 iconName: "bar_chart"
                 title: Theme.tr("Nothing played in this period")
-                text: Theme.tr("Statistics fill up as you listen. They stay on this device unless you agree to keep them on your server in the settings.")
+                text: Theme.tr("Statistics fill up as you listen. They stay on this device unless you allow otherwise.")
             }
 
             GridLayout {

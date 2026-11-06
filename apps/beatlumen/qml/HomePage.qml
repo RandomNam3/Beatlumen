@@ -110,9 +110,9 @@ Item {
 
             EmptyState {
                 Layout.fillWidth: true
-                Layout.leftMargin: 24
+                Layout.leftMargin: 16
                 Layout.rightMargin: 24
-                Layout.topMargin: 32
+                Layout.topMargin: 16
                 visible: !page.hasContent
                 iconName: "library_music"
                 title: Core.state.scanning ? Theme.tr("Scanning library…") : Theme.tr("Your library is empty")
@@ -150,7 +150,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: Theme.text
-                        text: Theme.tr("New: a start page, recommendations, statistics, more visuals and an epilepsy mode (under Visuals).")
+                        text: Theme.tr("New: start page, recommendations, statistics and more visuals.")
                     }
                     Flow {
                         Layout.fillWidth: true

@@ -89,7 +89,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.textDim
-                text: Theme.tr("The song plays right away while the server stores it. Your choice is remembered; you can change it in the settings.")
+                text: Theme.tr("It plays right away while the server stores it.")
             }
             component Choice: ItemDelegate {
                 id: ch

@@ -101,6 +101,11 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationVersion(QStringLiteral(BL_VERSION));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Beatlumen/assets/icon.png")));
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS) && !defined(Q_OS_WASM)
+    // Mouse and keyboard: the compact controls. Fingers keep the large ones.
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_MATERIAL_VARIANT"))
+        qputenv("QT_QUICK_CONTROLS_MATERIAL_VARIANT", "Dense");
+#endif
     QQuickStyle::setStyle(QStringLiteral("Material"));
 
     const int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/qt/qml/Beatlumen/assets/Inter-Variable.ttf"));

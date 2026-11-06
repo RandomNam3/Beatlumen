@@ -82,7 +82,7 @@ ColumnLayout {
         textFormat: Text.PlainText
         Layout.fillWidth: true
         visible: panel.state_ === "off"
-        text: Theme.tr("More about artists from the internet can be switched on in the settings (Library & sources).")
+        text: Theme.tr("More about artists: switch it on in the settings.")
         color: Theme.textFaint
         font.pixelSize: 13
         wrapMode: Text.WordWrap
@@ -123,7 +123,7 @@ ColumnLayout {
             textFormat: Text.PlainText
             Layout.fillWidth: true
             visible: panel.artist !== null && panel.artist.ambiguous === true
-            text: Theme.tr("There are several artists of this name; this may be another one.")
+            text: Theme.tr("Several artists have this name; this may be another one.")
             color: Theme.textDim
             font.pixelSize: 13
             wrapMode: Text.WordWrap

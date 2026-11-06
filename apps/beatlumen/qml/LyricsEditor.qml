@@ -295,7 +295,7 @@ Rectangle {
                         font.pixelSize: row.isCurrent ? 20 : 16
                         font.weight: row.isCurrent ? Font.DemiBold : Font.Normal
                     }
-                    TextField {
+                    InputField {
                         Accessible.name: Theme.tr("Song text")
                         visible: !ed.tapping
                         Layout.fillWidth: true

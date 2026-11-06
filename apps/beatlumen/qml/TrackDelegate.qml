@@ -51,8 +51,8 @@ ItemDelegate {
         }
         CoverImage {
             visible: d.showCover
-            Layout.preferredWidth: 44
-            Layout.preferredHeight: 44
+            Layout.preferredWidth: Theme.cover
+            Layout.preferredHeight: Theme.cover
             source: Covers.url(d.track.id, d.track.cover)
             seed: d.track.album || d.track.title || ""
             radius: 8

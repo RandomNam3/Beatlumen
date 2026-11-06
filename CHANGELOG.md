@@ -107,6 +107,16 @@
   With the agreement to keep the history on the server also across all devices
   (`GET /api/stats`).
 
+### Sizes and texts
+
+- **Compact with a mouse:** on a computer, rows, buttons, dropdowns, text fields, the
+  player bar, the navigation and the space between them are smaller. Dropdowns are as
+  wide as their longest entry. Phones and the web app keep the sizes for fingers.
+- **Shorter texts in the menus:** settings, setup and signal path say what matters in a
+  line. Where more needs saying, for example what goes out to online services, it is
+  behind a small info button.
+- **Wide windows:** settings and visuals options no longer stretch across the window.
+
 ### Navigation
 
 - **Slimmer menu:** Home, Search, Library and Visuals; statistics, devices,

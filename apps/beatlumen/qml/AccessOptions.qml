@@ -15,7 +15,7 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: options.showEpilepsy
         title: Theme.tr("Epilepsy mode")
-        detail: Theme.tr("Prevents flashes and fast colour changes as far as possible: brightness changes slowly, flash effects and hard cuts are off. This lowers the risk but cannot rule it out.")
+        detail: Theme.tr("Fewer flashes and colour changes. Lowers the risk, cannot rule it out.")
         on: options.settings.photosensitive === true
         onSwitched: (v) => Core.call("settings.set", { key: "photosensitive", value: v })
     }
@@ -36,7 +36,7 @@ ColumnLayout {
     SwitchRow {
         Layout.fillWidth: true
         title: Theme.tr("Keep the controls visible")
-        detail: Theme.tr("The controls stay while music plays instead of fading out.")
+        detail: Theme.tr("Controls stay visible during playback.")
         on: options.ui.keepControls === true
         onSwitched: (v) => Core.call("settings.set", { key: "ui.keepControls", value: v })
     }

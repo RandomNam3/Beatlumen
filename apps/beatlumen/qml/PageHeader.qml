@@ -26,7 +26,7 @@ RowLayout {
             textFormat: Text.PlainText
             Layout.fillWidth: true
             text: h.title
-            font.pixelSize: 26
+            font.pixelSize: 22
             font.weight: Font.Bold
             color: Theme.text
             elide: Text.ElideRight

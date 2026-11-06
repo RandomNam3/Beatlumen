@@ -10,7 +10,7 @@ ColumnLayout {
     readonly property var audio: Core.state.audio || ({})
     readonly property bool on: settings.audioDirect === true
     property var devices: []
-    spacing: 8
+    spacing: 4
     visible: audio.directAvailable === true
 
     function refresh() {
@@ -26,7 +26,8 @@ ColumnLayout {
     SwitchRow {
         Layout.fillWidth: true
         title: Theme.tr("Bit-perfect playback")
-        detail: Theme.tr("Hands the music on exactly as it is in the file, at its own rate. Equalizer, normalizing, crossfade and skipping silence are off. Set the volume to 100 % and turn it down on your amplifier.")
+        detail: Theme.tr("Plays the file exactly as it is. Equalizer and volume leveling are off.")
+        info: Theme.tr("Equalizer, normalizing, crossfade and skipping silence are off. Set the volume to 100 % and turn it down on your amplifier.")
         on: panel.on
         onSwitched: (on) => {
             panel.refresh()
@@ -42,17 +43,16 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.leftMargin: 16
         Layout.rightMargin: 16
-        spacing: 8
+        spacing: 4
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
-            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Output"); color: Theme.text; font.pixelSize: 15; wrapMode: Text.WordWrap }
-            ComboBox {
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Output"); color: Theme.text; font.pixelSize: 14; wrapMode: Text.WordWrap }
+            Dropdown {
                 id: deviceBox
                 Layout.maximumWidth: panel.width - 120
                 Accessible.name: Theme.tr("Output")
-                implicitContentWidthPolicy: ComboBox.WidestText
                 model: panel.devices.map(d => d.shared ? Theme.tr("%1: other programs stay audible").arg(d.name) : Theme.tr("%1 alone").arg(d.name))
                 displayText: currentIndex >= 0 ? currentText : Theme.tr("Please choose")
                 currentIndex: panel.devices.findIndex(d => d.id === panel.settings.audioDirectDevice)
@@ -68,11 +68,11 @@ ColumnLayout {
                 if (!d)
                     return ""
                 return d.shared
-                    ? Theme.tr("The sound server runs at each song's rate, for other programs too. Bit-perfect as long as nothing else makes sound: then it has to mix, and the signal path says so.")
-                    : Theme.tr("Only this app is on the card: other programs move to another output or stay silent, until you pause for 30 s or switch this off. Exact whatever else is going on.")
+                    ? Theme.tr("Exact as long as nothing else makes sound.")
+                    : Theme.tr("Other programs have no sound on this card until you pause for 30 s.")
             }
             color: Theme.textDim
-            font.pixelSize: 13
+            font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
         Label {
@@ -81,7 +81,7 @@ ColumnLayout {
             visible: panel.devices.length === 0
             text: Theme.tr("No sound card found.")
             color: Theme.textDim
-            font.pixelSize: 13
+            font.pixelSize: 12
         }
         Label {
             textFormat: Text.PlainText
@@ -89,7 +89,7 @@ ColumnLayout {
             visible: !!panel.audio.directError
             text: panel.audio.directError || ""
             color: Theme.danger
-            font.pixelSize: 13
+            font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
     }
@@ -99,7 +99,7 @@ ColumnLayout {
         Layout.leftMargin: 16
         Layout.rightMargin: 16
         spacing: 4
-        Label { textFormat: Text.PlainText; text: Theme.tr("Signal path"); color: Theme.text; font.pixelSize: 15 }
+        Label { textFormat: Text.PlainText; text: Theme.tr("Signal path"); color: Theme.text; font.pixelSize: 14 }
         SignalPath { Layout.fillWidth: true }
     }
 }

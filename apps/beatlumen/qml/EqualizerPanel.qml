@@ -39,7 +39,7 @@ ColumnLayout {
     SwitchRow {
         Layout.fillWidth: true
         title: Theme.tr("Equalizer")
-        detail: Theme.tr("Raises or lowers the bass, mids and treble. Applies at once, also on speakers in the network.")
+        detail: Theme.tr("Bass, mids and treble.")
         on: panel.on
         onSwitched: (on) => Core.call("settings.set", { key: "eqEnabled", value: on })
     }
@@ -51,7 +51,7 @@ ColumnLayout {
         visible: panel.on && (Core.state.audio || {}).directActive === true
         text: Theme.tr("Not applied during bit-perfect playback.")
         color: Theme.textDim
-        font.pixelSize: 13
+        font.pixelSize: 12
         wrapMode: Text.WordWrap
     }
 
@@ -64,9 +64,8 @@ ColumnLayout {
 
         RowLayout {
             Layout.fillWidth: true
-            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Sound"); color: Theme.text; font.pixelSize: 15 }
-            ComboBox {
-                implicitContentWidthPolicy: ComboBox.WidestText
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Sound"); color: Theme.text; font.pixelSize: 14 }
+            Dropdown {
                 Accessible.name: Theme.tr("Sound")
                 model: panel.presets.map(p => p.name).concat(panel.presetIndex < 0 ? [Theme.tr("Your own")] : [])
                 currentIndex: panel.presetIndex < 0 ? panel.presets.length : panel.presetIndex
@@ -81,7 +80,7 @@ ColumnLayout {
         Canvas {
             id: curve
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: Theme.fingers ? 72 : 44
             readonly property color line: Theme.accent
             readonly property color grid: Theme.outline
             Accessible.role: Accessible.Graphic
@@ -132,12 +131,12 @@ ColumnLayout {
                     required property int index
                     Layout.fillWidth: true
                     implicitWidth: 28
-                    implicitHeight: 172
+                    implicitHeight: Theme.fingers ? 172 : 126
                     Slider {
                         anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: 28
-                        height: 150
+                        height: Theme.fingers ? 150 : 104
                         padding: 0
                         orientation: Qt.Vertical
                         from: -12; to: 12; stepSize: 0.5
@@ -162,7 +161,7 @@ ColumnLayout {
 
         RowLayout {
             Layout.fillWidth: true
-            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Level"); color: Theme.text; font.pixelSize: 15 }
+            Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Level"); color: Theme.text; font.pixelSize: 14 }
             Label { textFormat: Text.PlainText; text: panel.dbText(levelSlider.value); color: Theme.textDim }
         }
         Slider {

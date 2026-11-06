@@ -62,18 +62,18 @@ Item {
         EmptyState {
             visible: !page.connected
             Layout.fillWidth: true
-            Layout.topMargin: 48
+            Layout.topMargin: 24
             iconName: "devices"
             title: Theme.tr("Devices")
-            text: Theme.tr("Connect to a server: the apps logged in to it see each other, can control each other and take over each other's playback.")
+            text: Theme.tr("Connect to a server to control your other devices from here.")
         }
         EmptyState {
             visible: page.connected && page.devices.length === 0
             Layout.fillWidth: true
-            Layout.topMargin: 48
+            Layout.topMargin: 24
             iconName: "devices"
             title: Theme.tr("No other devices yet")
-            text: Theme.tr("Open Beatlumen on another phone, computer or in the browser and connect it to this server.")
+            text: Theme.tr("Open Beatlumen on another device and connect it to this server.")
         }
 
         ListView {
