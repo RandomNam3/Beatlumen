@@ -22,8 +22,6 @@ Popup {
     padding: 0
     closePolicy: Popup.CloseOnEscape
     background: null
-    Accessible.role: Accessible.Dialog
-    Accessible.name: Theme.tr("Tour")
 
     function start(list) {
         steps = list
@@ -52,6 +50,8 @@ Popup {
     onHeightChanged: target = hole()
 
     contentItem: Item {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: Theme.tr("Tour")
         // The dim area around the control.
         readonly property color dim: Qt.rgba(0, 0, 0, 0.72)
         Rectangle { x: 0; y: 0; width: parent.width; height: tour.target.y; color: parent.dim }

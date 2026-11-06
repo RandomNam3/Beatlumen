@@ -39,8 +39,6 @@ Popup {
     closePolicy: Popup.CloseOnEscape
     onOpened: { step = 0; nextButton.forceActiveFocus() }
     onClosed: Core.call("settings.set", { key: "ui.setupDone", value: true })
-    Accessible.role: Accessible.Dialog
-    Accessible.name: Theme.tr("Setup")
 
     function next() {
         if (step + 1 < steps.length)
@@ -52,6 +50,8 @@ Popup {
     background: Rectangle { color: Theme.dark ? "#121216" : "#fafafc" }
 
     contentItem: ColumnLayout {
+        Accessible.role: Accessible.Dialog
+        Accessible.name: Theme.tr("Setup")
         spacing: 0
 
         // Where you are, and the way out.
