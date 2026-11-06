@@ -294,8 +294,9 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 8
-                visible: page.shows("playback", ["Equalizer", "Raises or lowers the bass, mids and treble. Applies at once, also on speakers in the network.", "More bass", "More treble", "Voices"])
+                visible: page.shows("playback", ["Equalizer", "Raises or lowers the bass, mids and treble. Applies at once, also on speakers in the network.", "More bass", "More treble", "Voices", "Bit-perfect playback", "Signal path", "Sound card"])
                 SectionLabel { text: Theme.tr("Sound") }
+                DirectOutputPanel { Layout.fillWidth: true }
                 EqualizerPanel { Layout.fillWidth: true }
             }
             // ---- library ----

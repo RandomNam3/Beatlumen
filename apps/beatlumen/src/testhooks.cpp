@@ -235,6 +235,9 @@ void TestHooks::run(const QString &line)
             QCoreApplication::sendEvent(m_window, &press);
             QCoreApplication::sendEvent(m_window, &release);
         }
+    } else if (cmd == QLatin1String("quit")) {
+        // After this command's dump.
+        QTimer::singleShot(100, qApp, &QCoreApplication::quit);
     } else if (cmd == QLatin1String("size") && a.size() >= 2) {
         m_window->resize(a.at(0).toInt(), a.at(1).toInt());
     } else if (cmd == QLatin1String("set") && a.size() >= 2) {

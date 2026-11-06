@@ -14,7 +14,7 @@
 //! current track the thread continues decoding the next one into the same
 //! ring, and [`PlayerEvent::Advanced`] is emitted once it becomes audible.
 
-use crate::host::{AudioSource, Host};
+use crate::host::{AudioSource, DirectOpened, DirectSink, Host};
 use bl_media::{Decoder, EqSettings, Equalizer, Resampler};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -75,6 +75,8 @@ pub enum PlayerEvent {
     /// the preloaded track: reload the current track and seek there.
     Reload(f64),
     Error(String),
+    /// The sound card in direct use could not be opened; nothing plays.
+    DeviceError(String),
 }
 
 /// Decoded audio converted to interleaved stereo at the output rate.
@@ -93,6 +95,8 @@ pub struct Pipeline {
     /// cut the flushed filter tail at the exact end of the track.
     in_frames: u64,
     out_frames: u64,
+    /// What the sound card in direct use opened with for this track.
+    opened: Option<DirectOpened>,
 }
 
 impl Pipeline {
@@ -112,6 +116,7 @@ impl Pipeline {
             skip: 0,
             in_frames: 0,
             out_frames: 0,
+            opened: None,
         }
         .primed()
     }
@@ -315,6 +320,9 @@ pub struct Output {
     /// the device gets silence but takes the samples at its own pace, so
     /// the position and the visuals follow it.
     monitor: AtomicBool,
+    /// The sound card in direct use: only the volume may touch the samples.
+    direct: Mutex<Option<Arc<dyn DirectSink>>>,
+    direct_on: AtomicBool,
 }
 
 impl Output {
@@ -340,6 +348,8 @@ impl Output {
             external: AtomicBool::new(false),
             resets: AtomicU64::new(0),
             monitor: AtomicBool::new(false),
+            direct: Mutex::new(None),
+            direct_on: AtomicBool::new(false),
         }
     }
 
@@ -414,7 +424,11 @@ impl AudioSource for Output {
             out.fill(0.0);
             return;
         }
-        self.render_frames(out, latency_frames);
+        if self.direct_on.load(Ordering::Relaxed) {
+            self.render_direct(out, latency_frames);
+        } else {
+            self.render_frames(out, latency_frames);
+        }
         if self.monitor.load(Ordering::Relaxed) {
             out.fill(0.0);
         }
@@ -422,6 +436,58 @@ impl AudioSource for Output {
 }
 
 impl Output {
+    /// For a sound card in direct use: the samples as they are. At full
+    /// volume they are not even multiplied by anything; a pause is silence
+    /// at once, without a fade.
+    fn render_direct(&self, out: &mut [f32], latency_frames: u32) {
+        self.latency.store(latency_frames, Ordering::Relaxed);
+        if self.paused.load(Ordering::Relaxed) {
+            out.fill(0.0);
+            return;
+        }
+        let frames = out.len() / 2;
+        let mut taken = 0usize;
+        if let Ok(mut r) = self.ring.lock() {
+            taken = (r.samples.len() / 2).min(frames);
+            for (o, s) in out[..taken * 2]
+                .iter_mut()
+                .zip(r.samples.drain(..taken * 2))
+            {
+                *o = s;
+            }
+            r.next_frame += taken as u64;
+        }
+        if taken < frames {
+            out[taken * 2..].fill(0.0);
+            if self.streaming.load(Ordering::Relaxed) {
+                self.underruns.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        if let Ok(mut t) = self.tap.lock() {
+            t.push_stereo(&out[..taken * 2]);
+        }
+        let target = f32::from_bits(self.volume.load(Ordering::Relaxed));
+        let mut gain = self.current_gain.lock().map(|g| *g).unwrap_or(target);
+        if gain != 1.0 || target != 1.0 {
+            let rate = self.sample_rate.load(Ordering::Relaxed).max(1) as f32;
+            let step = 1.0 / (0.02 * rate);
+            for f in out[..taken * 2].chunks_exact_mut(2) {
+                if gain < target {
+                    gain = (gain + step).min(target);
+                } else if gain > target {
+                    gain = (gain - step).max(target);
+                }
+                let g = gain * gain;
+                f[0] *= g;
+                f[1] *= g;
+            }
+            if let Ok(mut g) = self.current_gain.lock() {
+                *g = gain;
+            }
+        }
+        self.played.fetch_add(taken as u64, Ordering::SeqCst);
+    }
+
     fn render_frames(&self, out: &mut [f32], latency_frames: u32) {
         self.latency.store(latency_frames, Ordering::Relaxed);
         let target = if self.paused.load(Ordering::Relaxed) {
@@ -528,12 +594,18 @@ struct NativeTrack {
     advance: Option<(u64, TrackInfo, f64)>,
 }
 
-#[derive(Clone, Copy)]
-struct TrackInfo {
-    duration: Option<f64>,
-    sample_rate: u32,
-    channels: u16,
-    codec: &'static str,
+/// A track as it reached the output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrackInfo {
+    pub duration: Option<f64>,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub codec: &'static str,
+    /// Bits of its integer samples (none for lossy files and floats).
+    pub bits: Option<u8>,
+    pub out_rate: u32,
+    /// What the sound card in direct use opened with.
+    pub opened: Option<DirectOpened>,
 }
 
 impl TrackInfo {
@@ -543,17 +615,15 @@ impl TrackInfo {
             sample_rate: p.source_rate(),
             channels: p.source_channels(),
             codec: p.codec(),
+            bits: p.decoder.bits_per_sample(),
+            out_rate: p.out_rate,
+            opened: p.opened,
         }
     }
 }
 
 enum ThreadEvent {
-    Loaded {
-        duration: Option<f64>,
-        sample_rate: u32,
-        channels: u16,
-        codec: &'static str,
-    },
+    Loaded(TrackInfo),
     /// The next track was opened; its first frame is output frame `at` and
     /// it starts `start` seconds into the track (skipped silence).
     Advanced {
@@ -566,6 +636,8 @@ enum ThreadEvent {
     SeekStale(f64),
     Eof,
     Error(String),
+    /// The sound card in direct use could not be opened.
+    DeviceFailed(String),
 }
 
 /// Web (push) state.
@@ -600,6 +672,17 @@ pub struct Player {
     /// Normalization gain (push audio) and the gain last sent to the host.
     norm_gain: f32,
     sent_gain: f32,
+    /// The sound card to use directly (its id), once it is needed.
+    direct: Option<String>,
+    /// The rate of the normal audio output.
+    shared_rate: u32,
+    /// The crossfade and skipping of silence that were asked for.
+    transition: (f32, bool),
+    /// Since when nothing is playing, and whether the card was given back.
+    resting_since: Option<f64>,
+    direct_idle: bool,
+    /// The track that is heard.
+    track: Option<TrackInfo>,
 }
 
 impl Default for Player {
@@ -629,19 +712,100 @@ impl Player {
             pending_seek: None,
             norm_gain: 1.0,
             sent_gain: -1.0,
+            direct: None,
+            shared_rate: 48000,
+            transition: (0.0, false),
+            resting_since: None,
+            direct_idle: false,
+            track: None,
         }
     }
 
-    fn ensure_device(&mut self, host: &mut dyn Host) {
-        if self.device_started || host.audio_is_push() {
-            if host.audio_is_push() {
-                self.device_rate = 48000;
+    /// The sound card to use directly from the next load on (`None`: the
+    /// normal audio output); stops what is playing when that changes.
+    pub fn set_direct(&mut self, host: &mut dyn Host, device: Option<String>) {
+        if self.direct == device {
+            return;
+        }
+        self.stop(host);
+        let old = self.output.direct.lock().ok().and_then(|mut d| d.take());
+        if let Some(sink) = old {
+            sink.close();
+        }
+        let was_on = self.output.direct_on.swap(false, Ordering::Relaxed);
+        self.direct = device;
+        self.direct_idle = false;
+        self.resting_since = None;
+        if self.direct.is_none() {
+            self.device_rate = self.shared_rate;
+            self.output
+                .sample_rate
+                .store(self.shared_rate, Ordering::Relaxed);
+            if was_on && self.device_started {
+                host.audio_suspend(false);
             }
+        }
+        self.apply_transition();
+    }
+
+    /// Before the first load, when there is no host yet.
+    pub fn prefer_direct(&mut self, device: Option<String>) {
+        self.direct = device;
+        self.apply_transition();
+    }
+
+    pub fn direct_device(&self) -> Option<&str> {
+        self.direct.as_deref()
+    }
+
+    /// Whether the samples go to a sound card directly right now.
+    pub fn direct_active(&self) -> bool {
+        self.output.direct_on.load(Ordering::Relaxed)
+    }
+
+    /// The track as it reached the output.
+    pub fn track_info(&self) -> Option<TrackInfo> {
+        self.track
+    }
+
+    fn ensure_device(&mut self, host: &mut dyn Host) {
+        if host.audio_is_push() {
+            self.device_rate = 48000;
+            return;
+        }
+        if let Some(device) = self.direct.clone() {
+            if self.direct_active() {
+                return;
+            }
+            match host.direct_sink(&device, self.output.clone()) {
+                Some(sink) => {
+                    if self.device_started {
+                        host.audio_suspend(true);
+                    }
+                    if let Ok(mut d) = self.output.direct.lock() {
+                        *d = Some(sink);
+                    }
+                    self.output.direct_on.store(true, Ordering::Relaxed);
+                    // Starts from what the volume asks for, without a fade.
+                    if let Ok(mut g) = self.output.current_gain.lock() {
+                        *g = self.volume;
+                    }
+                    return;
+                }
+                None => {
+                    host.log("direct output is not available here");
+                    self.direct = None;
+                    self.apply_transition();
+                }
+            }
+        }
+        if self.device_started {
             return;
         }
         match host.audio_start(self.output.clone()) {
             Ok(info) => {
                 self.device_rate = info.sample_rate;
+                self.shared_rate = info.sample_rate;
                 self.output
                     .sample_rate
                     .store(info.sample_rate, Ordering::Relaxed);
@@ -697,11 +861,20 @@ impl Player {
     /// Crossfade length between tracks (0 = gapless) and whether silence at
     /// the end and start of tracks is skipped when moving on.
     pub fn set_transition(&mut self, crossfade_secs: f32, skip_silence: bool) {
-        let ms = (crossfade_secs.clamp(0.0, 30.0) * 1000.0) as u32;
+        self.transition = (crossfade_secs, skip_silence);
+        self.apply_transition();
+    }
+
+    /// Both would change what is heard: not on a sound card in direct use.
+    fn apply_transition(&mut self) {
+        let (crossfade, skip) = if self.direct.is_some() {
+            (0.0, false)
+        } else {
+            self.transition
+        };
+        let ms = (crossfade.clamp(0.0, 30.0) * 1000.0) as u32;
         self.output.crossfade_ms.store(ms, Ordering::Relaxed);
-        self.output
-            .skip_silence
-            .store(skip_silence, Ordering::Relaxed);
+        self.output.skip_silence.store(skip, Ordering::Relaxed);
     }
 
     /// Normalization gain of the preloaded next track (None = unknown, the
@@ -793,6 +966,7 @@ impl Player {
         self.output.paused.store(true, Ordering::Relaxed);
         self.output.reset(0);
         self.state = PlayState::Stopped;
+        self.track = None;
         self.duration = None;
         self.base_secs = 0.0;
         self.track_offset = 0;
@@ -843,7 +1017,6 @@ impl Player {
         self.error = None;
         self.state = PlayState::Loading;
         self.serial += 1;
-        let out_rate = self.device_rate;
         if host.has_threads() && !host.audio_is_push() {
             let (ctx, crx) = std::sync::mpsc::channel();
             let (etx, erx) = std::sync::mpsc::channel();
@@ -856,7 +1029,7 @@ impl Player {
             output.paused.store(!autoplay, Ordering::Relaxed);
             std::thread::Builder::new()
                 .name("bl-decoder".into())
-                .spawn(move || decoder_thread(opener, out_rate, output, crx, etx))
+                .spawn(move || decoder_thread(opener, output, crx, etx))
                 .ok();
             self.native = Some(NativeTrack {
                 commands: ctx,
@@ -868,8 +1041,9 @@ impl Player {
             // Push mode: open synchronously.
             match opener.open() {
                 Ok(dec) => {
-                    let pipeline = Pipeline::new(dec, out_rate);
+                    let pipeline = Pipeline::new(dec, self.device_rate);
                     self.duration = pipeline.duration();
+                    self.track = Some(TrackInfo::of(&pipeline));
                     self.events.push(PlayerEvent::Loaded {
                         duration: self.duration,
                         sample_rate: pipeline.source_rate(),
@@ -956,22 +1130,22 @@ impl Player {
     /// Per-frame housekeeping: collects decoder events and pumps audio in
     /// push mode.
     pub fn update(&mut self, host: &mut dyn Host) {
+        let mut device_failed = None;
         if let Some(t) = &mut self.native {
             let mut ended = false;
             for ev in t.events.try_iter() {
                 match ev {
-                    ThreadEvent::Loaded {
-                        duration,
-                        sample_rate,
-                        channels,
-                        codec,
-                    } => {
-                        self.duration = duration;
+                    ThreadEvent::Loaded(info) => {
+                        self.duration = info.duration;
+                        self.track = Some(info);
+                        if self.output.direct_on.load(Ordering::Relaxed) {
+                            self.device_rate = info.out_rate;
+                        }
                         self.events.push(PlayerEvent::Loaded {
-                            duration,
-                            sample_rate,
-                            channels,
-                            codec,
+                            duration: info.duration,
+                            sample_rate: info.sample_rate,
+                            channels: info.channels,
+                            codec: info.codec,
                         });
                     }
                     ThreadEvent::Advanced { at, info, start } => {
@@ -993,6 +1167,7 @@ impl Player {
                         self.events.push(PlayerEvent::Error(e));
                         ended = true;
                     }
+                    ThreadEvent::DeviceFailed(e) => device_failed = Some(e),
                 }
             }
             if let Some((at, info, start)) = t.advance {
@@ -1009,6 +1184,10 @@ impl Player {
                     self.track_offset = at;
                     self.base_secs = start;
                     self.duration = info.duration;
+                    self.track = Some(info);
+                    if self.output.direct_on.load(Ordering::Relaxed) {
+                        self.device_rate = info.out_rate;
+                    }
                     self.events.push(PlayerEvent::Advanced {
                         duration: info.duration,
                         sample_rate: info.sample_rate,
@@ -1031,6 +1210,13 @@ impl Player {
                 self.events.push(PlayerEvent::Ended);
             }
         }
+        if let Some(e) = device_failed {
+            // Not the track's fault: the queue must not run through.
+            self.stop(host);
+            self.error = Some(e.clone());
+            self.events.push(PlayerEvent::DeviceError(e));
+        }
+        self.rest_direct(host);
         if self.push.is_some() {
             // Push audio: the host applies volume and normalization.
             let g = self.volume * self.volume * self.norm_gain;
@@ -1079,13 +1265,48 @@ impl Player {
         }
     }
 
+    /// A sound card in direct use goes back to the others in a long pause.
+    fn rest_direct(&mut self, host: &dyn Host) {
+        const AFTER_SECONDS: f64 = 30.0;
+        let sink = self.output.direct.lock().ok().and_then(|d| d.clone());
+        let Some(sink) = sink else { return };
+        if self.state == PlayState::Playing || self.state == PlayState::Loading {
+            self.resting_since = None;
+            if self.direct_idle {
+                self.direct_idle = false;
+                sink.set_idle(false);
+            }
+        } else {
+            let since = *self.resting_since.get_or_insert_with(|| host.now());
+            if !self.direct_idle && host.now() - since > AFTER_SECONDS {
+                self.direct_idle = true;
+                sink.set_idle(true);
+            }
+        }
+    }
+
     pub fn underruns(&self) -> u64 {
         self.output.underruns.load(Ordering::Relaxed)
     }
 }
 
-fn open_pipeline(opener: Opener, out_rate: u32) -> Result<Pipeline, String> {
-    Ok(Pipeline::new(opener.open()?, out_rate))
+/// Readies the output for a track. A sound card in direct use opens at the
+/// track's rate, and the pipeline converts only what the card refuses.
+fn connect(output: &Output, decoder: Box<dyn Decoder>) -> Result<Pipeline, String> {
+    let sink = output.direct.lock().ok().and_then(|d| d.clone());
+    let Some(sink) = sink else {
+        return Ok(Pipeline::new(
+            decoder,
+            output.sample_rate.load(Ordering::Relaxed),
+        ));
+    };
+    let spec = decoder.spec();
+    let formats = bl_media::pcm_preference(decoder.bits_per_sample());
+    let opened = sink.open(spec.sample_rate, &formats)?;
+    output.sample_rate.store(opened.rate, Ordering::Relaxed);
+    let mut pipeline = Pipeline::new(decoder, opened.rate);
+    pipeline.opened = Some(opened);
+    Ok(pipeline)
 }
 
 /// Level below which audio counts as silence (-50 dBFS).
@@ -1175,30 +1396,34 @@ fn skip_leading_silence(p: &mut Pipeline, out: &mut Vec<f32>, max: usize) -> usi
 
 fn decoder_thread(
     opener: Opener,
-    out_rate: u32,
     output: Arc<Output>,
     commands: std::sync::mpsc::Receiver<Command>,
     events: std::sync::mpsc::Sender<ThreadEvent>,
 ) {
-    let mut pipeline = match open_pipeline(opener, out_rate) {
-        Ok(p) => p,
+    let decoder = match opener.open() {
+        Ok(d) => d,
         Err(e) => {
             let _ = events.send(ThreadEvent::Error(e));
             return;
         }
     };
-    let info = TrackInfo::of(&pipeline);
-    let _ = events.send(ThreadEvent::Loaded {
-        duration: info.duration,
-        sample_rate: info.sample_rate,
-        channels: info.channels,
-        codec: info.codec,
-    });
-    let rate = out_rate.max(1) as f64;
-    let max_queue = out_rate as usize; // one second
+    let mut pipeline = match connect(&output, decoder) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = events.send(ThreadEvent::DeviceFailed(e));
+            return;
+        }
+    };
+    let _ = events.send(ThreadEvent::Loaded(TrackInfo::of(&pipeline)));
+    let mut out_rate = pipeline.out_rate;
+    let mut rate = out_rate.max(1) as f64;
+    let mut max_queue = out_rate as usize; // one second
     let mut buf = Vec::with_capacity(8192);
     let mut eof_sent = false;
     let mut next: Option<Opener> = None;
+    // The next track when the sound card in direct use has to open for it
+    // anew: it waits until what is queued has played.
+    let mut waiting: Option<Box<dyn Decoder>> = None;
     // Number of tracks advanced to (seeks name the track they are meant for).
     let mut index = 0u64;
     let mut wait = false;
@@ -1226,7 +1451,10 @@ fn decoder_thread(
             };
             match cmd {
                 Command::Stop => return,
-                Command::Next(o) => next = o,
+                Command::Next(o) => {
+                    next = o;
+                    waiting = None;
+                }
                 Command::Seek(s, i) if i == index => {
                     let actual = pipeline.seek(s).unwrap_or(s);
                     fade = None;
@@ -1243,7 +1471,7 @@ fn decoder_thread(
         }
         // Move on to the next track: at the end, when the crossfade starts,
         // or when the track has gone silent near its end.
-        if fade.is_none() && next.is_some() && pending.is_empty() {
+        if fade.is_none() && (next.is_some() || waiting.is_some()) && pending.is_empty() {
             let crossfade =
                 output.crossfade_ms.load(Ordering::Relaxed) as u64 * out_rate as u64 / 1000;
             let skip = output.skip_silence.load(Ordering::Relaxed);
@@ -1255,10 +1483,24 @@ fn decoder_thread(
             let fade_now =
                 crossfade > 0 && !pipeline.eof && remaining.is_some_and(|r| r <= crossfade);
             if pipeline.eof || silent_end || fade_now {
-                let opener = next.take().expect("checked");
                 // On failure the track ends normally; loading the next one
                 // again reports the error.
-                if let Ok(mut b) = open_pipeline(opener, out_rate) {
+                let decoder = match waiting.take() {
+                    Some(d) => Some(d),
+                    None => next.take().and_then(|o| o.open().ok()),
+                };
+                if let Some(d) = &decoder {
+                    let spec = d.spec();
+                    let same = spec.sample_rate == pipeline.in_rate
+                        && d.bits_per_sample() == pipeline.decoder.bits_per_sample();
+                    if pipeline.opened.is_some() && !same && output.queued_frames() > 0 {
+                        waiting = decoder;
+                        output.streaming.store(false, Ordering::Relaxed);
+                        wait = true;
+                        continue;
+                    }
+                }
+                if let Some(mut b) = decoder.and_then(|d| connect(&output, d).ok()) {
                     if silent_end {
                         output.trim_tail(silent_run);
                     }
@@ -1291,6 +1533,9 @@ fn decoder_thread(
                     index += 1;
                     eof_sent = false;
                     silent_run = 0;
+                    out_rate = pipeline.out_rate;
+                    rate = out_rate.max(1) as f64;
+                    max_queue = out_rate as usize;
                     let _ = events.send(ThreadEvent::Advanced {
                         at,
                         info: TrackInfo::of(&pipeline),
@@ -1364,6 +1609,153 @@ mod tests {
             d.extend_from_slice(&v.to_le_bytes());
         }
         d
+    }
+
+    #[derive(Default)]
+    struct FakeCard {
+        opened: Mutex<Vec<(u32, bl_media::PcmFormat)>>,
+        refuse: bool,
+    }
+
+    impl DirectSink for FakeCard {
+        fn open(&self, rate: u32, formats: &[bl_media::PcmFormat]) -> Result<DirectOpened, String> {
+            if self.refuse {
+                return Err("busy".into());
+            }
+            self.opened.lock().unwrap().push((rate, formats[0]));
+            Ok(DirectOpened {
+                rate,
+                format: formats[0],
+                channels: 2,
+            })
+        }
+        fn close(&self) {}
+        fn set_idle(&self, _idle: bool) {}
+    }
+
+    fn direct_output(card: Arc<FakeCard>) -> Arc<Output> {
+        let output = Arc::new(Output::new());
+        *output.direct.lock().unwrap() = Some(card);
+        output.direct_on.store(true, Ordering::Relaxed);
+        output.paused.store(false, Ordering::Relaxed);
+        output.volume.store(1.0f32.to_bits(), Ordering::Relaxed);
+        *output.current_gain.lock().unwrap() = 1.0;
+        output
+    }
+
+    #[test]
+    fn a_card_in_direct_use_gets_the_samples_exactly() {
+        let output = direct_output(Arc::new(FakeCard::default()));
+        // Whatever else is set must not matter.
+        let mut settings = EqSettings::default();
+        settings.enabled = true;
+        settings.bands_db = [6.0; 10];
+        output.eq.lock().unwrap().set(&settings);
+        output.norm.lock().unwrap().target = 0.25;
+        output.norm.lock().unwrap().gain = 0.25;
+
+        let samples: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.37).sin() * 0.9).collect();
+        output.push(&samples);
+        let mut out = vec![0.0; samples.len()];
+        output.render(&mut out, 0);
+        assert_eq!(out, samples);
+        assert_eq!(output.played.load(Ordering::SeqCst), 2400);
+    }
+
+    #[test]
+    fn below_full_volume_the_direct_path_scales_and_pauses_at_once() {
+        let output = direct_output(Arc::new(FakeCard::default()));
+        output.volume.store(0.5f32.to_bits(), Ordering::Relaxed);
+        *output.current_gain.lock().unwrap() = 0.5;
+        output.push(&[0.8; 400]);
+        let mut out = vec![0.0; 200];
+        output.render(&mut out, 0);
+        assert!(out.iter().all(|v| (*v - 0.2).abs() < 1e-6));
+        output.paused.store(true, Ordering::Relaxed);
+        let mut out = vec![1.0; 200];
+        output.render(&mut out, 0);
+        assert!(out.iter().all(|v| *v == 0.0));
+        // Nothing was used up by the pause.
+        assert_eq!(output.queued_frames(), 100);
+    }
+
+    fn wait_for(events: &std::sync::mpsc::Receiver<ThreadEvent>) -> ThreadEvent {
+        events
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("an event from the decoder")
+    }
+
+    fn opener(rate: u32, frames: usize) -> Opener {
+        let data = wav(rate, frames, 440.0);
+        Opener::Source(Box::new(move || {
+            Ok((
+                Box::new(std::io::Cursor::new(data)) as Box<dyn bl_media::Source>,
+                Some("wav".to_string()),
+            ))
+        }))
+    }
+
+    #[test]
+    fn the_card_opens_at_each_tracks_rate_and_the_next_rate_waits_its_turn() {
+        let card = Arc::new(FakeCard::default());
+        let output = direct_output(card.clone());
+        let (ctx, crx) = std::sync::mpsc::channel();
+        let (etx, erx) = std::sync::mpsc::channel();
+        ctx.send(Command::Next(Some(opener(96000, 4800)))).unwrap();
+        let thread_output = output.clone();
+        let thread = std::thread::spawn(move || {
+            decoder_thread(opener(44100, 4410), thread_output, crx, etx)
+        });
+        match wait_for(&erx) {
+            ThreadEvent::Loaded(info) => {
+                assert_eq!(info.sample_rate, 44100);
+                assert_eq!(info.out_rate, 44100);
+                assert_eq!(info.bits, Some(16));
+                assert_eq!(info.opened.unwrap().format, bl_media::PcmFormat::S16);
+            }
+            _ => panic!("expected the track to load"),
+        }
+        // The next track is at another rate: nothing changes while the first
+        // is still queued.
+        while output.queued_frames() < 4410 {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(card.opened.lock().unwrap().len(), 1);
+        assert_eq!(output.sample_rate.load(Ordering::Relaxed), 44100);
+        // Played out: the card opens for the next one.
+        let mut out = vec![0.0; 4410 * 2];
+        output.render(&mut out, 0);
+        match wait_for(&erx) {
+            ThreadEvent::Advanced { at, info, .. } => {
+                assert_eq!(at, 4410);
+                assert_eq!(info.out_rate, 96000);
+            }
+            _ => panic!("expected the next track"),
+        }
+        assert_eq!(
+            card.opened.lock().unwrap().as_slice(),
+            &[
+                (44100, bl_media::PcmFormat::S16),
+                (96000, bl_media::PcmFormat::S16)
+            ]
+        );
+        assert_eq!(output.sample_rate.load(Ordering::Relaxed), 96000);
+        ctx.send(Command::Stop).unwrap();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_busy_card_is_reported_as_such_and_not_as_a_broken_track() {
+        let card = Arc::new(FakeCard {
+            refuse: true,
+            ..FakeCard::default()
+        });
+        let output = direct_output(card);
+        let (_ctx, crx) = std::sync::mpsc::channel();
+        let (etx, erx) = std::sync::mpsc::channel();
+        decoder_thread(opener(44100, 441), output, crx, etx);
+        assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(e) if e == "busy"));
     }
 
     #[test]

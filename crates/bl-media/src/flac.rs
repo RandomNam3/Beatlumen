@@ -145,4 +145,7 @@ impl Decoder for FlacAdapter {
     fn codec_name(&self) -> &'static str {
         "flac"
     }
+    fn bits_per_sample(&self) -> Option<u8> {
+        Some(self.dec.bits_per_sample() as u8)
+    }
 }

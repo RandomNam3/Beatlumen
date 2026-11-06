@@ -171,6 +171,11 @@ pub struct Settings {
     pub skip_silence: bool,
     /// The equalizer (of this device: it depends on what is connected).
     pub eq: bl_media::EqSettings,
+    /// Hand the samples to a sound card directly (bit-perfect playback) and
+    /// which one: its id and the name it had. Off until asked for.
+    pub audio_direct: bool,
+    pub audio_direct_device: String,
+    pub audio_direct_name: String,
     /// Offer this device as an AirPlay speaker in the local network.
     pub airplay: bool,
     /// Also announce the AirPlay 2 receiver (experimental).
@@ -271,6 +276,9 @@ impl Default for Settings {
             crossfade: 0.0,
             skip_silence: true,
             eq: bl_media::EqSettings::default(),
+            audio_direct: false,
+            audio_direct_device: String::new(),
+            audio_direct_name: String::new(),
             airplay: false,
             dlna_receiver: false,
             airplay2: false,
@@ -324,6 +332,12 @@ fn eq_from_json(v: &Value) -> bl_media::EqSettings {
 }
 
 impl Settings {
+    /// The sound card to use directly.
+    pub fn direct_device(&self) -> Option<String> {
+        (self.audio_direct && !self.audio_direct_device.is_empty())
+            .then(|| self.audio_direct_device.clone())
+    }
+
     pub const STORAGE_KEY: &'static str = "settings.json";
 
     pub fn from_json(v: &Value) -> Settings {
@@ -377,6 +391,9 @@ impl Settings {
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             eq: eq_from_json(v),
+            audio_direct: v.bool_or("audioDirect", false),
+            audio_direct_device: v.str_or("audioDirectDevice", "").to_string(),
+            audio_direct_name: v.str_or("audioDirectName", "").to_string(),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
             airplay2: v.bool_or("airplay2", false),
@@ -481,6 +498,9 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("audioDirect", self.audio_direct)
+            .with("audioDirectDevice", self.audio_direct_device.as_str())
+            .with("audioDirectName", self.audio_direct_name.as_str())
             .with("eqEnabled", self.eq.enabled)
             .with("eqPreamp", self.eq.preamp_db)
             .with(

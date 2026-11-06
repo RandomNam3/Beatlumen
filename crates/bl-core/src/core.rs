@@ -211,7 +211,9 @@ pub struct Core {
     pub settings: Settings,
     pub(crate) settings_dirty_at: Option<f64>,
     /// Position in the restored current track, used by the first play.
-    resume_at: Option<f64>,
+    pub(crate) resume_at: Option<f64>,
+    /// Why the sound card in direct use cannot be used.
+    pub(crate) direct_error: Option<String>,
     position_saved_at: f64,
     pub(crate) rng: Rng,
     pub(crate) gfx: Option<Gfx>,
@@ -389,6 +391,7 @@ impl Core {
         player.set_volume(if settings.muted { 0.0 } else { settings.volume });
         player.set_transition(settings.crossfade, settings.skip_silence);
         player.set_eq(&settings.eq);
+        player.prefer_direct(settings.direct_device());
         let queue = Queue::new(
             settings.audio_queue.clone(),
             settings.audio_index,
@@ -499,6 +502,7 @@ impl Core {
             download_progress: None,
             airplay: Default::default(),
             outputs: Default::default(),
+            direct_error: None,
             dlna: Default::default(),
             capture: Default::default(),
             mic: Default::default(),
@@ -723,6 +727,7 @@ impl Core {
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
+            .with("audio", self.audio_json(host))
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
             .with(
@@ -2656,7 +2661,10 @@ impl Core {
                 PlayerEvent::Ended if self.playing_dlna() => self.dlna_track_ended(host),
                 PlayerEvent::Ended if self.playing_capture() => self.capture_stream_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
-                PlayerEvent::Advanced { .. } => self.on_track_advanced(host),
+                PlayerEvent::Advanced { .. } => {
+                    self.follow_device_rate();
+                    self.on_track_advanced(host);
+                }
                 PlayerEvent::Reload(at) => {
                     let playing = self.player.state() == PlayState::Playing;
                     self.play_current(host, playing);
@@ -2666,14 +2674,10 @@ impl Core {
                     let msg = format!("{}: {e}", self.tr("Playback error"));
                     self.toast(msg, true);
                 }
+                PlayerEvent::DeviceError(e) => self.direct_failed(host, e),
                 PlayerEvent::Loaded { .. } => {
-                    if self.live.sample_rate() != self.player.device_rate() {
-                        self.live = RealtimeAnalyzer::new(
-                            self.player.device_rate(),
-                            &self.preset.analysis_config(),
-                        );
-                        self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
-                    }
+                    self.direct_error = None;
+                    self.follow_device_rate();
                 }
             }
         }
@@ -2717,6 +2721,16 @@ impl Core {
     pub fn gl_lost(&mut self) {
         self.gfx = None;
         self.bg_source = None;
+    }
+
+    /// The live analysis works at the rate of the output, and on a sound card
+    /// in direct use that changes with the song.
+    fn follow_device_rate(&mut self) {
+        if self.live.sample_rate() != self.player.device_rate() {
+            self.live =
+                RealtimeAnalyzer::new(self.player.device_rate(), &self.preset.analysis_config());
+            self.beats = bl_analysis::beat::BeatTracker::new(self.live.frame_rate());
+        }
     }
 
     /// Renders the visualizer into framebuffer `fbo` (size in physical

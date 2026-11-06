@@ -8,6 +8,17 @@
   points and the curve that results (Settings, Playback). Boosts lower the level
   by themselves so that nothing clips. It applies at once, also on speakers in
   the network, and stays on this device. Switched off nothing is computed.
+- **Bit-perfect playback (Linux):** hands the music to a sound card exactly as it
+  is in the file (Settings, Playback; off by default). The card opens at each
+  song's rate through ALSA, and the sound server is asked to let go of it for as
+  long as that lasts; after 30 s of pause it gets it back. Songs of the same format
+  stay gapless, another rate means a short gap. Equalizer, normalizing, crossfade
+  and skipping silence are off meanwhile.
+- **Signal path:** says what really happens to the music, from what opened and not
+  from the switch: the file, the output and whatever changes the samples, for
+  example a card that cannot do 44.1 kHz or a volume below 100 %. "Bit-perfect" only
+  appears when all of it holds. Lossy files never get that word. On Windows, Android
+  and in the browser the direct path does not exist yet, and the app says so.
 
 ### Start page and favorites
 

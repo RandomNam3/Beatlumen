@@ -26,6 +26,18 @@ pub(crate) enum SampleFormat {
 }
 
 impl SampleFormat {
+    /// Bits of an integer sample (companded and float samples are none).
+    pub fn int_bits(self) -> Option<u8> {
+        use SampleFormat::*;
+        match self {
+            U8 | S8 => Some(8),
+            S16Le | S16Be => Some(16),
+            S24Le | S24Be => Some(24),
+            S32Le | S32Be => Some(32),
+            F32Le | F32Be | F64Le | F64Be | ALaw | MuLaw => None,
+        }
+    }
+
     pub fn bytes(self) -> usize {
         use SampleFormat::*;
         match self {
@@ -261,6 +273,9 @@ impl<R: Read + Seek + Send> Decoder for PcmDecoder<R> {
     }
     fn codec_name(&self) -> &'static str {
         "pcm"
+    }
+    fn bits_per_sample(&self) -> Option<u8> {
+        self.s.fmt.int_bits()
     }
 }
 

@@ -1,5 +1,8 @@
 #include "bridge.h"
 #include "audio.h"
+#if defined(BEATLUMEN_DIRECT_AUDIO)
+#include "audio_direct.h"
+#endif
 #include "testhooks.h"
 #include "secrets.h"
 #include "tls.h"
@@ -94,6 +97,12 @@ uint32_t audioStartCallback(void *user)
 {
     Q_UNUSED(user);
     return AudioOutput::instance()->start();
+}
+
+void audioSuspendCallback(void *user, int32_t suspended)
+{
+    Q_UNUSED(user);
+    AudioOutput::instance()->setSuspended(suspended != 0);
 }
 
 #ifdef Q_OS_ANDROID
@@ -362,8 +371,13 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
 #endif
     AudioOutput::configure(cb);
     tls::configure(cb);
-    if (!cb.audio_push)
+    if (!cb.audio_push) {
         cb.audio_start = audioStartCallback;
+        cb.audio_suspend = audioSuspendCallback;
+    }
+#if defined(BEATLUMEN_DIRECT_AUDIO)
+    directaudio::configure(cb, this);
+#endif
     cb.open_url = openUrlCallback;
     probeNativeDialogs();
     secrets::configure(cb, this);
@@ -451,6 +465,9 @@ Bridge::~Bridge()
         m_core = nullptr;
         bl_core_free(c);
     }
+#if defined(BEATLUMEN_DIRECT_AUDIO)
+    directaudio::shutdown();
+#endif
     AudioOutput::instance()->stop();
 }
 

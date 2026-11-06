@@ -981,6 +981,21 @@ impl Core {
                 self.set_setting(host, &s("key"), c.get("value").clone());
                 ok()
             }
+            "audio.devices" => host
+                .direct_devices()
+                .iter()
+                .map(|d| {
+                    Value::object()
+                        .with("id", d.id.as_str())
+                        .with("name", d.name.as_str())
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            // The platform lost the card in direct use, or was asked for it.
+            "audio.directFailed" => {
+                self.direct_failed(host, s("error"));
+                ok()
+            }
             // The equalizer's curve in dB for the display.
             "eq.curve" => {
                 let columns = idx("columns").clamp(8, 256);
@@ -1148,6 +1163,10 @@ impl Core {
         }
         if old.eq != self.settings.eq {
             self.player.set_eq(&self.settings.eq);
+        }
+        if old.direct_device() != self.settings.direct_device() {
+            self.direct_error = None;
+            self.apply_direct(host);
         }
         if old.library_folders != self.settings.library_folders {
             self.rescan_local();

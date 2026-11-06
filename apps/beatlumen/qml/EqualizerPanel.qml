@@ -43,6 +43,17 @@ ColumnLayout {
         on: panel.on
         onSwitched: (on) => Core.call("settings.set", { key: "eqEnabled", value: on })
     }
+    Label {
+        textFormat: Text.PlainText
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        visible: panel.on && (Core.state.audio || {}).directActive === true
+        text: Theme.tr("Not applied during bit-perfect playback.")
+        color: Theme.textDim
+        font.pixelSize: 13
+        wrapMode: Text.WordWrap
+    }
 
     ColumnLayout {
         visible: panel.on

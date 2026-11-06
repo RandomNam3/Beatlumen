@@ -48,6 +48,36 @@ pub struct AudioDeviceInfo {
     pub channels: u16,
 }
 
+/// What a sound card in direct use opened with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectOpened {
+    pub rate: u32,
+    pub format: bl_media::PcmFormat,
+    /// Channels per frame; the music is on the first two.
+    pub channels: u32,
+}
+
+/// A sound card that can be used directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectDevice {
+    pub id: String,
+    pub name: String,
+}
+
+/// A sound card in direct use: nothing lies between the samples and the card.
+/// The platform pulls the samples itself (`bl_audio_render_pcm`).
+pub trait DirectSink: Send + Sync {
+    /// Opens the card at `rate` with the first format of `formats` it takes,
+    /// or at the nearest rate if it refuses that one; nothing happens when it
+    /// already runs like that. What was queued is played out first. May take
+    /// seconds: the sound server has to let go of the card.
+    fn open(&self, rate: u32, formats: &[bl_media::PcmFormat]) -> Result<DirectOpened, String>;
+    /// Gives the card back.
+    fn close(&self);
+    /// Gives the card back for now (a long pause) or takes it again.
+    fn set_idle(&self, idle: bool);
+}
+
 /// A directory entry for the folder browser.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirEntry {
@@ -148,6 +178,26 @@ pub trait Host {
     /// Whether audio is pull based ([`Host::audio_start`]) or push based.
     fn audio_is_push(&self) -> bool {
         false
+    }
+
+    /// Stops the normal audio output while a sound card is used directly, or
+    /// brings it back.
+    fn audio_suspend(&mut self, _suspended: bool) {}
+    /// Whether sound cards can be used directly here.
+    fn has_direct(&self) -> bool {
+        false
+    }
+    /// The sound cards that can be used directly. Looks without opening any.
+    fn direct_devices(&self) -> Vec<DirectDevice> {
+        Vec::new()
+    }
+    /// Prepares the direct use of `device`, which pulls from `source`.
+    fn direct_sink(
+        &mut self,
+        _device: &str,
+        _source: Arc<dyn AudioSource>,
+    ) -> Option<Arc<dyn DirectSink>> {
+        None
     }
 
     /// Logs a message (stderr, logcat or the browser console).

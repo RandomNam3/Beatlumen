@@ -376,6 +376,13 @@ fn discover(own: Option<String>) -> Vec<Device> {
     found
 }
 
+impl Outputs {
+    /// The speaker in the network that plays instead of this device.
+    pub(crate) fn speaker_name(&self) -> Option<&str> {
+        self.active.as_ref().map(|a| a.device.name.as_str())
+    }
+}
+
 impl Core {
     /// Looks for speakers in the network (a few seconds).
     pub(crate) fn outputs_scan(&mut self, host: &mut dyn Host) {
@@ -396,13 +403,17 @@ impl Core {
         self.outputs.sent_volume = None;
         self.player.output().set_external(false);
         if id == "local" || id.is_empty() {
+            self.apply_direct(host);
             return;
         }
         let known = self.outputs.devices.iter().find(|d| d.id == id).cloned();
         let Some(device) = known.or_else(|| device_from_id(id)) else {
             self.outputs.error = Some(self.tr("The speaker is not available").into());
+            self.apply_direct(host);
             return;
         };
+        // A speaker takes a steady rate: the normal path feeds it.
+        self.direct_for_speaker(host);
         let stop = Arc::new(AtomicBool::new(false));
         let control = Arc::new(Mutex::new(Control::default()));
         let job = Job {
@@ -425,6 +436,7 @@ impl Core {
             })
             .ok();
         if thread.is_none() {
+            self.apply_direct(host);
             return;
         }
         self.outputs.active = Some(Active {
@@ -434,7 +446,6 @@ impl Core {
             thread,
             connected: false,
         });
-        let _ = host;
     }
 
     /// Delivers results and keeps the speaker informed (every tick).
@@ -467,6 +478,7 @@ impl Core {
                         .unwrap_or_default();
                     self.outputs.active = None;
                     self.player.output().set_external(false);
+                    self.apply_direct(host);
                     let msg = if e == "password" {
                         self.tr("Wrong or missing password for the speaker")
                             .to_string()

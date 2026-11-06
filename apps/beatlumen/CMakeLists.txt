@@ -160,10 +160,14 @@ elseif(UNIX AND NOT APPLE AND NOT ANDROID AND NOT EMSCRIPTEN)
     target_sources(beatlumen PRIVATE src/mic_input_pulse.cpp src/mic_input.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MIC_INPUT)
     target_link_libraries(beatlumen PRIVATE ${CMAKE_DL_LIBS})
+    # Bit-perfect playback: a sound card in direct use (libasound, loaded at
+    # run time), asked of the sound server over the session bus where there is one.
+    target_sources(beatlumen PRIVATE src/audio_direct.cpp src/audio_direct.h src/audio_reserve.cpp src/audio_reserve.h)
+    target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DIRECT_AUDIO)
     find_package(Qt6 QUIET COMPONENTS DBus)
     if(TARGET Qt6::DBus)
         target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
-        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS BEATLUMEN_PORTAL)
+        target_compile_definitions(beatlumen PRIVATE BEATLUMEN_MPRIS BEATLUMEN_PORTAL BEATLUMEN_RESERVE)
         target_link_libraries(beatlumen PRIVATE Qt6::DBus)
         # "Visualize other apps": the sound output's monitor (libpulse-simple,
         # loaded at run time) and MPRIS players.

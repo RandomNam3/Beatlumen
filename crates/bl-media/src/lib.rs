@@ -34,6 +34,7 @@ mod mkv;
 mod mp3;
 mod mp4;
 mod ogg;
+mod pack;
 mod pcm;
 mod probe;
 mod resample;
@@ -131,6 +132,11 @@ pub trait Decoder: Send {
     fn seek(&mut self, frame: u64) -> Result<u64, Error>;
     /// Short codec name, e.g. "mp3", "flac", "aac", "opus", "vorbis", "alac", "pcm".
     fn codec_name(&self) -> &'static str;
+    /// Bits of the file's integer samples; `None` when it has none to keep
+    /// (lossy codecs, floats).
+    fn bits_per_sample(&self) -> Option<u8> {
+        None
+    }
 }
 
 /// Textual tags normalised across tag formats.
@@ -242,6 +248,7 @@ pub fn downmix_to_stereo(input: &[f32], channels: u16, out: &mut Vec<f32>) {
 }
 
 pub use eq::{eq_response_db, EqSettings, Equalizer, EQ_BANDS, EQ_MAX_DB};
+pub use pack::{pack_pcm, pcm_preference, PcmFormat};
 pub use resample::Resampler;
 
 /// Decodes a whole file to mono at `rate` Hz (the channels averaged), at

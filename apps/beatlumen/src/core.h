@@ -10,6 +10,13 @@ extern "C" {
 
 typedef struct BlCore BlCore;
 
+// What a sound card in direct use opened with.
+typedef struct BlDirectOpened {
+    uint32_t rate;
+    uint32_t format;
+    uint32_t channels;
+} BlDirectOpened;
+
 typedef struct BlCallbacks {
     void *user;
     uint32_t (*audio_start)(void *user);
@@ -56,6 +63,19 @@ typedef struct BlCallbacks {
     // "mic.state" {stream, running, error}), "close" {stream}. Non-zero when
     // taken; null where the platform has no microphones.
     int32_t (*mic_request)(void *user, const char *kind, const char *json);
+    // Stops the normal audio output while a sound card is used directly
+    // (non-zero), or brings it back.
+    void (*audio_suspend)(void *user, int32_t suspended);
+    // The sound cards that can be used directly, as a JSON array of {id,
+    // name}; returns the bytes written (0: none fit). Null where there are none.
+    size_t (*direct_list)(void *user, char *json, size_t len);
+    // Opens a card at rate with the first of formats it takes, from any
+    // thread: 1 with opened filled in, 0 with a message in err. The samples
+    // come through bl_audio_render_pcm.
+    int32_t (*direct_open)(void *user, const char *device, uint32_t rate, const uint32_t *formats, size_t count, BlDirectOpened *opened, char *err, size_t err_len);
+    void (*direct_close)(void *user);
+    // Gives the card back for now (non-zero) or takes it again.
+    void (*direct_idle)(void *user, int32_t idle);
 } BlCallbacks;
 
 BlCore *bl_core_new(const char *data_dir, const char *args_json, const char *language, const char *platform, BlCallbacks cb);
@@ -71,6 +91,9 @@ void bl_core_http_complete(BlCore *c, uint64_t id, int32_t status, const char *h
 void bl_core_open_data(BlCore *c, const char *name, const uint8_t *data, size_t len);
 void bl_core_save(BlCore *c);
 void bl_audio_render(float *out, size_t frames, uint32_t latency_frames);
+// The same for a sound card in direct use: frames of channels channels in
+// format (0 S16, 1 S24 in three bytes, 2 S24 in four, 3 S32, little endian).
+void bl_audio_render_pcm(uint8_t *out, size_t frames, uint32_t format, uint32_t channels, uint32_t latency_frames);
 // Recorded audio of other apps (interleaved 16-bit PCM); from any thread.
 void bl_capture_push(const int16_t *pcm, size_t frames, uint32_t channels, uint32_t rate);
 // Recorded audio of microphone stream `stream` (interleaved 16-bit PCM);
