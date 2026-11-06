@@ -17,6 +17,7 @@ ColumnLayout {
     function verdictText() {
         switch (path.verdict) {
         case "bitperfect": return Theme.tr("Bit-perfect")
+        case "unverified": return Theme.tr("Direct, cannot be verified")
         case "unprocessed": return Theme.tr("Direct, nothing changed")
         case "changed": return Theme.tr("Direct, but not bit-perfect")
         case "network": return Theme.tr("On a speaker in the network")
@@ -26,7 +27,10 @@ ColumnLayout {
     }
     function verdictDetail() {
         switch (path.verdict) {
-        case "bitperfect": return Theme.tr("Every sample reaches the sound card with the value it has in the file.")
+        case "bitperfect": return route.shared
+            ? Theme.tr("Every sample reaches the sound card with the value it has in the file, as long as no other program makes sound.")
+            : Theme.tr("Every sample reaches the sound card with the value it has in the file.")
+        case "unverified": return Theme.tr("It goes to the sound server unchanged, but what happens after that could not be found out.")
         case "unprocessed": return Theme.tr("This file has no exact samples to keep (lossy or float): it reaches the card as it was decoded, and is not called bit-perfect.")
         case "network": return Theme.tr("The speaker takes a stream at its own rate.")
         case "shared": return Theme.tr("The system mixes it with other programs and may convert it.")
@@ -61,6 +65,9 @@ ColumnLayout {
         case "downmixed": return Theme.tr("%1 channels mixed down to stereo").arg(c.channels)
         case "narrowed": return Theme.tr("%1 bits reduced to %2").arg(c.from).arg(c.to)
         case "volume": return Theme.tr("Volume below 100 %")
+        case "systemVolume": return Theme.tr("System volume below 100 %")
+        case "mixed": return Theme.tr("Mixed with other programs (%1)").arg(c.programs)
+        case "notACard": return Theme.tr("Not a sound card (Bluetooth, a filter or similar)")
         case "equalizer": return Theme.tr("Equalizer")
         case "normalized": return Theme.tr("Normalized volume")
         case "crossfade": return Theme.tr("Crossfade")

@@ -8,6 +8,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -54,8 +56,8 @@ const size_t kFormatBytes[] = {2, 3, 4, 4};
 struct Alsa {
     int (*pcm_open)(Pcm **, const char *, int, int);
     int (*pcm_close)(Pcm *);
-    int (*pcm_nonblock)(Pcm *, int);
     long (*pcm_writei)(Pcm *, const void *, unsigned long);
+    int (*pcm_wait)(Pcm *, int);
     int (*pcm_recover)(Pcm *, int, int);
     int (*pcm_delay)(Pcm *, long *);
     int (*pcm_drain)(Pcm *);
@@ -101,8 +103,8 @@ const Alsa *alsa()
             return false;
         bool all = load(l, a.pcm_open, "snd_pcm_open");
         all &= load(l, a.pcm_close, "snd_pcm_close");
-        all &= load(l, a.pcm_nonblock, "snd_pcm_nonblock");
         all &= load(l, a.pcm_writei, "snd_pcm_writei");
+        all &= load(l, a.pcm_wait, "snd_pcm_wait");
         all &= load(l, a.pcm_recover, "snd_pcm_recover");
         all &= load(l, a.pcm_delay, "snd_pcm_delay");
         all &= load(l, a.pcm_drain, "snd_pcm_drain");
@@ -184,11 +186,49 @@ int cardNumber(const QString &device)
     return -1;
 }
 
+// ALSA's device for the PipeWire graph: other programs stay audible on it.
+const char *const kPipeWire = "pipewire";
+
+bool isPipeWire(const std::string &device)
+{
+    return device == kPipeWire;
+}
+
+bool pipeWireThere()
+{
+    QString dir = qEnvironmentVariable("PIPEWIRE_RUNTIME_DIR");
+    if (dir.isEmpty())
+        dir = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    const QString remote = qEnvironmentVariable("PIPEWIRE_REMOTE", QStringLiteral("pipewire-0"));
+    return !dir.isEmpty() && QFile::exists(dir + QLatin1Char('/') + remote)
+        && !QStandardPaths::findExecutable(QStringLiteral("pw-metadata")).isEmpty();
+}
+
+// Sets the rate of the PipeWire graph (0: as it pleases), for the whole graph:
+// other programs are converted to it. A program that crashes leaves it set until
+// the next start of PipeWire or of this one, which does no harm.
+void forcePipeWireRate(uint32_t rate)
+{
+    QProcess p;
+    p.start(QStringLiteral("pw-metadata"),
+            {QStringLiteral("-n"), QStringLiteral("settings"), QStringLiteral("0"), QStringLiteral("clock.force-rate"), QString::number(rate)});
+    if (!p.waitForFinished(2000))
+        p.kill();
+    p.waitForFinished(500);
+}
+
 // Looks at /proc and opens nothing: a device in use by the sound server stays
 // where it is.
 QByteArray listJson()
 {
     QJsonArray list;
+    if (pipeWireThere()) {
+        QJsonObject o;
+        o[QStringLiteral("id")] = QString::fromLatin1(kPipeWire);
+        o[QStringLiteral("name")] = QStringLiteral("PipeWire");
+        o[QStringLiteral("shared")] = true;
+        list.append(o);
+    }
     for (const Card &card : cards()) {
         const QString dir = QStringLiteral("/proc/asound/card%1").arg(card.number);
         QStringList pcms = QDir(dir).entryList({QStringLiteral("pcm*p")}, QDir::Dirs, QDir::Name);
@@ -226,6 +266,8 @@ public:
             return true;
         }
         stopWorker(true);
+        if (device != m_device)
+            releaseRate();
         m_device = device;
         m_rate = rate;
         m_formats = std::move(formats);
@@ -233,6 +275,7 @@ public:
         if (!openPcm(err)) {
             m_device.clear();
             m_reservation.release();
+            releaseRate();
             return false;
         }
         *opened = m_opened;
@@ -247,6 +290,7 @@ public:
         m_device.clear();
         m_idle = false;
         m_reservation.release();
+        releaseRate();
     }
 
     void setIdle(bool idle)
@@ -256,13 +300,23 @@ public:
             return;
         m_idle = idle;
         stopWorker(false);
-        if (idle)
+        if (idle) {
             m_reservation.release();
-        else
+            releaseRate();
+        } else {
             startWorker(true); // Asking for the card can take seconds.
+        }
     }
 
 private:
+    void releaseRate()
+    {
+        if (m_rateForced) {
+            m_rateForced = false;
+            forcePipeWireRate(0);
+        }
+    }
+
     bool openPcm(QString *err)
     {
         const Alsa *a = alsa();
@@ -278,6 +332,10 @@ private:
         }
         if (card >= 0 && !m_reservation.take(card, err))
             return false;
+        if (isPipeWire(m_device)) {
+            forcePipeWireRate(m_rate);
+            m_rateForced = true;
+        }
         // The server closes the card right after letting go of its name.
         Pcm *pcm = nullptr;
         int r = -EBUSY;
@@ -292,7 +350,6 @@ private:
                                : QStringLiteral("The sound card is not available");
             return false;
         }
-        a->pcm_nonblock(pcm, 0);
         HwParams *hw = nullptr;
         a->hw_params_malloc(&hw);
         const bool ok = configure(a, pcm, hw);
@@ -413,6 +470,12 @@ private:
             size_t done = 0;
             while (done < m_periodFrames && m_run) {
                 long n = a->pcm_writei(m_pcm, buffer.data() + done * frameBytes, m_periodFrames - done);
+                // Never blocked for good: a stream the sound server has not
+                // started, or a card that hangs, must not keep this from stopping.
+                if (n == -EAGAIN) {
+                    a->pcm_wait(m_pcm, 100);
+                    continue;
+                }
                 if (n < 0)
                     n = a->pcm_recover(m_pcm, int(n), 1);
                 if (n < 0) {
@@ -434,6 +497,7 @@ private:
     std::atomic<bool> m_run{false};
     std::atomic<bool> m_failed{false};
     bool m_idle = false;
+    bool m_rateForced = false;
     Pcm *m_pcm = nullptr;
     std::string m_device;
     uint32_t m_rate = 0;

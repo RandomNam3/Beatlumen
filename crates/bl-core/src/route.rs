@@ -4,8 +4,11 @@
 
 use crate::core::Core;
 use crate::host::{DirectOpened, Host};
+use crate::pipewire::{self, SinkFacts};
 use crate::player::{PlayState, TrackInfo};
 use bl_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// What is known about the moment.
 pub(crate) struct Facts<'a> {
@@ -19,12 +22,18 @@ pub(crate) struct Facts<'a> {
     pub equalizer: bool,
     pub normalize: bool,
     pub crossfade: bool,
+    /// Through the sound server (other programs stay audible): `Some` with
+    /// what could be found out about the output, if anything.
+    pub shared: Option<Option<SinkFacts>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
     /// Every sample reaches the card with the value it has in the file.
     BitPerfect,
+    /// Through the sound server, and nothing could be found out about the
+    /// output: it may be exact, it may not.
+    Unverified,
     /// Nothing is done to a source without exact samples (MP3, floats).
     Unprocessed,
     /// A card in direct use, but something changes the samples.
@@ -39,6 +48,7 @@ impl Verdict {
     fn name(self) -> &'static str {
         match self {
             Verdict::BitPerfect => "bitperfect",
+            Verdict::Unverified => "unverified",
             Verdict::Unprocessed => "unprocessed",
             Verdict::Changed => "changed",
             Verdict::Shared => "shared",
@@ -50,10 +60,26 @@ impl Verdict {
 /// Something that changes the samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Change {
-    Resampled { from: u32, to: u32 },
-    Downmixed { channels: u16 },
-    Narrowed { from: u8, to: u8 },
+    Resampled {
+        from: u32,
+        to: u32,
+    },
+    Downmixed {
+        channels: u16,
+    },
+    Narrowed {
+        from: u8,
+        to: u8,
+    },
     Volume,
+    /// The sound server's own volume for the output.
+    SystemVolume,
+    /// Other programs are mixed in.
+    Mixed {
+        programs: u32,
+    },
+    /// Not a sound card behind the sound server (Bluetooth, a filter, ...).
+    NotACard,
     Equalizer,
     Normalized,
     Crossfade,
@@ -74,6 +100,11 @@ impl Change {
                 .with("from", from as u32)
                 .with("to", to as u32),
             Change::Volume => Value::object().with("kind", "volume"),
+            Change::SystemVolume => Value::object().with("kind", "systemVolume"),
+            Change::Mixed { programs } => Value::object()
+                .with("kind", "mixed")
+                .with("programs", programs),
+            Change::NotACard => Value::object().with("kind", "notACard"),
             Change::Equalizer => Value::object().with("kind", "equalizer"),
             Change::Normalized => Value::object().with("kind", "normalized"),
             Change::Crossfade => Value::object().with("kind", "crossfade"),
@@ -124,12 +155,43 @@ pub(crate) fn assess(f: &Facts) -> (Verdict, Vec<Change>) {
             changes.push(Change::Crossfade);
         }
     }
+    if let (true, Some(Some(s))) = (direct, &f.shared) {
+        if !s.hardware {
+            changes.push(Change::NotACard);
+        }
+        // The graph runs at the track's rate; the card may be fixed to another.
+        if let Some(rate) = s.card_rate.filter(|r| *r != t.out_rate) {
+            changes.push(Change::Resampled {
+                from: t.out_rate,
+                to: rate,
+            });
+        }
+        if let (Some(bits), Some(have)) = (t.bits, s.card_bits) {
+            if bits > have {
+                changes.push(Change::Narrowed {
+                    from: bits,
+                    to: have,
+                });
+            }
+        }
+        if s.soft_volume {
+            changes.push(Change::SystemVolume);
+        }
+        if s.others > 0 {
+            changes.push(Change::Mixed { programs: s.others });
+        }
+    }
+    let unknown = direct && matches!(f.shared, Some(None));
     let verdict = if f.speaker.is_some() {
         Verdict::Network
     } else if !direct {
         Verdict::Shared
     } else if !changes.is_empty() {
         Verdict::Changed
+    } else if t.bits.is_none() {
+        Verdict::Unprocessed
+    } else if unknown {
+        Verdict::Unverified
     } else if t.bits.is_some() {
         Verdict::BitPerfect
     } else {
@@ -169,7 +231,21 @@ pub(crate) fn to_json(f: &Facts) -> Value {
     if let Some(speaker) = f.speaker {
         v = v.with("speaker", speaker);
     }
+    if f.shared.is_some() {
+        v = v.with("shared", true);
+    }
     v
+}
+
+/// Seconds between looks at the sound server.
+const PROBE_EVERY: f64 = 5.0;
+
+/// Looks at the sound server now and then, on a thread of its own.
+#[derive(Default)]
+pub(crate) struct SharedProbe {
+    facts: Arc<Mutex<Option<SinkFacts>>>,
+    busy: Arc<AtomicBool>,
+    next_at: f64,
 }
 
 impl Core {
@@ -201,6 +277,39 @@ impl Core {
             self.play_current(host, state == PlayState::Playing);
             self.player.seek(host, position);
         }
+    }
+
+    /// A new track: what was known about the output no longer counts.
+    pub(crate) fn shared_probe_soon(&mut self) {
+        if let Ok(mut f) = self.shared_probe.facts.lock() {
+            *f = None;
+        }
+        self.shared_probe.next_at = self.time + 1.0;
+    }
+
+    /// Keeps what is known about the sound server's output fresh while
+    /// something plays through it.
+    pub(crate) fn poll_shared_probe(&mut self, host: &mut dyn Host) {
+        let shared = self.player.direct_active()
+            && self.player.direct_device() == Some(pipewire::DEVICE)
+            && self.player.state() == PlayState::Playing;
+        let now = host.now();
+        if !shared || now < self.shared_probe.next_at || !host.has_threads() {
+            return;
+        }
+        self.shared_probe.next_at = now + PROBE_EVERY;
+        if self.shared_probe.busy.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let facts = self.shared_probe.facts.clone();
+        let busy = self.shared_probe.busy.clone();
+        host.spawn(Box::new(move || {
+            let found = pipewire::probe();
+            if let Ok(mut f) = facts.lock() {
+                *f = found;
+            }
+            busy.store(false, Ordering::Release);
+        }));
     }
 
     /// The card cannot be used (busy, gone, or somebody with a better claim
@@ -237,6 +346,9 @@ impl Core {
                 equalizer: s.eq.active(),
                 normalize: s.normalize,
                 crossfade: s.crossfade > 0.0,
+                shared: (self.player.direct_device() == Some(pipewire::DEVICE)
+                    && self.player.direct_active())
+                .then(|| self.shared_probe.facts.lock().ok().and_then(|f| f.clone())),
             };
             v = v.with("route", to_json(&facts));
         }
@@ -278,7 +390,89 @@ mod tests {
             equalizer: false,
             normalize: false,
             crossfade: false,
+            shared: None,
         }
+    }
+
+    fn sink() -> SinkFacts {
+        SinkFacts {
+            hardware: true,
+            card_rate: Some(44100),
+            card_bits: Some(32),
+            soft_volume: false,
+            others: 0,
+        }
+    }
+
+    #[test]
+    fn through_the_sound_server_only_what_was_seen_counts() {
+        let t = track(44100, 44100, Some(16), PcmFormat::S32);
+        let mut f = facts(t);
+        // Nothing to go by: not called exact.
+        f.shared = Some(None);
+        assert_eq!(assess(&f), (Verdict::Unverified, vec![]));
+        // Alone on a card at this rate and full volume.
+        f.shared = Some(Some(sink()));
+        assert_eq!(assess(&f), (Verdict::BitPerfect, vec![]));
+        // Somebody else makes sound.
+        f.shared = Some(Some(SinkFacts {
+            others: 2,
+            ..sink()
+        }));
+        assert_eq!(
+            assess(&f),
+            (Verdict::Changed, vec![Change::Mixed { programs: 2 }])
+        );
+        // The card cannot follow (a 48 kHz only device): the server converts.
+        f.shared = Some(Some(SinkFacts {
+            card_rate: Some(48000),
+            ..sink()
+        }));
+        assert_eq!(
+            assess(&f),
+            (
+                Verdict::Changed,
+                vec![Change::Resampled {
+                    from: 44100,
+                    to: 48000
+                }]
+            )
+        );
+        f.shared = Some(Some(SinkFacts {
+            soft_volume: true,
+            ..sink()
+        }));
+        assert_eq!(assess(&f), (Verdict::Changed, vec![Change::SystemVolume]));
+        f.shared = Some(Some(SinkFacts {
+            hardware: false,
+            ..sink()
+        }));
+        assert_eq!(assess(&f), (Verdict::Changed, vec![Change::NotACard]));
+        f.shared = Some(Some(SinkFacts {
+            card_bits: Some(16),
+            ..sink()
+        }));
+        assert_eq!(
+            assess(&f),
+            (Verdict::BitPerfect, vec![]),
+            "16 bits fit in 16"
+        );
+        let mut f24 = facts(track(44100, 44100, Some(24), PcmFormat::S32));
+        f24.shared = Some(Some(SinkFacts {
+            card_bits: Some(16),
+            ..sink()
+        }));
+        assert_eq!(
+            assess(&f24),
+            (
+                Verdict::Changed,
+                vec![Change::Narrowed { from: 24, to: 16 }]
+            )
+        );
+        // A lossy file stays what it is.
+        let mut lossy = facts(track(44100, 44100, None, PcmFormat::S32));
+        lossy.shared = Some(None);
+        assert_eq!(assess(&lossy).0, Verdict::Unprocessed);
     }
 
     #[test]

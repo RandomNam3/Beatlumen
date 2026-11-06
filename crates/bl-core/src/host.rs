@@ -62,6 +62,8 @@ pub struct DirectOpened {
 pub struct DirectDevice {
     pub id: String,
     pub name: String,
+    /// Other programs stay audible on it (through the sound server).
+    pub shared: bool,
 }
 
 /// A sound card in direct use: nothing lies between the samples and the card.

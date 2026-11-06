@@ -307,6 +307,7 @@ pub struct Core {
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) outputs: crate::outputs::Outputs,
     pub(crate) artists: crate::artists::Artists,
+    pub(crate) shared_probe: crate::route::SharedProbe,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) mic: crate::mic::MicState,
@@ -507,6 +508,7 @@ impl Core {
             airplay: Default::default(),
             outputs: Default::default(),
             artists: Default::default(),
+            shared_probe: Default::default(),
             direct_error: None,
             dlna: Default::default(),
             capture: Default::default(),
@@ -2669,6 +2671,7 @@ impl Core {
         self.update_dlna(host);
         self.update_extensions(host);
         self.poll_artists(host);
+        self.poll_shared_probe(host);
         self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
@@ -2680,6 +2683,7 @@ impl Core {
                 PlayerEvent::Ended if self.playing_capture() => self.capture_stream_ended(host),
                 PlayerEvent::Ended => self.on_track_ended(host),
                 PlayerEvent::Advanced { .. } => {
+                    self.shared_probe_soon();
                     self.follow_device_rate();
                     self.on_track_advanced(host);
                 }
@@ -2694,6 +2698,7 @@ impl Core {
                 }
                 PlayerEvent::DeviceError(e) => self.direct_failed(host, e),
                 PlayerEvent::Loaded { .. } => {
+                    self.shared_probe_soon();
                     self.direct_error = None;
                     self.follow_device_rate();
                 }

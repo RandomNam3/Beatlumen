@@ -102,4 +102,5 @@ library (`libQt6Qml`): it is built from the official Qt source with the
 patches in `apps/beatlumen/android/qt-patches/` by `build-qml.sh` there, and
 can be replaced by any compatible build of the library. The icons in
 `apps/beatlumen/icons` are [Material Symbols](https://github.com/google/material-design-icons)
-by Google, licensed under the Apache License 2.0.
+by Google, licensed under the Apache License 2.0; `smart_playlist.svg` was drawn
+for Beatlumen in their style.

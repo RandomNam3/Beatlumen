@@ -32,6 +32,7 @@ pub mod mic;
 pub mod native;
 mod offline;
 mod outputs;
+pub mod pipewire;
 pub mod player;
 mod push;
 pub mod queue;

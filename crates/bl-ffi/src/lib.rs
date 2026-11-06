@@ -663,6 +663,7 @@ impl Host for UiHost {
                     .map(|d| DirectDevice {
                         id: d.str_or("id", "").to_string(),
                         name: d.str_or("name", "").to_string(),
+                        shared: d.bool_or("shared", false),
                     })
                     .filter(|d| !d.id.is_empty())
                     .collect()

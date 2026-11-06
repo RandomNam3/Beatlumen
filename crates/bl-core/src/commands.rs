@@ -1044,6 +1044,7 @@ impl Core {
                     Value::object()
                         .with("id", d.id.as_str())
                         .with("name", d.name.as_str())
+                        .with("shared", d.shared)
                 })
                 .collect::<Vec<_>>()
                 .into(),
