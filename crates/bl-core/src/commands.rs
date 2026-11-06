@@ -981,6 +981,18 @@ impl Core {
                 self.set_setting(host, &s("key"), c.get("value").clone());
                 ok()
             }
+            // The equalizer's curve in dB for the display.
+            "eq.curve" => {
+                let columns = idx("columns").clamp(8, 256);
+                let freqs: Vec<f32> = (0..columns)
+                    .map(|i| 20.0 * 1000f32.powf(i as f32 / (columns - 1) as f32))
+                    .collect();
+                bl_media::eq_response_db(&self.settings.eq, &freqs, self.player.device_rate())
+                    .into_iter()
+                    .map(Value::from)
+                    .collect::<Vec<_>>()
+                    .into()
+            }
 
             // ---- server ------------------------------------------------------
             "server.connect" => {
@@ -1133,6 +1145,9 @@ impl Core {
         {
             self.player
                 .set_transition(self.settings.crossfade, self.settings.skip_silence);
+        }
+        if old.eq != self.settings.eq {
+            self.player.set_eq(&self.settings.eq);
         }
         if old.library_folders != self.settings.library_folders {
             self.rescan_local();

@@ -27,6 +27,7 @@ mod adts;
 mod aiff;
 mod alac;
 mod downmix;
+mod eq;
 mod flac;
 pub mod lyrics;
 mod mkv;
@@ -240,6 +241,7 @@ pub fn downmix_to_stereo(input: &[f32], channels: u16, out: &mut Vec<f32>) {
     downmix::downmix_to_stereo(input, channels, out)
 }
 
+pub use eq::{eq_response_db, EqSettings, Equalizer, EQ_BANDS, EQ_MAX_DB};
 pub use resample::Resampler;
 
 /// Decodes a whole file to mono at `rate` Hz (the channels averaged), at

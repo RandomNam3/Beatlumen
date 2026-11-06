@@ -169,6 +169,8 @@ pub struct Settings {
     pub crossfade: f32,
     /// Skip silence at the end and start of tracks when moving on.
     pub skip_silence: bool,
+    /// The equalizer (of this device: it depends on what is connected).
+    pub eq: bl_media::EqSettings,
     /// Offer this device as an AirPlay speaker in the local network.
     pub airplay: bool,
     /// Also announce the AirPlay 2 receiver (experimental).
@@ -268,6 +270,7 @@ impl Default for Settings {
             normalize: false,
             crossfade: 0.0,
             skip_silence: true,
+            eq: bl_media::EqSettings::default(),
             airplay: false,
             dlna_receiver: false,
             airplay2: false,
@@ -304,6 +307,20 @@ fn strs(v: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn eq_from_json(v: &Value) -> bl_media::EqSettings {
+    let mut bands_db = [0.0; 10];
+    if let Some(a) = v.get("eqBands").as_array() {
+        for (band, value) in bands_db.iter_mut().zip(a) {
+            *band = value.as_f32().unwrap_or(0.0);
+        }
+    }
+    bl_media::EqSettings {
+        enabled: v.bool_or("eqEnabled", false),
+        preamp_db: v.f32_or("eqPreamp", 0.0),
+        bands_db,
+    }
 }
 
 impl Settings {
@@ -359,6 +376,7 @@ impl Settings {
             normalize: v.bool_or("normalize", d.normalize),
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
+            eq: eq_from_json(v),
             airplay: v.bool_or("airplay", false),
             dlna_receiver: v.bool_or("dlnaReceiver", false),
             airplay2: v.bool_or("airplay2", false),
@@ -463,6 +481,16 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("eqEnabled", self.eq.enabled)
+            .with("eqPreamp", self.eq.preamp_db)
+            .with(
+                "eqBands",
+                self.eq
+                    .bands_db
+                    .iter()
+                    .map(|b| Value::from(*b))
+                    .collect::<Vec<_>>(),
+            )
             .with("airplay", self.airplay)
             .with("dlnaReceiver", self.dlna_receiver)
             .with("airplay2", self.airplay2)
@@ -502,6 +530,21 @@ fn stream_kbps(v: Option<u64>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equalizer_survives_saving_and_starts_off() {
+        assert!(!Settings::default().eq.enabled);
+        let mut s = Settings::default();
+        s.eq.enabled = true;
+        s.eq.preamp_db = -3.5;
+        s.eq.bands_db[2] = 6.0;
+        s.eq.bands_db[9] = -4.5;
+        let back = Settings::from_json(&bl_json::parse(&s.to_json().to_json()).unwrap());
+        assert_eq!(back.eq, s.eq);
+        // Files from before the equalizer existed.
+        let old = Settings::from_json(&bl_json::parse("{}").unwrap());
+        assert_eq!(old.eq, bl_media::EqSettings::default());
+    }
 
     #[test]
     fn roundtrip() {

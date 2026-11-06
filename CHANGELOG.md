@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Sound
+
+- **Equalizer:** ten bands from 31 Hz to 16 kHz, a level control, a few starting
+  points and the curve that results (Settings, Playback). Boosts lower the level
+  by themselves so that nothing clips. It applies at once, also on speakers in
+  the network, and stays on this device. Switched off nothing is computed.
+
 ### Start page and favorites
 
 - **Start page:** the app opens on a start page with what you last played,

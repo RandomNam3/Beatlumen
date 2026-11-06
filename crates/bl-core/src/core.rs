@@ -388,6 +388,7 @@ impl Core {
         let mut player = Player::new();
         player.set_volume(if settings.muted { 0.0 } else { settings.volume });
         player.set_transition(settings.crossfade, settings.skip_silence);
+        player.set_eq(&settings.eq);
         let queue = Queue::new(
             settings.audio_queue.clone(),
             settings.audio_index,

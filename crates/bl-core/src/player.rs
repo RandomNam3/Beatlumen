@@ -15,7 +15,7 @@
 //! ring, and [`PlayerEvent::Advanced`] is emitted once it becomes audible.
 
 use crate::host::{AudioSource, Host};
-use bl_media::{Decoder, Resampler};
+use bl_media::{Decoder, EqSettings, Equalizer, Resampler};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -290,6 +290,7 @@ pub struct Output {
     volume: AtomicU32,
     current_gain: Mutex<f32>,
     norm: Mutex<Norm>,
+    eq: Mutex<Equalizer>,
     /// Output frame index (since track start, including the seek base) of
     /// the last frame handed to the device.
     played: AtomicU64,
@@ -328,6 +329,7 @@ impl Output {
             volume: AtomicU32::new(0.5f32.to_bits()),
             current_gain: Mutex::new(0.0),
             norm: Mutex::new(Norm::default()),
+            eq: Mutex::new(Equalizer::new()),
             played: AtomicU64::new(0),
             latency: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
@@ -472,10 +474,15 @@ impl Output {
         if let Ok(mut t) = self.tap.lock() {
             t.push_stereo(&out[..taken * 2]);
         }
+        let device_rate = self.sample_rate.load(Ordering::Relaxed).max(1);
+        if let Ok(mut eq) = self.eq.lock() {
+            eq.set_rate(device_rate);
+            eq.process(&mut out[..taken * 2]);
+        }
         // Smooth gain changes (pause/resume fades, volume changes); the
         // normalization gain follows within ~0.25 s and switches exactly at
         // the first frame of a gapless next track.
-        let rate = self.sample_rate.load(Ordering::Relaxed).max(1) as f32;
+        let rate = device_rate as f32;
         let step = 1.0 / (0.02 * rate);
         let follow = 1.0 / (0.25 * rate);
         for (i, f) in out[..taken * 2].chunks_exact_mut(2).enumerate() {
@@ -702,6 +709,14 @@ impl Player {
     pub fn set_next_gain(&mut self, gain: Option<f32>) {
         if let Ok(mut n) = self.output.norm.lock() {
             n.next = gain;
+        }
+    }
+
+    /// The equalizer's settings; it follows them at once, also on speakers
+    /// in the network.
+    pub fn set_eq(&mut self, settings: &EqSettings) {
+        if let Ok(mut eq) = self.output.eq.lock() {
+            eq.set(settings);
         }
     }
 
@@ -1034,11 +1049,15 @@ impl Player {
                     match p.pipeline.next(&mut self.scratch) {
                         Ok(more) => {
                             if !self.scratch.is_empty() {
-                                host.audio_push(&self.scratch);
-                                p.pushed += (self.scratch.len() / 2) as u64;
                                 if let Ok(mut t) = self.output.tap.lock() {
                                     t.push_stereo(&self.scratch);
                                 }
+                                if let Ok(mut eq) = self.output.eq.lock() {
+                                    eq.set_rate(self.device_rate);
+                                    eq.process(&mut self.scratch);
+                                }
+                                host.audio_push(&self.scratch);
+                                p.pushed += (self.scratch.len() / 2) as u64;
                             }
                             if !more {
                                 p.eof_pushed = true;
@@ -1345,6 +1364,45 @@ mod tests {
             d.extend_from_slice(&v.to_le_bytes());
         }
         d
+    }
+
+    #[test]
+    fn the_equalizer_works_on_the_way_out_and_leaves_the_tap_alone() {
+        let output = Output::new();
+        output.volume.store(1.0f32.to_bits(), Ordering::Relaxed);
+        output.paused.store(false, Ordering::Relaxed);
+        *output.current_gain.lock().unwrap() = 1.0;
+        let tone: Vec<f32> = (0..48000)
+            .flat_map(|i| {
+                let v = (i as f32 * 1000.0 * std::f32::consts::TAU / 48000.0).sin() * 0.25;
+                [v, v]
+            })
+            .collect();
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+
+        // Off: exactly what was queued.
+        output.push(&tone[..9600]);
+        let mut out = vec![0.0; 9600];
+        output.render(&mut out, 0);
+        assert_eq!(out, tone[..9600]);
+
+        // On: 1 kHz lowered by 12 dB, the visuals still see the original.
+        let mut settings = EqSettings::default();
+        settings.enabled = true;
+        settings.bands_db[5] = -12.0;
+        output.eq.lock().unwrap().set(&settings);
+        output.push(&tone[9600..]);
+        let mut out = vec![0.0; tone.len() - 9600];
+        output.render(&mut out, 0);
+        let db = 20.0 * (rms(&out[out.len() / 2..]) / rms(&tone)).log10();
+        assert!((db + 12.0).abs() < 0.5, "{db} dB");
+        let mut tapped = vec![0.0; 4800];
+        let tap = output.tap.lock().unwrap();
+        for (i, o) in tapped.iter_mut().enumerate() {
+            *o = tap.buf[tap.buf.len() - 4800 + i];
+        }
+        drop(tap);
+        assert!((rms(&tapped) - rms(&tone)).abs() < 0.01);
     }
 
     #[test]

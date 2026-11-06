@@ -289,6 +289,15 @@ Item {
                     onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
                 }
             }
+            // ---- equalizer ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                visible: page.shows("playback", ["Equalizer", "Raises or lowers the bass, mids and treble. Applies at once, also on speakers in the network.", "More bass", "More treble", "Voices"])
+                SectionLabel { text: Theme.tr("Sound") }
+                EqualizerPanel { Layout.fillWidth: true }
+            }
             // ---- library ----
             ColumnLayout {
                 objectName: "section"
