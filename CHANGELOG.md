@@ -7,9 +7,13 @@
 - **Plain texts are timed closer:** a line whose first words the model did
   not recognise no longer starts at its first recognised word, up to two
   seconds late; it starts about where its first word is sung (on the test
-  songs 84 % of the lines within half a second instead of 79 %). Lines
-  also no longer start up to a third of a second too early when the timing
-  picks up after a longer stretch.
+  songs about 85 % of the lines within half a second instead of 79 %, with
+  and without a GPU). Lines also no longer start up to a third of a second
+  too early when the timing picks up after a longer stretch.
+- **Skipped choruses:** when the model leaves out a repeat of a chorus, its
+  lines are placed where the recognition leaves time for them, and lines
+  that were not heard spread over a long gap instead of bunching up at its
+  start.
 
 ## 0.11.1 (beta)
 
