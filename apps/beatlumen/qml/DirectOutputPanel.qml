@@ -67,7 +67,8 @@ ColumnLayout {
                 id: deviceBox
                 Layout.maximumWidth: panel.width - 120
                 Accessible.name: Theme.tr("Output")
-                implicitContentWidthPolicy: panel.devices.length > 0 ? ComboBox.WidestText : ComboBox.ContentItemImplicitWidth
+                // With nothing in the list it would only be as wide as an empty entry.
+                Layout.minimumWidth: panel.devices.length > 0 ? 0 : 140
                 model: panel.devices.map(d => d.shared ? Theme.tr("%1: other programs stay audible").arg(d.name) : Theme.tr("%1 alone").arg(d.name))
                 displayText: currentIndex >= 0 ? currentText : Theme.tr("Please choose")
                 currentIndex: panel.devices.findIndex(d => d.id === panel.settings.audioDirectDevice)

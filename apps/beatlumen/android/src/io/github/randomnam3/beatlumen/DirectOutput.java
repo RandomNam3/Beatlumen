@@ -33,7 +33,7 @@ import org.json.JSONObject;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +61,9 @@ public final class DirectOutput
     private static final int BUFFER_MS = 80;
     private static final int ROUTE_WAIT_MS = 1500;
     private static final int ROUTE_CHECK_MS = 250;
+    // A device that takes nothing for this long has gone.
+    private static final int STALL_MS = 2000;
+    private static final int MIXER_TRIES = 10;
     private static final int PLAY_OUT_MAX_MS = 1000;
 
     static native void nativeRender(ByteBuffer out, int frames, int format, int channels, int latency);
@@ -100,21 +103,24 @@ public final class DirectOutput
 
     /**
      * The USB outputs by an id that outlives pulling the plug (the system's own
-     * changes every time): the product's name, numbered when there are several.
+     * changes every time): the product's name. Several of a kind also go by
+     * where they are plugged in, so that with one of them gone the other does
+     * not silently take its place.
      */
     private static Map<String, AudioDeviceInfo> usbDevices(AudioManager am)
     {
-        AudioDeviceInfo[] devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-        Arrays.sort(devices, Comparator.comparingInt(AudioDeviceInfo::getId));
+        List<AudioDeviceInfo> usb = new ArrayList<>();
+        Map<String, Integer> names = new HashMap<>();
+        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            if (isUsb(d.getType())) {
+                usb.add(d);
+                names.merge(name(d), 1, Integer::sum);
+            }
+        }
         Map<String, AudioDeviceInfo> out = new LinkedHashMap<>();
-        for (AudioDeviceInfo d : devices) {
-            if (!isUsb(d.getType()))
-                continue;
+        for (AudioDeviceInfo d : usb) {
             String id = "usb:" + name(d);
-            String free = id;
-            for (int n = 2; out.containsKey(free); ++n)
-                free = id + "#" + n;
-            out.put(free, d);
+            out.put(names.get(name(d)) > 1 ? id + "#" + d.getAddress() : id, d);
         }
         return out;
     }
@@ -289,7 +295,14 @@ public final class DirectOutput
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build();
-        if (!am.setPreferredMixerAttributes(media, device, mixer)) {
+        // The system lets go of the last track a moment after its release.
+        boolean taken = false;
+        for (int i = 0; i < MIXER_TRIES && !taken; ++i) {
+            if (i > 0)
+                Stream.sleep(100);
+            taken = am.setPreferredMixerAttributes(media, device, mixer);
+        }
+        if (!taken) {
             Log.w(TAG, "direct output: the system refused the mixer for " + sDevice);
             return am.getPreferredMixerAttributes(media, device) != null ? IN_USE : NOT_TAKEN;
         }
@@ -333,9 +346,12 @@ public final class DirectOutput
         AudioTrack mTrack;
         long mWritten;
         long mStampedAt;
+        long mProgressAt;
+        long mRouteCheckAt;
         boolean mStamped;
         boolean mReleased;
         volatile boolean mRun = true;
+        volatile boolean mPlayOut;
         volatile boolean mRouted;
         volatile boolean mFailed;
         // Somebody changed the mixer under the track.
@@ -405,6 +421,8 @@ public final class DirectOutput
                 AudioDeviceInfo routed = mTrack.getRoutedDevice();
                 if (routed != null && routed.getId() == mDevice.getId()) {
                     mRouted = true;
+                    if (mFailed)
+                        break;
                     return null;
                 }
                 sleep(20);
@@ -421,6 +439,7 @@ public final class DirectOutput
 
         void finish(boolean playOut)
         {
+            mPlayOut = playOut;
             mRun = false;
             try {
                 mThread.join();
@@ -484,39 +503,68 @@ public final class DirectOutput
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
             final int bytes = mPeriodFrames * mFrameBytes;
             ByteBuffer out = ByteBuffer.allocateDirect(bytes);
-            long nextCheck = 0;
+            mProgressAt = SystemClock.uptimeMillis();
             String error = null;
             while (mRun && error == null) {
-                nativeRender(out, mPeriodFrames, mFormat, mChannels, latency());
+                // Silence (the buffer starts out empty) until it is known where
+                // this plays: after a long pause there is music waiting.
+                if (mRouted)
+                    nativeRender(out, mPeriodFrames, mFormat, mChannels, latency());
                 out.position(0);
                 out.limit(bytes);
-                // Never blocked for good: a device that hangs must not keep this from stopping.
-                while (out.hasRemaining() && mRun && error == null) {
+                // What was taken from the queue still goes out when the card is to
+                // play out; otherwise a song would lose its end at a change of rate.
+                // Never blocked for good: a device that hangs must not keep this
+                // from stopping.
+                int patience = 60;
+                while (out.hasRemaining() && error == null && (mRun || (mPlayOut && patience > 0))) {
                     int n = mTrack.write(out, out.remaining(), AudioTrack.WRITE_NON_BLOCKING);
                     if (n < 0) {
                         Log.w(TAG, "direct output: write: " + n);
                         error = NOT_AVAILABLE;
-                    } else if (out.hasRemaining()) {
+                        continue;
+                    }
+                    if (n > 0)
+                        mProgressAt = SystemClock.uptimeMillis();
+                    if (out.hasRemaining()) {
                         sleep(PERIOD_MS / 4);
+                        if (!mRun)
+                            --patience;
+                        error = trouble();
                     }
                 }
                 mWritten += out.position() / mFrameBytes;
-                error = error != null ? error : mLost;
-                long now = SystemClock.uptimeMillis();
-                if (error == null && mRouted && now >= nextCheck) {
-                    nextCheck = now + ROUTE_CHECK_MS;
-                    AudioDeviceInfo routed = mTrack.getRoutedDevice();
-                    if (routed != null && routed.getId() != mDevice.getId()) {
-                        Log.w(TAG, "direct output: the track moved to " + routed.getType());
-                        error = NOT_AVAILABLE;
-                    }
-                }
+                if (error == null)
+                    error = trouble();
             }
             if (error != null) {
                 mFailed = true;
                 release();
-                nativeFailed(error);
+                // While it opens, the answer goes to whoever asked.
+                if (mRouted)
+                    nativeFailed(error);
             }
+        }
+
+        /** What is wrong right now, if anything. */
+        private String trouble()
+        {
+            if (mLost != null)
+                return mLost;
+            long now = SystemClock.uptimeMillis();
+            if (now - mProgressAt > STALL_MS) {
+                Log.w(TAG, "direct output: the device stopped taking samples");
+                return NOT_AVAILABLE;
+            }
+            if (mRouted && now >= mRouteCheckAt) {
+                mRouteCheckAt = now + ROUTE_CHECK_MS;
+                AudioDeviceInfo routed = mTrack.getRoutedDevice();
+                if (routed != null && routed.getId() != mDevice.getId()) {
+                    Log.w(TAG, "direct output: the track moved to " + routed.getType());
+                    return NOT_AVAILABLE;
+                }
+            }
+            return null;
         }
     }
 }

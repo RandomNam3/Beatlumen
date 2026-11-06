@@ -70,6 +70,12 @@ QString errorText(HRESULT hr)
     return QString::fromLatin1(kNotAvailable);
 }
 
+// Answers that are about the device and not about the format asked for.
+bool aboutTheDevice(HRESULT hr)
+{
+    return hr == AUDCLNT_E_DEVICE_IN_USE || hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED || hr == AUDCLNT_E_DEVICE_INVALIDATED;
+}
+
 // ---- the cards -------------------------------------------------------------
 
 QString takeString(LPWSTR s)
@@ -217,7 +223,7 @@ HRESULT findCandidates(IAudioClient *client, uint32_t rate, const std::vector<ui
                     const HRESULT hr = client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &w.Format, nullptr);
                     if (hr == S_OK)
                         out.push_back({ w, format });
-                    else if (hr == AUDCLNT_E_DEVICE_IN_USE || hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED || hr == AUDCLNT_E_DEVICE_INVALIDATED)
+                    else if (aboutTheDevice(hr))
                         return hr;
                 }
             }
@@ -401,7 +407,7 @@ private:
         if (FAILED(hr))
             return hr;
         probe.Reset();
-        // Not everything a driver says it takes works.
+        // Not everything a driver says it takes works, and each says so in its own way.
         for (const Candidate &c : candidates) {
             hr = initialize(s, c.wfx);
             if (SUCCEEDED(hr)) {
@@ -410,7 +416,7 @@ private:
                 s.opened.channels = c.wfx.Format.nChannels;
                 return start(s);
             }
-            if (hr != AUDCLNT_E_UNSUPPORTED_FORMAT)
+            if (aboutTheDevice(hr))
                 return hr;
         }
         return hr;
@@ -434,8 +440,7 @@ private:
                 s.client = client;
                 return hr;
             }
-            if (hr == AUDCLNT_E_DEVICE_IN_USE || hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED || hr == AUDCLNT_E_UNSUPPORTED_FORMAT
-                || hr == AUDCLNT_E_DEVICE_INVALIDATED)
+            if (aboutTheDevice(hr) || hr == AUDCLNT_E_UNSUPPORTED_FORMAT)
                 return hr;
             if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
                 // It tells the nearest length it can do.
@@ -494,8 +499,9 @@ private:
     {
         BYTE *data = nullptr;
         HRESULT hr = s.render->GetBuffer(s.frames, &data);
-        if (hr == AUDCLNT_E_BUFFER_TOO_LARGE)
-            return S_OK; // Not its turn yet.
+        // Not its turn, or this thread came too late for this one: wait for the next.
+        if (hr == AUDCLNT_E_BUFFER_TOO_LARGE || hr == AUDCLNT_E_BUFFER_ERROR)
+            return S_FALSE;
         if (FAILED(hr))
             return hr;
         if (!silent) {
@@ -509,16 +515,16 @@ private:
     {
         int quiet = 0;
         while (m_run) {
-            if (WaitForSingleObject(s.ready, kWaitMs) != WAIT_OBJECT_0) {
+            const HRESULT hr = WaitForSingleObject(s.ready, kWaitMs) == WAIT_OBJECT_0 ? fill(s, false) : S_FALSE;
+            if (hr == S_FALSE) {
                 if (++quiet >= kMaxQuietWaits) {
-                    qWarning("direct output: the device stopped asking for samples");
+                    qWarning("direct output: the device stopped taking samples");
                     fail(QString::fromLatin1(kNotAvailable));
                     break;
                 }
                 continue;
             }
             quiet = 0;
-            const HRESULT hr = fill(s, false);
             if (FAILED(hr)) {
                 qWarning("direct output: 0x%08lx", static_cast<unsigned long>(hr));
                 fail(hr == AUDCLNT_E_DEVICE_IN_USE ? QString::fromLatin1(kInUse) : QString::fromLatin1(kNotAvailable));

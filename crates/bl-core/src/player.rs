@@ -323,6 +323,12 @@ pub struct Output {
     /// The sound card in direct use: only the volume may touch the samples.
     direct: Mutex<Option<Arc<dyn DirectSink>>>,
     direct_on: AtomicBool,
+    /// The load that may still open the card: a track replaced while it was
+    /// loading must not take the card from the one after it, or that one
+    /// would play at the wrong rate while everything says it is exact.
+    load: AtomicU64,
+    /// Held while the card is opened or closed.
+    opening: Mutex<()>,
 }
 
 impl Output {
@@ -350,7 +356,14 @@ impl Output {
             monitor: AtomicBool::new(false),
             direct: Mutex::new(None),
             direct_on: AtomicBool::new(false),
+            load: AtomicU64::new(0),
+            opening: Mutex::new(()),
         }
+    }
+
+    /// Whatever is still loading may no longer open the card.
+    fn next_load(&self) -> u64 {
+        self.load.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     pub(crate) fn set_external(&self, on: bool) {
@@ -730,6 +743,7 @@ impl Player {
         self.stop(host);
         let old = self.output.direct.lock().ok().and_then(|mut d| d.take());
         if let Some(sink) = old {
+            let _turn = self.output.opening.lock();
             sink.close();
         }
         let was_on = self.output.direct_on.swap(false, Ordering::Relaxed);
@@ -957,6 +971,7 @@ impl Player {
 
     /// Stops playback and releases the track.
     pub fn stop(&mut self, host: &mut dyn Host) {
+        self.output.next_load();
         if let Some(t) = self.native.take() {
             let _ = t.commands.send(Command::Stop);
         }
@@ -1027,9 +1042,10 @@ impl Player {
                 n.next = None;
             }
             output.paused.store(!autoplay, Ordering::Relaxed);
+            let load = output.next_load();
             std::thread::Builder::new()
                 .name("bl-decoder".into())
-                .spawn(move || decoder_thread(opener, output, crx, etx))
+                .spawn(move || decoder_thread(opener, output, load, crx, etx))
                 .ok();
             self.native = Some(NativeTrack {
                 commands: ctx,
@@ -1290,9 +1306,16 @@ impl Player {
     }
 }
 
+impl Drop for Player {
+    /// What is still loading has nobody left to play for.
+    fn drop(&mut self) {
+        self.output.next_load();
+    }
+}
+
 /// Readies the output for a track. A sound card in direct use opens at the
 /// track's rate, and the pipeline converts only what the card refuses.
-fn connect(output: &Output, decoder: Box<dyn Decoder>) -> Result<Pipeline, String> {
+fn connect(output: &Output, load: u64, decoder: Box<dyn Decoder>) -> Result<Pipeline, String> {
     let sink = output.direct.lock().ok().and_then(|d| d.clone());
     let Some(sink) = sink else {
         return Ok(Pipeline::new(
@@ -1302,7 +1325,13 @@ fn connect(output: &Output, decoder: Box<dyn Decoder>) -> Result<Pipeline, Strin
     };
     let spec = decoder.spec();
     let formats = bl_media::pcm_preference(decoder.bits_per_sample());
-    let opened = sink.open(spec.sample_rate, &formats)?;
+    let opened = {
+        let _turn = output.opening.lock();
+        if output.load.load(Ordering::SeqCst) != load {
+            return Err("another track took over".to_string());
+        }
+        sink.open(spec.sample_rate, &formats)?
+    };
     output.sample_rate.store(opened.rate, Ordering::Relaxed);
     let mut pipeline = Pipeline::new(decoder, opened.rate);
     pipeline.opened = Some(opened);
@@ -1397,6 +1426,7 @@ fn skip_leading_silence(p: &mut Pipeline, out: &mut Vec<f32>, max: usize) -> usi
 fn decoder_thread(
     opener: Opener,
     output: Arc<Output>,
+    load: u64,
     commands: std::sync::mpsc::Receiver<Command>,
     events: std::sync::mpsc::Sender<ThreadEvent>,
 ) {
@@ -1407,7 +1437,7 @@ fn decoder_thread(
             return;
         }
     };
-    let mut pipeline = match connect(&output, decoder) {
+    let mut pipeline = match connect(&output, load, decoder) {
         Ok(p) => p,
         Err(e) => {
             let _ = events.send(ThreadEvent::DeviceFailed(e));
@@ -1500,7 +1530,7 @@ fn decoder_thread(
                         continue;
                     }
                 }
-                if let Some(mut b) = decoder.and_then(|d| connect(&output, d).ok()) {
+                if let Some(mut b) = decoder.and_then(|d| connect(&output, load, d).ok()) {
                     if silent_end {
                         output.trim_tail(silent_run);
                     }
@@ -1704,7 +1734,7 @@ mod tests {
         ctx.send(Command::Next(Some(opener(96000, 4800)))).unwrap();
         let thread_output = output.clone();
         let thread = std::thread::spawn(move || {
-            decoder_thread(opener(44100, 4410), thread_output, crx, etx)
+            decoder_thread(opener(44100, 4410), thread_output, 0, crx, etx)
         });
         match wait_for(&erx) {
             ThreadEvent::Loaded(info) => {
@@ -1754,8 +1784,44 @@ mod tests {
         let output = direct_output(card);
         let (_ctx, crx) = std::sync::mpsc::channel();
         let (etx, erx) = std::sync::mpsc::channel();
-        decoder_thread(opener(44100, 441), output, crx, etx);
+        decoder_thread(opener(44100, 441), output, 0, crx, etx);
         assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(e) if e == "busy"));
+    }
+
+    #[test]
+    fn a_track_replaced_while_it_was_loading_leaves_the_card_alone() {
+        let card = Arc::new(FakeCard::default());
+        let output = direct_output(card.clone());
+        let old = output.next_load();
+        let new = output.next_load();
+        let (_ctx, crx) = std::sync::mpsc::channel();
+        let (etx, erx) = std::sync::mpsc::channel();
+        // The slow one comes back from the network after the next has the card.
+        decoder_thread(opener(44100, 441), output.clone(), old, crx, etx);
+        assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(_)));
+        assert!(card.opened.lock().unwrap().is_empty());
+        assert_ne!(output.sample_rate.load(Ordering::Relaxed), 44100);
+
+        let (ctx, crx) = std::sync::mpsc::channel();
+        let (etx, erx) = std::sync::mpsc::channel();
+        let thread_output = output.clone();
+        let thread = std::thread::spawn(move || {
+            decoder_thread(opener(96000, 480), thread_output, new, crx, etx)
+        });
+        assert!(matches!(wait_for(&erx), ThreadEvent::Loaded(_)));
+        assert_eq!(
+            card.opened.lock().unwrap().as_slice(),
+            &[(96000, bl_media::PcmFormat::S16)]
+        );
+        ctx.send(Command::Stop).unwrap();
+        thread.join().unwrap();
+        // Stopped: what is still on its way does not take the card back.
+        output.next_load();
+        let (_ctx, crx) = std::sync::mpsc::channel();
+        let (etx, erx) = std::sync::mpsc::channel();
+        decoder_thread(opener(44100, 441), output.clone(), new, crx, etx);
+        assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(_)));
+        assert_eq!(card.opened.lock().unwrap().len(), 1);
     }
 
     #[test]

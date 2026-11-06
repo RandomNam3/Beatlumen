@@ -719,7 +719,7 @@ QtObject {
         "Not a sound card (Bluetooth, a filter or similar)": "Keine Soundkarte (Bluetooth, ein Filter oder Ähnliches)",
         "Sound card": "Soundkarte",
         "Please choose": "Bitte wählen",
-        "Exact as far as Android tells: its bit-perfect mixer is set, and the music plays on this device in that format.": "Exakt, soweit Android das mitteilt: Sein bit-perfekter Mixer ist gesetzt, und die Musik läuft auf diesem Gerät in diesem Format.",
+        "Exact as far as Android tells, as long as no other app makes sound: its bit-perfect mixer is set, and the music plays on this device in that format.": "Exakt, soweit Android das mitteilt und solange keine andere App Ton macht: Sein bit-perfekter Mixer ist gesetzt, und die Musik läuft auf diesem Gerät in diesem Format.",
         "No sound card found.": "Keine Soundkarte gefunden.",
         "No USB sound card with a bit-perfect mode found.": "Keine USB-Soundkarte mit bit-perfektem Modus gefunden.",
         "Not available: this needs Android 14 or newer.": "Nicht verfügbar: Das braucht Android 14 oder neuer.",
