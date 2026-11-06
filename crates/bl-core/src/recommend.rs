@@ -194,7 +194,7 @@ impl Core {
         c
     }
 
-    fn local_taste(&self, c: &Catalog, now: u64) -> Taste {
+    pub(crate) fn local_taste(&self, c: &Catalog, now: u64) -> Taste {
         let plays: Vec<Play> = self
             .history
             .plays

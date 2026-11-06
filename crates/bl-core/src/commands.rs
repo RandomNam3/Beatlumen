@@ -575,7 +575,51 @@ impl Core {
                             .with("cover", cover)
                     })
                     .collect();
+                let mut all = all;
+                for list in self.smart_lists() {
+                    let songs = self.smart_songs(host, &list);
+                    let cover = songs
+                        .iter()
+                        .find_map(|id| self.library.track(id))
+                        .map(|t| self.cover_url_cached(t))
+                        .unwrap_or_default();
+                    all.push(
+                        Value::object()
+                            .with("id", format!("{}{}", crate::smart::PREFIX, list.id))
+                            .with("name", list.name.as_str())
+                            .with("kind", "track")
+                            .with("count", songs.len())
+                            .with("server", false)
+                            .with("fixed", false)
+                            .with("smart", true)
+                            .with("rules", list.to_json())
+                            .with("cover", cover),
+                    );
+                }
                 Value::Array(all)
+            }
+            "smart.save" => match self.smart_save(host, c.get("list")) {
+                Ok(id) => Value::object().with("id", id),
+                Err(e) => Value::object().with("error", e),
+            },
+            "smart.delete" => {
+                self.smart_delete(host, &s("id"));
+                ok()
+            }
+            "smart.preview" => self.smart_preview(host, c.get("list")),
+            "playlist.items" if s("id").starts_with(crate::smart::PREFIX) => {
+                match self.smart_find(&s("id")) {
+                    Some(list) => {
+                        let songs = self.smart_songs(host, &list);
+                        Value::Array(
+                            songs
+                                .iter()
+                                .map(|id| self.track_json(&self.track_for(id)))
+                                .collect(),
+                        )
+                    }
+                    None => err("unknown playlist"),
+                }
             }
             "playlist.items" => match self.find_playlist(&s("id")) {
                 Some(p) if p.kind == PlaylistKind::Track => Value::Array(
@@ -642,6 +686,13 @@ impl Core {
             "playlist.export" => self.export_playlist(&s("id"), &s("folder")),
             "playlist.delete" => {
                 self.delete_playlist(host, &s("id"));
+                ok()
+            }
+            "playlist.play" if s("id").starts_with(crate::smart::PREFIX) => {
+                if let Some(list) = self.smart_find(&s("id")) {
+                    let songs = self.smart_songs(host, &list);
+                    self.play_tracks(host, songs, idx("start"));
+                }
                 ok()
             }
             "playlist.play" => {

@@ -171,6 +171,8 @@ pub struct Settings {
     pub skip_silence: bool,
     /// The equalizer (of this device: it depends on what is connected).
     pub eq: bl_media::EqSettings,
+    /// Smart playlists: rules, as `bl_recommend::SmartList` writes them.
+    pub smart_lists: Value,
     /// Look artists up in public databases (their names go out). Off until
     /// the listener agrees.
     pub online_metadata: bool,
@@ -279,6 +281,7 @@ impl Default for Settings {
             crossfade: 0.0,
             skip_silence: true,
             eq: bl_media::EqSettings::default(),
+            smart_lists: Value::Array(Vec::new()),
             online_metadata: false,
             audio_direct: false,
             audio_direct_device: String::new(),
@@ -395,6 +398,11 @@ impl Settings {
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             eq: eq_from_json(v),
+            smart_lists: if v.get("smartLists").as_array().is_some() {
+                v.get("smartLists").clone()
+            } else {
+                Value::Array(Vec::new())
+            },
             online_metadata: v.bool_or("onlineMetadata", false),
             audio_direct: v.bool_or("audioDirect", false),
             audio_direct_device: v.str_or("audioDirectDevice", "").to_string(),
@@ -503,6 +511,7 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("smartLists", self.smart_lists.clone())
             .with("onlineMetadata", self.online_metadata)
             .with("audioDirect", self.audio_direct)
             .with("audioDirectDevice", self.audio_direct_device.as_str())

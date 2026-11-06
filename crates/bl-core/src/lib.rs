@@ -40,6 +40,7 @@ mod route;
 pub mod server;
 pub mod settings;
 mod share;
+mod smart;
 #[cfg(not(target_arch = "wasm32"))]
 mod sources;
 #[cfg(target_arch = "wasm32")]

@@ -415,28 +415,46 @@ Item {
                             visible: page.playlists.length > 0
                             model: page.playlists
                             ScrollBar.vertical: ScrollBar { }
-                            header: ListRow {
-                                title: Theme.tr("New playlist")
-                                onClicked: newPlaylist.open()
-                                lead: Rectangle {
-                                    anchors.fill: parent
-                                    radius: 12
-                                    color: "transparent"
-                                    border.width: 1.5
-                                    border.color: Theme.outline
-                                    Icon { anchors.centerIn: parent; name: "add"; color: Theme.accent }
+                            header: Column {
+                                width: ListView.view ? ListView.view.width : 0
+                                ListRow {
+                                    width: parent.width
+                                    title: Theme.tr("New playlist")
+                                    onClicked: newPlaylist.open()
+                                    lead: Rectangle {
+                                        anchors.fill: parent
+                                        radius: 12
+                                        color: "transparent"
+                                        border.width: 1.5
+                                        border.color: Theme.outline
+                                        Icon { anchors.centerIn: parent; name: "add"; color: Theme.accent }
+                                    }
+                                }
+                                ListRow {
+                                    width: parent.width
+                                    title: Theme.tr("New smart playlist")
+                                    subtitle: Theme.tr("Rules instead of songs: new songs that fit join by themselves.")
+                                    onClicked: smartDialog.edit(null)
+                                    lead: Rectangle {
+                                        anchors.fill: parent
+                                        radius: 12
+                                        color: "transparent"
+                                        border.width: 1.5
+                                        border.color: Theme.outline
+                                        Icon { anchors.centerIn: parent; name: "smart_playlist"; color: Theme.accent }
+                                    }
                                 }
                             }
                             delegate: ListRow {
                                 id: playlistRow
                                 required property var modelData
                                 title: modelData.name
-                                subtitle: page.count(modelData.count, "song", "songs") + (modelData.server ? " · " + Theme.tr("Server") : "")
+                                subtitle: page.count(modelData.count, "song", "songs") + (modelData.server ? " · " + Theme.tr("Server") : "") + (modelData.smart ? " · " + Theme.tr("Smart") : "")
                                 onClicked: stack.push(playlistView, { playlist: modelData })
                                 lead: CoverImage {
                                     anchors.fill: parent
                                     radius: 12
-                                    placeholder: playlistRow.modelData.fixed ? "favorite" : "queue_music"
+                                    placeholder: playlistRow.modelData.fixed ? "favorite" : playlistRow.modelData.smart ? "smart_playlist" : "queue_music"
                                     seed: playlistRow.modelData.name || ""
                                     source: playlistRow.modelData.cover || ""
                                 }
@@ -786,6 +804,8 @@ Item {
         }
     }
 
+    SmartListDialog { id: smartDialog }
+
     Component {
         id: albumView
         DetailPage {
@@ -846,9 +866,12 @@ Item {
             Connections { target: page; function onPlaylistsRevChanged() { pv.reload() } }
             title: playlist.name || ""
             subtitle: page.count(tracks.length, "song", "songs")
-            placeholder: playlist.fixed ? "favorite" : "queue_music"
+            placeholder: playlist.fixed ? "favorite" : playlist.smart ? "smart_playlist" : "queue_music"
             cover: playlist.cover || ""
-            menuItems: playlist.fixed ? [
+            menuItems: playlist.smart ? [
+                { text: Theme.tr("Edit rules"), action: () => smartDialog.edit(pv.playlist.rules) },
+                { text: Theme.tr("Delete"), action: () => { Core.call("smart.delete", { id: pv.playlist.id }); stack.pop() } }
+            ] : playlist.fixed ? [
                 { text: Theme.tr("Export as file…"), action: () => page.exportPlaylist(pv.playlist.id) }
             ] : [
                 { text: Theme.tr("Rename"), action: () => renamePrompt.open() },
@@ -856,6 +879,8 @@ Item {
                 { text: Theme.tr("Delete"), action: () => { Core.call("playlist.delete", { id: pv.playlist.id }); stack.pop() } }
             ]
             onTrackMenu: (t, a) => {
+                if (pv.playlist.smart)
+                    return songMenu.openFor([t.id], a)
                 const i = pv.tracks.indexOf(t)
                 songMenu.openFor([t.id], a, [{ text: Theme.tr("Remove"), action: () => Core.call("playlist.removeItem", { id: pv.playlist.id, index: i }) }])
             }

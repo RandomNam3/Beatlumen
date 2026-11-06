@@ -448,6 +448,15 @@ impl Catalog {
         v
     }
 
+    /// Whether a song is by that artist, whatever the case.
+    pub(crate) fn has_artist(&self, song: u32, name: &str) -> bool {
+        let wanted = name.trim().to_lowercase();
+        self.artists
+            .ids
+            .get(&wanted)
+            .is_some_and(|a| self.items[song as usize].artists.contains(a))
+    }
+
     /// The labels of a song.
     pub fn labels_of(&self, i: u32) -> impl Iterator<Item = &str> {
         self.items[i as usize]

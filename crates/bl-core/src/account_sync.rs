@@ -34,6 +34,7 @@ pub(crate) const SYNCED: &[&str] = &[
     "overlayFull",
     "photosensitive",
     "notifications",
+    "smartLists",
     "ui",
 ];
 

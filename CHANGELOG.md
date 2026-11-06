@@ -34,6 +34,14 @@
   then on, local and encrypted files never leave the device. Can be deleted
   at any time.
 
+### Smart playlists
+
+- **Rules instead of songs:** genre, mood, decade, tempo, key, language, record label,
+  your own labels, artist, year, rating, favorites, how often and when played, when
+  added; all rules or at least one, each also as "is not", with an order and a limit
+  (Library, Playlists). Worked out again whenever you open it, so new songs that fit
+  join by themselves. The rules follow your account like other settings.
+
 ### Song texts
 
 - **TTML files** next to a song or added by hand work like LRC ones, with word times,

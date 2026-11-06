@@ -13,6 +13,7 @@ mod labels;
 mod mixes;
 mod radio;
 mod rng;
+mod smart;
 pub mod stats;
 mod taste;
 
@@ -20,4 +21,5 @@ pub use catalog::{language_code, normalize_genre, parse_key, Catalog, Features, 
 pub use labels::{auto_labels, key_name};
 pub use mixes::{mixes, shelves, Mix, Reason, Shelf, Suggestion};
 pub use radio::{radio, Seed};
+pub use smart::{Condition, Order, Rule, SmartList, MOST_SONGS};
 pub use taste::{Play, Signals, Taste};
