@@ -22,6 +22,7 @@ Popup {
             s.push("music")
         if (connected)
             s.push("history")
+        s.push("online")
         s.push("tour")
         return s
     }
@@ -101,6 +102,7 @@ Popup {
                         case "look": return Theme.tr("How should it look?")
                         case "music": return Theme.tr("Where does your music come from?")
                         case "history": return Theme.tr("Personal recommendations?")
+                        case "online": return Theme.tr("Artist information from the internet?")
                         default: return Theme.tr("Ready")
                         }
                     }
@@ -313,6 +315,29 @@ Popup {
                         detail: Theme.tr("What you play on this device also goes to your server, for recommendations and statistics across your devices. The server's admin could read it. Only the server's songs, and only from now on: local and encrypted files never leave this device.")
                         on: wizard.settings.historySync === true
                         onSwitched: (v) => Core.call("settings.set", { key: "historySync", value: v })
+                    }
+                }
+
+                // ---- artist information ------------------------------------------------
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: wizard.current === "online"
+                    spacing: 8
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        wrapMode: Text.WordWrap
+                        color: Theme.textDim
+                        text: Theme.tr("Artist pages with a biography, picture and members, and better recommendations, come from public music databases. Everything works without them too.")
+                    }
+                    SwitchRow {
+                        Layout.fillWidth: true
+                        title: Theme.tr("Look artists up on the internet")
+                        detail: Theme.tr("The names of the artists in your library and your IP address go to MusicBrainz, Wikimedia and ListenBrainz, nothing else. Off, none of them is asked. You can change this at any time in the settings.")
+                        on: wizard.settings.onlineMetadata === true
+                        onSwitched: (v) => Core.call("settings.set", { key: "onlineMetadata", value: v })
                     }
                 }
 

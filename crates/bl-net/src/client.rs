@@ -239,10 +239,17 @@ fn write_request(
     body: &[u8],
 ) -> io::Result<()> {
     let mut head = format!(
-        "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Beatlumen/0.1\r\nConnection: close\r\n",
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
         url.path,
         url.host_header()
     );
+    // Sent twice, some servers take it as a broken request.
+    if !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+    {
+        head.push_str("User-Agent: Beatlumen/0.1\r\n");
+    }
     for (k, v) in headers {
         if k.contains(['\r', '\n']) || v.contains(['\r', '\n']) {
             return Err(io::Error::new(

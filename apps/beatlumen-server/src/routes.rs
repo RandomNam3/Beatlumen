@@ -410,6 +410,24 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
             }
         }
+        ["artist-info"] if get => {
+            let name = req.query("name").unwrap_or("");
+            let language = req.query("lang").unwrap_or("en");
+            let lib = state.library();
+            // The artist's id, when the tags of one of their songs name it.
+            let mbid = lib
+                .tracks()
+                .iter()
+                .map(|e| &e.track)
+                .find(|t| {
+                    t.artists.len() == 1
+                        && !t.meta.mb_artist.is_empty()
+                        && t.artists[0].eq_ignore_ascii_case(name)
+                })
+                .map(|t| t.meta.mb_artist.clone());
+            json(200, &state.artists.info(name, mbid, language))
+        }
+        ["artist-info"] => not_allowed("GET, HEAD"),
         ["labels"] if get => json(200, &crate::recommend::labels(state, &login)),
         ["labels"] => not_allowed("GET, HEAD"),
         ["recommendations"] if get => json(200, &crate::recommend::recommendations(state, &login)),

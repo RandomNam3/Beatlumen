@@ -334,6 +334,52 @@ Item {
                     }
                 }
             }
+            // ---- artist information from the internet ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 8
+                visible: page.shows("library", ["Artist information", "Look artists up on the internet", "Forget what was found"])
+                SectionLabel { text: Theme.tr("Artist information") }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Look artists up on the internet")
+                    detail: Theme.tr("For artist pages and better recommendations. The names of the artists in your library and your IP address go to MusicBrainz, Wikimedia and ListenBrainz, nothing else. Off, none of them is asked and nothing found earlier is shown.")
+                    on: page.settings.onlineMetadata === true
+                    onSwitched: (on) => Core.call("settings.set", { key: "onlineMetadata", value: on })
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    visible: page.server === "connected"
+                    text: Theme.tr("A server has its own switch for its library, in its admin area.")
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    visible: ((Core.state.artists || {}).known || 0) > 0 || page.settings.onlineMetadata === true
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        readonly property var artists: Core.state.artists || ({})
+                        text: Theme.tr("%1 artists known, %2 still to ask").arg(artists.known || 0).arg(artists.waiting || 0)
+                        color: Theme.textDim
+                        font.pixelSize: 13
+                        wrapMode: Text.WordWrap
+                    }
+                    Button {
+                        flat: true
+                        text: Theme.tr("Forget what was found")
+                        onClicked: Core.call("artists.clear")
+                    }
+                }
+            }
             // ---- music sources (without a server) ----
             ColumnLayout {
                 objectName: "section"

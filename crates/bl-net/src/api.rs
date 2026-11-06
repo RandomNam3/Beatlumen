@@ -426,6 +426,7 @@ pub mod paths {
     pub const FAVORITES: &str = "/api/favorites";
     pub const HISTORY: &str = "/api/history";
     pub const LABELS: &str = "/api/labels";
+    pub const ARTIST_INFO: &str = "/api/artist-info";
     pub const RECOMMENDATIONS: &str = "/api/recommendations";
     pub const RADIO: &str = "/api/radio";
     pub const STATS: &str = "/api/stats";

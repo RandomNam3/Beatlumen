@@ -1,0 +1,9 @@
+[package]
+name = "bl-meta"
+description = "What public databases know about an artist: addresses, answers and pace, without any network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }

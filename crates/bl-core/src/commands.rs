@@ -981,6 +981,11 @@ impl Core {
                 self.set_setting(host, &s("key"), c.get("value").clone());
                 ok()
             }
+            "artist.info" => self.artist_info(host, &s("name")),
+            "artists.clear" => {
+                self.artists_clear(host);
+                ok()
+            }
             "audio.devices" => host
                 .direct_devices()
                 .iter()
@@ -1163,6 +1168,9 @@ impl Core {
         }
         if old.eq != self.settings.eq {
             self.player.set_eq(&self.settings.eq);
+        }
+        if old.online_metadata != self.settings.online_metadata {
+            self.artists_switched();
         }
         if old.direct_device() != self.settings.direct_device() {
             self.direct_error = None;

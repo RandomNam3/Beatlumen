@@ -171,6 +171,9 @@ pub struct Settings {
     pub skip_silence: bool,
     /// The equalizer (of this device: it depends on what is connected).
     pub eq: bl_media::EqSettings,
+    /// Look artists up in public databases (their names go out). Off until
+    /// the listener agrees.
+    pub online_metadata: bool,
     /// Hand the samples to a sound card directly (bit-perfect playback) and
     /// which one: its id and the name it had. Off until asked for.
     pub audio_direct: bool,
@@ -276,6 +279,7 @@ impl Default for Settings {
             crossfade: 0.0,
             skip_silence: true,
             eq: bl_media::EqSettings::default(),
+            online_metadata: false,
             audio_direct: false,
             audio_direct_device: String::new(),
             audio_direct_name: String::new(),
@@ -391,6 +395,7 @@ impl Settings {
             crossfade: v.f32_or("crossfade", d.crossfade).clamp(0.0, 12.0),
             skip_silence: v.bool_or("skipSilence", d.skip_silence),
             eq: eq_from_json(v),
+            online_metadata: v.bool_or("onlineMetadata", false),
             audio_direct: v.bool_or("audioDirect", false),
             audio_direct_device: v.str_or("audioDirectDevice", "").to_string(),
             audio_direct_name: v.str_or("audioDirectName", "").to_string(),
@@ -498,6 +503,7 @@ impl Settings {
             .with("normalize", self.normalize)
             .with("crossfade", self.crossfade)
             .with("skipSilence", self.skip_silence)
+            .with("onlineMetadata", self.online_metadata)
             .with("audioDirect", self.audio_direct)
             .with("audioDirectDevice", self.audio_direct_device.as_str())
             .with("audioDirectName", self.audio_direct_name.as_str())

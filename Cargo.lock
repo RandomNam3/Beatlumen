@@ -74,6 +74,7 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-meta",
  "bl-net",
  "bl-offline",
  "bl-opus-enc",
@@ -145,6 +146,7 @@ dependencies = [
  "bl-image",
  "bl-json",
  "bl-media",
+ "bl-meta",
  "bl-mt",
  "bl-net",
  "bl-offline",
@@ -209,6 +211,13 @@ dependencies = [
  "bl-ogg",
  "bl-opus",
  "bl-vorbis",
+]
+
+[[package]]
+name = "bl-meta"
+version = "0.11.1"
+dependencies = [
+ "bl-json",
 ]
 
 [[package]]

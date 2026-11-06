@@ -63,7 +63,7 @@ pub(crate) struct RecommendState {
     labels_fetched_at: Option<f64>,
     /// Labels given to songs that are not the server's.
     local_labels: HashMap<String, Vec<String>>,
-    catalog: Option<((u64, u64), Arc<Catalog>)>,
+    catalog: Option<((u64, u64, u64), Arc<Catalog>)>,
     labels_rev: u64,
     radio: Option<RadioState>,
     /// A request for more songs is on its way.
@@ -144,7 +144,11 @@ impl Core {
 
     /// All songs known here, with the labels known here.
     pub(crate) fn song_catalog(&mut self) -> Arc<Catalog> {
-        let key = (self.library.revision, self.recommend.labels_rev);
+        let key = (
+            self.library.revision,
+            self.recommend.labels_rev,
+            self.artists.genres_rev,
+        );
         if let Some((k, c)) = &self.recommend.catalog {
             if *k == key {
                 return c.clone();
@@ -160,6 +164,18 @@ impl Core {
                 } else {
                     self.recommend.local_labels.get(&t.id)
                 };
+                let mut tagged = bl_recommend::Tagged::from_text(
+                    t.meta.bpm,
+                    &t.meta.key,
+                    &t.meta.mood,
+                    &t.meta.publisher,
+                    &t.meta.language,
+                    &t.meta.composer,
+                    t.meta.rating,
+                );
+                if let Some(artist) = t.artists.first() {
+                    tagged.artist_genres = self.artist_genres(artist).to_vec();
+                }
                 Song {
                     id: t.id.clone(),
                     artists: t.artists.clone(),
@@ -169,15 +185,7 @@ impl Core {
                     added: t.modified,
                     features: None,
                     labels: labels.cloned().unwrap_or_default(),
-                    tagged: bl_recommend::Tagged::from_text(
-                        t.meta.bpm,
-                        &t.meta.key,
-                        &t.meta.mood,
-                        &t.meta.publisher,
-                        &t.meta.language,
-                        &t.meta.composer,
-                        t.meta.rating,
-                    ),
+                    tagged,
                 }
             })
             .collect();

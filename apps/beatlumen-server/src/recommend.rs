@@ -29,7 +29,7 @@ const CATALOGS: usize = 4;
 
 /// What a catalog was built from: (login's labels, library revision, sound
 /// revision, labels revision).
-type Built = (usize, u64, u64, u64);
+type Built = (usize, u64, u64, u64, u64);
 
 #[derive(Default)]
 pub struct Cache {
@@ -59,6 +59,7 @@ impl Cache {
             lib.revision,
             state.sound.revision(),
             login.labels.revision(),
+            state.artists.revision(),
         );
         let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((_, c)) = built.iter().find(|(k, _)| *k == key) {
@@ -81,7 +82,15 @@ impl Cache {
                 added: e.track.modified,
                 features: state.sound.features(&e.track.id, e.mtime_ns),
                 labels: given.get(&e.track.id).cloned().unwrap_or_default(),
-                tagged: tagged(&e.track.meta),
+                tagged: bl_recommend::Tagged {
+                    artist_genres: e
+                        .track
+                        .artists
+                        .first()
+                        .map(|a| state.artists.genres(a))
+                        .unwrap_or_default(),
+                    ..tagged(&e.track.meta)
+                },
             })
             .collect();
         let c = Arc::new(Catalog::new(songs));

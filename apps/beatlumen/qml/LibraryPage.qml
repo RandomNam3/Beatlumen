@@ -591,6 +591,8 @@ Item {
         property bool round: false
         // Additional entries for the ⋮ menu: [{text, action}].
         property var menuItems: []
+        // Shown between the header and the songs.
+        property Component extra: null
         signal trackMenu(var track, Item anchor)
         readonly property var ids: tracks.map(t => t.id)
         readonly property bool wide: width >= 640
@@ -607,7 +609,7 @@ Item {
             header: Item {
                 id: hero
                 width: ListView.view.width
-                height: content.implicitHeight + 64
+                height: content.implicitHeight + 64 + (extraHolder.item ? extraHolder.item.implicitHeight + 16 : 0)
 
                 // Ambient backdrop: the cover, blurred and fading out.
                 Image {
@@ -723,6 +725,16 @@ Item {
                         }
                     }
                 }
+                Loader {
+                    id: extraHolder
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: content.bottom
+                    anchors.topMargin: 16
+                    anchors.leftMargin: 20
+                    anchors.rightMargin: 20
+                    sourceComponent: dp.extra
+                }
             }
         }
 
@@ -797,9 +809,20 @@ Item {
             tracks: Core.call("library.artist", { name: artist }) || []
             title: page.artistName(artist)
             subtitle: page.count(tracks.length, "song", "songs")
+            id: artistPage
             placeholder: "person"
             round: true
-            cover: tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
+            // Its picture from the internet, where allowed and found.
+            property string picture: ""
+            cover: picture !== "" ? picture : tracks.length > 0 ? Covers.url(tracks[0].id, tracks[0].cover) : ""
+            extra: Component {
+                ArtistInfoPanel {
+                    name: artistPage.artist
+                    known: page.artists
+                    onImageChanged: artistPage.picture = image
+                    onOpenArtist: (n) => stack.push(artistView, { artist: n })
+                }
+            }
             menuItems: [
                 { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { artist: artist }, name: page.artistName(artist) }) }
             ]

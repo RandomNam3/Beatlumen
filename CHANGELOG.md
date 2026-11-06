@@ -46,6 +46,16 @@
 - **Analysis version:** when the sound analysis improves, the server works songs
   out again by itself instead of keeping old results until the file changes.
 - The library is read once more after the update to find all this.
+- **Artist information from the internet (off by default):** the setup asks once, and
+  the settings can change it at any time. With it on, artist pages show a biography
+  (Wikipedia), a picture (Wikimedia Commons), where they come from, members, links and
+  similar artists (ListenBrainz), and the artists' genres (MusicBrainz) feed
+  recommendations and labels. Names of artists and your IP address go to those
+  services, nothing else; off, none of them is asked. An artist is only shown when the
+  match is certain, and marked when several share the name. Looked up in the background
+  at the pace the services ask for and kept for 30 days; "Forget what was found" deletes it.
+- **On the server** the same has its own switch in the admin area (`onlineMetadata`,
+  `--online-metadata`, off by default) for its whole library and for everybody on it.
 
 ### Labels and recommendations
 

@@ -2,7 +2,7 @@
 //! `kind:value`; labels given by people have no such form (a ":" is taken
 //! out of their names). The apps translate the known ones.
 
-use crate::catalog::{split_genres, Features, Song};
+use crate::catalog::{song_genres, Features, Song};
 
 const KEYS: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -59,7 +59,7 @@ fn danceable(f: &Features) -> bool {
 /// The song's labels from its tags and features.
 pub fn auto_labels(s: &Song) -> Vec<String> {
     let mut out = Vec::new();
-    for g in split_genres(&s.genre) {
+    for g in song_genres(s) {
         out.push(format!("genre:{g}"));
     }
     if let Some(y) = s.year.filter(|y| *y >= 1000) {

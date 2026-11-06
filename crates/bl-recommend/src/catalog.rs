@@ -49,6 +49,8 @@ pub struct Tagged {
     pub composers: Vec<String>,
     /// (0..1)
     pub rating: Option<f32>,
+    /// The genres of its artist, where the listener allowed looking them up.
+    pub artist_genres: Vec<String>,
 }
 
 impl Tagged {
@@ -70,6 +72,7 @@ impl Tagged {
             language: language_code(language).unwrap_or_default().to_string(),
             composers: split_values(composer),
             rating,
+            artist_genres: Vec::new(),
         }
     }
 }
@@ -197,6 +200,22 @@ pub(crate) fn split_genres(genre: &str) -> Vec<String> {
     for g in genre
         .split([';', ',', '/', '|'])
         .filter_map(normalize_genre)
+    {
+        if !out.contains(&g) {
+            out.push(g);
+        }
+    }
+    out
+}
+
+/// A song's own genres and, after them, those of its artist.
+pub(crate) fn song_genres(s: &Song) -> Vec<String> {
+    let mut out = split_genres(&s.genre);
+    for g in s
+        .tagged
+        .artist_genres
+        .iter()
+        .filter_map(|g| normalize_genre(g))
     {
         if !out.contains(&g) {
             out.push(g);
@@ -334,10 +353,7 @@ impl Catalog {
                 .map(|a| c.artists.id(&a))
                 .collect();
             let album = c.albums.id(&s.album_id);
-            let genres = split_genres(&s.genre)
-                .iter()
-                .map(|g| c.genres.id(g))
-                .collect();
+            let genres = song_genres(&s).iter().map(|g| c.genres.id(g)).collect();
             for a in &artists {
                 if c.by_artist.len() <= *a as usize {
                     c.by_artist.resize(*a as usize + 1, Vec::new());
@@ -612,6 +628,29 @@ pub(crate) mod tests {
         assert_eq!(language_code(" Deutsch "), Some("de"));
         assert_eq!(language_code("eng"), Some("en"));
         assert_eq!(language_code("xxx"), None);
+    }
+
+    #[test]
+    fn the_artists_genres_count_like_the_songs_own() {
+        let by = |id: &str, genre: &str, artist: &[&str]| Song {
+            id: id.to_string(),
+            album_id: id.to_string(),
+            genre: genre.to_string(),
+            tagged: Tagged {
+                artist_genres: artist.iter().map(|g| g.to_string()).collect(),
+                ..Tagged::default()
+            },
+            ..Song::default()
+        };
+        // Nothing in the tags: the looked up genres bring them together.
+        let c = Catalog::new(vec![
+            by("a", "", &["Art Rock", "favorites"]),
+            by("b", "art rock", &[]),
+            by("c", "", &["polka"]),
+        ]);
+        assert!(c.similarity(0, 1) > c.similarity(0, 2));
+        assert!(c.labels_of(0).any(|l| l == "genre:art rock"));
+        assert!(!c.labels_of(0).any(|l| l == "genre:favorites"));
     }
 
     #[test]

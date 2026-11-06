@@ -23,6 +23,7 @@ pub mod log;
 pub mod admin;
 pub mod admin_web;
 pub mod analysis;
+pub mod artists;
 pub mod auth;
 pub mod config;
 pub mod covers;
@@ -76,6 +77,7 @@ pub struct DataPaths {
     pub favorites: PathBuf,
     pub history: PathBuf,
     pub sound: PathBuf,
+    pub artists: PathBuf,
     pub labels: PathBuf,
     pub presets: PathBuf,
     pub uploads: PathBuf,
@@ -96,6 +98,7 @@ impl DataPaths {
             favorites: root.join("favorites.json"),
             history: root.join("history.jsonl"),
             sound: root.join("sound.jsonl"),
+            artists: root.join("artists.json"),
             labels: root.join("labels.json"),
             presets: root.join("presets"),
             uploads: root.join("uploads"),
@@ -159,6 +162,7 @@ pub struct State {
     pub favorites: favorites::Favorites,
     pub history: history::History,
     pub sound: Arc<labels::SoundIndex>,
+    pub artists: Arc<artists::ArtistIndex>,
     pub labels: labels::SongLabels,
     pub recommend: recommend::Cache,
     pub presets: presets::Presets,
@@ -195,6 +199,7 @@ impl State {
         self.lyrics_sync
             .configure(cfg.speech_model.clone(), cfg.auto_sync_lyrics);
         self.sound.set_enabled(cfg.auto_labels);
+        self.artists.set_enabled(cfg.online_metadata);
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(cfg);
         if restart {
             self.restart_pending.store(true, Ordering::Relaxed);
@@ -682,6 +687,10 @@ pub fn start(config: Config) -> Result<Server, String> {
             sources.clone(),
             config.auto_labels,
         )),
+        artists: Arc::new(artists::ArtistIndex::new(
+            data.artists.clone(),
+            config.online_metadata,
+        )),
         labels: labels::SongLabels::load(data.labels.clone()),
         recommend: recommend::Cache::default(),
         presets: presets::Presets::new(data.presets.clone()),
@@ -723,6 +732,7 @@ pub fn start(config: Config) -> Result<Server, String> {
     state.extensions.attach(&state);
     state.lyrics_sync.attach(&state);
     state.sound.attach(&state);
+    state.artists.attach(&state);
 
     info!(
         "Beatlumen server {} listening on http://{addr}",

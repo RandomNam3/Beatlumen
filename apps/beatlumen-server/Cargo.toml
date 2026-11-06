@@ -21,6 +21,7 @@ bl-media = { path = "../../crates/bl-media" }
 bl-image = { path = "../../crates/bl-image" }
 bl-analysis = { path = "../../crates/bl-analysis" }
 bl-recommend = { path = "../../crates/bl-recommend" }
+bl-meta = { path = "../../crates/bl-meta" }
 bl-fx = { path = "../../crates/bl-fx" }
 bl-vault = { path = "../../crates/bl-vault" }
 # (With the audio encoder on the GPU when there is one.)

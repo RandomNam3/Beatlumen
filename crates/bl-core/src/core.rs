@@ -59,6 +59,9 @@ impl LaunchArgs {
 /// HTTP request purposes, for dispatching responses.
 #[derive(Debug, Clone)]
 pub(crate) enum Req {
+    Artist,
+    ArtistServer,
+    ArtistImage,
     Info,
     Login,
     Library,
@@ -303,6 +306,7 @@ pub struct Core {
     pub(crate) download_progress: Option<String>,
     pub(crate) airplay: crate::airplay::AirplayState,
     pub(crate) outputs: crate::outputs::Outputs,
+    pub(crate) artists: crate::artists::Artists,
     pub(crate) dlna: crate::dlna_receiver::DlnaState,
     pub(crate) capture: crate::capture::CaptureState,
     pub(crate) mic: crate::mic::MicState,
@@ -502,6 +506,7 @@ impl Core {
             download_progress: None,
             airplay: Default::default(),
             outputs: Default::default(),
+            artists: Default::default(),
             direct_error: None,
             dlna: Default::default(),
             capture: Default::default(),
@@ -728,6 +733,7 @@ impl Core {
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
             .with("audio", self.audio_json(host))
+            .with("artists", self.artists_json())
             .with("dlnaReceiver", self.dlna_json())
             .with("capture", self.capture_json(host))
             .with(
@@ -836,6 +842,12 @@ impl Core {
                 _ => None,
             }
         };
+        match req {
+            Req::Artist => return self.artist_http(host, res),
+            Req::ArtistImage => return self.artist_image_http(host, res),
+            Req::ArtistServer => return self.artist_server_http(host, res),
+            _ => {}
+        }
         if let Req::Vault(v, token) = req {
             return self.vault_http(host, v, &token, res);
         }
@@ -1045,7 +1057,12 @@ impl Core {
                 }
             }
             Req::Rescan => self.toast(self.tr("Server library rescan started"), false),
-            Req::Vault(..) | Req::WebCheck(_) | Req::Ext(_) => {}
+            Req::Vault(..)
+            | Req::WebCheck(_)
+            | Req::Ext(_)
+            | Req::Artist
+            | Req::ArtistServer
+            | Req::ArtistImage => {}
         }
     }
 
@@ -2651,6 +2668,7 @@ impl Core {
         self.update_airplay(host);
         self.update_dlna(host);
         self.update_extensions(host);
+        self.poll_artists(host);
         self.poll_outputs(host);
         self.player.update(host);
         for ev in self.player.take_events() {
