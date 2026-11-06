@@ -168,7 +168,7 @@ pub fn time_song(
 /// (`anchors`) and writes the LRC. A matched line is looked for from its
 /// time on; a line that was not matched anywhere between the matched lines
 /// around it. Each line starts with its first word.
-fn time_anchors(
+pub fn time_anchors(
     t: &Transcriber,
     samples: &[f32],
     segments: &[crate::transcribe::Segment],
@@ -201,12 +201,14 @@ fn time_anchors(
                     start: a.time,
                     end: end.min(a.time + LAST_LINE),
                     text: a.text.clone(),
+                    guess: None,
                 }
             } else {
                 Line {
                     start: prev_matched,
                     end: matched_after(i),
                     text: a.text.clone(),
+                    guess: Some(a.time),
                 }
             };
             Line {
@@ -347,6 +349,7 @@ fn time_lines(
                 start: *start,
                 end: next.min(start + LAST_LINE).max(*start + 0.2),
                 text: text.clone(),
+                guess: None,
             }
         })
         .collect();

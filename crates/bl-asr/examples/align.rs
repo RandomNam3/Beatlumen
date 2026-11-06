@@ -42,6 +42,29 @@ fn main() {
     }
     let (anchors, matched) = bl_asr::align::anchor_lines(&text, &segments);
     println!("# matched {:.0} %", matched * 100.0);
+    if let Ok(out) = std::env::var("TIME_LRC") {
+        let m = bl_asr::model::Model::load(&mut std::io::BufReader::new(
+            std::fs::File::open(&a[1]).unwrap(),
+        ))
+        .unwrap();
+        let raw = std::fs::read(&a[2]).unwrap();
+        let samples: Vec<f32> = raw[44..]
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+            .collect();
+        let song_end = samples.len() as f64 / bl_asr::mel::SAMPLE_RATE as f64;
+        let lrc = bl_asr::sync::time_anchors(
+            &Transcriber::new(&m),
+            &samples,
+            &segments,
+            &anchors,
+            "align",
+            song_end,
+            &mut |_| true,
+        )
+        .unwrap();
+        std::fs::write(out, lrc).unwrap();
+    }
     for a in anchors {
         println!(
             "{:7.2} {} {}",
