@@ -40,18 +40,30 @@ fn similarity(a: &str, b: &str) -> f32 {
     1.0 - prev[b.len()] as f32 / n as f32
 }
 
+/// A recognised word that seems to last longer than this (seconds) did
+/// not: its segment starts long before the singing, and the path through
+/// the attention stayed on the word until the next one (measured on the
+/// test songs: 4 to 8 alike).
+const STRETCHED_WORD: f64 = 6.0;
+
 /// Recognised words with their start times (estimated by position in
 /// the segment when the recognition gave none).
 fn timed_words(segments: &[Segment]) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for s in segments {
         if !s.words.is_empty() {
-            out.extend(
-                s.words
-                    .iter()
-                    .map(|w| (norm(&w.text), w.start))
-                    .filter(|(n, _)| !n.is_empty()),
-            );
+            let mut words: Vec<(String, f64)> = s
+                .words
+                .iter()
+                .map(|w| (norm(&w.text), w.start))
+                .filter(|(n, _)| !n.is_empty())
+                .collect();
+            for k in (1..words.len()).rev() {
+                if words[k].1 - words[k - 1].1 > STRETCHED_WORD {
+                    words[k - 1].1 = words[k].1 - 0.3;
+                }
+            }
+            out.extend(words);
             continue;
         }
         let words: Vec<&str> = s.text.split_whitespace().collect();
@@ -121,9 +133,23 @@ fn spread(words: &[&str], known: &[Option<f64>], start: f64, end: f64) -> Vec<f6
 /// matched as a whole: song texts repeat their lines (choruses), and
 /// without this the words of one line could be matched to scattered
 /// words of several repetitions.
-fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
+///
+/// Words of the song text are left out sooner where the recognised words
+/// (with their `times`) leave time for them: when a recognition skipped one
+/// of a chorus's repetitions, that decides which one it was (measured on
+/// the test songs: any time from 1 to 4 s and any cost below `GAP` alike).
+fn align_words(text: &[String], rec: &[String], times: &[f64]) -> Vec<(usize, usize)> {
     let (n, m) = (text.len(), rec.len());
     const GAP: f32 = -0.4;
+    const GAP_WITH_TIME: f32 = -0.2;
+    const TIME_LEFT: f64 = 2.0;
+    let skip = |j: usize| {
+        if j > 0 && j < m && times[j] - times[j - 1] >= TIME_LEFT {
+            GAP_WITH_TIME
+        } else {
+            GAP
+        }
+    };
     const MISMATCH: f32 = -1.0;
     const RUN: f32 = 0.6;
     let w = m + 1;
@@ -149,12 +175,12 @@ fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
             }
             best[at(i, j)] = run[at(i, j)]
                 .max(best[at(i - 1, j - 1)] + MISMATCH)
-                .max(best[at(i - 1, j)] + GAP)
+                .max(best[at(i - 1, j)] + skip(j))
                 .max(best[at(i, j - 1)] + GAP);
         }
     }
     // Back from the end; `in_run`: the path continues a run at (i, j).
-    let close = |a: f32, b: f32| (a - b).abs() <= 1e-3 * (1.0 + a.abs());
+    let close = |a: f32, b: f32| (a - b).abs() <= 1e-5 * (1.0 + a.abs());
     let mut pairs = Vec::new();
     let (mut i, mut j) = (n, m);
     let mut in_run = false;
@@ -175,7 +201,7 @@ fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
         } else if close(here, best[at(i - 1, j - 1)] + MISMATCH) {
             i -= 1;
             j -= 1;
-        } else if close(here, best[at(i - 1, j)] + GAP) {
+        } else if close(here, best[at(i - 1, j)] + skip(j)) {
             i -= 1;
         } else {
             j -= 1;
@@ -724,7 +750,8 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
     let rec = timed_words(segments);
     let rec_words: Vec<String> = rec.iter().map(|(w, _)| w.clone()).collect();
     let lead_words: Vec<String> = lead.iter().map(|&i| words[i].clone()).collect();
-    let pairs: Vec<(usize, usize)> = align_words(&lead_words, &rec_words)
+    let rec_times: Vec<f64> = rec.iter().map(|(_, t)| *t).collect();
+    let pairs: Vec<(usize, usize)> = align_words(&lead_words, &rec_words, &rec_times)
         .into_iter()
         .map(|(wi, ri)| (lead[wi], ri))
         .collect();
@@ -874,6 +901,71 @@ fn align(text: &str, segments: &[Segment], word_times: bool) -> (String, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skipped_repetition_is_where_time_is_left() {
+        let words = |t: f64, text: &str| {
+            let parts: Vec<&str> = text.split(' ').collect();
+            let n = parts.len() as f64;
+            Segment {
+                start: t,
+                end: t + 0.5 * n,
+                text: text.into(),
+                avg_logprob: 0.0,
+                words: parts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| Word {
+                        text: (*w).into(),
+                        start: t + 0.5 * i as f64,
+                        end: t + 0.5 * (i as f64 + 1.0),
+                        pieces: Vec::new(),
+                    })
+                    .collect(),
+            }
+        };
+        let text = "strophe am anfang hier\nrefrain singt man laut\nzwischen den beiden teilen\nrefrain singt man laut\nstrophe ganz am ende";
+        // The first refrain follows at once, the time for the rest comes later.
+        let segs = [
+            words(0.0, "strophe am anfang hier"),
+            words(2.0, "refrain singt man laut"),
+            words(20.0, "strophe ganz am ende"),
+        ];
+        let (a, _) = anchor_lines(text, &segs);
+        assert!(a[1].matched && a[1].time == 2.0, "{:?}", a[1]);
+        assert!(!a[3].matched);
+        // The time comes first: it was the second refrain that was recognised.
+        let segs = [
+            words(0.0, "strophe am anfang hier"),
+            words(18.0, "refrain singt man laut"),
+            words(20.0, "strophe ganz am ende"),
+        ];
+        let (a, _) = anchor_lines(text, &segs);
+        assert!(!a[1].matched);
+        assert!(a[3].matched && a[3].time == 18.0, "{:?}", a[3]);
+    }
+
+    #[test]
+    fn a_stretched_word_starts_shortly_before_the_next() {
+        let w = |t: f64, text: &str| Word {
+            text: text.into(),
+            start: t,
+            end: t + 0.2,
+            pieces: Vec::new(),
+        };
+        let s = Segment {
+            start: 240.0,
+            end: 259.0,
+            text: "doch die liegt".into(),
+            avg_logprob: 0.0,
+            words: vec![w(240.0, "doch"), w(240.0, "die"), w(256.0, "liegt")],
+        };
+        let t: Vec<f64> = timed_words(&[s])
+            .into_iter()
+            .map(|(_, t)| (t * 10.0).round() / 10.0)
+            .collect();
+        assert_eq!(t, [255.4, 255.7, 256.0]);
+    }
 
     #[test]
     fn spelled_title_words_are_mended_only_when_near() {

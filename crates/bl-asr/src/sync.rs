@@ -201,12 +201,14 @@ pub fn time_anchors(
                     start: a.time,
                     end: end.min(a.time + LAST_LINE),
                     text: a.text.clone(),
+                    guess: None,
                 }
             } else {
                 Line {
                     start: prev_matched,
                     end: matched_after(i),
                     text: a.text.clone(),
+                    guess: Some(a.time),
                 }
             };
             Line {
@@ -347,6 +349,7 @@ fn time_lines(
                 start: *start,
                 end: next.min(start + LAST_LINE).max(*start + 0.2),
                 text: text.clone(),
+                guess: None,
             }
         })
         .collect();

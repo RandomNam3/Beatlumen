@@ -26,6 +26,12 @@ const MIN_LOGPROB: f32 = -1.0;
 /// Above this no-speech probability (with an unsure result) a window has
 /// no singing.
 const NO_SPEECH: f32 = 0.6;
+/// A line with only a guess of its time counts as sung until this long after
+/// the guess when lines are taken together for a window (seconds; measured on
+/// the test songs: 0 to 2 alike, 4 and 8 worse). All it could span would rarely
+/// fit a window, and alone in a window a line sits at the window's start.
+const GUESS_MARGIN: f64 = 2.0;
+
 /// A window's first line may start this long before its known time
 /// (seconds; measured on the test songs: 0.1 to 0.15 alike, 0.3 clearly
 /// worse).
@@ -113,6 +119,8 @@ pub struct Line {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// Where a line that can be anywhere from `start` to `end` is most likely.
+    pub guess: Option<f64>,
 }
 
 pub struct Options<'a> {
@@ -446,9 +454,9 @@ impl<'a> Transcriber<'a> {
             let mut n_tok = tokens[todo[k]].len().min(max_tokens);
             while k + group.len() < todo.len() {
                 let next = todo[k + group.len()];
-                if lines[next].end - begin > window_secs - 0.5
-                    || n_tok + tokens[next].len() > max_tokens
-                {
+                let l = &lines[next];
+                let ends = l.guess.map_or(l.end, |g| (g + GUESS_MARGIN).min(l.end));
+                if ends - begin > window_secs - 0.5 || n_tok + tokens[next].len() > max_tokens {
                     break;
                 }
                 n_tok += tokens[next].len();
@@ -972,6 +980,7 @@ mod tests {
     #[test]
     fn word_span_stays_in_order() {
         let line = |start, end| Line {
+            guess: None,
             start,
             end,
             text: String::new(),
