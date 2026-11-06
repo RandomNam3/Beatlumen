@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 (beta)
+
+A start page with recommendations and statistics, an equalizer and bit-perfect
+playback, artist pages and smart playlists, and a more compact interface.
 
 ### Sound
 
