@@ -120,7 +120,7 @@ Popup {
                         Layout.rightMargin: 16
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
-                        text: Theme.tr("Beatlumen plays your music and lets pictures and light move with it. A few questions, all of them can be skipped.")
+                        text: Theme.tr("A few questions; all can be skipped.")
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -132,7 +132,7 @@ Popup {
                             text: Theme.tr("Language")
                             color: Theme.text
                         }
-                        ComboBox {
+                        Dropdown {
                             readonly property var codes: ["", "de", "en"]
                             model: [Theme.tr("System"), "Deutsch", "English"]
                             currentIndex: Math.max(0, codes.indexOf(wizard.settings.language || ""))
@@ -149,12 +149,12 @@ Popup {
                         wrapMode: Text.WordWrap
                         color: Theme.text
                         font.weight: Font.DemiBold
-                        text: Theme.tr("The visuals flash and change colour with the music. If that is a problem for you (epilepsy, migraine), turn this on now:")
+                        text: Theme.tr("The visuals can flash with the music. If that is a problem for you, turn this on:")
                     }
                     SwitchRow {
                         Layout.fillWidth: true
                         title: Theme.tr("Epilepsy mode")
-                        detail: Theme.tr("Prevents flashes and fast colour changes as far as possible: brightness changes slowly, flash effects and hard cuts are off. This lowers the risk but cannot rule it out.")
+                        detail: Theme.tr("Fewer flashes and colour changes. Lowers the risk, cannot rule it out.")
                         on: wizard.settings.photosensitive === true
                         onSwitched: (v) => Core.call("settings.set", { key: "photosensitive", value: v })
                     }
@@ -242,7 +242,7 @@ Popup {
                     Choice {
                         iconName: "cloud"
                         text: Theme.tr("A Beatlumen server")
-                        detail: Theme.tr("Your library at home, analysed for the visuals, with accounts and encrypted files.")
+                        detail: Theme.tr("Your library at home, with accounts and encrypted files.")
                         onClicked: serverRow.visible = !serverRow.visible
                     }
                     RowLayout {
@@ -251,7 +251,7 @@ Popup {
                         Layout.fillWidth: true
                         Layout.leftMargin: 16
                         Layout.rightMargin: 16
-                        TextField {
+                        InputField {
                             id: serverField
                             Layout.fillWidth: true
                             placeholderText: "http://192.168.1.10:7878"
@@ -290,7 +290,7 @@ Popup {
                     Choice {
                         iconName: "speaker"
                         text: Theme.tr("Use this device as a speaker")
-                        detail: Theme.tr("iPhones, Macs, Windows and DLNA apps play here (AirPlay, DLNA) with visuals.")
+                        detail: Theme.tr("iPhones, Macs and DLNA apps play here.")
                         onClicked: { wizard.close(); wizard.openSettings("receive") }
                     }
                 }
@@ -307,12 +307,13 @@ Popup {
                         Layout.rightMargin: 16
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
-                        text: Theme.tr("Your favorites and playlists give the server something to go by already. It suggests better if it also knows what you listen to.")
+                        text: Theme.tr("The server suggests better if it knows what you listen to.")
                     }
                     SwitchRow {
                         Layout.fillWidth: true
                         title: Theme.tr("Also keep it on the server")
-                        detail: Theme.tr("What you play on this device also goes to your server, for recommendations and statistics across your devices. The server's admin could read it. Only the server's songs, and only from now on: local and encrypted files never leave this device.")
+                        detail: Theme.tr("Also for recommendations across devices. The server's admin could read it.")
+                        info: Theme.tr("Only the server's songs, and only from now on: local and encrypted files never leave this device.")
                         on: wizard.settings.historySync === true
                         onSwitched: (v) => Core.call("settings.set", { key: "historySync", value: v })
                     }
@@ -330,12 +331,13 @@ Popup {
                         Layout.rightMargin: 16
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
-                        text: Theme.tr("Artist pages with a biography, picture and members, and better recommendations, come from public music databases. Everything works without them too.")
+                        text: Theme.tr("For artist pages and better recommendations. Everything else works without it.")
                     }
                     SwitchRow {
                         Layout.fillWidth: true
                         title: Theme.tr("Look artists up on the internet")
-                        detail: Theme.tr("The names of the artists in your library and your IP address go to MusicBrainz, Wikimedia and ListenBrainz, nothing else. Off, none of them is asked. You can change this at any time in the settings.")
+                        detail: Theme.tr("Artist names and your IP address go to MusicBrainz, Wikimedia and ListenBrainz.")
+                        info: Theme.tr("For artist pages and better recommendations. Nothing else goes out. Off, none of them is asked and nothing found earlier is shown.")
                         on: wizard.settings.onlineMetadata === true
                         onSwitched: (v) => Core.call("settings.set", { key: "onlineMetadata", value: v })
                     }
@@ -353,7 +355,7 @@ Popup {
                         Layout.rightMargin: 16
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
-                        text: Theme.tr("Would you like a short tour of where everything is? It takes half a minute. You can start it again from More → Help.")
+                        text: Theme.tr("A half-minute tour of where everything is?")
                     }
                     AccentButton {
                         Layout.leftMargin: 16

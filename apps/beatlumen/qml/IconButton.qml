@@ -2,13 +2,13 @@ import QtQuick
 import QtQuick.Controls.Material
 import Beatlumen.Core
 
-// Round, touch sized icon button with tooltip.
+// Round icon button with tooltip.
 ToolButton {
     id: control
     property string iconName
     property string tip
     property color iconColor: Theme.text
-    property int iconSize: 24
+    property int iconSize: Theme.fingers ? 24 : 20
     property bool active: false
 
     implicitWidth: Theme.touch

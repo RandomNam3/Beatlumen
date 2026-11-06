@@ -470,11 +470,11 @@ ApplicationWindow {
         win.poke()
         const bar = win.compact ? nav : rail
         tourPopup.start([
-            { item: bar.button(0), title: Theme.tr("Home"), text: Theme.tr("What you last played, what is new, your favorites and suggestions for you.") },
+            { item: bar.button(0), title: Theme.tr("Home"), text: Theme.tr("What you last played, what is new, and suggestions.") },
             { item: bar.button(1), title: Theme.tr("Search"), text: Theme.tr("Find songs, albums and artists, or browse by genre and mood.") },
             { item: bar.button(2), title: Theme.tr("Library"), text: Theme.tr("All your music: songs, albums, artists, folders, playlists and labels.") },
             { item: bar.button(3), title: Theme.tr("Visuals"), text: Theme.tr("Styles, animations and backgrounds. The epilepsy mode is here too.") },
-            { item: playerBar, title: Theme.tr("Player"), text: Theme.tr("The heart marks a favorite. The cover takes you to the visual. On the right: where it plays, the volume and the queue.") },
+            { item: playerBar, title: Theme.tr("Player"), text: Theme.tr("Heart: favorite. Cover: the visual. Right: output, volume, queue.") },
             { item: bar.button(4), title: Theme.tr("More"), text: Theme.tr("Statistics, devices, settings and help. You can start this tour again under Help.") }
         ])
     }

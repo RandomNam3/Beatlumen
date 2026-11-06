@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 (beta)
+
+A start page with recommendations and statistics, an equalizer and bit-perfect
+playback, artist pages and smart playlists, and a more compact interface.
 
 ### Sound
 
@@ -61,6 +64,16 @@
   be written in any case (`.LRC`).
 - **A warning when a text does not fit:** when its lines go on well after the song
   ends, or it says it was timed for another length.
+- **Plain texts are timed closer:** a line whose first words the model did
+  not recognise no longer starts at its first recognised word, up to two
+  seconds late; it starts about where its first word is sung (on the test
+  songs about 85 % of the lines within half a second instead of 79 %, with
+  and without a GPU). Lines also no longer start up to a third of a second
+  too early when the timing picks up after a longer stretch.
+- **Skipped choruses:** when the model leaves out a repeat of a chorus, its
+  lines are placed where the recognition leaves time for them, and lines
+  that were not heard spread over a long gap instead of bunching up at its
+  start.
 
 ### Song metadata
 
@@ -113,6 +126,16 @@
   With the agreement to keep the history on the server also across all devices
   (`GET /api/stats`).
 
+### Sizes and texts
+
+- **Compact with a mouse:** on a computer, rows, buttons, dropdowns, text fields, the
+  player bar, the navigation and the space between them are smaller. Dropdowns are as
+  wide as their longest entry. Phones and the web app keep the sizes for fingers.
+- **Shorter texts in the menus:** settings, setup and signal path say what matters in a
+  line. Where more needs saying, for example what goes out to online services, it is
+  behind a small info button.
+- **Wide windows:** settings and visuals options no longer stretch across the window.
+
 ### Navigation
 
 - **Slimmer menu:** Home, Search, Library and Visuals; statistics, devices,
@@ -162,6 +185,13 @@
 - **Reduce motion** also ends sliding and fading in all pages.
 - **Small windows:** phones held sideways get the small player instead of big
   controls that covered the title; the window can be made lower.
+
+### Apps
+
+- **Windows now uses Qt 6.11.3** (before: 6.10.3), like Linux, Android and
+  the web client. Qt's security issue CVE-2026-114366 is in the Qt WebSockets
+  module, which Beatlumen neither uses nor ships, so the apps were not
+  affected.
 
 ## 0.11.1 (beta)
 

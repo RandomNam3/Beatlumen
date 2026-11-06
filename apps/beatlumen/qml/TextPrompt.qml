@@ -20,7 +20,7 @@ AppDialog {
     ColumnLayout {
         anchors.fill: parent
         spacing: 12
-        TextField {
+        InputField {
             id: field
             Accessible.name: dlg.placeholder || dlg.title
             Layout.fillWidth: true

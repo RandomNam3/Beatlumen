@@ -60,15 +60,15 @@ Item {
         visible: page.wide
         anchors.left: parent.left
         anchors.top: parent.top
-        anchors.topMargin: 56
-        width: 200
+        anchors.topMargin: 48
+        width: 168
         spacing: 2
         Repeater {
             model: page.categories
             ItemDelegate {
                 required property var modelData
                 width: categoryColumn.width
-                height: 44
+                height: Theme.fingers ? 44 : 36
                 highlighted: settingsSearch.text === "" && page.category === modelData.id
                 Accessible.role: Accessible.Button
                 Accessible.name: modelData.label
@@ -102,12 +102,12 @@ Item {
         contentWidth: availableWidth
         ColumnLayout {
             id: sectionsColumn
-            width: sv.availableWidth
+            width: Math.min(sv.availableWidth, 720)
             spacing: 8
             PageHeader { Layout.fillWidth: true; title: Theme.tr("Settings") }
 
             // Search and categories.
-            TextField {
+            InputField {
                 Accessible.name: placeholderText
                 id: settingsSearch
                 Layout.fillWidth: true
@@ -153,7 +153,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: 6
                 visible: page.shows("look", ["Accessibility", "Epilepsy mode", "Reduce motion", "High contrast", "Keep the controls visible", "Size of everything"])
                 SectionLabel { text: Theme.tr("Accessibility") }
                 AccessOptions { Layout.fillWidth: true }
@@ -163,7 +163,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 12
                 visible: page.shows("look", ["Accent colour", "Appearance", "Dark", "Language", "Light", "System", "Theme"])
                 SectionLabel { text: Theme.tr("Appearance") }
                 ColumnLayout {
@@ -200,12 +200,12 @@ Item {
                         Repeater {
                             model: ["", "#e91e63", "#ff5722", "#ff9800", "#ffc107", "#8bc34a", "#00bfa5", "#00b0ff", "#3d5afe", "#7c4dff", "#d500f9"]
                             delegate: AbstractButton {
-                                width: 40; height: 40
+                                width: Theme.fingers ? 40 : 28; height: width
                                 readonly property string tip: modelData === "" ? "accent:system" : modelData
                                 Accessible.name: modelData === "" ? Theme.tr("System") : modelData
                                 onClicked: Core.call("settings.set", { key: "ui.accent", value: modelData })
                                 background: Rectangle {
-                                    radius: 20
+                                    radius: width / 2
                                     color: modelData === "" ? Core.systemAccent : modelData
                                     border.width: (page.ui.accent || "") === modelData ? 3 : 0
                                     border.color: Theme.text
@@ -215,7 +215,7 @@ Item {
                                         visible: modelData === "" || selected
                                         name: modelData === "" ? "hdr_auto" : "check"
                                         color: Theme.onColor(parent.color)
-                                        size: 20
+                                        size: Theme.fingers ? 20 : 16
                                     }
                                 }
                             }
@@ -226,7 +226,7 @@ Item {
                     Layout.leftMargin: 16
                     spacing: 8
                     Label { textFormat: Text.PlainText; text: Theme.tr("Language"); color: Theme.text; Layout.preferredWidth: 120 }
-                    ComboBox {
+                    Dropdown {
                         Accessible.name: Theme.tr("Language")
                         model: [{ v: "de", l: "Deutsch" }, { v: "en", l: "English" }]
                         textRole: "l"
@@ -240,13 +240,13 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("playback", ["Crossfade", "Moves on to the next song as soon as the current one has ended, without silent gaps.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness. Each song is measured once when it is first played.", "Skip silence", "The next song fades in while the current one fades out."])
+                spacing: 6
+                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence"])
                 SectionLabel { text: Theme.tr("Playback") }
                 SwitchRow {
                     Layout.fillWidth: true
                     title: Theme.tr("Normalize volume")
-                    detail: Theme.tr("Plays all songs at a similar loudness. Each song is measured once when it is first played.")
+                    detail: Theme.tr("Plays all songs at a similar loudness.")
                     on: page.settings.normalize === true
                     onSwitched: (on) => Core.call("settings.set", { key: "normalize", value: on })
                 }
@@ -257,7 +257,7 @@ Item {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Crossfade"); color: Theme.text; font.pixelSize: 15 }
+                        Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Crossfade"); color: Theme.text; font.pixelSize: 14 }
                         Label {
                             textFormat: Text.PlainText
                             text: crossfadeSlider.value < 0.5 ? Theme.tr("Off") : Math.round(crossfadeSlider.value) + " s"
@@ -272,19 +272,11 @@ Item {
                         onMoved: Core.call("settings.set", { key: "crossfade", value: value })
                         Accessible.name: Theme.tr("Crossfade")
                     }
-                    Label {
-                        textFormat: Text.PlainText
-                        Layout.fillWidth: true
-                        text: Theme.tr("The next song fades in while the current one fades out.")
-                        color: Theme.textDim
-                        font.pixelSize: 13
-                        wrapMode: Text.WordWrap
-                    }
                 }
                 SwitchRow {
                     Layout.fillWidth: true
                     title: Theme.tr("Skip silence")
-                    detail: Theme.tr("Moves on to the next song as soon as the current one has ended, without silent gaps.")
+                    detail: Theme.tr("No silent gaps between songs.")
                     on: page.settings.skipSilence !== false
                     onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
                 }
@@ -293,8 +285,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("playback", ["Equalizer", "Raises or lowers the bass, mids and treble. Applies at once, also on speakers in the network.", "More bass", "More treble", "Voices", "Bit-perfect playback", "Signal path", "Sound card"])
+                spacing: 6
+                visible: page.shows("playback", ["Equalizer", "Bass, mids and treble.", "More bass", "More treble", "Voices", "Bit-perfect playback", "Signal path", "Sound card"])
                 SectionLabel { text: Theme.tr("Sound") }
                 DirectOutputPanel { Layout.fillWidth: true }
                 EqualizerPanel { Layout.fillWidth: true }
@@ -303,7 +295,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.shows("library", ["Add music folder", "Allow access to music", "Music folders", "Remove", "Rescan"])
                 SectionLabel { text: Theme.tr("Music folders"); visible: Core.platform !== "web" }
                 Repeater {
@@ -338,13 +330,14 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.shows("library", ["Artist information", "Look artists up on the internet", "Forget what was found"])
                 SectionLabel { text: Theme.tr("Artist information") }
                 SwitchRow {
                     Layout.fillWidth: true
                     title: Theme.tr("Look artists up on the internet")
-                    detail: Theme.tr("For artist pages and better recommendations. The names of the artists in your library and your IP address go to MusicBrainz, Wikimedia and ListenBrainz, nothing else. Off, none of them is asked and nothing found earlier is shown.")
+                    detail: Theme.tr("Artist names and your IP address go to MusicBrainz, Wikimedia and ListenBrainz.")
+                    info: Theme.tr("For artist pages and better recommendations. Nothing else goes out. Off, none of them is asked and nothing found earlier is shown.")
                     on: page.settings.onlineMetadata === true
                     onSwitched: (on) => Core.call("settings.set", { key: "onlineMetadata", value: on })
                 }
@@ -354,9 +347,9 @@ Item {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     visible: page.server === "connected"
-                    text: Theme.tr("A server has its own switch for its library, in its admin area.")
+                    text: Theme.tr("A server has its own switch in its admin area.")
                     color: Theme.textDim
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                     wrapMode: Text.WordWrap
                 }
                 RowLayout {
@@ -370,7 +363,7 @@ Item {
                         readonly property var artists: Core.state.artists || ({})
                         text: Theme.tr("%1 artists known, %2 still to ask").arg(artists.known || 0).arg(artists.waiting || 0)
                         color: Theme.textDim
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         wrapMode: Text.WordWrap
                     }
                     Button {
@@ -384,8 +377,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("library", ["Add music source", "Listing songs…", "Music sources", "Off", "Play the music of a Subsonic, Navidrome or Jellyfin server, a WebDAV or Nextcloud folder or a DLNA media server directly on this device.", "Remove", "Sync now", "Trust key"])
+                spacing: 6
+                visible: page.shows("library", ["Add music source", "Listing songs…", "Music sources", "Off", "Subsonic, Navidrome, Jellyfin, WebDAV, Nextcloud or DLNA, directly on this device.", "Remove", "Sync now", "Trust key"])
                 SectionLabel { text: Theme.tr("Music sources"); visible: page.sources.available === true }
                 Label {
                     visible: page.sources.available === true && (page.sources.list || []).length === 0
@@ -395,8 +388,8 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.Wrap
                     color: Theme.textDim
-                    font.pixelSize: 13
-                    text: Theme.tr("Play the music of a Subsonic, Navidrome or Jellyfin server, a WebDAV or Nextcloud folder or a DLNA media server directly on this device.")
+                    font.pixelSize: 12
+                    text: Theme.tr("Subsonic, Navidrome, Jellyfin, WebDAV, Nextcloud or DLNA, directly on this device.")
                 }
                 Repeater {
                     model: page.sources.available === true ? (page.sources.list || []) : []
@@ -450,8 +443,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("texts", ["Delete", "Download", "In use", "Recognise and time song texts", "Turn off", "Use", "Time all songs on this device", "songs left", "A speech model times song texts word by word and writes down the singing of songs without a text. A server with a model does this for its songs itself."])
+                spacing: 6
+                visible: page.shows("texts", ["Delete", "Download", "In use", "Recognise and time song texts", "Turn off", "Use", "Time all songs on this device", "songs left", "A speech model times song texts and writes down songs without one."])
                 SectionLabel { text: Theme.tr("Recognise and time song texts"); visible: page.speechLocal.available === true }
                 Label {
                     visible: page.speechLocal.available === true
@@ -461,8 +454,8 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.Wrap
                     color: Theme.textDim
-                    font.pixelSize: 13
-                    text: Theme.tr("A speech model times song texts word by word and writes down the singing of songs without a text. A server with a model does this for its songs itself.")
+                    font.pixelSize: 12
+                    text: Theme.tr("A speech model times song texts and writes down songs without one.")
                 }
                 Repeater {
                     id: speechModels
@@ -540,7 +533,7 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.Wrap
                     color: Theme.textDim
-                    font.pixelSize: 13
+                    font.pixelSize: 12
                     text: Theme.tr("Computed on the graphics card: %1").arg(page.speechLocal.gpu || "")
                 }
                 // All songs of this device, one after the other.
@@ -552,8 +545,8 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.Wrap
                     color: Theme.textDim
-                    font.pixelSize: 13
-                    text: Theme.tr("Songs with a text get word times, the others get the sung words written down. Done songs are skipped unless the speech model is better.")
+                    font.pixelSize: 12
+                    text: Theme.tr("Songs already done are skipped unless the model is better.")
                 }
                 RowLayout {
                     visible: page.speechLocal.ready === true
@@ -594,13 +587,13 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.", "Translation", "Delete"])
+                spacing: 6
+                visible: page.speechLocal.available === true && page.shows("texts", ["Translate song texts", "Shows each line in this app's language too (about 300 MB once, stays on this device).", "Translation", "Delete"])
                 SectionLabel { text: Theme.tr("Translation") }
                 SwitchRow {
                     Layout.fillWidth: true
                     title: Theme.tr("Translate song texts")
-                    detail: Theme.tr("Shows each line of a song text in this app's language as well. The translation model for the song's language (about 300 MB) is downloaded when first needed; translations are kept on this device.")
+                    detail: Theme.tr("Shows each line in this app's language too (about 300 MB once, stays on this device).")
                     on: page.settings.translate === true
                     onSwitched: (on) => Core.call("translate.set", { on: on })
                 }
@@ -661,8 +654,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("server", ["Check", "Checking the web app…", "Connect", "Connected to", "Connecting…", "Connection failed", "Disconnect", "Log in", "Log out", "Login required", "Not connected", "Only connections to this server are made. Outside your home network, use an https:// address or a VPN.", "Server", "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:", "Trust this certificate", "Warning: the web app on the server was modified.", "Warning: this address is outside your home network and the connection is not encrypted. Use https:// or a VPN.", "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)", "Web app on the server: not checked yet", "Web app on the server: unchanged official release"])
+                spacing: 6
+                visible: page.shows("server", ["Check", "Checking the web app…", "Connect", "Connected to", "Connecting…", "Connection failed", "Disconnect", "Log in", "Log out", "Login required", "Not connected", "Outside your home network, use https:// or a VPN.", "Server", "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:", "Trust this certificate", "Warning: the web app on the server was modified.", "Warning: this address is outside your home network and the connection is not encrypted. Use https:// or a VPN.", "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)", "Web app on the server: not checked yet", "Web app on the server: unchanged official release"])
                 SectionLabel { text: Theme.tr("Server") }
                 Label {
                     textFormat: Text.PlainText
@@ -682,7 +675,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
-                    TextField {
+                    InputField {
                         Accessible.name: placeholderText
                         id: url
                         Layout.fillWidth: true
@@ -780,7 +773,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
-                    text: Theme.tr("Only connections to this server are made. Outside your home network, use an https:// address or a VPN.")
+                    text: Theme.tr("Outside your home network, use https:// or a VPN.")
                     wrapMode: Text.WordWrap
                     color: Theme.textFaint
                     font.pixelSize: 12
@@ -790,8 +783,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("server", ["Allow remote control", "Device name", "Name", "This device", "Your other devices on this server may control the playback here and move music to this device."])
+                spacing: 6
+                visible: page.shows("server", ["Allow remote control", "Device name", "Name", "This device", "Your other devices may control playback here."])
                 SectionLabel { text: Theme.tr("This device"); visible: page.server === "connected" }
                 RowLayout {
                     visible: page.server === "connected"
@@ -799,7 +792,7 @@ Item {
                     Layout.rightMargin: 16
                     spacing: 8
                     Label { textFormat: Text.PlainText; text: Theme.tr("Name"); color: Theme.text; Layout.preferredWidth: 120 }
-                    TextField {
+                    InputField {
                         id: deviceName
                         Layout.fillWidth: true
                         placeholderText: Core.state.deviceName || ""
@@ -813,7 +806,7 @@ Item {
                     visible: page.server === "connected"
                     Layout.fillWidth: true
                     title: Theme.tr("Allow remote control")
-                    detail: Theme.tr("Your other devices on this server may control the playback here and move music to this device.")
+                    detail: Theme.tr("Your other devices may control playback here.")
                     on: page.settings.remoteControl !== false
                     onSwitched: (on) => Core.call("settings.set", { key: "remoteControl", value: on })
                 }
@@ -822,9 +815,9 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.server === "connected" && Core.platform !== "web"
-                         && page.shows("server", ["Streaming quality", "Original", "On Wi-Fi", "On mobile data", "Smaller streams save data: the server converts songs to Opus while sending them. Offline copies stay originals.", "Now on mobile data"])
+                         && page.shows("server", ["Streaming quality", "Original", "On Wi-Fi", "On mobile data", "Smaller streams save data. Offline copies stay originals.", "Now on mobile data"])
                 SectionLabel { text: Theme.tr("Streaming quality") }
                 Label {
                     textFormat: Text.PlainText
@@ -833,7 +826,7 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.WordWrap
                     color: Theme.textDim
-                    text: Theme.tr("Smaller streams save data: the server converts songs to Opus while sending them. Offline copies stay originals.")
+                    text: Theme.tr("Smaller streams save data. Offline copies stay originals.")
                           + (Core.state.metered ? " " + Theme.tr("Now on mobile data") + "." : "")
                 }
                 Repeater {
@@ -847,9 +840,8 @@ Item {
                         Layout.leftMargin: 16
                         Layout.rightMargin: 16
                         Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: modelData.label; color: Theme.text }
-                        ComboBox {
+                        Dropdown {
                             readonly property var rates: [0, 256, 160, 128, 96, 64, 48]
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             model: rates.map(r => r === 0 ? Theme.tr("Original") : r + " kbit/s")
                             currentIndex: Math.max(0, rates.indexOf(page.settings[modelData.key] || 0))
                             onActivated: (i) => Core.call("settings.set", { key: modelData.key, value: rates[i] })
@@ -862,8 +854,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("server", ["Account", "Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).", "Encrypted files", "Unlock or create account", "Unlocked as", "With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them."])
+                spacing: 6
+                visible: page.shows("server", ["Account", "Appearance and playback options follow your account (end-to-end encrypted).", "Encrypted files", "Unlock or create account", "Unlocked as", "Store and share end-to-end encrypted files; the server cannot read them."])
                 SectionLabel { text: Theme.tr("Account"); visible: page.server === "connected" || page.server === "login" }
                 ColumnLayout {
                     readonly property var v: Core.state.vault || ({})
@@ -878,7 +870,7 @@ Item {
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
                         text: parent.v.state === "ready" ? Theme.tr("Unlocked as") + " " + parent.v.user
-                            : Theme.tr("With an account, you store end-to-end encrypted files on the server and share them; the server cannot read them.")
+                            : Theme.tr("Store and share end-to-end encrypted files; the server cannot read them.")
                     }
                     Label {
                         textFormat: Text.PlainText
@@ -887,7 +879,7 @@ Item {
                         wrapMode: Text.WordWrap
                         color: Theme.textFaint
                         font.pixelSize: 12
-                        text: Theme.tr("Appearance, styles and playback options follow your account to your other devices (end-to-end encrypted).")
+                        text: Theme.tr("Appearance and playback options follow your account (end-to-end encrypted).")
                     }
                     Button {
                         text: parent.v.state === "ready" ? Theme.tr("Encrypted files") : Theme.tr("Unlock or create account")
@@ -900,7 +892,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.shows("server", ["Ask", "Library on the server", "My encrypted files", "Save in", "Songs from"])
                 SectionLabel {
                     text: Theme.tr("Songs from") + " " + ((((Core.state.extensions || {}).list || [])[0] || {}).name || "")
@@ -912,7 +904,7 @@ Item {
                     Layout.rightMargin: 16
                     spacing: 8
                     Label { textFormat: Text.PlainText; text: Theme.tr("Save in"); color: Theme.text; Layout.preferredWidth: 120 }
-                    ComboBox {
+                    Dropdown {
                         Accessible.name: Theme.tr("Save in")
                         Layout.fillWidth: true
                         readonly property var choices: ["", "library", "vault"]
@@ -926,14 +918,14 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("receive", ["AirPlay is not available", "DLNA has no password.", "Forget", "New devices are asked for before they play here.", "Only reachable in the local network. Without a password anyone in this network can play music on this device.", "Password (optional)", "Password set (enter a new one to change it)", "Ready, visible as", "Receive AirPlay", "Receive DLNA / UPnP", "Receiving from", "Remove password", "Set password", "Speaker for other devices", "Speaker name", "Starting…", "This device appears as a speaker on iPhone, iPad and Mac; what they play is shown with visuals here.", "Windows (\"Play to\"), TVs and apps like BubbleUPnP can send music to this device.", "not available", "playing what a device sent"])
+                spacing: 6
+                visible: page.shows("receive", ["AirPlay is not available", "DLNA has no password.", "Forget", "New devices are asked for before they play here.", "Without a password, anyone in your network can play here.", "Password (optional)", "Password set (enter a new one to change it)", "Ready, visible as", "Receive AirPlay", "Receive DLNA / UPnP", "Receiving from", "Remove password", "Set password", "Speaker for other devices", "Speaker name", "Starting…", "This device appears as a speaker on iPhone, iPad and Mac.", "Windows, TVs and apps like BubbleUPnP can send music here.", "not available", "playing what a device sent"])
                 SectionLabel { text: Theme.tr("Speaker for other devices"); visible: Core.platform !== "web" }
                 SwitchRow {
                     visible: Core.platform !== "web"
                     Layout.fillWidth: true
                     title: Theme.tr("Receive AirPlay")
-                    detail: Theme.tr("This device appears as a speaker on iPhone, iPad and Mac; what they play is shown with visuals here.")
+                    detail: Theme.tr("This device appears as a speaker on iPhone, iPad and Mac.")
                     on: page.settings.airplay === true
                     onSwitched: (on) => Core.call("settings.set", { key: "airplay", value: on })
                 }
@@ -941,7 +933,7 @@ Item {
                     visible: Core.platform !== "web" && Core.platform !== "android" && page.settings.airplay === true
                     Layout.fillWidth: true
                     title: Theme.tr("AirPlay 2 (experimental)")
-                    detail: Theme.tr("Also offers AirPlay 2 to newer iPhones and Macs. If they cannot connect, turn it off: AirPlay 1 keeps working.")
+                    detail: Theme.tr("For newer iPhones and Macs. If they cannot connect, turn it off.")
                     on: page.settings.airplay2 === true
                     onSwitched: (on) => Core.call("settings.set", { key: "airplay2", value: on })
                 }
@@ -949,7 +941,7 @@ Item {
                     visible: Core.platform !== "web"
                     Layout.fillWidth: true
                     title: Theme.tr("Receive DLNA / UPnP")
-                    detail: Theme.tr("Windows (\"Play to\"), TVs and apps like BubbleUPnP can send music to this device.")
+                    detail: Theme.tr("Windows, TVs and apps like BubbleUPnP can send music here.")
                     on: page.settings.dlnaReceiver === true
                     onSwitched: (on) => Core.call("settings.set", { key: "dlnaReceiver", value: on })
                 }
@@ -982,7 +974,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: Theme.textDim
-                            font.pixelSize: 13
+                            font.pixelSize: 12
                             text: (parent.parent.dl.allowed || []).length > 0
                                   ? Theme.tr("Allowed devices: %1").arg(parent.parent.dl.allowed.join(", "))
                                   : Theme.tr("New devices are asked for before they play here.")
@@ -1005,7 +997,7 @@ Item {
                         color: parent.ap.error ? Theme.danger : Theme.textDim
                         wrapMode: Text.WordWrap
                     }
-                    TextField {
+                    InputField {
                         Accessible.name: placeholderText
                         id: airplayName
                         Layout.fillWidth: true
@@ -1014,7 +1006,7 @@ Item {
                         maximumLength: 48
                         onEditingFinished: if (text !== (page.settings.airplayName || "")) Core.call("settings.set", { key: "airplayName", value: text })
                     }
-                    TextField {
+                    InputField {
                         Accessible.name: placeholderText
                         id: airplayPassword
                         visible: parent.airplayOn
@@ -1044,10 +1036,10 @@ Item {
                     Label {
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
-                        text: Theme.tr("Only reachable in the local network. Without a password anyone in this network can play music on this device.")
+                        text: Theme.tr("Without a password, anyone in your network can play here.")
                               + (parent.dlnaOn ? " " + Theme.tr("DLNA has no password.") : "")
                         color: Theme.textFaint
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -1056,7 +1048,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: 6
                 visible: page.shows("library", ["Listening history", "Also keep it on the server", "Delete listening history"])
                 SectionLabel { text: Theme.tr("Listening history") }
                 Label {
@@ -1066,13 +1058,14 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.WordWrap
                     color: Theme.textDim
-                    text: Theme.tr("Beatlumen remembers on this device what you played, for the start page and the statistics.")
+                    text: Theme.tr("Kept on this device for the start page and statistics.")
                 }
                 SwitchRow {
                     Layout.fillWidth: true
                     visible: page.server === "connected"
                     title: Theme.tr("Also keep it on the server")
-                    detail: Theme.tr("What you play on this device also goes to your server, for recommendations and statistics across your devices. The server's admin could read it. Only the server's songs, and only from now on: local and encrypted files never leave this device.")
+                    detail: Theme.tr("Also for recommendations across devices. The server's admin could read it.")
+                    info: Theme.tr("Only the server's songs, and only from now on: local and encrypted files never leave this device.")
                     on: page.settings.historySync === true
                     onSwitched: (v) => Core.call("settings.set", { key: "historySync", value: v })
                 }
@@ -1109,8 +1102,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("library", ["No limit", "Offline", "Remove all offline copies", "Remove offline copy", "Saving", "Songs kept on this device play without a connection to the server, with their song text and visuals.", "Storage limit", "Unknown Album", "of", "songs"])
+                spacing: 6
+                visible: page.shows("library", ["No limit", "Offline", "Remove all offline copies", "Remove offline copy", "Saving", "Songs kept here play without a connection.", "Storage limit", "Unknown Album", "of", "songs"])
                 SectionLabel { text: Theme.tr("Offline"); visible: offlineBox.visible }
                 ColumnLayout {
                     id: offlineBox
@@ -1125,7 +1118,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: Theme.textDim
-                        text: Theme.tr("Songs kept on this device play without a connection to the server, with their song text and visuals.")
+                        text: Theme.tr("Songs kept here play without a connection.")
                     }
                     Label {
                         textFormat: Text.PlainText
@@ -1141,7 +1134,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Storage limit"); color: Theme.text }
-                        ComboBox {
+                        Dropdown {
                             Accessible.name: Theme.tr("Storage limit")
                             readonly property var sizes: [0, 1024, 2048, 5120, 10240, 20480, 51200]
                             model: sizes.map(s => s === 0 ? Theme.tr("No limit") : (s / 1024) + " GB")
@@ -1197,8 +1190,8 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
-                visible: page.shows("receive", ["Allow control of other apps", "For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.", "Other apps", "Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.", "Shows visuals for what the computer plays (Spotify, the browser, any player) and controls the playing app from here. Only the sound is used.", "Stop", "Visualize other apps", "Visualizing and controlling", "Visualizing other apps; controlling them needs notification access", "Visualizing other apps; no playing app found to control", "not available"])
+                spacing: 6
+                visible: page.shows("receive", ["Allow control of other apps", "For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.", "Other apps", "Visuals for music in other apps. Only the sound is used.", "Visuals for what the computer plays. Only the sound is used.", "Stop", "Visualize other apps", "Visualizing and controlling", "Visualizing other apps; controlling them needs notification access", "Visualizing other apps; no playing app found to control", "not available"])
                 SectionLabel { text: Theme.tr("Other apps"); visible: (Core.state.capture || {}).available === true }
                 ColumnLayout {
                     readonly property var cap: Core.state.capture || ({})
@@ -1207,14 +1200,22 @@ Item {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     spacing: 8
-                    Label {
-                        textFormat: Text.PlainText
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: Core.platform === "android"
-                              ? Theme.tr("Shows visuals for music that other apps play (Spotify, YouTube, radio apps, …) and controls them from here. Android asks for permission to record the screen each time; only the sound is used. Some apps do not allow recording, then only their title and controls are shown.")
-                              : Theme.tr("Shows visuals for what the computer plays (Spotify, the browser, any player) and controls the playing app from here. Only the sound is used.")
-                        color: Theme.textDim
-                        wrapMode: Text.WordWrap
+                        spacing: 4
+                        Label {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            text: Core.platform === "android"
+                                  ? Theme.tr("Visuals for music in other apps. Only the sound is used.")
+                                  : Theme.tr("Visuals for what the computer plays. Only the sound is used.")
+                            color: Theme.textDim
+                            wrapMode: Text.WordWrap
+                        }
+                        InfoButton {
+                            visible: Core.platform === "android"
+                            info: Theme.tr("Android asks for permission to record the screen each time. Some apps do not allow recording: then only their title and controls are shown.")
+                        }
                     }
                     Label {
                         textFormat: Text.PlainText
@@ -1250,7 +1251,7 @@ Item {
                         visible: Core.platform === "android" && parent.cap.access !== true
                         text: Theme.tr("For titles, covers and controls, Android needs notification access for Beatlumen. Notifications are not read.")
                         color: Theme.textFaint
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         wrapMode: Text.WordWrap
                     }
                 }
@@ -1259,7 +1260,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.shows("look", ["Performance", "Render resolution"])
                 SectionLabel { text: Theme.tr("Performance") }
                 RowLayout {
@@ -1282,7 +1283,7 @@ Item {
                 id: micTest
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 readonly property var mic: Core.state.mic || ({})
                 visible: mic.available === true && settingsSearch.text.trim().length >= 3
                          && page.shows("", ["Microphone test", "Microphones"])
@@ -1339,8 +1340,8 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.WordWrap
                     color: Theme.textFaint
-                    font.pixelSize: 13
-                    text: Theme.tr("Opens inputs to check their levels. The sound stays on this device and is not saved; the inputs close when you leave this check.")
+                    font.pixelSize: 12
+                    text: Theme.tr("Check input levels. Nothing is saved.")
                 }
                 Repeater {
                     model: micTest.devices
@@ -1418,7 +1419,7 @@ Item {
             ColumnLayout {
                 objectName: "section"
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 6
                 visible: page.shows("about", ["About", "Copy link", "Source code"])
                 SectionLabel { text: Theme.tr("About") }
                 RowLayout {

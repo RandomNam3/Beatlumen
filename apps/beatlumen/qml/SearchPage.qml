@@ -64,7 +64,7 @@ Item {
         }
 
         // A filled pill instead of an outlined form field.
-        TextField {
+        InputField {
             id: search
             Layout.fillWidth: true
             Layout.leftMargin: 12
@@ -157,7 +157,7 @@ Item {
                 GridLayout {
                     width: browse.availableWidth - 24
                     x: 12
-                    columns: Math.max(2, Math.floor(width / 190))
+                    columns: Math.max(2, Math.floor(width / 170))
                     columnSpacing: 10
                     rowSpacing: 10
                     Repeater {
@@ -166,7 +166,7 @@ Item {
                             id: tile
                             required property var modelData
                             Layout.fillWidth: true
-                            implicitHeight: 72
+                            implicitHeight: Theme.fingers ? 64 : 48
                             focusPolicy: Qt.TabFocus
                             text: Theme.labelName(modelData.name)
                             Accessible.role: Accessible.Button
@@ -209,9 +209,9 @@ Item {
 
                     EmptyState {
                         Layout.fillWidth: true
-                        Layout.leftMargin: 24
+                        Layout.leftMargin: 16
                         Layout.rightMargin: 24
-                        Layout.topMargin: 32
+                        Layout.topMargin: 16
                         visible: page.songs.length === 0 && page.albums.length === 0 && page.artists.length === 0 && !searchTimer.running
                         iconName: "search"
                         title: Theme.tr("No results")

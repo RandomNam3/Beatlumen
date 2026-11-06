@@ -50,7 +50,7 @@ ColumnLayout {
             tip: Theme.tr("More") + ": " + (fc.field.label || "")
             onClicked: fc.changed(Math.min(fc.field.max !== null ? fc.field.max : 1e9, fc.field.value + fc.field.step))
         }
-        ComboBox {
+        Dropdown {
             Accessible.name: fc.field.label || ""
             visible: fc.field.kind === "enum" || fc.field.kind === "intenum"
             Layout.preferredWidth: 180

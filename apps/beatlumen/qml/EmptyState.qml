@@ -9,12 +9,12 @@ ColumnLayout {
     property string title
     property string text
     default property alias actions: buttons.data
-    spacing: 12
+    spacing: 8
 
     Icon {
         Layout.alignment: Qt.AlignHCenter
         name: e.iconName
-        size: 56
+        size: 40
         color: Theme.textFaint
     }
     Label {

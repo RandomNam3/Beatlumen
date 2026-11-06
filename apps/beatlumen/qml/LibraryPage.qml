@@ -133,13 +133,13 @@ Item {
         default property alias trailing: trail.data
         property alias lead: leadBox.data
         width: ListView.view ? ListView.view.width : implicitWidth
-        height: 72
-        leftPadding: 16
+        height: Theme.listRow
+        leftPadding: 12
         rightPadding: 8
         Accessible.name: title
         contentItem: RowLayout {
-            spacing: 14
-            Item { id: leadBox; Layout.preferredWidth: 52; Layout.preferredHeight: 52 }
+            spacing: 12
+            Item { id: leadBox; Layout.preferredWidth: Theme.lead; Layout.preferredHeight: Theme.lead }
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
@@ -320,7 +320,7 @@ Item {
                         bottomMargin: 8
                         boundsBehavior: Flickable.StopAtBounds
                         readonly property real avail: width - leftMargin - rightMargin
-                        readonly property int cols: Math.max(2, Math.floor(avail / 172))
+                        readonly property int cols: Math.max(2, Math.floor(avail / 150))
                         cellWidth: Math.floor(avail / cols)
                         cellHeight: cellWidth + 52
                         model: page.albums
@@ -433,7 +433,7 @@ Item {
                                 ListRow {
                                     width: parent.width
                                     title: Theme.tr("New smart playlist")
-                                    subtitle: Theme.tr("Rules instead of songs: new songs that fit join by themselves.")
+                                    subtitle: Theme.tr("Fills itself by rules.")
                                     onClicked: smartDialog.edit(null)
                                     lead: Rectangle {
                                         anchors.fill: parent
@@ -484,7 +484,7 @@ Item {
                             visible: labelsPane.all.length === 0
                             iconName: "label"
                             title: Theme.tr("No labels yet")
-                            text: Theme.tr("Songs get labels from their tags and, on a server, from how they sound. You can add your own in the song menu.")
+                            text: Theme.tr("Labels come from tags and the sound. Add your own in the song menu.")
                         }
                         ScrollView {
                             id: labelsScroll
@@ -543,7 +543,7 @@ Item {
                             visible: parent.stations.length === 0
                             iconName: "graphic_eq"
                             title: Theme.tr("No stations yet")
-                            text: Theme.tr("Add an internet radio station with its stream address or station file (.pls, .m3u). The visuals follow the music live.")
+                            text: Theme.tr("Add a station by its stream address or a .pls or .m3u file.")
                             AccentButton { text: Theme.tr("Add station"); highlighted: true; icon.source: Theme.icon("add"); onClicked: stationDialog.openFor(null) }
                         }
                         ListView {
@@ -627,7 +627,7 @@ Item {
             header: Item {
                 id: hero
                 width: ListView.view.width
-                height: content.implicitHeight + 64 + (extraHolder.item ? extraHolder.item.implicitHeight + 16 : 0)
+                height: content.implicitHeight + 52 + (extraHolder.item ? extraHolder.item.implicitHeight + 16 : 0)
 
                 // Ambient backdrop: the cover, blurred and fading out.
                 Image {
@@ -680,14 +680,14 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.topMargin: 56
+                    anchors.topMargin: 44
                     anchors.leftMargin: 20
                     anchors.rightMargin: 20
                     columns: dp.wide ? 2 : 1
-                    columnSpacing: 24
-                    rowSpacing: 16
+                    columnSpacing: 20
+                    rowSpacing: 12
                     CoverImage {
-                        readonly property real side: dp.wide ? 200 : Math.min(hero.width * 0.58, 240)
+                        readonly property real side: dp.wide ? 150 : Math.min(hero.width * 0.5, 200)
                         Layout.preferredWidth: side
                         Layout.preferredHeight: side
                         Layout.alignment: dp.wide ? Qt.AlignTop : Qt.AlignHCenter
@@ -705,7 +705,7 @@ Item {
                             Layout.fillWidth: true
                             text: dp.title
                             horizontalAlignment: dp.wide ? Text.AlignLeft : Text.AlignHCenter
-                            font.pixelSize: dp.wide ? 32 : 24
+                            font.pixelSize: dp.wide ? 26 : 22
                             font.weight: Font.Bold
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2
@@ -760,7 +760,7 @@ Item {
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 52
+            height: 44
             readonly property bool solid: list.contentY - list.originY > 200
             color: solid ? Theme.surfaceStrong : "transparent"
             Behavior on color { ColorAnimation { duration: Theme.ms(150) } }

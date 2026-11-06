@@ -32,8 +32,8 @@ Rectangle {
     ].filter(i => i.page !== 4 || Core.state.server === "connected")
 
     color: Theme.surfaceStrong
-    implicitHeight: rail ? 0 : 72
-    implicitWidth: rail ? (dense ? 64 : 88) : 0
+    implicitHeight: rail ? 0 : Theme.fingers ? 72 : 56
+    implicitWidth: rail ? (dense ? 56 : 72) : 0
 
     component NavButton: AbstractButton {
         id: btn
@@ -42,7 +42,7 @@ Rectangle {
         focusPolicy: Qt.TabFocus
         Layout.fillWidth: true
         Layout.fillHeight: !nav.rail
-        Layout.preferredHeight: nav.rail ? (nav.dense ? 48 : 72) : -1
+        Layout.preferredHeight: nav.rail ? (nav.dense ? 44 : 60) : -1
         Accessible.role: Accessible.Button
         Accessible.name: text
         ToolTip.text: text
@@ -56,8 +56,8 @@ Rectangle {
                 spacing: 4
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: nav.dense ? 44 : 60
-                    height: 32
+                    width: nav.dense ? 40 : 52
+                    height: 28
                     radius: 16
                     color: btn.sel ? Qt.alpha(Theme.accent, 0.22) : (btn.hovered ? Theme.surfaceVariant : "transparent")
                     Behavior on color { ColorAnimation { duration: Theme.ms(150) } }

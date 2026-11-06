@@ -40,18 +40,30 @@ fn similarity(a: &str, b: &str) -> f32 {
     1.0 - prev[b.len()] as f32 / n as f32
 }
 
+/// A recognised word that seems to last longer than this (seconds) did
+/// not: its segment starts long before the singing, and the path through
+/// the attention stayed on the word until the next one (measured on the
+/// test songs: 4 to 8 alike).
+const STRETCHED_WORD: f64 = 6.0;
+
 /// Recognised words with their start times (estimated by position in
 /// the segment when the recognition gave none).
 fn timed_words(segments: &[Segment]) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     for s in segments {
         if !s.words.is_empty() {
-            out.extend(
-                s.words
-                    .iter()
-                    .map(|w| (norm(&w.text), w.start))
-                    .filter(|(n, _)| !n.is_empty()),
-            );
+            let mut words: Vec<(String, f64)> = s
+                .words
+                .iter()
+                .map(|w| (norm(&w.text), w.start))
+                .filter(|(n, _)| !n.is_empty())
+                .collect();
+            for k in (1..words.len()).rev() {
+                if words[k].1 - words[k - 1].1 > STRETCHED_WORD {
+                    words[k - 1].1 = words[k].1 - 0.3;
+                }
+            }
+            out.extend(words);
             continue;
         }
         let words: Vec<&str> = s.text.split_whitespace().collect();
@@ -121,9 +133,23 @@ fn spread(words: &[&str], known: &[Option<f64>], start: f64, end: f64) -> Vec<f6
 /// matched as a whole: song texts repeat their lines (choruses), and
 /// without this the words of one line could be matched to scattered
 /// words of several repetitions.
-fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
+///
+/// Words of the song text are left out sooner where the recognised words
+/// (with their `times`) leave time for them: when a recognition skipped one
+/// of a chorus's repetitions, that decides which one it was (measured on
+/// the test songs: any time from 1 to 4 s and any cost below `GAP` alike).
+fn align_words(text: &[String], rec: &[String], times: &[f64]) -> Vec<(usize, usize)> {
     let (n, m) = (text.len(), rec.len());
     const GAP: f32 = -0.4;
+    const GAP_WITH_TIME: f32 = -0.2;
+    const TIME_LEFT: f64 = 2.0;
+    let skip = |j: usize| {
+        if j > 0 && j < m && times[j] - times[j - 1] >= TIME_LEFT {
+            GAP_WITH_TIME
+        } else {
+            GAP
+        }
+    };
     const MISMATCH: f32 = -1.0;
     const RUN: f32 = 0.6;
     let w = m + 1;
@@ -149,12 +175,12 @@ fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
             }
             best[at(i, j)] = run[at(i, j)]
                 .max(best[at(i - 1, j - 1)] + MISMATCH)
-                .max(best[at(i - 1, j)] + GAP)
+                .max(best[at(i - 1, j)] + skip(j))
                 .max(best[at(i, j - 1)] + GAP);
         }
     }
     // Back from the end; `in_run`: the path continues a run at (i, j).
-    let close = |a: f32, b: f32| (a - b).abs() <= 1e-3 * (1.0 + a.abs());
+    let close = |a: f32, b: f32| (a - b).abs() <= 1e-5 * (1.0 + a.abs());
     let mut pairs = Vec::new();
     let (mut i, mut j) = (n, m);
     let mut in_run = false;
@@ -175,7 +201,7 @@ fn align_words(text: &[String], rec: &[String]) -> Vec<(usize, usize)> {
         } else if close(here, best[at(i - 1, j - 1)] + MISMATCH) {
             i -= 1;
             j -= 1;
-        } else if close(here, best[at(i - 1, j)] + GAP) {
+        } else if close(here, best[at(i - 1, j)] + skip(j)) {
             i -= 1;
         } else {
             j -= 1;
@@ -697,6 +723,11 @@ struct LineTimes<'a> {
     matched: f32,
 }
 
+/// A line whose first words were not recognised is moved back by this
+/// share of the song's usual time per word for each of them (measured on
+/// the test songs: 0.5 to 1.0 alike, 0.7 best).
+const WORD_BACKOFF: f64 = 0.7;
+
 fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTimes<'a> {
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     let mut words = Vec::new();
@@ -719,7 +750,8 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
     let rec = timed_words(segments);
     let rec_words: Vec<String> = rec.iter().map(|(w, _)| w.clone()).collect();
     let lead_words: Vec<String> = lead.iter().map(|&i| words[i].clone()).collect();
-    let pairs: Vec<(usize, usize)> = align_words(&lead_words, &rec_words)
+    let rec_times: Vec<f64> = rec.iter().map(|(_, t)| *t).collect();
+    let pairs: Vec<(usize, usize)> = align_words(&lead_words, &rec_words, &rec_times)
         .into_iter()
         .map(|(wi, ri)| (lead[wi], ri))
         .collect();
@@ -736,7 +768,26 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
     let follows = |a: (usize, usize), b: (usize, usize)| {
         lead_pos[&b.0] == lead_pos[&a.0] + 1 && b.1 == a.1 + 1 && word_line[a.0] == word_line[b.0]
     };
+    // A line whose first words were not recognised starts that many words
+    // before its first matched one: a word takes about the song's usual
+    // time from one recognised word to the next.
+    let word_s = {
+        let mut d: Vec<f64> = rec
+            .windows(2)
+            .map(|p| p[1].1 - p[0].1)
+            .filter(|d| (0.05..1.5).contains(d))
+            .collect();
+        d.sort_by(f64::total_cmp);
+        d.get(d.len() / 2).copied().unwrap_or(0.3)
+    } * WORD_BACKOFF;
+    let mut lead_before = vec![0usize; words.len()];
+    let mut seen = vec![0usize; lines.len()];
+    for &w in &lead {
+        lead_before[w] = seen[word_line[w]];
+        seen[word_line[w]] += 1;
+    }
     let mut line_time: Vec<Option<f64>> = vec![None; lines.len()];
+    let mut skipped = vec![0usize; lines.len()];
     for (k, &(wi, ri)) in pairs.iter().enumerate() {
         let li = word_line[wi];
         let in_run = (k > 0 && follows(pairs[k - 1], pairs[k]))
@@ -744,15 +795,18 @@ fn line_times<'a>(text: &'a str, segments: &[Segment], song_end: f64) -> LineTim
             || lead_count[li] == 1;
         if in_run && line_time[li].is_none() {
             line_time[li] = Some(rec[ri].1);
+            skipped[li] = lead_before[wi];
         }
     }
-    // Times must increase.
+    // Times must increase (by the matched words); then moved back by the
+    // words not recognised, not before the line before.
     let mut last = f64::MIN;
-    for t in line_time.iter_mut() {
+    for (t, &n) in line_time.iter_mut().zip(&skipped) {
         if let Some(v) = *t {
             if v < last {
                 *t = None;
             } else {
+                *t = Some((v - n as f64 * word_s).max(last));
                 last = v;
             }
         }
@@ -849,6 +903,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_skipped_repetition_is_where_time_is_left() {
+        let words = |t: f64, text: &str| {
+            let parts: Vec<&str> = text.split(' ').collect();
+            let n = parts.len() as f64;
+            Segment {
+                start: t,
+                end: t + 0.5 * n,
+                text: text.into(),
+                avg_logprob: 0.0,
+                words: parts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| Word {
+                        text: (*w).into(),
+                        start: t + 0.5 * i as f64,
+                        end: t + 0.5 * (i as f64 + 1.0),
+                        pieces: Vec::new(),
+                    })
+                    .collect(),
+            }
+        };
+        let text = "strophe am anfang hier\nrefrain singt man laut\nzwischen den beiden teilen\nrefrain singt man laut\nstrophe ganz am ende";
+        // The first refrain follows at once, the time for the rest comes later.
+        let segs = [
+            words(0.0, "strophe am anfang hier"),
+            words(2.0, "refrain singt man laut"),
+            words(20.0, "strophe ganz am ende"),
+        ];
+        let (a, _) = anchor_lines(text, &segs);
+        assert!(a[1].matched && a[1].time == 2.0, "{:?}", a[1]);
+        assert!(!a[3].matched);
+        // The time comes first: it was the second refrain that was recognised.
+        let segs = [
+            words(0.0, "strophe am anfang hier"),
+            words(18.0, "refrain singt man laut"),
+            words(20.0, "strophe ganz am ende"),
+        ];
+        let (a, _) = anchor_lines(text, &segs);
+        assert!(!a[1].matched);
+        assert!(a[3].matched && a[3].time == 18.0, "{:?}", a[3]);
+    }
+
+    #[test]
+    fn a_stretched_word_starts_shortly_before_the_next() {
+        let w = |t: f64, text: &str| Word {
+            text: text.into(),
+            start: t,
+            end: t + 0.2,
+            pieces: Vec::new(),
+        };
+        let s = Segment {
+            start: 240.0,
+            end: 259.0,
+            text: "doch die liegt".into(),
+            avg_logprob: 0.0,
+            words: vec![w(240.0, "doch"), w(240.0, "die"), w(256.0, "liegt")],
+        };
+        let t: Vec<f64> = timed_words(&[s])
+            .into_iter()
+            .map(|(_, t)| (t * 10.0).round() / 10.0)
+            .collect();
+        assert_eq!(t, [255.4, 255.7, 256.0]);
+    }
+
+    #[test]
     fn spelled_title_words_are_mended_only_when_near() {
         let mut segs = vec![seg(1.0, 5.0, "F-R-I-N-D-S, f-r-i-n-e-s L-O-V-E-D A-B-C")];
         assert_eq!(spell_like_title(&mut segs, "FRIENDS (Love)"), 2);
@@ -915,6 +1034,32 @@ mod tests {
         assert_eq!(
             lrc,
             "[00:10.00]Hello darkness, my old friend\n[00:14.00]I've come to talk with you again\n[00:18.00]\n[00:40.00]Because a vision softly creeping\n"
+        );
+    }
+
+    #[test]
+    fn lines_start_before_unrecognised_first_words() {
+        // "Hello" not recognised: the line starts about a word before "darkness".
+        let segments = vec![
+            seg(10.0, 14.0, "darkness my old friend"),
+            seg(14.0, 18.0, "I've come to talk with you again"),
+        ];
+        let text = "Hello darkness, my old friend\nI've come to talk with you again";
+        let (anchors, _) = anchor_lines(text, &segments);
+        assert!(anchors[0].matched);
+        assert!(
+            anchors[0].time < 10.0 && anchors[0].time > 9.0,
+            "{}",
+            anchors[0].time
+        );
+        assert_eq!(anchors[1].time, 14.0);
+        // Never before the line before.
+        let segments = vec![seg(10.0, 11.0, "one two"), seg(11.0, 12.0, "five six")];
+        let (anchors, _) = anchor_lines("one two\nthree four five six", &segments);
+        assert!(
+            anchors[1].time >= anchors[0].time,
+            "{:?}",
+            anchors.iter().map(|a| a.time).collect::<Vec<_>>()
         );
     }
 

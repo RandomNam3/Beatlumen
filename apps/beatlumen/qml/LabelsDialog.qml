@@ -66,7 +66,7 @@ AppDialog {
         }
         RowLayout {
             Layout.fillWidth: true
-            TextField {
+            InputField {
                 id: field
                 Layout.fillWidth: true
                 placeholderText: Theme.tr("New label")

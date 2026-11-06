@@ -4,7 +4,7 @@ import QtQuick.Controls.Material
 // Filter chip (section bars, setting categories).
 AbstractButton {
     id: chip
-    implicitHeight: 36
+    implicitHeight: 32
     implicitWidth: implicitContentWidth + leftPadding + rightPadding
     leftPadding: 12
     rightPadding: 12

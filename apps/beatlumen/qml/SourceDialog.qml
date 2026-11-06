@@ -68,7 +68,7 @@ AppDialog {
             width: sv.availableWidth
             spacing: 6
 
-            ComboBox {
+            Dropdown {
                 id: kindBox
                 Layout.fillWidth: true
                 enabled: !dlg.source
@@ -83,7 +83,7 @@ AppDialog {
                 font.pixelSize: 13
                 text: Theme.tr(dlg.kind.hint)
             }
-            TextField {
+            InputField {
                 Accessible.name: placeholderText
                 id: nameField
                 Layout.fillWidth: true
@@ -116,14 +116,14 @@ AppDialog {
                 }
             }
 
-            TextField {
+            InputField {
                 id: urlField
                 Layout.fillWidth: true
                 placeholderText: Theme.tr("Address") + " (" + dlg.kind.url + ")"
                 inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
                 Accessible.name: Theme.tr("Address")
             }
-            TextField {
+            InputField {
                 Accessible.name: placeholderText
                 id: userField
                 visible: dlg.kind.id !== "dlna"
@@ -131,7 +131,7 @@ AppDialog {
                 placeholderText: Theme.tr("User name")
                 inputMethodHints: Qt.ImhNoAutoUppercase
             }
-            TextField {
+            InputField {
                 Accessible.name: placeholderText
                 id: secretField
                 visible: dlg.kind.id !== "dlna"
@@ -139,7 +139,7 @@ AppDialog {
                 echoMode: TextInput.Password
                 placeholderText: dlg.source && dlg.source.hasSecret ? Theme.tr("Password (unchanged)") : Theme.tr("Password")
             }
-            TextField {
+            InputField {
                 Accessible.name: placeholderText
                 id: pathField
                 visible: dlg.kind.id === "webdav" || dlg.kind.id === "sftp"

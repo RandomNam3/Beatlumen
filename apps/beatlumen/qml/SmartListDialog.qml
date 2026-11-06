@@ -129,7 +129,7 @@ AppDialog {
         ColumnLayout {
             width: scroll.availableWidth
             spacing: 10
-            TextField {
+            InputField {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: Theme.tr("Name")
@@ -146,11 +146,10 @@ AppDialog {
             RowLayout {
                 Layout.fillWidth: true
                 Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Songs that fit"); color: Theme.text; wrapMode: Text.WordWrap }
-                ComboBox {
+                Dropdown {
                     id: anyBox
                     model: [Theme.tr("all rules"), Theme.tr("at least one rule")]
                     Accessible.name: Theme.tr("Songs that fit")
-                    implicitContentWidthPolicy: ComboBox.WidestText
                     onActivated: dlg.updatePreview()
                 }
             }
@@ -165,7 +164,7 @@ AppDialog {
                     spacing: 4
                     RowLayout {
                         Layout.fillWidth: true
-                        ComboBox {
+                        Dropdown {
                             Layout.fillWidth: true
                             model: dlg.kinds.map(k => k.name)
                             currentIndex: dlg.kinds.findIndex(k => k.id === ruleRow.modelData.kind)
@@ -186,15 +185,14 @@ AppDialog {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
-                        ComboBox {
+                        Dropdown {
                             visible: ruleRow.kind.not === true
                             model: [Theme.tr("is"), Theme.tr("is not")]
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             currentIndex: ruleRow.modelData.not ? 1 : 0
                             Accessible.name: Theme.tr("Rule")
                             onActivated: (i) => dlg.setRule(ruleRow.index, { not: i === 1 })
                         }
-                        ComboBox {
+                        Dropdown {
                             visible: ruleRow.modelData.kind === "label"
                             Layout.fillWidth: true
                             model: dlg.labels.map(l => Theme.labelName(l))
@@ -203,7 +201,7 @@ AppDialog {
                             Accessible.name: Theme.tr("Genre, mood, label…")
                             onActivated: (i) => dlg.setRule(ruleRow.index, { value: dlg.labels[i] })
                         }
-                        ComboBox {
+                        Dropdown {
                             visible: ruleRow.modelData.kind === "artist"
                             Layout.fillWidth: true
                             model: dlg.artists
@@ -221,7 +219,7 @@ AppDialog {
                             Accessible.name: ruleRow.kind.name
                             onValueModified: dlg.setNumber(ruleRow.index, ruleRow.modelData, value)
                         }
-                        TextField {
+                        InputField {
                             visible: ruleRow.kind.range === true
                             Layout.fillWidth: true
                             placeholderText: Theme.tr("from")
@@ -231,7 +229,7 @@ AppDialog {
                             Accessible.name: ruleRow.kind.name + " " + Theme.tr("from")
                             onEditingFinished: dlg.setRule(ruleRow.index, { min: text === "" ? null : Number(text) })
                         }
-                        TextField {
+                        InputField {
                             visible: ruleRow.kind.range === true
                             Layout.fillWidth: true
                             placeholderText: Theme.tr("to")
@@ -253,7 +251,7 @@ AppDialog {
             RowLayout {
                 Layout.fillWidth: true
                 Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: Theme.tr("Order"); color: Theme.text; wrapMode: Text.WordWrap }
-                ComboBox {
+                Dropdown {
                     id: orderBox
                     Layout.fillWidth: true
                     Layout.maximumWidth: scroll.availableWidth * 0.7

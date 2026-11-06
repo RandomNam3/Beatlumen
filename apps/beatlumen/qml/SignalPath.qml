@@ -9,7 +9,7 @@ ColumnLayout {
     id: path
     readonly property var route: (Core.state.audio || {}).route || null
     readonly property string verdict: route ? route.verdict : ""
-    spacing: 4
+    spacing: 2
 
     function khz(hz) {
         return (hz / 1000).toLocaleString(Qt.locale(Theme.language), "f", hz % 1000 === 0 ? 0 : 1) + " kHz"
@@ -28,14 +28,14 @@ ColumnLayout {
     function verdictDetail() {
         switch (path.verdict) {
         case "bitperfect": return route.shared
-            ? Theme.tr("Every sample reaches the sound card with the value it has in the file, as long as no other program makes sound.")
+            ? Theme.tr("Exact, as long as no other program makes sound.")
             : Core.platform === "android"
-            ? Theme.tr("Every sample reaches the USB device with the value it has in the file, as far as Android tells: its bit-perfect mixer is set, and the music plays on this device in that mixer's format.")
-            : Theme.tr("Every sample reaches the sound card with the value it has in the file.")
-        case "unverified": return Theme.tr("It goes to the sound server unchanged, but what happens after that could not be found out.")
-        case "unprocessed": return Theme.tr("This file has no exact samples to keep (lossy or float): it reaches the card as it was decoded, and is not called bit-perfect.")
+            ? Theme.tr("Exact as far as Android tells: its bit-perfect mixer is set, and the music plays on this device in that format.")
+            : Theme.tr("Every sample arrives as it is in the file.")
+        case "unverified": return Theme.tr("What happens after the sound server could not be found out.")
+        case "unprocessed": return Theme.tr("A lossy or float file has no exact samples to keep.")
         case "network": return Theme.tr("The speaker takes a stream at its own rate.")
-        case "shared": return Theme.tr("The system mixes it with other programs and may convert it.")
+        case "shared": return Theme.tr("The system may mix and convert it.")
         default: return ""
         }
     }
@@ -83,7 +83,7 @@ ColumnLayout {
         visible: path.route === null
         text: Theme.tr("Nothing is playing.")
         color: Theme.textDim
-        font.pixelSize: 13
+        font.pixelSize: 12
     }
     Label {
         textFormat: Text.PlainText
@@ -91,7 +91,7 @@ ColumnLayout {
         visible: path.route !== null
         text: path.verdictText()
         color: path.verdict === "bitperfect" ? Theme.accentText : Theme.text
-        font.pixelSize: 15
+        font.pixelSize: 14
         font.weight: Font.DemiBold
         wrapMode: Text.WordWrap
     }
@@ -101,7 +101,7 @@ ColumnLayout {
         visible: text !== ""
         text: path.verdictDetail()
         color: Theme.textDim
-        font.pixelSize: 13
+        font.pixelSize: 12
         wrapMode: Text.WordWrap
     }
     Label {
@@ -110,7 +110,7 @@ ColumnLayout {
         visible: path.route !== null
         text: Theme.tr("File") + ": " + path.sourceText()
         color: Theme.textDim
-        font.pixelSize: 13
+        font.pixelSize: 12
         wrapMode: Text.WordWrap
     }
     Label {
@@ -119,7 +119,7 @@ ColumnLayout {
         visible: path.route !== null
         text: Theme.tr("Output") + ": " + path.outputText()
         color: Theme.textDim
-        font.pixelSize: 13
+        font.pixelSize: 12
         wrapMode: Text.WordWrap
     }
     Label {
@@ -128,7 +128,7 @@ ColumnLayout {
         visible: path.route !== null && path.route.changes.length > 0
         text: Theme.tr("Changes the samples") + ": " + (path.route ? path.route.changes.map(c => path.changeText(c)).join(", ") : "")
         color: Theme.text
-        font.pixelSize: 13
+        font.pixelSize: 12
         wrapMode: Text.WordWrap
     }
 }

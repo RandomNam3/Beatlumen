@@ -26,6 +26,16 @@ const MIN_LOGPROB: f32 = -1.0;
 /// Above this no-speech probability (with an unsure result) a window has
 /// no singing.
 const NO_SPEECH: f32 = 0.6;
+/// A line with only a guess of its time counts as sung until this long after
+/// the guess when lines are taken together for a window (seconds; measured on
+/// the test songs: 0 to 2 alike, 4 and 8 worse). All it could span would rarely
+/// fit a window, and alone in a window a line sits at the window's start.
+const GUESS_MARGIN: f64 = 2.0;
+
+/// A window's first line may start this long before its known time
+/// (seconds; measured on the test songs: 0.1 to 0.15 alike, 0.3 clearly
+/// worse).
+const FIRST_LINE_LEAD: f64 = 0.15;
 
 /// Special tokens (their ids depend on the vocabulary size).
 #[derive(Debug, Clone, Copy)]
@@ -109,6 +119,8 @@ pub struct Line {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// Where a line that can be anywhere from `start` to `end` is most likely.
+    pub guess: Option<f64>,
 }
 
 pub struct Options<'a> {
@@ -436,14 +448,15 @@ impl<'a> Transcriber<'a> {
             // A window from just before the first line, with the lines
             // that end within it.
             let first = &lines[todo[k]];
-            let begin = (first.start.max(after.min(first.end - 0.2)) - 0.3).max(0.0);
+            let near = first.start.max(after.min(first.end - 0.2));
+            let begin = (near - 0.3).max(0.0);
             let mut group = vec![todo[k]];
             let mut n_tok = tokens[todo[k]].len().min(max_tokens);
             while k + group.len() < todo.len() {
                 let next = todo[k + group.len()];
-                if lines[next].end - begin > window_secs - 0.5
-                    || n_tok + tokens[next].len() > max_tokens
-                {
+                let l = &lines[next];
+                let ends = l.guess.map_or(l.end, |g| (g + GUESS_MARGIN).min(l.end));
+                if ends - begin > window_secs - 0.5 || n_tok + tokens[next].len() > max_tokens {
                     break;
                 }
                 n_tok += tokens[next].len();
@@ -521,9 +534,16 @@ impl<'a> Transcriber<'a> {
                 let li = owner[first];
                 let l = &lines[li];
                 let words = &mut out[li];
-                let floor = words
-                    .last()
-                    .map_or(l.start.max(begin) - 0.3, |x: &Word| x.start);
+                // The path through the attention starts with the window, so
+                // the window's first word sits at the floor: nearer its line.
+                let floor = words.last().map_or(
+                    if li == group[0] {
+                        near - FIRST_LINE_LEAD
+                    } else {
+                        l.start.max(begin) - 0.3
+                    },
+                    |x: &Word| x.start,
+                );
                 let (start, end) = word_span(begin + w.start, begin + w.end, floor, l);
                 after = after.max(end);
                 let mut w = shifted(w, begin, start, end);
@@ -960,6 +980,7 @@ mod tests {
     #[test]
     fn word_span_stays_in_order() {
         let line = |start, end| Line {
+            guess: None,
             start,
             end,
             text: String::new(),
