@@ -210,6 +210,7 @@ pub(crate) struct Vault {
     /// The server's secret for contents kept apart (see `encrypt_job`); without
     /// it music is encrypted like everything else.
     pub content_salt: Option<Vec<u8>>,
+    pub trash_days: u64,
     pub contacts: Vec<Contact>,
     used: u64,
     quota: u64,
@@ -1681,6 +1682,7 @@ impl Core {
                 self.vault.used = json.get("used").as_u64().unwrap_or(0);
                 self.vault.quota = json.get("quota").as_u64().unwrap_or(0);
                 self.vault.content_salt = unb64(json.get("contentSalt"));
+                self.vault.trash_days = json.get("trashDays").as_u64().unwrap_or(0);
                 self.vault.rev += 1;
                 self.revs.queue += 1;
                 self.revs.images += 1;
@@ -1830,6 +1832,7 @@ impl Core {
             )
             .with("recoveryCode", self.vault.recovery_code.clone())
             .with("rev", self.vault.rev)
+            .with("trashDays", self.vault.trash_days)
             .with("uploads", Value::Array(uploads))
             .with("used", self.vault.used)
             .with("quota", self.vault.quota)

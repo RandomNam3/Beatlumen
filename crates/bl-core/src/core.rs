@@ -728,6 +728,10 @@ impl Core {
             .with("scanProcessed", scan.2)
             .with("libraryRev", self.library.revision)
             .with("libraryTracks", self.library.tracks.len())
+            .with(
+                "trashCount",
+                self.hidden_items.len() + self.vault.trash.len(),
+            )
             .with("queueRev", self.revs.queue)
             .with("playlistsRev", self.revs.playlists)
             .with("presetsRev", self.revs.presets)

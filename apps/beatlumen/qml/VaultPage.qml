@@ -11,6 +11,7 @@ Item {
     property bool back: false
     signal backClicked()
     signal upload()
+    signal openTrash()
 
     readonly property var vault: Core.state.vault || ({})
     readonly property string vstate: vault.state || "locked"
@@ -70,6 +71,12 @@ Item {
                                  : Theme.tr("Only you and the people you share with can read them")
             back: page.back
             onBackClicked: page.backClicked()
+            IconButton {
+                visible: page.ready
+                iconName: "delete"
+                tip: Theme.tr("Trash")
+                onClicked: page.openTrash()
+            }
             IconButton {
                 visible: page.ready
                 iconName: "upload"
@@ -542,13 +549,14 @@ Item {
         modal: true
         anchors.centerIn: Overlay.overlay
         width: Math.min(420, page.width - 32)
-        title: fileMenu.file.mine ? Theme.tr("Delete file?") : Theme.tr("Remove from my files?")
+        title: fileMenu.file.mine ? Theme.tr("Move file to the trash?") : Theme.tr("Remove from my files?")
         standardButtons: Dialog.Cancel | Dialog.Ok
         Label {
             textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.WordWrap
-            text: fileMenu.file.mine ? Theme.tr("The file is deleted on the server for you and everyone you shared it with.") : Theme.tr("You lose access; the owner keeps the file.")
+            text: fileMenu.file.mine ? Theme.tr("You can get it back for 29 days. Until then, nobody you shared it with can open it, and its links stop working.")
+                                     : Theme.tr("It goes to your trash for 29 days; the owner keeps the file.")
         }
         onAccepted: Core.call(fileMenu.file.mine ? "vault.delete" : "vault.leave", { id: fileMenu.file.id.replace("vault:", "") })
     }
