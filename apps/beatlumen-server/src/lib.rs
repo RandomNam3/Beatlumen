@@ -44,6 +44,7 @@ pub mod push;
 pub mod random;
 pub mod recommend;
 pub mod release;
+pub mod rooms;
 pub mod routes;
 pub mod sha256;
 pub mod sources;
@@ -147,6 +148,7 @@ pub struct State {
     pub admin: admin::Admin,
     pub models: Arc<models::Models>,
     pub devices: devices::Devices,
+    pub rooms: rooms::Rooms,
     /// Remote music sources (their songs are part of the library).
     pub sources: Arc<sources::Sources>,
     /// Playlist files in the music folders (read-only playlists).
@@ -292,6 +294,7 @@ impl State {
             web_integrity: self.web.integrity.status.to_string(),
             passkeys: self.vault.rp.is_some(),
             speech: self.lyrics_sync.available(),
+            room_guests: self.config().room_guests,
         }
     }
 
@@ -711,6 +714,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         admin,
         models,
         devices: devices::Devices::default(),
+        rooms: Default::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
         favorites: favorites::Favorites::load(data.favorites.clone()),
         hidden: hidden::Hidden::load(data.root.join("hidden.json")),
@@ -827,6 +831,22 @@ pub fn start(config: Config) -> Result<Server, String> {
             })
             .map_err(|e| format!("cannot start the trash: {e}"))?;
     }
+    // Rooms go on between requests: see `rooms.rs`.
+    let weak = Arc::downgrade(&state);
+    std::thread::Builder::new()
+        .name("rooms".into())
+        .spawn(move || loop {
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            let guests = state.config().room_guests;
+            state
+                .rooms
+                .tick(&state.devices, guests, std::time::Instant::now());
+            drop(state);
+            std::thread::sleep(Duration::from_millis(500));
+        })
+        .map_err(|e| format!("cannot start the rooms: {e}"))?;
     if state.extensions.enabled() {
         // Songs from extensions nobody played for a long time.
         let weak = Arc::downgrade(&state);

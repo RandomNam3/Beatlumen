@@ -341,6 +341,21 @@ def check_log():
         raise SystemExit("QML errors:\n" + "\n".join(bad))
 
 
+def listen_together():
+    app = start((1000, 800), False)
+    app.set("page", 4)
+    app.shows("Listen together")
+    # No server here: a code alone leads nowhere, and the app says so.
+    field = app.wait("the field", lambda: [i for i in app.items() if i["type"].startswith("InputField")])
+    app.click(field[0])
+    app.send("text ABCD2345")
+    app.click_text("Join")
+    app.shows("Enter the whole link: this device is not connected to a server")
+    # Without a server there is no room to make.
+    assert not app.named("Create room"), "needs a server"
+    app.quit()
+
+
 def main():
     make_music()
     try:
@@ -348,6 +363,7 @@ def main():
         phone_queue_and_swipe()
         desktop()
         wide_window()
+        listen_together()
         check_log()
     except (SystemExit, AssertionError, Exception):
         if os.path.exists(LOG):

@@ -142,8 +142,12 @@ server see each other.
   several devices together at a common server time. Commands go through
   the server's event channel (long polling); remote control can be turned
   off per device; remote commands only play server songs.
-- Next: keeping grouped devices in step while they play (drift
-  correction), editing another device's queue.
+  Grouped devices stay in step while they play (drift correction by the
+  server's clock, corrected by the round trip).
+- Listening together: rooms on the server, joined with a code or a link,
+  also by guests without a login. The server only relays and says when a song
+  should start, once everybody has it.
+- Next: editing another device's queue, a readiness check for groups.
 
 - Device list with name, type, online state and what is playing.
 - Each device plays on its own by default (own queue, own position).

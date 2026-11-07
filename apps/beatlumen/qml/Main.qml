@@ -31,6 +31,9 @@ ApplicationWindow {
     // -1: visualizer only, 0 library, 2 visuals, 3 settings, 4 devices,
     // 5 start page, 6 statistics, 7 search
     property int page: -1
+    // Into a room by a link: that is what this start is about.
+    readonly property bool inRoom: (Core.state.room || {}).active === true
+    onInRoomChanged: if (inRoom && (Core.state.room || {}).host !== true) page = 4
     // The queue leaves the visual in sight: a panel at the side, on a narrow
     // window a sheet that covers only the lower part.
     property bool queueOpen: false

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Listen together:** make a room on the Devices page and let others in with its code or
+  link. Everyone hears the same song of the server at the same moment; the host decides what
+  plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and
+  while it plays every device keeps itself in step, in steps too small to be heard. People
+  without a login can join as guests: they get this room's songs and nothing else, and only
+  while it lasts. The host can turn guests off for a room, the admin for the server (Admin
+  area, `--no-room-guests`).
+- **Devices playing together** ask for the server's time more carefully (corrected by the
+  round trip) and now stay in step while they play.
 - **Music is stored once:** the same music file in several accounts' encrypted files takes up
   the space of one, and it stays encrypted. The server can see that two accounts hold the
   same file (`docs/ENCRYPTION.md`); other files are never put together.
