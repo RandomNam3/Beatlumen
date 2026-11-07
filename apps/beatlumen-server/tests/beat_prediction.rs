@@ -5,6 +5,11 @@ mod common;
 
 use bl_json::Value;
 use common::App;
+use std::time::{Duration, Instant};
+
+/// The test host's sound card.
+const CARD_RATE: usize = 48000;
+const CHUNK: usize = 512;
 
 /// A stereo 44.1 kHz WAV with a kick drum at `bpm`.
 fn kicks(bpm: f64, seconds: u32) -> Vec<u8> {
@@ -36,17 +41,27 @@ fn kicks(bpm: f64, seconds: u32) -> Vec<u8> {
 }
 
 /// Plays on like a sound card, analysing as it goes; the position after.
-/// Paced so the decoder keeps up (gaps of silence would shift the heard
-/// beats against the position, as on a slow test machine).
-fn play_for(app: &mut App, seconds: f64) -> f64 {
+/// A real card takes its frames on its own clock. This one runs ahead of that
+/// clock to keep the test short, so it may wait for the decoder, but only
+/// until `due`, when the real card would need the frames: a decoder too slow
+/// for a real card still runs the queue dry, which counts as an underrun.
+fn play_for(app: &mut App, due: &mut Instant, seconds: f64) -> f64 {
+    let chunk = Duration::from_secs_f64(CHUNK as f64 / CARD_RATE as f64);
     let start = app.core.position(&app.host);
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(Duration::from_millis(2));
+        while app.core.queued_frames() < CHUNK && Instant::now() < *due {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         app.state();
         if let Some(src) = app.host.audio.lock().unwrap().clone() {
-            let mut buf = vec![0f32; 1024];
+            let mut buf = vec![0f32; CHUNK * 2];
             src.render(&mut buf, 0);
         }
+        // Never further ahead than a full queue (one second) lasts on a real
+        // card, or a long stall of the decoder would go unnoticed.
+        let now = Instant::now();
+        *due = ((*due).max(now) + chunk).min(now + Duration::from_secs(1));
         app.core.update_live(&mut app.host);
         let p = app.core.position(&app.host);
         if p - start >= seconds {
@@ -69,8 +84,13 @@ fn tempo_and_tap_sync() {
     );
     app.wait("playing", |s| s.str_or("play", "") == "playing");
     // The decoder fills its buffer first.
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    play_for(&mut app, 8.0);
+    let t0 = Instant::now();
+    while app.core.queued_frames() < CARD_RATE {
+        assert!(t0.elapsed() < Duration::from_secs(60), "no audio decoded");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let mut due = Instant::now();
+    play_for(&mut app, &mut due, 8.0);
     let s = app.state();
     let bpm = s.get("tempo").get("bpm").as_f64().expect("a tempo");
     assert!((bpm - 126.0).abs() < 3.0, "{bpm}");
@@ -81,7 +101,7 @@ fn tempo_and_tap_sync() {
         let pos = app.core.position(&app.host);
         let k = (pos / period).ceil() + 1.0;
         let target = k * period + 0.12;
-        play_for(&mut app, target - pos);
+        play_for(&mut app, &mut due, target - pos);
         let r = app.cmd(Value::object().with("cmd", "sync.tap"));
         assert!(r.get("error").is_null(), "{r:?}");
     }
