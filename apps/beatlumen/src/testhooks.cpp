@@ -210,6 +210,8 @@ void TestHooks::run(const QString &line)
         m_sampler.start(50);
     } else if (cmd == QLatin1String("shot") && !a.isEmpty()) {
         m_window->grabWindow().save(a.at(0));
+        // Grabbing lays everything out, also while no frames are drawn.
+        dump();
     } else if (cmd == QLatin1String("hover") && a.size() >= 2) {
         mouse(QEvent::MouseMove, QPointF(a.at(0).toDouble(), a.at(1).toDouble()), Qt::NoButton, Qt::NoButton);
     } else if (cmd == QLatin1String("click") && a.size() >= 2) {
@@ -217,6 +219,15 @@ void TestHooks::run(const QString &line)
         mouse(QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton);
         mouse(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
+    } else if (cmd == QLatin1String("drag") && a.size() >= 4) {
+        const QPointF from(a.at(0).toDouble(), a.at(1).toDouble());
+        const QPointF to(a.at(2).toDouble(), a.at(3).toDouble());
+        mouse(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        mouse(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        const int steps = 12;
+        for (int i = 1; i <= steps; ++i)
+            mouse(QEvent::MouseMove, from + (to - from) * i / steps, Qt::NoButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
     } else if (cmd == QLatin1String("scroll") && a.size() >= 3) {
         const QPointF pos(a.at(0).toDouble(), a.at(1).toDouble());
         QWheelEvent e(pos, m_window->mapToGlobal(pos), QPoint(), QPoint(0, a.at(2).toInt() * 120), Qt::NoButton,

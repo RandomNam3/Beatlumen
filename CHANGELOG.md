@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **The queue leaves the visual in sight:** it opens as a panel at the side, on a narrow
+  window as a sheet over the lower part, instead of as a page over everything.
+- **Song sheet on phones:** the menu of a song is now a sheet from below, with the song
+  on top, big rows and the way to its album and artist.
+- **Current line in the player:** with a timed song text, the line being sung appears
+  under the title instead of the artist (Settings, Playback; on by default).
+- **Swiping on the mini player** goes to the next or the previous song.
+
 ## 0.12.0 (beta)
 
 A start page with recommendations and statistics, an equalizer and bit-perfect

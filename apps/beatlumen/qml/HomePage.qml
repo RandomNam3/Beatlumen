@@ -66,7 +66,7 @@ Item {
         }
     }
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    TrackActions { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
     LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
 

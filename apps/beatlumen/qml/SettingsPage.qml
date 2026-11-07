@@ -241,7 +241,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence"])
+                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence", "Current line in the player"])
                 SectionLabel { text: Theme.tr("Playback") }
                 SwitchRow {
                     Layout.fillWidth: true
@@ -279,6 +279,13 @@ Item {
                     detail: Theme.tr("No silent gaps between songs.")
                     on: page.settings.skipSilence !== false
                     onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
+                }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Current line in the player")
+                    detail: Theme.tr("With a timed song text, the line being sung instead of the artist.")
+                    on: (page.settings.ui || {}).barLyrics !== false
+                    onSwitched: (on) => Core.call("settings.set", { key: "ui.barLyrics", value: on })
                 }
             }
             // ---- equalizer ----

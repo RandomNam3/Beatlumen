@@ -50,7 +50,7 @@ Item {
     readonly property int labelsRev: Core.state.labelsRev || 0
     onLabelsRevChanged: reloadLabels()
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    TrackActions { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
     PlaylistPicker { id: picker }
     LabelsDialog { id: labelsDialog }
 
