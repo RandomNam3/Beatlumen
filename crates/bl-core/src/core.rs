@@ -317,6 +317,7 @@ pub struct Core {
     pub(crate) speech: crate::speech::SpeechState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
+    pub(crate) discord: crate::discord::DiscordState,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
     started: bool,
@@ -519,6 +520,7 @@ impl Core {
             speech: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
+            discord: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
             started: false,
@@ -763,6 +765,7 @@ impl Core {
                 },
             )
             .with("settings", self.settings_json())
+            .with("discord", self.discord_json())
     }
 
     /// Track as shown in lists.
@@ -2724,6 +2727,7 @@ impl Core {
         }
         self.sync_preload(host);
         self.track_listening(host);
+        self.poll_discord(host);
         self.mic_tick(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {

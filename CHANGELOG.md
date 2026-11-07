@@ -15,6 +15,19 @@
   or favorites stay, and the library's own songs are never touched. All of it can be changed
   in the admin area (0 days: never). Songs imported earlier get the full 90 days from the
   first start.
+- **Status in Discord (Linux, Windows):** shows the song you are listening to in the
+  Discord program on the same computer (Settings, Playback; off by default). Needs the
+  Application ID of a Discord application of your own. Only title, artist, album,
+  start and end time and that application's picture go out, and only to the Discord
+  program: no cover links, no account token. Encrypted songs and what other devices
+  send here (AirPlay, DLNA, other programs) never show up, and pausing removes the status.
+- **The queue leaves the visual in sight:** it opens as a panel at the side, on a narrow
+  window as a sheet over the lower part, instead of as a page over everything.
+- **Song sheet on phones:** the menu of a song is now a sheet from below, with the song
+  on top, big rows and the way to its album and artist.
+- **Current line in the player:** with a timed song text, the line being sung appears
+  under the title instead of the artist (Settings, Playback; on by default).
+- **Swiping on the mini player** goes to the next or the previous song.
 
 ## 0.12.0 (beta)
 

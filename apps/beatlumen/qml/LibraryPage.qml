@@ -82,7 +82,7 @@ Item {
     Component.onCompleted: { reload(); reloadPlaylists() }
     Timer { id: reloadTimer; interval: 400; onTriggered: page.reload() }
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    TrackActions { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
     LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
     StationDialog { id: stationDialog }

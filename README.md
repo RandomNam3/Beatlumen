@@ -41,6 +41,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   Jellyfin, WebDAV/Nextcloud, SFTP (own SSH client), DLNA media servers and
   web folders, in the app directly or added on the server (which then
   indexes, analyses and streams them for every app).
+- **Status in Discord** (optional, Linux and Windows): shows the song you are
+  listening to in the Discord program on the same computer, through a Discord
+  application of your own. Encrypted songs never show up.
 - **Internet radio**: Icecast/Shoutcast and HLS stations (also from
   `.pls`/`.m3u`) with the current song; **live beat prediction** lets the
   effects land on the coming beats of radio, other apps, AirPlay and DLNA;

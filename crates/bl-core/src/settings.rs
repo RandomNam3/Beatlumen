@@ -176,6 +176,10 @@ pub struct Settings {
     /// Look artists up in public databases (their names go out). Off until
     /// the listener agrees.
     pub online_metadata: bool,
+    /// Show what is playing as a status in the Discord program on this
+    /// computer, through the application with this id. Off until asked for.
+    pub discord_status: bool,
+    pub discord_app_id: String,
     /// Hand the samples to a sound card directly (bit-perfect playback) and
     /// which one: its id and the name it had. Off until asked for.
     pub audio_direct: bool,
@@ -283,6 +287,8 @@ impl Default for Settings {
             eq: bl_media::EqSettings::default(),
             smart_lists: Value::Array(Vec::new()),
             online_metadata: false,
+            discord_status: false,
+            discord_app_id: String::new(),
             audio_direct: false,
             audio_direct_device: String::new(),
             audio_direct_name: String::new(),
@@ -404,6 +410,13 @@ impl Settings {
                 Value::Array(Vec::new())
             },
             online_metadata: v.bool_or("onlineMetadata", false),
+            discord_status: v.bool_or("discordStatus", false),
+            discord_app_id: v
+                .str_or("discordAppId", "")
+                .chars()
+                .filter(char::is_ascii_digit)
+                .take(20)
+                .collect(),
             audio_direct: v.bool_or("audioDirect", false),
             audio_direct_device: v.str_or("audioDirectDevice", "").to_string(),
             audio_direct_name: v.str_or("audioDirectName", "").to_string(),
@@ -513,6 +526,8 @@ impl Settings {
             .with("skipSilence", self.skip_silence)
             .with("smartLists", self.smart_lists.clone())
             .with("onlineMetadata", self.online_metadata)
+            .with("discordStatus", self.discord_status)
+            .with("discordAppId", self.discord_app_id.as_str())
             .with("audioDirect", self.audio_direct)
             .with("audioDirectDevice", self.audio_direct_device.as_str())
             .with("audioDirectName", self.audio_direct_name.as_str())

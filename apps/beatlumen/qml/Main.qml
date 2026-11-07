@@ -24,9 +24,30 @@ ApplicationWindow {
 
     readonly property bool compact: width < 760
     readonly property bool playing: Core.state.play === "playing"
-    // -1: visualizer only, 0 library, 1 queue, 2 visuals, 3 settings,
-    // 4 devices, 5 start page, 6 statistics, 7 search
+    // -1: visualizer only, 0 library, 2 visuals, 3 settings, 4 devices,
+    // 5 start page, 6 statistics, 7 search
     property int page: -1
+    // The queue leaves the visual in sight: a panel at the side, on a narrow
+    // window a sheet that covers only the lower part.
+    property bool queueOpen: false
+    onQueueOpenChanged: placeQueue()
+    onCompactChanged: placeQueue()
+    function placeQueue() {
+        if (queueOpen && compact)
+            queueSheet.open()
+        else
+            queueSheet.close()
+    }
+    function showAlbum(album) {
+        queueOpen = false
+        page = 0
+        Qt.callLater(() => library.item && library.item.openAlbum(album))
+    }
+    function showArtist(name) {
+        queueOpen = false
+        page = 0
+        Qt.callLater(() => library.item && library.item.openArtist(name))
+    }
     // Where the player's button returns to from the visual.
     property int lastPage: 5
     function toggleVisual() {
@@ -42,7 +63,7 @@ ApplicationWindow {
     readonly property bool bigPlayer: compact && page < 0 && height >= 560
     property bool idle: false
     readonly property bool showLyrics: !!(Core.state.settings && Core.state.settings.ui && Core.state.settings.ui.lyrics)
-    readonly property bool chromeVisible: page >= 0 || !idle || !playing || Theme.lyricsEditing || Theme.keepControls
+    readonly property bool chromeVisible: page >= 0 || queueOpen || !idle || !playing || Theme.lyricsEditing || Theme.keepControls
 
     Component.onCompleted: {
         if (startFullscreen)
@@ -81,6 +102,10 @@ ApplicationWindow {
         idleTimer.restart()
     }
     function goBack() {
+        if (queueOpen) {
+            queueOpen = false
+            return true
+        }
         if (page === 0 && library.item && library.item.back())
             return true
         if (page === 2 && visuals.item && visuals.item.back())
@@ -190,7 +215,7 @@ ApplicationWindow {
     // Visualizer controls in the top right corner.
     Row {
         anchors.top: parent.top
-        anchors.right: parent.right
+        anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.margins: 8
         visible: win.page < 0
         opacity: win.chromeVisible ? 1 : 0
@@ -217,7 +242,7 @@ ApplicationWindow {
     NowPlaying {
         id: nowPlaying
         anchors.left: win.compact ? parent.left : rail.right
-        anchors.right: parent.right
+        anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         // Slides down when the controls fade out.
@@ -253,7 +278,7 @@ ApplicationWindow {
         height: implicitHeight
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
-        onOpenQueue: win.page = 1
+        onOpenQueue: win.queueOpen = true
     }
 
     // Page panel.
@@ -264,7 +289,7 @@ ApplicationWindow {
         anchors.left: win.compact ? parent.left : rail.right
         anchors.top: parent.top
         anchors.bottom: playerBar.top
-        anchors.right: parent.right
+        anchors.right: queueSide.visible ? queueSide.left : parent.right
 
         StackLayout {
             anchors.fill: parent
@@ -282,10 +307,8 @@ ApplicationWindow {
                     onUploadVault: dialogs.openUpload()
                 }
             }
-            Loader {
-                active: win.page === 1 || item !== null
-                sourceComponent: QueuePage { }
-            }
+            // Page 1 is free: the queue has its own place below.
+            Item { }
             Loader {
                 id: visuals
                 active: win.page === 2 || item !== null
@@ -316,10 +339,7 @@ ApplicationWindow {
                     onAddFolder: win.addFolder()
                     onOpenFiles: dialogs.openAudio()
                     onConnectServer: win.page = 3
-                    onOpenAlbum: (album) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openAlbum(album))
-                    }
+                    onOpenAlbum: (album) => win.showAlbum(album)
                     onOpenFavorites: {
                         win.page = 0
                         Qt.callLater(() => library.item && library.item.openFavorites())
@@ -335,14 +355,8 @@ ApplicationWindow {
                 id: searchLoader
                 active: win.page === 7 || item !== null
                 sourceComponent: SearchPage {
-                    onOpenAlbum: (album) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openAlbum(album))
-                    }
-                    onOpenArtist: (name) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openArtist(name))
-                    }
+                    onOpenAlbum: (album) => win.showAlbum(album)
+                    onOpenArtist: (name) => win.showArtist(name)
                     onOpenLabel: (name) => {
                         win.page = 0
                         Qt.callLater(() => library.item && library.item.openLabel(name))
@@ -353,10 +367,51 @@ ApplicationWindow {
         }
     }
 
+    // The queue as a side panel.
+    Rectangle {
+        id: queueSide
+        visible: win.queueOpen && !win.compact
+        color: Theme.surface
+        anchors.top: parent.top
+        anchors.bottom: playerBar.top
+        anchors.right: parent.right
+        width: Math.min(420, win.width * 0.42)
+        Accessible.role: Accessible.Pane
+        Accessible.name: Theme.tr("Queue")
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 1
+            color: Theme.outline
+        }
+        Loader {
+            anchors.fill: parent
+            anchors.margins: 8
+            active: queueSide.visible
+            sourceComponent: QueuePage { onCloseRequested: win.queueOpen = false }
+        }
+    }
+    // The queue as a sheet.
+    BottomSheet {
+        id: queueSheet
+        title: Theme.tr("Queue")
+        maxShare: 0.72
+        onClosed: if (win.compact) win.queueOpen = false
+        Loader {
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            active: queueSheet.opened || queueSheet.visible
+            sourceComponent: QueuePage { onCloseRequested: win.queueOpen = false }
+        }
+    }
+
     PlayerBar {
         id: playerBar
         mode: win.compact ? "mini" : "full"
         dense: win.dense
+        showLine: !(win.showLyrics && win.page < 0)
         visible: !win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right
@@ -365,7 +420,7 @@ ApplicationWindow {
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         onOpenNowPlaying: win.compact ? win.page = -1 : win.toggleVisual()
-        onOpenQueue: win.page = win.page === 1 ? -1 : 1
+        onOpenQueue: win.queueOpen = !win.queueOpen
     }
 
     NavBar {

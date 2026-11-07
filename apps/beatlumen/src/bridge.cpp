@@ -530,7 +530,7 @@ bool Bridge::mobile() const
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
     return true;
 #else
-    return false;
+    return qEnvironmentVariableIsSet("BEATLUMEN_TEST_MOBILE");
 #endif
 }
 

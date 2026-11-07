@@ -241,7 +241,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence"])
+                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence", "Current line in the player"])
                 SectionLabel { text: Theme.tr("Playback") }
                 SwitchRow {
                     Layout.fillWidth: true
@@ -280,6 +280,13 @@ Item {
                     on: page.settings.skipSilence !== false
                     onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
                 }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Current line in the player")
+                    detail: Theme.tr("With a timed song text, the line being sung instead of the artist.")
+                    on: (page.settings.ui || {}).barLyrics !== false
+                    onSwitched: (on) => Core.call("settings.set", { key: "ui.barLyrics", value: on })
+                }
             }
             // ---- equalizer ----
             ColumnLayout {
@@ -290,6 +297,55 @@ Item {
                 SectionLabel { text: Theme.tr("Sound") }
                 DirectOutputPanel { Layout.fillWidth: true }
                 EqualizerPanel { Layout.fillWidth: true }
+            }
+            // ---- status in Discord ----
+            ColumnLayout {
+                objectName: "section"
+                Layout.fillWidth: true
+                spacing: 6
+                readonly property var discord: Core.state.discord || ({})
+                visible: discord.available === true && page.shows("playback", ["Discord", "Show what's playing in Discord", "Application ID"])
+                SectionLabel { text: Theme.tr("Discord") }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Show what's playing in Discord")
+                    detail: Theme.tr("Title, artist, album and times go to the Discord program on this computer. Never for encrypted songs, and pausing removes the status.")
+                    info: Theme.tr("Needs a Discord application of your own: create one at discord.com/developers/applications and copy its Application ID. For a picture, upload one named logo under Rich Presence, Art Assets.")
+                    on: page.settings.discordStatus === true
+                    onSwitched: (on) => Core.call("settings.set", { key: "discordStatus", value: on })
+                }
+                InputField {
+                    id: discordAppId
+                    Accessible.name: placeholderText
+                    visible: page.settings.discordStatus === true
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    placeholderText: Theme.tr("Application ID")
+                    text: page.settings.discordAppId || ""
+                    maximumLength: 20
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    validator: RegularExpressionValidator { regularExpression: /[0-9]*/ }
+                    onEditingFinished: if (text !== (page.settings.discordAppId || "")) Core.call("settings.set", { key: "discordAppId", value: text })
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    visible: page.settings.discordStatus === true
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 12
+                    color: parent.discord.state === "refused" ? Theme.danger : Theme.textDim
+                    text: {
+                        switch (parent.discord.state) {
+                        case "noId": return Theme.tr("Enter the Application ID to connect.")
+                        case "connected": return Theme.tr("Connected to Discord.")
+                        case "refused": return Theme.tr("Discord does not accept this Application ID.")
+                        default: return Theme.tr("Waiting for Discord: it has to run on this computer.")
+                        }
+                    }
+                }
             }
             // ---- library ----
             ColumnLayout {

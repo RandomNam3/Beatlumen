@@ -725,6 +725,11 @@ impl Core {
                 start,
             }),
         );
+    /// A song on its way to the user's encrypted files. A job no longer known
+    /// counts as one, it may have ended up there.
+    pub(crate) fn extension_job_is_private(&self, id: &str) -> bool {
+        id.strip_prefix(ID_PREFIX)
+            .is_some_and(|job| !self.ext.jobs.iter().any(|j| j.job == job && j.keep))
     }
 
     /// Metadata of a result for a track the library list may not have yet.
