@@ -13,6 +13,8 @@ Item {
     signal connectServer()
     signal uploadVault()
     signal exportPlaylist(string id)
+    // Back from a detail page to the list.
+    signal detailClosed()
 
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
@@ -111,9 +113,9 @@ Item {
         stack.push(collectionView, { ext: ext, itemId: id })
         Core.call("extensions.collection", { ext: ext, id: id })
     }
-    function openMix(id, name) {
+    function openMix(id, name, cover) {
         stack.pop(null)
-        stack.push(mixView, { mixId: id, mixName: name })
+        stack.push(mixView, { mixId: id, mixName: name, cover: cover })
     }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
@@ -150,6 +152,7 @@ Item {
 
     StackView {
         id: stack
+        onDepthChanged: if (depth === 1) page.detailClosed()
         anchors.fill: parent
         initialItem: mainView
     }

@@ -18,7 +18,8 @@
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window
   keeps its size when the bars come and go.
-- **Mixes:** tapping one shows its songs first; the button on the cover starts it right away.
+- **Mixes:** tapping one shows its songs first; the button on the cover starts it right away, and
+  back leads to the start page.
 - **Start page:** its rows are only made anew when something in them changed (they kept jumping
   back to their start), and the covers of the top cards sit straight in their cards.
 - **Far less power on Android:** the visual is drawn at about a million pixels and fewer behind a

@@ -12,7 +12,7 @@ Item {
     signal openFiles()
     signal openAlbum(var album)
     signal openFavorites()
-    signal openMix(string id, string name)
+    signal openMix(string id, string name, string cover)
     signal openLabel(string name)
     signal openCollection(string ext, string id)
     signal startTour()
@@ -387,7 +387,7 @@ Item {
                     hasPlay: true
                     onPlayClicked: Core.call("mix.play", { id: modelData.id })
                     Component.onCompleted: if (!modelData.cover) Covers.request(modelData.coverTrack)
-                    onClicked: page.openMix(modelData.id, title)
+                    onClicked: page.openMix(modelData.id, title, cover)
                 }
             }
 

@@ -262,6 +262,7 @@ ApplicationWindow {
         }
     }
     property bool swipeHeld: false
+    property int backToPage: -1
 
     // Tapping the visual toggles the controls (and closes pages on phones).
     TapHandler {
@@ -403,6 +404,12 @@ ApplicationWindow {
                         onExportPlaylist: (id) => dialogs.exportPlaylist(id)
                         onConnectServer: win.page = 3
                         onUploadVault: dialogs.openUpload()
+                        // Opened from another page: back there.
+                        onDetailClosed: {
+                            if (win.backToPage >= 0)
+                                win.page = win.backToPage
+                            win.backToPage = -1
+                        }
                     }
                 }
                 // Page 1 is free: the queue has its own place below.
@@ -438,9 +445,13 @@ ApplicationWindow {
                         onOpenFiles: dialogs.openAudio()
                         onConnectServer: win.page = 3
                         onOpenAlbum: (album) => win.showAlbum(album)
-                        onOpenMix: (id, name) => {
+                        onOpenMix: (id, name, cover) => {
                             win.page = 0
-                            Qt.callLater(() => library.item && library.item.openMix(id, name))
+                            Qt.callLater(() => {
+                                if (library.item)
+                                    library.item.openMix(id, name, cover)
+                                win.backToPage = 5
+                            })
                         }
                         onOpenFavorites: {
                             win.page = 0
@@ -448,7 +459,11 @@ ApplicationWindow {
                         }
                         onOpenLabel: (name) => {
                             win.page = 0
-                            Qt.callLater(() => library.item && library.item.openLabel(name))
+                            Qt.callLater(() => {
+                                if (library.item)
+                                    library.item.openLabel(name)
+                                win.backToPage = 5
+                            })
                         }
                         onOpenCollection: (ext, id) => win.showCollection(ext, id)
                     }
