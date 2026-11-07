@@ -341,6 +341,32 @@ def check_log():
         raise SystemExit("QML errors:\n" + "\n".join(bad))
 
 
+def swiping_pages():
+    app = start((900, 700), True)
+    app.set("page", 2)
+    app.shows("Epilepsy mode")
+    # A slider keeps the finger.
+    slider = app.wait("a slider", lambda: [i for i in app.items() if "Slider" in i["type"] and i["w"] > 100])[0]
+    y = slider["y"] + slider["h"] / 2
+    app.send(f"drag {slider['x'] + 30} {y} {slider['x'] + slider['w'] - 30} {y}")
+    time.sleep(0.4)
+    app.shows("Epilepsy mode")
+    # Tabs first, then the pages.
+    app.send("drag 800 450 300 450")
+    app.gone("Epilepsy mode")
+    app.send("drag 300 450 800 450")
+    app.shows("Epilepsy mode")
+    # Too short: nothing.
+    app.send("drag 300 450 360 450")
+    time.sleep(0.4)
+    app.shows("Epilepsy mode")
+    app.send("drag 300 450 800 450")
+    app.gone("Epilepsy mode")
+    app.send("drag 800 450 300 450")
+    app.shows("Epilepsy mode")
+    app.quit()
+
+
 def main():
     make_music()
     try:
@@ -348,6 +374,7 @@ def main():
         phone_queue_and_swipe()
         desktop()
         wide_window()
+        swiping_pages()
         check_log()
     except (SystemExit, AssertionError, Exception):
         if os.path.exists(LOG):

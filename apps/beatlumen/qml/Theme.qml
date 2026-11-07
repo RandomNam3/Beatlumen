@@ -641,6 +641,8 @@ QtObject {
         "Loading…": "Wird geladen …",
         "Could not load this": "Das konnte nicht geladen werden",
         "Add to library": "In die Bibliothek",
+        "Always support assistive services": "Bedienungshilfen immer unterstützen",
+        "Screen readers work without this. Turn it on if another assistant cannot read the app. Takes effect after a restart and can make the app slower.": "Screenreader funktionieren auch ohne das. Schalte es ein, wenn eine andere Hilfe die App nicht lesen kann. Wirkt nach einem Neustart und kann die App langsamer machen.",
         "Add all to library": "Alle in die Bibliothek",
         "Discord": "Discord",
         "Show what's playing in Discord": "Aktuellen Song in Discord anzeigen",

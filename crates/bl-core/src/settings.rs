@@ -477,6 +477,14 @@ impl Settings {
     }
 
     pub fn to_json(&self) -> Value {
+        self.without_lists()
+            .with("audioQueue", self.audio_queue.clone())
+            .with("backgrounds", self.backgrounds.clone())
+    }
+
+    /// All but the lists that can get long: the state of the app holds this,
+    /// and that is made many times a second.
+    pub fn without_lists(&self) -> Value {
         Value::object()
             .with("version", "1.0.0")
             .with("language", self.language.as_str())
@@ -494,12 +502,10 @@ impl Settings {
             .with("useServer", self.use_server)
             .with("libraryFolders", self.library_folders.clone())
             .with("preset", self.preset.as_str())
-            .with("audioQueue", self.audio_queue.clone())
             .with("audioIndex", self.audio_index)
             .with("audioPosition", self.audio_position)
             .with("shuffle", self.shuffle)
             .with("repeat", self.repeat.name())
-            .with("backgrounds", self.backgrounds.clone())
             .with("backgroundIndex", self.background_index)
             .with("backgroundShuffle", self.background_shuffle)
             .with("backgroundRepeat", self.background_repeat.name())

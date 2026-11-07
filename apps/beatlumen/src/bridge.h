@@ -21,6 +21,8 @@ class Bridge : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
     Q_PROPERTY(double position READ position NOTIFY positionChanged)
+    // For what a screen reader can see: it hears about every change.
+    Q_PROPERTY(double seekPosition READ seekPosition NOTIFY seekPositionChanged)
     Q_PROPERTY(bool systemDark READ systemDark NOTIFY systemThemeChanged)
     Q_PROPERTY(QColor systemAccent READ systemAccent NOTIFY systemThemeChanged)
     Q_PROPERTY(QString platform READ platform CONSTANT)
@@ -35,6 +37,7 @@ public:
     ~Bridge() override;
 
     QVariantMap state() const { return m_state; }
+    double seekPosition() const { return m_seekPosition; }
     double position() const { return m_position; }
     bool systemDark() const;
     QColor systemAccent() const;
@@ -47,6 +50,12 @@ public:
     Q_INVOKABLE QJSValue call(const QString &cmd, const QVariantMap &args = {});
     // Renders the visualizer underneath the QML scene of `window`.
     Q_INVOKABLE void attachWindow(QQuickWindow *window);
+    // A page lies over the visual: fewer frames will do (Android).
+    Q_INVOKABLE void setVisualCovered(bool covered) { m_visualCovered = covered; }
+    // Android: Qt's bridge to accessibility services whatever runs, from the
+    // next start on (Accessibility.java).
+    Q_INVOKABLE bool accessibilityAlways() const;
+    Q_INVOKABLE void setAccessibilityAlways(bool on);
     // Opens files: local paths/URLs, Android content URIs, browser uploads.
     Q_INVOKABLE void openUrls(const QList<QUrl> &urls, bool play = true);
     void openPaths(const QStringList &paths, bool play);
@@ -69,6 +78,7 @@ public:
 signals:
     void stateChanged();
     void positionChanged();
+    void seekPositionChanged();
     void systemThemeChanged();
     void nativeDialogsChanged();
     void toast(const QString &text, bool error);
@@ -90,6 +100,9 @@ private:
 #endif
     QVariantMap m_state;
     double m_position = 0;
+    double m_seekPosition = 0;
+    bool m_visualCovered = false;
+    QTimer m_frameTimer;
     QTimer m_timer;
     QQuickWindow *m_window = nullptr;
     class DesktopMedia *m_desktopMedia = nullptr;

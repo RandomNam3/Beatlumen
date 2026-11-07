@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Android, no more "not responding":** with any accessibility service on (a password manager
+  like Bitwarden, KDE Connect's remote mouse), Android's main thread spent minutes waiting for
+  Qt's answers about the app's controls. The keyboard did not come up, Android offered to close
+  the app, and sometimes it crashed. The app now only talks to such services when a screen
+  reader or similar assistant runs (Settings has a switch for others).
+- **Less work per frame on Android:** at most 60 frames a second and 30 behind a page, and the
+  app's state is put together far less often. With a long queue that was a large part of the load.
+- **Swiping:** sideways through the pages and the tabs of Visuals, back out of a detail page.
+- **Tablets:** Visuals uses the width of the screen in two columns, the spectrum is wider and the
+  shade behind the title reaches the window's edges. The keyboard no longer opens by itself with
+  the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
 - **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
   offers is in its manifest. Rows of suggestions on the start page, collections that open
   like an album, a radio for a song, and search results next to the library's. Extensions

@@ -10,6 +10,8 @@ Item {
     property bool showSpectrum: true
     property bool showLyrics: false
     property bool controlsVisible: true
+    // The controls are away: the shade reaches the window's edges.
+    property bool shadeToEdges: false
     signal addLyrics()
     readonly property var cur: Core.state.current || null
     readonly property bool compact: width < 600 || height < 420
@@ -19,6 +21,8 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.leftMargin: np.shadeToEdges ? -np.x : 0
+        anchors.bottomMargin: np.shadeToEdges ? -(np.parent.height - np.y - np.height) : 0
         height: info.height + (np.compact ? 48 : 96)
         visible: np.cur !== null
         gradient: Gradient {
@@ -83,7 +87,7 @@ Item {
             id: spectrumArea
             Layout.fillWidth: true
             Layout.preferredHeight: np.compact ? 36 : 56
-            Layout.maximumWidth: 720
+            Layout.maximumWidth: 1200
             visible: np.cur !== null && !np.overlayFull
         }
     }

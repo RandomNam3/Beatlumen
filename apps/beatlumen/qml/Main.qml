@@ -99,7 +99,10 @@ ApplicationWindow {
     }
     // Behind a page the visual is only a blur; beside one it stays sharp.
     readonly property bool visualBlurred: page >= 0 && !docked
-    onVisualBlurredChanged: Core.call("ui.blur", { value: visualBlurred ? 2.0 : 0.0 })
+    onVisualBlurredChanged: {
+        Core.call("ui.blur", { value: visualBlurred ? 2.0 : 0.0 })
+        Core.setVisualCovered(visualBlurred)
+    }
     // Where the visual goes: what the panels leave of the window, so that it is
     // not half hidden behind them.
     readonly property var visualPart: docked ? [width - dockWidth, 0, dockWidth, height]
@@ -218,6 +221,32 @@ ApplicationWindow {
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
 
+    // Wiping sideways goes through the pages as the bar lists them, and the
+    // visual comes after the last one.
+    function swipePage(dir) {
+        const shown = win.page === 0 ? library.item : win.page === 2 ? visuals.item : null
+        if (shown && shown.swipe && shown.swipe(dir))
+            return
+        const order = rail.items.map(i => i.page).concat([-1])
+        const at = order.indexOf(win.page)
+        if (at >= 0 && at + dir >= 0 && at + dir < order.length)
+            win.page = order[at + dir]
+    }
+    // What moves sideways by itself keeps the finger: sliders, rows to scroll.
+    function holdsSwipe(x, y) {
+        let item = win.contentItem
+        for (;;) {
+            const p = win.contentItem.mapToItem(item, x, y)
+            item = item.childAt(p.x, p.y)
+            if (!item)
+                return false
+            if (item instanceof Slider || item instanceof RangeSlider
+                    || (item instanceof Flickable && item.contentWidth > item.width + 1))
+                return true
+        }
+    }
+    property bool swipeHeld: false
+
     // Tapping the visual toggles the controls (and closes pages on phones).
     TapHandler {
         // Tapping the visual while the controls are shown hides them; the
@@ -279,6 +308,7 @@ ApplicationWindow {
         showSpectrum: true
         showLyrics: win.showLyrics
         controlsVisible: win.chromeVisible
+        shadeToEdges: !win.chromeVisible && !win.docked
         onAddLyrics: dialogs.openLyrics()
     }
 
@@ -317,81 +347,109 @@ ApplicationWindow {
         anchors.bottom: playerBar.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
 
-        StackLayout {
+        PointHandler {
+            acceptedButtons: Qt.LeftButton
+            onActiveChanged: {
+                const p = panel.mapToItem(win.contentItem, point.pressPosition.x, point.pressPosition.y)
+                win.swipeHeld = active && win.holdsSwipe(p.x, p.y)
+            }
+        }
+        // Follows a finger sideways and springs back: see swipePage().
+        Flickable {
+            id: pageSwipe
             anchors.fill: parent
-            anchors.margins: win.compact ? 4 : 8
-            anchors.topMargin: 8
-            currentIndex: Math.max(0, win.page)
-            Loader {
-                id: library
-                active: win.page === 0 || item !== null
-                sourceComponent: LibraryPage {
-                    onAddFolder: win.addFolder()
-                    onOpenFiles: dialogs.openAudio()
-                    onExportPlaylist: (id) => dialogs.exportPlaylist(id)
-                    onConnectServer: win.page = 3
-                    onUploadVault: dialogs.openUpload()
-                }
+            contentWidth: width
+            contentHeight: height
+            flickableDirection: Flickable.HorizontalFlick
+            boundsBehavior: Flickable.DragOverBounds
+            interactive: Core.mobile && !win.swipeHeld && !win.queueOpen && !Theme.lyricsEditing
+            clip: true
+            onDraggingChanged: {
+                if (dragging || Math.abs(contentX) < Math.min(60, width * 0.08))
+                    return
+                const dir = contentX > 0 ? 1 : -1
+                // What comes next stands straight at once.
+                cancelFlick()
+                contentX = 0
+                win.swipePage(dir)
             }
-            // Page 1 is free: the queue has its own place below.
-            Item { }
-            Loader {
-                id: visuals
-                active: win.page === 2 || item !== null
-                sourceComponent: VisualsPage {
-                    onAddImages: dialogs.openImages()
-                    onAddImageFolder: win.addImageFolder()
-                }
-            }
-            Loader {
-                id: settingsLoader
-                active: win.page === 3 || item !== null
-                sourceComponent: SettingsPage {
-                    onAddFolder: win.addFolder()
-                    onLogin: loginPrompt.open()
-                    onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
-                }
-            }
-            Loader {
-                active: win.page === 4 || item !== null
-                sourceComponent: DevicesPage {
-                    onOpenSettings: win.page = 3
-                }
-            }
-            Loader {
-                active: win.page === 5 || item !== null
-                sourceComponent: HomePage {
-                    onStartTour: win.startTour()
-                    onAddFolder: win.addFolder()
-                    onOpenFiles: dialogs.openAudio()
-                    onConnectServer: win.page = 3
-                    onOpenAlbum: (album) => win.showAlbum(album)
-                    onOpenFavorites: {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openFavorites())
+
+            StackLayout {
+                anchors.fill: parent
+                anchors.margins: win.compact ? 4 : 8
+                anchors.topMargin: 8
+                currentIndex: Math.max(0, win.page)
+                Loader {
+                    id: library
+                    active: win.page === 0 || item !== null
+                    sourceComponent: LibraryPage {
+                        onAddFolder: win.addFolder()
+                        onOpenFiles: dialogs.openAudio()
+                        onExportPlaylist: (id) => dialogs.exportPlaylist(id)
+                        onConnectServer: win.page = 3
+                        onUploadVault: dialogs.openUpload()
                     }
-                    onOpenLabel: (name) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openLabel(name))
-                    }
-                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
                 }
-            }
-            Loader {
-                active: win.page === 6 || item !== null
-                sourceComponent: StatsPage { }
-            }
-            Loader {
-                id: searchLoader
-                active: win.page === 7 || item !== null
-                sourceComponent: SearchPage {
-                    onOpenAlbum: (album) => win.showAlbum(album)
-                    onOpenArtist: (name) => win.showArtist(name)
-                    onOpenLabel: (name) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openLabel(name))
+                // Page 1 is free: the queue has its own place below.
+                Item { }
+                Loader {
+                    id: visuals
+                    active: win.page === 2 || item !== null
+                    sourceComponent: VisualsPage {
+                        onAddImages: dialogs.openImages()
+                        onAddImageFolder: win.addImageFolder()
                     }
-                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                }
+                Loader {
+                    id: settingsLoader
+                    active: win.page === 3 || item !== null
+                    sourceComponent: SettingsPage {
+                        onAddFolder: win.addFolder()
+                        onLogin: loginPrompt.open()
+                        onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
+                    }
+                }
+                Loader {
+                    active: win.page === 4 || item !== null
+                    sourceComponent: DevicesPage {
+                        onOpenSettings: win.page = 3
+                    }
+                }
+                Loader {
+                    active: win.page === 5 || item !== null
+                    sourceComponent: HomePage {
+                        onStartTour: win.startTour()
+                        onAddFolder: win.addFolder()
+                        onOpenFiles: dialogs.openAudio()
+                        onConnectServer: win.page = 3
+                        onOpenAlbum: (album) => win.showAlbum(album)
+                        onOpenFavorites: {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openFavorites())
+                        }
+                        onOpenLabel: (name) => {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openLabel(name))
+                        }
+                        onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                    }
+                }
+                Loader {
+                    active: win.page === 6 || item !== null
+                    sourceComponent: StatsPage { }
+                }
+                Loader {
+                    id: searchLoader
+                    active: win.page === 7 || item !== null
+                    sourceComponent: SearchPage {
+                        onOpenAlbum: (album) => win.showAlbum(album)
+                        onOpenArtist: (name) => win.showArtist(name)
+                        onOpenLabel: (name) => {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openLabel(name))
+                        }
+                        onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                    }
                 }
             }
         }

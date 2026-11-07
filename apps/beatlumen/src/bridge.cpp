@@ -8,6 +8,7 @@
 #include "tls.h"
 #include "web.h"
 
+#include <QAccessible>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDateTime>
@@ -665,6 +666,11 @@ void Bridge::tick()
     if (p != m_position) {
         m_position = p;
         emit positionChanged();
+        // A control moving by itself is a question to Android for every step.
+        if (!QAccessible::isActive() || qAbs(p - m_seekPosition) >= 1.0) {
+            m_seekPosition = p;
+            emit seekPositionChanged();
+        }
     }
 #ifdef Q_OS_ANDROID
     const bool playing = bl_core_is_playing(m_core);
@@ -722,7 +728,20 @@ void Bridge::attachWindow(QQuickWindow *window)
         m_glReady = false;
     }, Qt::DirectConnection);
     // Keep animating: the visualizer changes every frame.
+#ifdef Q_OS_ANDROID
+    // This thread does everything, and Android's main thread waits for it when
+    // it wants to know something (keyboard, accessibility). So it has to come
+    // up for air: no more frames than the eye needs, even on a 120 Hz screen.
+    m_frameTimer.setSingleShot(true);
+    m_frameTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_frameTimer, &QTimer::timeout, window, &QQuickWindow::update);
+    connect(window, &QQuickWindow::frameSwapped, this, [this]() {
+        const qint64 gap = QAccessible::isActive() ? 66 : m_visualCovered ? 33 : 16;
+        m_frameTimer.start(int(qMax<qint64>(0, gap - m_frameClock.elapsed())));
+    }, Qt::QueuedConnection);
+#else
     connect(window, &QQuickWindow::frameSwapped, window, &QQuickWindow::update, Qt::QueuedConnection);
+#endif
     m_frameClock.start();
     window->update();
 }
@@ -842,6 +861,28 @@ void Bridge::setSystemBarsHidden(bool hidden)
     });
 #else
     Q_UNUSED(hidden);
+#endif
+}
+
+bool Bridge::accessibilityAlways() const
+{
+#ifdef Q_OS_ANDROID
+    return QJniObject::callStaticMethod<jboolean>(
+        "io/github/randomnam3/beatlumen/Accessibility", "always", "(Landroid/content/Context;)Z",
+        QNativeInterface::QAndroidApplication::context().object<jobject>());
+#else
+    return false;
+#endif
+}
+
+void Bridge::setAccessibilityAlways(bool on)
+{
+#ifdef Q_OS_ANDROID
+    QJniObject::callStaticMethod<void>(
+        "io/github/randomnam3/beatlumen/Accessibility", "setAlways", "(Landroid/content/Context;Z)V",
+        QNativeInterface::QAndroidApplication::context().object<jobject>(), jboolean(on));
+#else
+    Q_UNUSED(on);
 #endif
 }
 

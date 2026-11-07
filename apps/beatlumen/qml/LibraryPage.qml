@@ -44,6 +44,10 @@ Item {
         }
         return false
     }
+    // Wiping back leaves a detail page first.
+    function swipe(dir) {
+        return dir < 0 && back()
+    }
     function openAlbum(album) {
         stack.pop(null)
         stack.push(albumView, { album: album })

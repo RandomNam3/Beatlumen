@@ -21,6 +21,9 @@ use bl_render::{Batch2d, Rect, Target, Visualizer};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Seconds between looks at the state while nothing asks for it.
+const STATE_EVERY: f64 = 0.1;
+
 /// Command line / launch options.
 #[derive(Debug, Clone, Default)]
 pub struct LaunchArgs {
@@ -296,6 +299,9 @@ pub struct Core {
     pub(crate) events: Vec<Value>,
     pub(crate) revs: Revisions,
     last_state: String,
+    /// A command ran: what it changed should show at once.
+    pub(crate) state_wanted: bool,
+    state_at: f64,
     pub(crate) blur_target: f32,
     menu_blur: f32,
     pub(crate) overlay: Overlay,
@@ -501,6 +507,8 @@ impl Core {
             events: Vec::new(),
             revs: Revisions::default(),
             last_state: String::new(),
+            state_wanted: true,
+            state_at: 0.0,
             blur_target: 0.0,
             menu_blur: 0.0,
             overlay: Overlay::default(),
@@ -613,13 +621,11 @@ impl Core {
 
     /// Settings as shown to the UI (without queues and secrets).
     pub(crate) fn settings_json(&self) -> Value {
-        let mut v = self.settings.to_json();
+        let mut v = self.settings.without_lists();
         if let Some(m) = v.as_object_mut() {
             for k in [
-                "audioQueue",
                 "audioIndex",
                 "audioPosition",
-                "backgrounds",
                 "backgroundIndex",
                 "serverToken",
                 "version",
@@ -2743,11 +2749,16 @@ impl Core {
                 self.save_settings(host);
             }
         }
-        let state = self.state(host);
-        let json = state.to_json();
-        if json != self.last_state {
-            self.last_state = json;
-            self.emit(Value::object().with("type", "state").with("state", state));
+        // At once after a command; otherwise a few times a second are plenty.
+        if self.state_wanted || self.time - self.state_at >= STATE_EVERY {
+            self.state_wanted = false;
+            self.state_at = self.time;
+            let state = self.state(host);
+            let json = state.to_json();
+            if json != self.last_state {
+                self.last_state = json;
+                self.emit(Value::object().with("type", "state").with("state", state));
+            }
         }
     }
 
