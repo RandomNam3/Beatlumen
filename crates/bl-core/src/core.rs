@@ -1903,6 +1903,11 @@ impl Core {
         self.player.position(host)
     }
 
+    /// Frames decoded ahead, waiting for the sound card.
+    pub fn queued_frames(&self) -> usize {
+        self.player.queued_frames()
+    }
+
     /// The most recently played samples (interleaved stereo), as the
     /// visuals get them.
     pub fn recent_samples(&self, out: &mut [f32]) {

@@ -1304,6 +1304,11 @@ impl Player {
     pub fn underruns(&self) -> u64 {
         self.output.underruns.load(Ordering::Relaxed)
     }
+
+    /// Frames decoded ahead, waiting for the sound card.
+    pub fn queued_frames(&self) -> usize {
+        self.output.queued_frames()
+    }
 }
 
 impl Drop for Player {
