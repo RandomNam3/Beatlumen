@@ -21,6 +21,14 @@ use bl_render::{Batch2d, Rect, Target, Visualizer};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// About this many pixels for the visual where the device decides (Android). It
+/// is soft anyway: a tablet's whole screen took all of its GPU, for 46 frames a
+/// second, and over a watt more than this, for no difference to see.
+const AUTO_PIXELS: f32 = 1_000_000.0;
+/// Seconds between looks at how many frames there are, and how few are too few.
+const FRAMES_LOOK: f64 = 3.0;
+const TOO_FEW_FRAMES: f64 = 40.0;
+
 /// Seconds between looks at the state while nothing asks for it.
 const STATE_EVERY: f64 = 0.1;
 
@@ -302,6 +310,9 @@ pub struct Core {
     /// A command ran: what it changed should show at once.
     pub(crate) state_wanted: bool,
     state_at: f64,
+    frames_time: f64,
+    frames_count: u32,
+    slow_scale: f32,
     pub(crate) blur_target: f32,
     menu_blur: f32,
     pub(crate) overlay: Overlay,
@@ -509,6 +520,9 @@ impl Core {
             last_state: String::new(),
             state_wanted: true,
             state_at: 0.0,
+            frames_time: 0.0,
+            frames_count: 0,
+            slow_scale: 1.0,
             blur_target: 0.0,
             menu_blur: 0.0,
             overlay: Overlay::default(),
@@ -2795,6 +2809,28 @@ impl Core {
 
     /// Renders the visualizer into framebuffer `fbo` (size in physical
     /// pixels). `dpr` is the device pixel ratio, `dt` the frame time.
+    /// How much of the screen's resolution the visual is drawn at.
+    fn render_scale(&mut self, auto: bool, w: u32, h: u32, dt: f64, playing: bool) -> f32 {
+        if !auto || !self.settings.render_auto {
+            return self.settings.render_scale.clamp(0.25, 1.0);
+        }
+        let covered = self.blur_target > 0.0 && (self.menu_blur - self.blur_target).abs() < 0.01;
+        // Too slow all the same: less still. Only what is seen and moving counts.
+        if playing && self.blur_target == 0.0 {
+            self.frames_time += dt;
+            self.frames_count += 1;
+            if self.frames_time >= FRAMES_LOOK {
+                let fps = self.frames_count as f64 / self.frames_time;
+                if fps < TOO_FEW_FRAMES {
+                    self.slow_scale = (self.slow_scale * 0.85).max(0.5);
+                }
+                self.frames_time = 0.0;
+                self.frames_count = 0;
+            }
+        }
+        auto_scale(w, h, self.slow_scale, covered)
+    }
+
     pub fn render(
         &mut self,
         gl: &Gl,
@@ -2816,9 +2852,9 @@ impl Core {
         if (self.menu_blur - self.blur_target).abs() < 0.01 {
             self.menu_blur = self.blur_target;
         }
-        let rs = self.settings.render_scale.clamp(0.25, 1.0);
         // Where the picture goes: the part of the window the pages leave free.
         let (px, py, pw, ph) = visible_part(self.view_part, w, h, dpr);
+        let rs = self.render_scale(host.platform() == "android", pw, ph, dt, playing);
         let render_size = (((pw as f32) * rs) as u32, ((ph as f32) * rs) as u32);
         let frame_input = FrameInput {
             dt,
@@ -3031,6 +3067,18 @@ pub(crate) fn http_stream(
     Err("streaming is not available in the browser".into())
 }
 
+/// The visual's scale on a device that decides for itself: about `AUTO_PIXELS`,
+/// and a blur behind a page needs far fewer.
+fn auto_scale(w: u32, h: u32, slow: f32, covered: bool) -> f32 {
+    let pixels = (w.max(1) as f32) * (h.max(1) as f32);
+    let scale = (AUTO_PIXELS / pixels).sqrt().min(1.0) * slow;
+    if covered {
+        scale * 0.5
+    } else {
+        scale
+    }
+}
+
 /// A part of the window in the framebuffer's pixels: x and y from the lower
 /// left corner, width and height. Always inside the window and never empty.
 fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, u32, u32) {
@@ -3042,6 +3090,32 @@ fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, 
     let pw = ((pw * dpr) as u32).clamp(1, w - px);
     let ph = ((ph * dpr) as u32).clamp(1, h - py);
     (px as i32, (h - py - ph) as i32, pw, ph)
+}
+
+#[cfg(test)]
+mod auto_scale_tests {
+    use super::{auto_scale, AUTO_PIXELS};
+
+    #[test]
+    fn about_the_same_pixels_on_any_screen() {
+        for (w, h) in [(2960, 1848), (1080, 2400), (1920, 1200)] {
+            let s = auto_scale(w, h, 1.0, false);
+            let pixels = (w as f32 * s) * (h as f32 * s);
+            assert!((pixels / AUTO_PIXELS - 1.0).abs() < 0.01, "{w}x{h}: {s}");
+        }
+    }
+
+    #[test]
+    fn a_small_part_is_not_blown_up() {
+        assert_eq!(auto_scale(800, 600, 1.0, false), 1.0);
+    }
+
+    #[test]
+    fn behind_a_page_and_when_too_slow_there_is_less() {
+        let s = auto_scale(2960, 1848, 1.0, false);
+        assert_eq!(auto_scale(2960, 1848, 1.0, true), s * 0.5);
+        assert_eq!(auto_scale(2960, 1848, 0.5, false), s * 0.5);
+    }
 }
 
 #[cfg(test)]

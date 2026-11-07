@@ -458,6 +458,13 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
         const bool visible = s == Qt::ApplicationActive;
         m_timer.setInterval(visible ? 33 : 250);
         call(QStringLiteral("app.visible"), {{QStringLiteral("visible"), visible}});
+        if (visible) {
+            // The system's battery saver: half the frames.
+            QJniObject power = QNativeInterface::QAndroidApplication::context().callObjectMethod(
+                "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;",
+                QJniObject::fromString(QStringLiteral("power")).object<jstring>());
+            m_powerSaving = power.isValid() && power.callMethod<jboolean>("isPowerSaveMode");
+        }
     });
 #endif
     tick();
@@ -753,7 +760,7 @@ void Bridge::attachWindow(QQuickWindow *window)
         const bool playing = m_core && bl_core_is_playing(m_core);
         const qint64 gap = QAccessible::isActive() ? 66
             : m_visualCovered ? (playing ? 50 : 100)
-            : playing ? 16 : 33;
+            : playing && !m_powerSaving ? 16 : 33;
         m_frameTimer.start(int(qMax<qint64>(0, gap - m_frameClock.elapsed())));
     }, Qt::QueuedConnection);
 #else

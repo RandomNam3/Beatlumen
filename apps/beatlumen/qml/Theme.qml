@@ -641,6 +641,8 @@ QtObject {
         "Loading…": "Wird geladen …",
         "Could not load this": "Das konnte nicht geladen werden",
         "Add to library": "In die Bibliothek",
+        "Choose the resolution automatically": "Auflösung automatisch wählen",
+        "Smooth and easy on the battery: the visual is soft anyway. The full resolution of a tablet takes all of its graphics power.": "Flüssig und schont den Akku: Das Visual ist ohnehin weich. Die volle Auflösung eines Tablets braucht die ganze Grafikleistung.",
         "Always support assistive services": "Bedienungshilfen immer unterstützen",
         "Screen readers work without this. Turn it on if another assistant cannot read the app. Takes effect after a restart and can make the app slower.": "Screenreader funktionieren auch ohne das. Schalte es ein, wenn eine andere Hilfe die App nicht lesen kann. Wirkt nach einem Neustart und kann die App langsamer machen.",
         "Add all to library": "Alle in die Bibliothek",

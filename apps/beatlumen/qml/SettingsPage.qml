@@ -1334,6 +1334,14 @@ Item {
                 spacing: 6
                 visible: page.shows("look", ["Performance", "Render resolution"])
                 SectionLabel { text: Theme.tr("Performance") }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    visible: Core.platform === "android"
+                    title: Theme.tr("Choose the resolution automatically")
+                    detail: Theme.tr("Smooth and easy on the battery: the visual is soft anyway. The full resolution of a tablet takes all of its graphics power.")
+                    on: page.settings.renderAuto !== false
+                    onSwitched: (v) => Core.call("settings.set", { key: "renderAuto", value: v })
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
@@ -1343,6 +1351,7 @@ Item {
                         Accessible.name: Theme.tr("Render resolution")
                         Layout.fillWidth: true
                         from: 0.25; to: 1; stepSize: 0.05
+                        enabled: !(Core.platform === "android" && page.settings.renderAuto !== false)
                         value: page.settings.renderScale || 1
                         onMoved: Core.call("settings.set", { key: "renderScale", value: value })
                     }

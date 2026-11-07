@@ -116,6 +116,7 @@ private:
     double m_position = 0;
     double m_seekPosition = 0;
     bool m_visualCovered = false;
+    bool m_powerSaving = false;
     QTimer m_frameTimer;
     QMargins m_safe;
     bool m_safeWide = false;

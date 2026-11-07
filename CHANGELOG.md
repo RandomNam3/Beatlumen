@@ -20,8 +20,12 @@
 - **Mixes:** tapping one shows its songs first; the button on the cover starts it right away.
 - **Start page:** its rows are only made anew when something in them changed (they kept jumping
   back to their start), and the covers of the top cards sit straight in their cards.
-- **Less to do while playing on Android:** a look at the state 30 times a second instead of 60,
-  fewer frames when paused or behind a page, and audio in the system's power saving mode.
+- **Far less power on Android:** the visual is drawn at about a million pixels and fewer behind a
+  page, instead of the whole screen. On a Galaxy Tab S8 Ultra that gives a steady 60 frames a second
+  instead of 46 with the graphics chip at its limit, and about half the current from the battery.
+  Settings, Appearance, can turn this off. Also: fewer frames when paused, behind a page or with the
+  system's battery saver, a look at the state 30 times a second instead of 60, and audio in the
+  system's power saving mode.
 - **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
   offers is in its manifest. Rows of suggestions on the start page, collections that open
   like an album, a radio for a song, and search results next to the library's. Extensions
