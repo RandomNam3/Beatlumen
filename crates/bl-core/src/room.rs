@@ -352,6 +352,17 @@ impl Core {
             self.room_post(host, &current, 0.0, true);
             return;
         }
+        // The same song once more (on repeat): for everybody.
+        let over = self.player.duration().is_some_and(|d| {
+            self.room.phase == "playing"
+                && self.room.start_at.is_none()
+                && self.room_position(host) > d + 0.5
+        });
+        if over && !current.is_empty() {
+            let position = self.player.position(host);
+            self.room_post(host, &current, position, true);
+            return;
+        }
         let upcoming = self.room_upcoming();
         if upcoming != self.room.sent_upcoming {
             self.room.sent_upcoming = upcoming.clone();
@@ -360,17 +371,18 @@ impl Core {
         }
     }
 
-    /// Has this device the room's song, with some of it ready to sound?
+    /// Is the room's song loaded here?
     fn room_has_song(&self) -> bool {
-        if self.queue.current() != Some(&self.room.track) {
-            return false;
-        }
-        match self.player.state() {
-            PlayState::Paused | PlayState::Playing => {}
-            _ => return false,
-        }
+        self.queue.current() == Some(&self.room.track)
+            && matches!(self.player.state(), PlayState::Paused | PlayState::Playing)
+    }
+
+    /// With some of it ready to sound?
+    fn room_song_ready(&self) -> bool {
         let rate = self.player.device_rate().max(1) as f64;
-        !self.player.can_nudge() || self.player.queued_frames() as f64 >= READY_AUDIO * rate
+        self.room_has_song()
+            && (!self.player.can_nudge()
+                || self.player.queued_frames() as f64 >= READY_AUDIO * rate)
     }
 
     /// Every device: do what the room says.
@@ -404,7 +416,7 @@ impl Core {
         }
         if self.room.phase == "preparing"
             && self.room.ready_sent != self.room.gen
-            && self.room_has_song()
+            && self.room_song_ready()
         {
             self.room.ready_sent = self.room.gen;
             let body = Value::object().with("gen", self.room.gen);
@@ -443,7 +455,10 @@ impl Core {
         if self.room.phase == "playing" && host.now() >= self.room.check_at {
             self.room.check_at = host.now() + CHECK;
             let expected = self.room_position(host);
-            self.room.drift_ms = self.keep_in_step(host, expected).or(self.room.drift_ms);
+            // At the end there is nothing to catch up with.
+            if self.player.duration().is_none_or(|d| expected < d - 0.5) {
+                self.room.drift_ms = self.keep_in_step(host, expected).or(self.room.drift_ms);
+            }
         }
     }
 
@@ -668,6 +683,7 @@ impl Core {
             .with("guest", r.guest)
             .with("guests", r.guests)
             .with("phase", r.phase.as_str())
+            .with("at", r.at)
             .with("members", r.members.clone())
             .with("me", r.me.as_str())
             .with("upcoming", Value::Array(r.upcoming.clone()))

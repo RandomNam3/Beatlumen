@@ -297,6 +297,51 @@ fn a_room_plays_together_and_stays_in_step() {
     let _ = &w.server;
 }
 
+#[test]
+fn a_song_on_repeat_starts_again_for_everybody() {
+    let w = world("repeat", Default::default());
+    let short = w.dir.join("music").join("Kurz.wav");
+    std::fs::write(&short, common::wav(4)).unwrap();
+    w.server.state.request_scan();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(w.server.wait_for_scan(Duration::from_secs(20)));
+    let mut a = App::new("room-rep-a");
+    let mut b = App::new("room-rep-b");
+    a.connect(&w.url);
+    b.connect(&w.url);
+    let tracks = common::wait_tracks(&mut a, 4);
+    let id = tracks
+        .iter()
+        .find(|t| t.str_or("title", "") == "Kurz")
+        .unwrap()
+        .str_or("id", "")
+        .to_string();
+    let code = create(&mut a);
+    join(&mut b, &code);
+    let _sa = speaker(&a, 1.0);
+    let _sb = speaker(&b, 1.0);
+    a.cmd(Value::object().with("cmd", "repeat").with("value", "Item"));
+    play(&mut a, std::slice::from_ref(&id));
+    until(&mut [&mut a, &mut b], "both play", 20, |x| {
+        x[0].state().str_or("play", "") == "playing" && x[1].state().str_or("play", "") == "playing"
+    });
+    // Twice round and more, and still together.
+    let first = room(&mut a).f64_or("at", 0.0);
+    until(&mut [&mut a, &mut b], "once more", 20, |x| {
+        let (sa, sb) = (x[0].state(), x[1].state());
+        let (pa, pb) = (pos(x[0]), pos(x[1]));
+        sa.get("room").f64_or("at", 0.0) > first + 3000.0
+            && sa.str_or("play", "") == "playing"
+            && sb.str_or("play", "") == "playing"
+            && pa > 1.0
+            && pa < 2.5
+            && pb < 2.5
+    });
+    run(&mut [&mut a, &mut b], Duration::from_millis(200));
+    let (pa, pb) = (pos(&mut a), pos(&mut b));
+    assert!((pa - pb).abs() < 0.3, "at {pa} and {pb}");
+}
+
 /// Status and answer of a request with a token.
 fn http(url: &str, token: &str, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
     let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
@@ -406,6 +451,8 @@ fn a_guest_gets_this_rooms_songs_and_nothing_else() {
         assert_eq!(http(&w.url, &token, "GET", path, b"").0, 403, "{path}");
     }
     assert_eq!(http(&w.url, &token, "POST", "/api/rescan", b"").0, 403);
+    let text = format!("/api/tracks/{}/lyrics", ids[0]);
+    assert_eq!(http(&w.url, &token, "PUT", &text, b"mine now").0, 403);
     assert_eq!(http(&w.url, &token, "POST", "/api/rooms", b"{}").0, 403);
     // A guest decides nothing.
     let id = v.get("room").str_or("id", "").to_string();

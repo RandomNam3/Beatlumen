@@ -241,7 +241,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     // A guest of a room: that room's songs and nothing else.
     let guest = state.rooms.guest(req);
     if let Some(g) = &guest {
-        if !state.rooms.guest_may(g, segs) {
+        if !state.rooms.guest_may(g, m, segs) {
             return Response::error(403, "not for a guest of a room");
         }
     } else if !state.auth.authorized(req) && user.is_none() {

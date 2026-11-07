@@ -251,8 +251,11 @@ impl Rooms {
         m.guest.then(|| Guest { room: room.clone() })
     }
 
-    /// Only what listening in this room takes.
-    pub fn guest_may(&self, g: &Guest, segs: &[&str]) -> bool {
+    /// Only what listening in this room takes, and that only reads.
+    pub fn guest_may(&self, g: &Guest, method: &str, segs: &[&str]) -> bool {
+        if !matches!(method, "GET" | "HEAD") {
+            return false;
+        }
         match segs {
             ["time"] | ["events"] => true,
             ["tracks", id, "stream" | "cover" | "loudness" | "lyrics" | "analysis"]
@@ -787,17 +790,20 @@ mod tests {
         r.upcoming = vec![song("s2")];
         rooms.lock().rooms.insert("r".into(), r);
         let g = Guest { room: "r".into() };
-        assert!(rooms.guest_may(&g, &["tracks", "s1", "stream"]));
-        assert!(rooms.guest_may(&g, &["tracks", "s2", "cover"]));
-        assert!(rooms.guest_may(&g, &["albums", "album", "cover"]));
-        assert!(rooms.guest_may(&g, &["time"]));
-        assert!(rooms.guest_may(&g, &["events"]));
-        assert!(!rooms.guest_may(&g, &["tracks", "s3", "stream"]));
-        assert!(!rooms.guest_may(&g, &["library"]));
-        assert!(!rooms.guest_may(&g, &["devices"]));
-        assert!(!rooms.guest_may(&g, &["rescan"]));
+        assert!(rooms.guest_may(&g, "GET", &["tracks", "s1", "stream"]));
+        assert!(rooms.guest_may(&g, "GET", &["tracks", "s2", "cover"]));
+        assert!(rooms.guest_may(&g, "GET", &["albums", "album", "cover"]));
+        assert!(rooms.guest_may(&g, "GET", &["time"]));
+        assert!(rooms.guest_may(&g, "GET", &["events"]));
+        assert!(!rooms.guest_may(&g, "GET", &["tracks", "s3", "stream"]));
+        assert!(!rooms.guest_may(&g, "GET", &["library"]));
+        assert!(!rooms.guest_may(&g, "GET", &["devices"]));
+        assert!(!rooms.guest_may(&g, "GET", &["rescan"]));
         let gone = Guest { room: "x".into() };
-        assert!(!rooms.guest_may(&gone, &["tracks", "s1", "stream"]));
+        assert!(!rooms.guest_may(&gone, "GET", &["tracks", "s1", "stream"]));
+        // Nothing to change: the song's text, for one.
+        assert!(!rooms.guest_may(&g, "PUT", &["tracks", "s1", "lyrics"]));
+        assert!(!rooms.guest_may(&g, "POST", &["tracks", "s1", "stream"]));
     }
 
     #[test]
