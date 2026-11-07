@@ -37,12 +37,13 @@ Item {
         if (!(stack.currentItem instanceof VaultPage))
             stack.push(vaultView)
     }
+    property var folders: null
     function back() {
         if (stack.depth > 1) {
             stack.pop()
             return true
         }
-        return false
+        return !!folders && folders.visible && folders.up()
     }
     // Wiping back leaves a detail page first.
     function swipe(dir) {
@@ -484,6 +485,7 @@ Item {
 
                     // Folders
                     FolderView {
+                        Component.onCompleted: page.folders = this
                         onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
                     }
 

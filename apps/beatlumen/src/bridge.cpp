@@ -460,7 +460,8 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
         call(QStringLiteral("app.visible"), {{QStringLiteral("visible"), visible}});
         if (visible) {
             // The system's battery saver: half the frames.
-            QJniObject power = QNativeInterface::QAndroidApplication::context().callObjectMethod(
+            QJniObject context = QNativeInterface::QAndroidApplication::context();
+            QJniObject power = context.callObjectMethod(
                 "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;",
                 QJniObject::fromString(QStringLiteral("power")).object<jstring>());
             m_powerSaving = power.isValid() && power.callMethod<jboolean>("isPowerSaveMode");

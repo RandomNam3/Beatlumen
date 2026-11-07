@@ -13,6 +13,7 @@
 - **Tablets:** Visuals uses the width of the screen in two columns, the spectrum is wider and the
   shade behind the title reaches the window's edges. The keyboard no longer opens by itself with
   the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
+- **Back in a folder** goes one folder up instead of closing the page.
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window

@@ -12,6 +12,13 @@ ColumnLayout {
     readonly property string current: path.length > 0 ? path[path.length - 1] : ""
     readonly property int libraryRev: Core.state.libraryRev || 0
 
+    // One folder up, if there is one.
+    function up() {
+        if (path.length === 0)
+            return false
+        path = path.slice(0, -1)
+        return true
+    }
     function load() { view = Core.call("library.folder", { path: current }) || { folders: [], tracks: [] } }
     onCurrentChanged: load()
     onLibraryRevChanged: load()
