@@ -23,6 +23,10 @@ ApplicationWindow {
     Material.background: Theme.surfaceStrong
 
     readonly property bool compact: width < 760
+    // Wide enough for a page and the visual beside it.
+    readonly property bool dockAllowed: width >= 1180 && ((Core.state.settings || {}).ui || {}).docked !== false
+    readonly property bool docked: dockAllowed && page >= 0 && !queueOpen && !!Core.state.current
+    readonly property real dockWidth: Math.min(440, width * 0.34)
     readonly property bool playing: Core.state.play === "playing"
     // -1: visualizer only, 0 library, 2 visuals, 3 settings, 4 devices,
     // 5 start page, 6 statistics, 7 search
@@ -91,9 +95,17 @@ ApplicationWindow {
     onPageChanged: {
         if (page >= 0)
             lastPage = page
-        Core.call("ui.blur", { value: page >= 0 ? 2.0 : 0.0 })
         poke()
     }
+    // Behind a page the visual is only a blur; beside one it stays sharp.
+    readonly property bool visualBlurred: page >= 0 && !docked
+    onVisualBlurredChanged: Core.call("ui.blur", { value: visualBlurred ? 2.0 : 0.0 })
+    // Where the visual goes: what the panels leave of the window, so that it is
+    // not half hidden behind them.
+    readonly property var visualPart: docked ? [width - dockWidth, 0, dockWidth, height]
+        : queueOpen && !compact && page < 0 ? [0, 0, width - queueSide.width, height]
+        : [0, 0, 0, 0]
+    onVisualPartChanged: Core.call("ui.viewport", { x: visualPart[0], y: visualPart[1], w: visualPart[2], h: visualPart[3] })
 
     property double lastPoke: 0
     function poke() {
@@ -101,7 +113,13 @@ ApplicationWindow {
         idle = false
         idleTimer.restart()
     }
+    // The list with songs selected, if any: going back ends that first.
+    property var selectionOwner: null
     function goBack() {
+        if (selectionOwner) {
+            selectionOwner.clearSelection()
+            return true
+        }
         if (queueOpen) {
             queueOpen = false
             return true
@@ -217,7 +235,7 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.margins: 8
-        visible: win.page < 0
+        visible: win.page < 0 || win.docked
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
         IconButton {
@@ -231,7 +249,13 @@ ApplicationWindow {
             onClicked: Core.call("backgrounds.next")
         }
         IconButton {
-            visible: !Core.mobile
+            visible: win.docked
+            iconName: "close"; iconColor: "white"
+            tip: Theme.tr("Hide now playing")
+            onClicked: Core.call("settings.set", { key: "ui.docked", value: false })
+        }
+        IconButton {
+            visible: !Core.mobile && !win.docked
             iconName: win.visibility === Window.FullScreen ? "fullscreen_exit" : "fullscreen"
             iconColor: "white"
             tip: win.visibility === Window.FullScreen ? Theme.tr("Exit fullscreen") : Theme.tr("Fullscreen")
@@ -241,7 +265,7 @@ ApplicationWindow {
 
     NowPlaying {
         id: nowPlaying
-        anchors.left: win.compact ? parent.left : rail.right
+        anchors.left: win.docked ? panel.right : win.compact ? parent.left : rail.right
         anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -251,7 +275,7 @@ ApplicationWindow {
                               : win.compact ? playerBar.height + nav.height
                               : playerBar.height
         Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.ms(450); easing.type: Easing.OutCubic } }
-        visible: win.page < 0
+        visible: win.page < 0 || win.docked
         showSpectrum: true
         showLyrics: win.showLyrics
         controlsVisible: win.chromeVisible
@@ -285,7 +309,9 @@ ApplicationWindow {
     Rectangle {
         id: panel
         visible: win.page >= 0
-        color: Theme.surface
+        // The visual beside it is sharp: nothing of it may show through here.
+        color: win.docked ? Theme.surfaceStrong : Theme.surface
+        anchors.rightMargin: win.docked ? win.dockWidth : 0
         anchors.left: win.compact ? parent.left : rail.right
         anchors.top: parent.top
         anchors.bottom: playerBar.top
@@ -343,6 +369,10 @@ ApplicationWindow {
                     onOpenFavorites: {
                         win.page = 0
                         Qt.callLater(() => library.item && library.item.openFavorites())
+                    }
+                    onOpenLabel: (name) => {
+                        win.page = 0
+                        Qt.callLater(() => library.item && library.item.openLabel(name))
                     }
                     onOpenCollection: (ext, id) => win.showCollection(ext, id)
                 }
@@ -411,7 +441,7 @@ ApplicationWindow {
         id: playerBar
         mode: win.compact ? "mini" : "full"
         dense: win.dense
-        showLine: !(win.showLyrics && win.page < 0)
+        showLine: !(win.showLyrics && (win.page < 0 || win.docked))
         visible: !win.bigPlayer
         anchors.left: parent.left
         anchors.right: parent.right

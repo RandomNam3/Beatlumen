@@ -11,6 +11,12 @@ ItemDelegate {
     property bool current: false
     property bool showCover: true
     property bool showMenu: true
+    // Can be selected (see TrackListView); while any song is, a tap selects.
+    property bool selectable: false
+    property bool selecting: false
+    property bool selected: false
+    signal selectToggled()
+    signal selectRange()
     // One more action on the row, if any.
     property string actionIcon: ""
     property string actionTip: ""
@@ -21,14 +27,33 @@ ItemDelegate {
     width: ListView.view ? ListView.view.width : implicitWidth
     height: Theme.row
     padding: 0
-    highlighted: current
+    highlighted: current || selected
     Accessible.role: Accessible.ListItem
-    Accessible.name: [track.title, track.artist, track.album, current ? Theme.tr("Now playing") : ""].filter(x => x).join(", ")
+    Accessible.name: [track.title, track.artist, track.album, current ? Theme.tr("Now playing") : "", selected ? Theme.tr("Selected") : ""].filter(x => x).join(", ")
     Keys.onReturnPressed: play()
     Keys.onEnterPressed: play()
     Keys.onMenuPressed: if (showMenu) menu(track, menuButton)
-    onClicked: play()
-    onPressAndHold: if (showMenu) menu(track, menuButton)
+    onClicked: selecting ? selectToggled() : play()
+    // A finger selects, as a long press does elsewhere; a mouse has the keys.
+    onPressAndHold: {
+        if (selectable && Theme.fingers)
+            selectToggled()
+        else if (showMenu)
+            menu(track, menuButton)
+    }
+    // Ctrl and Shift select; without them the press goes on to the row.
+    MouseArea {
+        anchors.fill: parent
+        z: 5
+        enabled: d.selectable
+        onPressed: (mouse) => mouse.accepted = (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) !== 0
+        onClicked: (mouse) => {
+            if (mouse.modifiers & Qt.ShiftModifier)
+                d.selectRange()
+            else
+                d.selectToggled()
+        }
+    }
 
     Component.onCompleted: if ((track.local || track.source) && !track.cover) Covers.request(track.id)
 
@@ -64,9 +89,16 @@ ItemDelegate {
             Rectangle {
                 anchors.fill: parent
                 radius: 8
-                visible: d.current
+                visible: d.current && !d.selected
                 color: Qt.rgba(0, 0, 0, 0.45)
                 Icon { anchors.centerIn: parent; name: "graphic_eq"; size: 22; color: "white" }
+            }
+            Rectangle {
+                anchors.fill: parent
+                radius: 8
+                visible: d.selected
+                color: Theme.accent
+                Icon { anchors.centerIn: parent; name: "check"; size: 22; color: Theme.onAccent }
             }
         }
         ColumnLayout {

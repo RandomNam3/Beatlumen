@@ -280,6 +280,54 @@ def desktop():
     print("ok: side panel and menu on a computer")
 
 
+def wide_window():
+    app = start((1400, 860), False)
+    app.set("page", 0)
+    # The library's sections sit at the side, the chips are gone.
+    side = app.wait("the sidebar", lambda: [i for i in app.labels("Albums") if i["x"] < 320])
+    assert side[0]["h"] < 40, f"a row, not a page: {side[0]}"
+    # The filters work on the songs.
+    app.shows("Bravo")
+    app.click_text("Favorites")
+    app.gone("Bravo")
+    app.click_text("All songs")
+    app.shows("Bravo")
+
+    # Now playing stays beside the page, at the side of the window.
+    title = app.wait("the visual's title", lambda: [i for i in app.labels("Alpha") if i["x"] > 960])
+    assert title[0]["h"] > 24, f"the big title: {title[0]}"
+    assert app.named("Hide now playing"), "it can be closed"
+    app.click_named("Hide now playing")
+    app.gone("Hide now playing")
+    assert not [i for i in app.labels("Alpha") if i["x"] > 960]
+
+    # Several songs at once.
+    row = app.wait("a song row", lambda: [i for i in app.items() if "TrackDelegate" in i["type"]])
+    mid = lambda r: f"{r['x'] + r['w'] / 2} {r['y'] + r['h'] / 2}"
+    app.send(f"click {mid(row[0])} ctrl")
+    app.shows("1 selected")
+    app.send(f"click {mid(row[2])} shift")
+    app.shows("3 selected")
+    # While songs are selected, a click selects instead of playing.
+    app.send(f"click {mid(row[3])}")
+    app.shows("4 selected")
+    app.click_named("Clear selection")
+    app.gone("4 selected")
+
+    # Recent searches.
+    app.set("page", 7)
+    app.send("text alpha")
+    time.sleep(3.5)
+    app.send("key Ctrl+A")
+    app.click_named("Clear")
+    app.shows("Recent searches")
+    app.shows("alpha")
+    app.click_text("alpha")
+    app.wait("the search again", lambda: [i for i in app.items() if i["text"] == "Alpha"])
+    app.quit()
+    print("ok: wide window, selection, recent searches")
+
+
 def check_log():
     allowed = ("Accessible attached property",)
     with open(LOG, encoding="utf8") as f:
@@ -299,6 +347,7 @@ def main():
         phone_song_sheet()
         phone_queue_and_swipe()
         desktop()
+        wide_window()
         check_log()
     except (SystemExit, AssertionError, Exception):
         if os.path.exists(LOG):

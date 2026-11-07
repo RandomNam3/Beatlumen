@@ -1168,6 +1168,11 @@ impl Core {
                 self.blur_target = n("value").clamp(0.0, 4.0) as f32;
                 ok()
             }
+            "ui.viewport" => {
+                self.view_part = (n("w") >= 1.0 && n("h") >= 1.0)
+                    .then(|| [n("x") as f32, n("y") as f32, n("w") as f32, n("h") as f32]);
+                ok()
+            }
             "ui.overlay" => {
                 self.overlay.rect = [n("x") as f32, n("y") as f32, n("w") as f32, n("h") as f32];
                 self.overlay.alpha = n("alpha").clamp(0.0, 1.0) as f32;

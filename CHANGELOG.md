@@ -21,6 +21,16 @@
   start and end time and that application's picture go out, and only to the Discord
   program: no cover links, no account token. Encrypted songs and what other devices
   send here (AirPlay, DLNA, other programs) never show up, and pausing removes the status.
+- **Now playing beside pages:** in wide windows the visual stays at the side, sharp and
+  whole, while a page is open (can be switched off, Settings, Playback). With the queue
+  open, the visual fills what the queue leaves free.
+- **Library:** in wide windows its sections sit at the side, with filters for the songs
+  and what you pinned there (albums, artists and labels, from their menu).
+- **Start page:** a dense grid of what you last played and your favorites, and chips for
+  moods and genres at the top.
+- **Several songs at once:** Ctrl and Shift with a mouse, a long press with a finger. A bar
+  then plays them, adds them to the queue or opens their menu.
+- **Recent searches** before you type, kept on this device and easy to clear.
 - **The queue leaves the visual in sight:** it opens as a panel at the side, on a narrow
   window as a sheet over the lower part, instead of as a page over everything.
 - **Song sheet on phones:** the menu of a song is now a sheet from below, with the song
