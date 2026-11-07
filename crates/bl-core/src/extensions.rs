@@ -725,6 +725,8 @@ impl Core {
                 start,
             }),
         );
+    }
+
     /// A song on its way to the user's encrypted files. A job no longer known
     /// counts as one, it may have ended up there.
     pub(crate) fn extension_job_is_private(&self, id: &str) -> bool {
