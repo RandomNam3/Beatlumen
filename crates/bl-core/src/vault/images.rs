@@ -108,7 +108,7 @@ impl Core {
         body: Option<Vec<u8>>,
     ) {
         let plain = self.vault.file(&id).and_then(|f| {
-            let key = f.key.clone()?;
+            let (key, _) = f.data_keys()?;
             bl_vault::file::decrypt(&key, &body?).ok()
         });
         let Some(data) = plain else {

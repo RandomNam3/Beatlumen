@@ -91,6 +91,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Shared" => "Geteilt",
         "Access removed" => "Zugriff entfernt",
         "Deleted" => "Gelöscht",
+        "Moved to the trash" => "In den Papierkorb gelegt",
+        "Restored" => "Wiederhergestellt",
         "Damaged file" => "Beschädigte Datei",
         "Cannot decrypt the file key" => "Dateischlüssel kann nicht entschlüsselt werden",
         "Key changed:" => "Schlüssel geändert:",

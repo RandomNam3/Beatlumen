@@ -319,6 +319,38 @@ impl Core {
                 };
                 Value::Array(tracks)
             }
+            // Out of this account's library: the file stays for the others.
+            "library.remove" | "library.restore" => {
+                let ids = strs(c.get("ids"));
+                let remove = name == "library.remove";
+                for id in &ids {
+                    if remove {
+                        self.library.hidden.insert(id.clone());
+                    } else {
+                        self.library.hidden.remove(id);
+                    }
+                }
+                self.library.rebuild();
+                let body = Value::object().with("ids", ids).to_json().into_bytes();
+                let path = if remove {
+                    "/api/library/remove"
+                } else {
+                    "/api/library/restore"
+                };
+                let rid = self.device_request(host, "POST", path, body, Some("application/json"));
+                self.requests.insert(rid, Req::HiddenChanged);
+                let msg = self
+                    .tr(if remove {
+                        "Moved to the trash"
+                    } else {
+                        "Restored"
+                    })
+                    .to_string();
+                self.toast(msg, false);
+                ok()
+            }
+            // What can still come back.
+            "library.trash" => Value::Array(self.hidden_items.clone()),
             "library.search" => {
                 let q = s("query");
                 let hits = self.library.search(&q);

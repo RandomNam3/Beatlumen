@@ -264,6 +264,9 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             _ => not_allowed("POST"),
         },
         ["library"] if get => library(state, req),
+        ["library", "hidden"] if get => hidden_list(state, req),
+        ["library", "remove"] if req.method == "POST" => hide_tracks(state, req, true),
+        ["library", "restore"] if req.method == "POST" => hide_tracks(state, req, false),
         ["extensions", rest @ ..] => state.extensions.handle(state, req, rest),
         ["library"] => not_allowed("GET, HEAD"),
         ["rescan"] if m == "POST" => {
@@ -570,6 +573,104 @@ fn library(state: &State, req: &Request) -> Response {
     Response::bytes(200, "application/json", idx.json().to_vec())
         .with_header("ETag", format!("\"{etag}\""))
         .with_header("Cache-Control", "no-cache")
+}
+
+/// What this account took out of its library: everything that stays hidden, and
+/// what can still come back (the trash).
+fn hidden_list(state: &State, req: &Request) -> Response {
+    Response::json(
+        200,
+        &trash_list(state, &state.account_of(req), util::now_secs()),
+    )
+}
+
+/// How long is left to take a removal back. Over for a song of an extension: for
+/// this account it is gone from then on, and neither this list nor a restore may
+/// tell whether it is still in somebody else's library. The admin's folders stay
+/// (`lasting`): such a song can always come back.
+pub fn trash_list(state: &State, account: &str, now: u64) -> Value {
+    let idx = state.library();
+    let items: Vec<Value> = state
+        .hidden_of(account, |h| h.all())
+        .into_iter()
+        .filter_map(|(id, at)| {
+            let e = idx.track(&id)?;
+            let left = trash_left(at, now);
+            let lasting = !state.extensions.is_import(&e.abs);
+            (left > 0 || lasting).then(|| {
+                Value::object()
+                    .with("id", id.as_str())
+                    .with("removed", at)
+                    .with("secondsLeft", left)
+                    .with("lasting", lasting)
+                    .with("title", e.track.title.as_str())
+                    .with("artist", e.track.artists.join(", "))
+                    .with("album", e.track.album.as_str())
+                    .with("duration", e.track.duration_ms as f64 / 1000.0)
+            })
+        })
+        .collect();
+    Value::object()
+        .with("items", Value::Array(items))
+        .with("foreign", state.extensions.foreign_tracks(state, account))
+}
+
+fn trash_left(removed: u64, now: u64) -> u64 {
+    (crate::vault::TRASH_DAYS * 24 * 3600).saturating_sub(now.saturating_sub(removed))
+}
+
+/// `POST /api/library/remove` or `/restore` `{"ids": [...]}`: for this account
+/// only. The file stays for everyone else; a song of an extension goes when it
+/// is in nobody's library any more (`extensions.rs`), the admin's folders never.
+fn hide_tracks(state: &State, req: &Request, hide: bool) -> Response {
+    let Ok(v) = bl_json::parse_bytes(&req.body) else {
+        return Response::error(400, "expected JSON");
+    };
+    let account = state.account_of(req);
+    let ids: Vec<&str> = v
+        .get("ids")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(5000)
+        .filter_map(|id| id.as_str().filter(|i| util::is_id(i)))
+        .collect();
+    let now = util::now_secs();
+    if hide {
+        remove_tracks(state, &account, &ids, now);
+    } else {
+        restore_tracks(state, &account, &ids, now);
+    }
+    Response::new(204)
+}
+
+pub fn remove_tracks(state: &State, account: &str, ids: &[&str], now: u64) {
+    let idx = state.library();
+    for id in ids {
+        // Only what exists here.
+        if let Some(e) = idx.track(id) {
+            state.hidden_of(account, |h| h.add(id, now));
+            state.extensions.released(&e.abs, account, now);
+        }
+    }
+}
+
+/// See `trash_list` for what is too late.
+pub fn restore_tracks(state: &State, account: &str, ids: &[&str], now: u64) {
+    let idx = state.library();
+    for id in ids {
+        let Some(at) = state.hidden_of(account, |h| h.removed_at(id)) else {
+            continue;
+        };
+        let import = idx.track(id).filter(|e| state.extensions.is_import(&e.abs));
+        if import.is_some() && trash_left(at, now) == 0 {
+            continue;
+        }
+        state.hidden_of(account, |h| h.remove(id));
+        if let Some(e) = import {
+            state.extensions.restored(&e.abs, account);
+        }
+    }
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {

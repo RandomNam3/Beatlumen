@@ -112,6 +112,15 @@ Menu {
         icon.source: Theme.icon("playlist_add")
         onTriggered: menu.addToPlaylist(menu.ids)
     }
+    // Out of this account's library; the file stays for the others.
+    MenuItem {
+        readonly property var songs: Core.state.server === "connected" ? menu.ids.filter(id => String(id).indexOf(":") < 0) : []
+        visible: songs.length > 0
+        height: visible ? implicitHeight : 0
+        text: Theme.tr("Remove from library")
+        icon.source: Theme.icon("delete")
+        onTriggered: Core.call("library.remove", { ids: songs })
+    }
     MenuItem {
         visible: menu.toSave.length > 0
         height: visible ? implicitHeight : 0

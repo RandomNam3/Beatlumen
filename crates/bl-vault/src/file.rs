@@ -15,6 +15,14 @@
 //! header are authenticated with every chunk: changed, swapped, missing or
 //! appended chunks fail to decrypt.
 //!
+//! **Contents kept apart.** Music is encrypted so that the same song gives the
+//! same bytes for everyone, and the server keeps those bytes once: key and
+//! header ([`content_keys`]) follow from the contents and a secret of the
+//! server. The file itself still has a header and key of its own, random as
+//! always, which protect the metadata and travel when it is shared; the
+//! metadata holds the key to the contents. So name and tags stay private to
+//! each file. The price: whoever has the same song can recognise its bytes.
+//!
 //! The metadata (name, type, size, …; the format is up to the app) is
 //! encrypted with the same key and padded to 256 bytes. The owner signs the
 //! header, the encrypted metadata and a commitment to the file key, so a
@@ -184,15 +192,67 @@ pub fn decrypt_chunk(key: &Secret, h: &Header, index: u64, data: &[u8]) -> Resul
 /// Encrypts a whole file held in memory.
 pub fn encrypt(key: &Secret, plain: &[u8]) -> Result<(Header, Vec<u8>), Error> {
     let h = Header::new(plain.len() as u64)?;
+    let out = encrypt_as(key, &h, plain)?;
+    Ok((h, out))
+}
+
+/// Key and header of contents kept apart: the same for the same contents on
+/// the same server (`salt`), and for nothing else.
+pub fn content_keys(salt: &[u8], plain: &[u8]) -> Result<(Secret, Header), Error> {
+    let len = (salt.len() as u32).to_be_bytes();
+    let digest = sha256(&[b"beatlumen content v1\0", &len, salt, plain]);
+    let key = crate::derive(&digest, "beatlumen content key v1");
+    let ids = crate::derive(&digest, "beatlumen content header v1");
+    let (file_id, nonce_prefix) = ids.as_bytes().split_at(16);
+    let h = Header {
+        file_id: file_id.try_into().expect("16"),
+        nonce_prefix: nonce_prefix.try_into().expect("16"),
+        chunk_size: CHUNK_SIZE,
+        chunks: plain.len() as u64 / CHUNK_SIZE as u64 + 1,
+    };
+    h.check()?;
+    Ok((key, h))
+}
+
+/// Encrypts contents kept apart: key, header and the bytes the server stores.
+pub fn encrypt_content(salt: &[u8], plain: &[u8]) -> Result<(Secret, Header, Vec<u8>), Error> {
+    let (key, h) = content_keys(salt, plain)?;
+    let out = encrypt_as(&key, &h, plain)?;
+    Ok((key, h, out))
+}
+
+/// The metadata's two fields for contents kept apart.
+pub fn content_fields(key: &Secret, h: &Header) -> (String, String) {
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    (hex(key.as_bytes()), hex(&h.to_bytes()))
+}
+
+/// Reads those fields back.
+pub fn content_from_fields(key: &str, header: &str) -> Option<(Secret, Header)> {
+    let unhex = |t: &str| -> Option<Vec<u8>> {
+        if t.len() % 2 != 0 || !t.is_ascii() {
+            return None;
+        }
+        (0..t.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&t[i..i + 2], 16).ok())
+            .collect()
+    };
+    let key: [u8; 32] = unhex(key)?.try_into().ok()?;
+    let h = Header::parse(&unhex(header)?).ok()?;
+    Some((Secret::from_bytes(key), h))
+}
+
+fn encrypt_as(key: &Secret, h: &Header, plain: &[u8]) -> Result<Vec<u8>, Error> {
     let mut out = Vec::with_capacity(h.encrypted_len() as usize);
     out.extend_from_slice(&h.to_bytes());
     let cs = h.chunk_size as usize;
     for i in 0..h.chunks {
         let start = (i as usize * cs).min(plain.len());
         let end = (start + cs).min(plain.len());
-        out.extend(encrypt_chunk(key, &h, i, &plain[start..end])?);
+        out.extend(encrypt_chunk(key, h, i, &plain[start..end])?);
     }
-    Ok((h, out))
+    Ok(out)
 }
 
 /// Decrypts a whole file held in memory.
@@ -505,5 +565,66 @@ mod tests {
         assert!(verify(&alice.public(), &h, &meta2, &key, &sig).is_err());
         assert!(verify(&bob.public(), &h, &meta, &key, &sig).is_err());
         assert!(verify(&alice.public(), &h_other, &meta, &key, &sig).is_err());
+    }
+
+    #[test]
+    fn the_same_contents_give_the_same_bytes_on_one_server() {
+        let song = vec![7u8; 200_000];
+        let (ka, ha, a) = encrypt_content(b"server", &song).unwrap();
+        let (kb, hb, b) = encrypt_content(b"server", &song).unwrap();
+        assert_eq!(a, b, "the server can keep this once");
+        assert_eq!(ka.as_bytes(), kb.as_bytes());
+        assert_eq!(ha, hb);
+        assert_eq!(decrypt(&ka, &a).unwrap(), song);
+        assert_ne!(
+            &a[HEADER_LEN..HEADER_LEN + 64],
+            &song[..64],
+            "and it is encrypted"
+        );
+    }
+
+    #[test]
+    fn other_contents_or_another_server_give_other_bytes() {
+        let song = vec![7u8; 200_000];
+        let (k, _, a) = encrypt_content(b"server", &song).unwrap();
+        let mut other = song.clone();
+        other[100] ^= 1;
+        let (k2, _, b) = encrypt_content(b"server", &other).unwrap();
+        assert_ne!(k.as_bytes(), k2.as_bytes());
+        assert_ne!(
+            a[HEADER_LEN..],
+            b[HEADER_LEN..],
+            "one bit changes everything"
+        );
+        let (k3, _, c) = encrypt_content(b"other server", &song).unwrap();
+        assert_ne!(k.as_bytes(), k3.as_bytes());
+        assert_ne!(a, c, "a list of known files is worth nothing elsewhere");
+        assert!(decrypt(&k2, &a).is_err());
+    }
+
+    #[test]
+    fn the_keys_survive_the_metadata() {
+        let (k, h, _) = encrypt_content(b"s", b"song").unwrap();
+        let (key, header) = content_fields(&k, &h);
+        let (k2, h2) = content_from_fields(&key, &header).unwrap();
+        assert_eq!(k.as_bytes(), k2.as_bytes());
+        assert_eq!(h, h2);
+        assert!(content_from_fields("zz", &header).is_none());
+        assert!(content_from_fields(&key, "00").is_none());
+        assert!(content_from_fields("é", &header).is_none());
+    }
+
+    #[test]
+    fn a_files_own_key_stays_random_while_its_contents_are_kept_apart() {
+        // Two people with the same song: the metadata of one is no use to the other.
+        let (k, _, _) = encrypt_content(b"s", b"song").unwrap();
+        let mine = Secret::random().unwrap();
+        let h = Header::new(4).unwrap();
+        let meta = seal_meta(&mine, &h, b"{\"name\":\"private name\"}").unwrap();
+        assert!(
+            open_meta(&k, &h, &meta).is_err(),
+            "the song's key opens no name"
+        );
+        assert!(open_meta(&mine, &h, &meta).is_ok());
     }
 }

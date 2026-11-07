@@ -59,7 +59,8 @@ AppDialog {
         }
         Choice {
             heading: Theme.tr("Library on the server")
-            detail: Theme.tr("Everyone who uses this server can play it.")
+            detail: target.vaultReady ? Theme.tr("In your library on this server. Others only get it if they add it themselves.")
+                                      : Theme.tr("Without an account it lands in the library everyone on this server shares.")
             iconName: "library_music"
             onClicked: target.choose("library")
         }
