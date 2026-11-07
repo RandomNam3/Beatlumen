@@ -28,6 +28,10 @@ Not protected against (inherent limits, stated openly):
 * **Metadata** the server needs to work: user names, file count, sizes
   (rounded to 64 KiB chunks), times of uploads and downloads, who shares
   with whom, IP addresses.
+* **That two accounts hold the same music file.** Music is stored once however
+  many accounts have it (below). The server sees that, and whoever holds the
+  same file and the server's salt can recognise it, so an admin with a copy of a
+  song can tell who else has it. Other files, names and tags are not affected.
 * **Deletion, withholding or rolling back** of stored files by the server
   (availability). Clients detect files they cannot verify, but a server can
   always refuse service.
@@ -82,6 +86,37 @@ identity: Ed25519 (signing) + X25519 (receiving file keys), X25519 public key si
 * The **pepper** is a random server secret kept outside the database (file
   `data/vault-pepper`, mode 0600): a database copy alone does not even
   allow checking password guesses.
+
+## Music is stored once
+
+Audio files are encrypted so that the same song gives the same bytes for every
+account on a server, and the server keeps those bytes once. Other files keep a
+random key and never match anything.
+
+```
+contents, server salt ──SHA-256──► digest ──HKDF──► content key, content header
+file key (random, per file, as always) ──encrypts──► metadata: name, tags, content key
+```
+
+* **Names and tags stay private:** they are encrypted with the file's own random
+  key, not the content key. Holding the same song opens nobody's metadata.
+* **Clients always upload.** The server compares only after an upload is complete,
+  by the hash of the bytes it received, and answers the same either way, in the
+  same time. Nobody can ask whether a file already exists, and nobody can claim a
+  file by its hash. A false upload has a different hash and harms nothing.
+* **The server salt** (32 random bytes, given to logged-in accounts) makes the bytes
+  differ from server to server, so a list of known files made elsewhere is of no use.
+* **A song of your own that nobody else has** stays as safe as anything else: without
+  the contents, its key cannot be worked out.
+
+## Trash
+
+Deleting a file puts it in the account's trash for 29 days, where only that
+account can get it back; links and people it was shared with lose it meanwhile.
+The stored bytes stay at least 30 days after the last deletion, one day longer on
+purpose: getting a file back always works the same and says nothing about whether
+anyone else still has those bytes. Deleting from the trash removes the account's
+entry at once; the bytes then still follow the 30 days.
 
 ## Registration, login, password change, recovery
 

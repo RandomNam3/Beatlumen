@@ -210,7 +210,7 @@ impl Core {
                         "/api/extensions/{ext}/search?q={}&limit=25",
                         bl_net::http::percent_encode(&q)
                     );
-                    let id = self.server.get(host, &path);
+                    let id = self.account_send(host, "GET", &path, Vec::new());
                     self.requests
                         .insert(id, Req::Ext(ExtReq::Search(self.ext.serial, ext)));
                     self.ext.pending += 1;
@@ -380,9 +380,7 @@ impl Core {
                 .to_json()
                 .into_bytes();
             let path = format!("/api/extensions/{ext}/import");
-            let rid = self
-                .server
-                .send(host, "POST", &path, body, "application/json");
+            let rid = self.account_send(host, "POST", &path, body);
             self.requests.insert(rid, Req::Ext(ExtReq::Add(id)));
             self.ext.add_asked += 1;
         }
@@ -463,9 +461,7 @@ impl Core {
             .to_json()
             .into_bytes();
         let path = format!("/api/extensions/{ext}/import");
-        let rid = self
-            .server
-            .send(host, "POST", &path, body, "application/json");
+        let rid = self.account_send(host, "POST", &path, body);
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Item {
@@ -594,9 +590,12 @@ impl Core {
             .map(|e| e.id.clone())
             .collect();
         for ext in exts {
-            let rid = self
-                .server
-                .get(host, &format!("/api/extensions/{ext}/shelves"));
+            let rid = self.account_send(
+                host,
+                "GET",
+                &format!("/api/extensions/{ext}/shelves"),
+                Vec::new(),
+            );
             self.requests
                 .insert(rid, Req::Ext(ExtReq::Shelves(self.ext.shelves_serial, ext)));
             self.ext.shelves_pending += 1;
@@ -629,7 +628,7 @@ impl Core {
             path.push_str(&format!("&after={}", bl_net::http::percent_encode(after)));
         }
         let ext = c.ext.clone();
-        let rid = self.server.get(host, &path);
+        let rid = self.account_send(host, "GET", &path, Vec::new());
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Collection(self.ext.collection_serial, ext)),
@@ -714,10 +713,8 @@ impl Core {
     }
 
     fn ask_extension_radio(&mut self, host: &mut dyn Host, ext: &str, item: &str, start: bool) {
-        let rid = self.server.get(
-            host,
-            &format!("/api/extensions/{ext}/radio/{item}?limit={RADIO_BATCH}"),
-        );
+        let path = format!("/api/extensions/{ext}/radio/{item}?limit={RADIO_BATCH}");
+        let rid = self.account_send(host, "GET", &path, Vec::new());
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Radio {
@@ -997,6 +994,8 @@ impl Core {
                     let track = track.to_string();
                     self.song_in_library(&id, &track);
                     self.ext.added += 1;
+                    // Maybe hidden until now, and someone else may have brought it.
+                    self.refresh_server_data(host);
                     return;
                 }
                 let job = v.str_or("job", "").to_string();

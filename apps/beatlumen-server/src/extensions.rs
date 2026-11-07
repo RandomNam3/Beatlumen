@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -94,8 +93,13 @@ struct Imported {
     /// Seconds since 1970.
     added: u64,
     played: u64,
-    /// Added to the library on purpose (not just by playing it): it stays.
-    pinned: bool,
+    /// Whose library it is in: who brought it in.
+    holders: Vec<String>,
+    /// Those of them who added it on purpose (not just by playing it): it stays
+    /// however long nobody plays it.
+    pinned: Vec<String>,
+    /// When someone last took it out of their library.
+    released: u64,
 }
 
 /// A song as the extension describes it.
@@ -141,8 +145,8 @@ struct Job {
     id: String,
     key: String,
     keep: bool,
-    /// Added to the library on purpose.
-    pin: AtomicBool,
+    /// Whose library it goes into once it is there, and whether on purpose.
+    holders: Mutex<Vec<(String, bool)>>,
     item: Item,
     st: Mutex<JobState>,
     cv: Condvar,
@@ -344,6 +348,15 @@ impl Read for Growing {
     }
 }
 
+impl Imported {
+    /// In this account's library? Added without an account, a song is in the
+    /// library everyone shares.
+    fn seen_by(&self, account: &str) -> bool {
+        self.holders.iter().any(|h| h == account || h.is_empty())
+            || (self.holders.is_empty() && self.released == 0)
+    }
+}
+
 impl Extensions {
     pub fn new(config: &crate::Config, data_root: &Path) -> Result<Extensions, String> {
         let token = match &config.extension_token_file {
@@ -415,16 +428,24 @@ impl Extensions {
                 for (k, entry) in o.iter() {
                     // Before times were kept: the file only; it gets the full
                     // time from now on.
-                    let (rel, added, played, pinned) = match entry.as_str() {
+                    let names = |key: &str| -> Vec<String> {
+                        entry
+                            .get(key)
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|n| n.as_str().map(str::to_string))
+                            .collect()
+                    };
+                    let (rel, added, played) = match entry.as_str() {
                         Some(rel) => {
                             older = true;
-                            (rel, now, now, false)
+                            (rel, now, now)
                         }
                         None => (
                             entry.str_or("path", ""),
                             entry.get("added").as_u64().unwrap_or(now),
                             entry.get("played").as_u64().unwrap_or(now),
-                            entry.bool_or("pinned", false),
                         ),
                     };
                     if let Some(path) = util::join_rel(&self.imports, rel) {
@@ -434,7 +455,9 @@ impl Extensions {
                                 path,
                                 added,
                                 played,
-                                pinned,
+                                holders: names("holders"),
+                                pinned: names("pinned"),
+                                released: entry.get("released").as_u64().unwrap_or(0),
                             },
                         );
                     }
@@ -462,7 +485,9 @@ impl Extensions {
                         .with("path", rel)
                         .with("added", imp.added)
                         .with("played", imp.played)
-                        .with("pinned", imp.pinned),
+                        .with("holders", imp.holders.clone())
+                        .with("pinned", imp.pinned.clone())
+                        .with("released", imp.released),
                 );
             }
         }
@@ -471,18 +496,83 @@ impl Extensions {
         }
     }
 
-    /// A kept import stays whether it is played or not.
-    fn pin(&self, ext: &str, item: &str) {
-        let changed = self
-            .imported
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&format!("{ext}/{item}"))
-            .filter(|i| !i.pinned)
-            .map(|i| i.pinned = true)
-            .is_some();
+    /// A song is in this account's library, on purpose or by playing it.
+    fn hold(&self, key: &str, account: &str, pin: bool) {
+        let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(i) = m.get_mut(key) else { return };
+        let mut changed = false;
+        if !i.holders.iter().any(|h| h == account) {
+            i.holders.push(account.to_string());
+            changed = true;
+        }
+        if pin && !i.pinned.iter().any(|h| h == account) {
+            i.pinned.push(account.to_string());
+            changed = true;
+        }
+        drop(m);
         if changed {
             self.save_imported();
+        }
+    }
+
+    /// Songs of extensions in other accounts' libraries, not in this one's: what
+    /// someone else keeps is nobody's business. Songs nobody is known to hold
+    /// (imported before this was kept) are everyone's.
+    pub fn foreign_tracks(&self, state: &State, account: &str) -> Vec<String> {
+        let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        let idx = state.library();
+        m.values()
+            .filter(|i| !i.seen_by(account))
+            .filter_map(|i| {
+                idx.entries
+                    .iter()
+                    .find(|e| e.abs == i.path)
+                    .map(|e| e.track.id.clone())
+            })
+            .collect()
+    }
+
+    /// The library track of an import, for an account that has it.
+    fn held_track(&self, state: &State, ext: &str, item: &str, account: &str) -> Option<String> {
+        let held = {
+            let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+            m.get(&format!("{ext}/{item}"))?.seen_by(account)
+        };
+        if held {
+            self.imported_track(state, ext, item)
+        } else {
+            None
+        }
+    }
+
+    /// A song of an extension, and not from one of the admin's folders?
+    pub fn is_import(&self, path: &Path) -> bool {
+        path.starts_with(&self.imports)
+    }
+
+    /// An account took this file out of its library (see `hidden.rs`).
+    pub fn released(&self, path: &Path, account: &str, now: u64) {
+        let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(i) = m.values_mut().find(|i| i.path == path) else {
+            return;
+        };
+        i.holders.retain(|h| h != account);
+        i.pinned.retain(|h| h != account);
+        i.released = now;
+        drop(m);
+        self.save_imported();
+    }
+
+    /// An account got this file back from its trash: it wanted it, so it stays.
+    pub fn restored(&self, path: &Path, account: &str) {
+        let key = {
+            let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+            m.iter()
+                .find(|(_, i)| i.path == path)
+                .map(|(k, _)| k.clone())
+        };
+        if let Some(key) = key {
+            self.hold(&key, account, true);
         }
     }
 
@@ -510,10 +600,11 @@ impl Extensions {
     /// folder: the library's own songs are not on that list.
     pub fn cleanup(&self, state: &State, now: u64) -> usize {
         let cfg = state.config();
-        if !self.enabled() || cfg.extension_cleanup_days == 0 {
+        if !self.enabled() {
             return 0;
         }
         let cutoff = now.saturating_sub(u64::from(cfg.extension_cleanup_days) * 24 * 3600);
+        let keep_days = crate::vault::KEEP_DAYS * 24 * 3600;
         let listed = if cfg.extension_cleanup_keep_listed {
             state.listed_tracks()
         } else {
@@ -532,10 +623,22 @@ impl Extensions {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|key, imp| {
-                if imp.played.max(imp.added) >= cutoff || !imp.path.starts_with(&self.imports) {
+                if !imp.path.starts_with(&self.imports) {
                     return true;
                 }
-                if imp.pinned && cfg.extension_cleanup_keep_listed {
+                // Whoever took it out can get it back from the trash, whatever
+                // else happens: nothing goes before that time is over.
+                if imp.released > 0 && now.saturating_sub(imp.released) < keep_days {
+                    return true;
+                }
+                // In nobody's library any more, and nobody played it since.
+                let abandoned =
+                    imp.released > 0 && imp.holders.is_empty() && imp.played < imp.released;
+                // Or not played for as long as the admin set.
+                let unplayed = cfg.extension_cleanup_days > 0
+                    && imp.played.max(imp.added) < cutoff
+                    && !(cfg.extension_cleanup_keep_listed && !imp.pinned.is_empty());
+                if !abandoned && !unplayed {
                     return true;
                 }
                 if track_of
@@ -774,7 +877,8 @@ impl Extensions {
                 }
                 let keep = body.get("keep").as_bool().unwrap_or(true);
                 let pin = keep && body.get("pin").as_bool().unwrap_or(false);
-                match self.import(state, e, item, keep, pin) {
+                let account = state.account_of(req);
+                match self.import(state, e, item, keep, pin, &account) {
                     Ok(v) => Response::json(200, &v),
                     Err((code, msg)) => Response::error(code, &msg),
                 }
@@ -818,7 +922,8 @@ impl Extensions {
                 return Response::error(502, &msg);
             }
         };
-        let items = self.entries(state, e, v.get("items"), limit as usize);
+        let account = state.account_of(req);
+        let items = self.entries(state, e, v.get("items"), limit as usize, &account);
         Response::json(200, &Value::object().with("items", Value::Array(items)))
     }
 
@@ -856,14 +961,21 @@ impl Extensions {
     }
 
     /// Songs and collections as the apps see them; anything else is left out.
-    fn entries(&self, state: &State, e: &Ext, list: &Value, limit: usize) -> Vec<Value> {
+    fn entries(
+        &self,
+        state: &State,
+        e: &Ext,
+        list: &Value,
+        limit: usize,
+        account: &str,
+    ) -> Vec<Value> {
         let collections = self.can(e, |m| m.collections);
         list.as_array()
             .map(|a| a.as_slice())
             .unwrap_or(&[])
             .iter()
             .filter_map(|raw| match raw.str_or("kind", "song") {
-                "song" => self.song_json(state, e, raw),
+                "song" => self.song_json(state, e, raw, account),
                 "collection" if collections => self.collection_json(e, raw),
                 _ => None,
             })
@@ -875,7 +987,7 @@ impl Extensions {
         has_image.then(|| format!("/api/extensions/{}/image/{item}", e.id))
     }
 
-    fn song_json(&self, state: &State, e: &Ext, raw: &Value) -> Option<Value> {
+    fn song_json(&self, state: &State, e: &Ext, raw: &Value, account: &str) -> Option<Value> {
         if raw.str_or("kind", "song") != "song" {
             return None;
         }
@@ -891,7 +1003,7 @@ impl Extensions {
                 .with("duration", it.duration)
                 .with("detail", detail)
                 .with("image", self.image_path(e, &it.id, it.image))
-                .with("track", self.imported_track(state, &e.id, &it.id)),
+                .with("track", self.held_track(state, &e.id, &it.id, account)),
         )
     }
 
@@ -918,6 +1030,7 @@ impl Extensions {
     /// `GET .../shelves`: rows of suggestions.
     fn shelves(&self, state: &State, e: &Ext, req: &Request) -> Response {
         let limit = limit_of(req);
+        let account = state.account_of(req);
         let v = match self.get_cached(e, &format!("/shelves?limit={limit}"), 30, BROWSE_KEEP) {
             Ok(v) => v,
             Err(msg) => {
@@ -932,7 +1045,7 @@ impl Extensions {
             .unwrap_or(&[])
             .iter()
             .filter_map(|shelf| {
-                let items = self.entries(state, e, shelf.get("items"), limit);
+                let items = self.entries(state, e, shelf.get("items"), limit, &account);
                 (!items.is_empty()).then(|| {
                     Value::object()
                         .with("title", text(shelf, "title"))
@@ -951,6 +1064,7 @@ impl Extensions {
             return Response::error(400, "invalid id");
         }
         let limit = limit_of(req);
+        let account = state.account_of(req);
         let mut path = format!("/collection/{item}?limit={limit}");
         if let Some(after) = req.query("after").filter(|a| !a.is_empty()) {
             if !valid_cursor(after) {
@@ -972,7 +1086,7 @@ impl Extensions {
             .map(|a| a.as_slice())
             .unwrap_or(&[])
             .iter()
-            .filter_map(|raw| self.song_json(state, e, raw))
+            .filter_map(|raw| self.song_json(state, e, raw, &account))
             .take(limit)
             .collect();
         Response::json(
@@ -1003,6 +1117,7 @@ impl Extensions {
             return Response::error(400, "invalid id");
         }
         let limit = limit_of(req);
+        let account = state.account_of(req);
         let v = match self.get_json(e, &format!("/radio/{item}?limit={limit}"), 30) {
             Ok(v) => v,
             Err(msg) => {
@@ -1016,7 +1131,7 @@ impl Extensions {
             .map(|a| a.as_slice())
             .unwrap_or(&[])
             .iter()
-            .filter_map(|raw| self.song_json(state, e, raw))
+            .filter_map(|raw| self.song_json(state, e, raw, &account))
             .take(limit)
             .collect();
         Response::json(200, &Value::object().with("items", Value::Array(items)))
@@ -1077,12 +1192,15 @@ impl Extensions {
         item_id: &str,
         keep: bool,
         pin: bool,
+        account: &str,
     ) -> Result<Value, (u16, String)> {
         if keep {
             if let Some(track) = self.imported_track(state, &e.id, item_id) {
-                if pin {
-                    self.pin(&e.id, item_id);
-                }
+                self.hold(&format!("{}/{item_id}", e.id), account, pin);
+                // Whoever asks for it again wants it back in their library.
+                state.hidden_of(account, |h| {
+                    h.remove(&track);
+                });
                 return Ok(Value::object()
                     .with("state", "done")
                     .with("track", track)
@@ -1096,9 +1214,12 @@ impl Extensions {
                 .values()
                 .find(|j| j.key == key && j.lock().error.is_none())
             {
-                if pin {
-                    j.pin.store(true, Ordering::Relaxed);
-                    self.pin(&e.id, item_id);
+                if keep {
+                    j.holders
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((account.to_string(), pin));
+                    self.hold(&format!("{}/{item_id}", e.id), account, pin);
                 }
                 return Ok(j.json());
             }
@@ -1150,7 +1271,7 @@ impl Extensions {
             id: id.clone(),
             key,
             keep,
-            pin: AtomicBool::new(pin),
+            holders: Mutex::new(vec![(account.to_string(), pin)]),
             item,
             st: Mutex::new(JobState {
                 path: part.clone(),
@@ -1300,9 +1421,20 @@ fn finish_import(
                                 path: final_path.to_path_buf(),
                                 added: now,
                                 played: now,
-                                pinned: job.pin.load(Ordering::Relaxed),
+                                holders: Vec::new(),
+                                pinned: Vec::new(),
+                                released: 0,
                             },
                         );
+                    let key = format!("{ext_id}/{}", job.item.id);
+                    let holders = job
+                        .holders
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    for (account, pin) in holders {
+                        exts.hold(&key, &account, pin);
+                    }
                     exts.save_imported();
                     state.request_scan();
                     // The scan adds it to the library.

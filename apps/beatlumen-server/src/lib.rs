@@ -30,6 +30,7 @@ pub mod covers;
 pub mod devices;
 pub mod extensions;
 pub mod favorites;
+pub mod hidden;
 pub mod history;
 pub mod images;
 pub mod labels;
@@ -160,6 +161,7 @@ pub struct State {
     pub auth: auth::Auth,
     pub playlists: playlists::Playlists,
     pub favorites: favorites::Favorites,
+    pub hidden: hidden::Hidden,
     pub history: history::History,
     pub sound: Arc<labels::SoundIndex>,
     pub artists: Arc<artists::ArtistIndex>,
@@ -372,6 +374,21 @@ impl State {
             if idx.revision != old_rev { format!(", revision {}", idx.revision) } else { String::new() }
         );
         self.prune_caches(&idx);
+    }
+
+    /// Who a request belongs to, for what is per account: the account's name, or
+    /// empty for a login with the server password.
+    pub fn account_of(&self, req: &bl_net::server::Request) -> String {
+        self.vault.session_user(req).unwrap_or_default()
+    }
+
+    /// The list of what an account took out of its library.
+    pub fn hidden_of<T>(&self, account: &str, f: impl FnOnce(&hidden::Hidden) -> T) -> T {
+        if account.is_empty() {
+            f(&self.hidden)
+        } else {
+            f(&self.user_data.get(self.vault.user_data_dir(account)).hidden)
+        }
     }
 
     /// Songs in a playlist or among the favorites of anyone on this server.
@@ -696,6 +713,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         devices: devices::Devices::default(),
         playlists: playlists::Playlists::load(data.playlists.clone()),
         favorites: favorites::Favorites::load(data.favorites.clone()),
+        hidden: hidden::Hidden::load(data.root.join("hidden.json")),
         history: history::History::load(data.history.clone()),
         sound: Arc::new(labels::SoundIndex::new(
             data.sound.clone(),
@@ -794,6 +812,21 @@ pub fn start(config: Config) -> Result<Server, String> {
         })
         .map_err(|e| format!("cannot start the source listing: {e}"))?;
 
+    {
+        // The trash of encrypted files, and bytes nobody refers to any more.
+        let weak = Arc::downgrade(&state);
+        std::thread::Builder::new()
+            .name("vault-trash".into())
+            .spawn(move || loop {
+                let Some(state) = weak.upgrade() else {
+                    return;
+                };
+                state.vault.purge(util::now_secs());
+                drop(state);
+                std::thread::sleep(Duration::from_secs(3600));
+            })
+            .map_err(|e| format!("cannot start the trash: {e}"))?;
+    }
     if state.extensions.enabled() {
         // Songs from extensions nobody played for a long time.
         let weak = Arc::downgrade(&state);

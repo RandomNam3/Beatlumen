@@ -65,6 +65,8 @@ pub(crate) enum Req {
     Info,
     Login,
     Library,
+    Hidden,
+    HiddenChanged,
     Playlists,
     PlaylistSaved,
     Images,
@@ -317,6 +319,9 @@ pub struct Core {
     pub(crate) speech: crate::speech::SpeechState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
+    /// What this account took out of the server's library, with how long each
+    /// can still come back.
+    pub(crate) hidden_items: Vec<Value>,
     pub(crate) discord: crate::discord::DiscordState,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
@@ -520,6 +525,7 @@ impl Core {
             speech: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
+            hidden_items: Vec::new(),
             discord: Default::default(),
             webcheck: Default::default(),
             push: Default::default(),
@@ -813,6 +819,8 @@ impl Core {
     }
 
     pub(crate) fn refresh_server_data(&mut self, host: &mut dyn Host) {
+        let id = self.account_send(host, "GET", "/api/library/hidden", Vec::new());
+        self.requests.insert(id, Req::Hidden);
         let reqs = [
             (bl_net::api::paths::LIBRARY, Req::Library),
             (bl_net::api::paths::PLAYLISTS, Req::Playlists),
@@ -906,6 +914,29 @@ impl Core {
                     self.library.set_remote(Library::from_json(&v));
                     self.restore_current_track();
                 }
+            }
+            Req::Hidden => {
+                if let Some(v) = ok_json(&res) {
+                    self.hidden_items = v.get("items").as_array().cloned().unwrap_or_default();
+                    // Taken out by this account, or in other accounts' libraries.
+                    self.library.hidden = self
+                        .hidden_items
+                        .iter()
+                        .map(|i| i.str_or("id", "").to_string())
+                        .chain(
+                            v.get("foreign")
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|i| i.as_str().map(str::to_string)),
+                        )
+                        .collect();
+                    self.library.rebuild();
+                }
+            }
+            Req::HiddenChanged => {
+                let id = self.account_send(host, "GET", "/api/library/hidden", Vec::new());
+                self.requests.insert(id, Req::Hidden);
             }
             Req::Playlists => {
                 if let Some(v) = ok_json(&res) {

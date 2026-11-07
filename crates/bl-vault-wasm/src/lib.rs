@@ -352,7 +352,14 @@ pub unsafe extern "C" fn bl_link_open(
             bl_vault::file::Header::parse(input(header, header_len)).map_err(|e| e.to_string())?;
         let m = bl_vault::file::open_meta(&key, &h, input(meta, meta_len))
             .map_err(|e| e.to_string())?;
-        *SHARED.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, h));
+        // Music has its contents apart: their key is in the metadata.
+        let content = bl_json::parse_bytes(&m).ok().and_then(|v| {
+            bl_vault::file::content_from_fields(
+                v.get("contentKey").as_str()?,
+                v.get("contentHeader").as_str()?,
+            )
+        });
+        *SHARED.lock().unwrap_or_else(|e| e.into_inner()) = Some(content.unwrap_or((key, h)));
         Ok(m)
     })())
 }

@@ -9,7 +9,8 @@
 //! Storage (inside the data folder):
 //! * `vault/users/<name>.json`: salt, Argon2 parameters, the verifiers
 //!   (hashes of the auth keys with the pepper) and the wrapped keys.
-//! * `vault/files/<id>.blob`: the encrypted file; `<id>.json`: owner,
+//! * `vault/blobs/<hash>`: the stored bytes of finished files, each once;
+//!   `vault/files/<id>.blob`: an upload still running; `<id>.json`: owner,
 //!   encrypted metadata, owner signature, sealed keys of all recipients.
 //! * `vault/invites/<hash>.json`: open invitations (from the command line).
 //! * `vault/sessions.json`: hashes of session tokens.
@@ -256,11 +257,26 @@ struct FileRec {
     keys: BTreeMap<String, Vec<u8>>,
     created: u64,
     updated: u64,
+    /// The stored bytes bring their own header (contents kept apart, see
+    /// `bl_vault::file`): the upload starts at byte 0.
+    whole: bool,
+    /// The shared stored bytes, by their hash, once the upload is complete.
+    blob: Option<String>,
+    /// Who put it in the trash and when; the owner's entry stands for everyone.
+    trash: BTreeMap<String, u64>,
 }
 
 impl FileRec {
     fn complete(&self) -> bool {
         self.received == self.size
+    }
+
+    /// In the trash as far as this user is concerned.
+    fn trashed_for(&self, user: &str) -> Option<u64> {
+        self.trash
+            .get(user)
+            .or_else(|| self.trash.get(&self.owner))
+            .copied()
     }
 
     fn to_json(&self) -> Value {
@@ -274,6 +290,15 @@ impl FileRec {
             .with("keys", keys)
             .with("created", self.created)
             .with("updated", self.updated)
+            .with("whole", self.whole)
+            .with("blob", self.blob.clone())
+            .with(
+                "trash",
+                self.trash
+                    .iter()
+                    .map(|(u, t)| (u.clone(), Value::from(*t)))
+                    .collect::<bl_json::Map>(),
+            )
     }
 
     fn from_json(v: &Value) -> Result<FileRec, Failure> {
@@ -298,6 +323,19 @@ impl FileRec {
             keys,
             created: v.get("created").as_u64().unwrap_or(0),
             updated: v.get("updated").as_u64().unwrap_or(0),
+            whole: v.bool_or("whole", false),
+            blob: v
+                .get("blob")
+                .as_str()
+                .filter(|b| valid_blob(b))
+                .map(str::to_string),
+            trash: v
+                .get("trash")
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.iter())
+                .filter_map(|(u, t)| Some((u.to_string(), t.as_u64()?)))
+                .collect(),
         })
     }
 
@@ -315,7 +353,8 @@ impl FileRec {
             .with("signature", b64(&self.signature))
             .with("key", self.keys.get(user).map(|k| base64_encode(k)))
             .with("created", self.created)
-            .with("updated", self.updated);
+            .with("updated", self.updated)
+            .with("trashed", self.trashed_for(user));
         if user == self.owner {
             v.set(
                 "recipients",
@@ -353,11 +392,32 @@ const CHALLENGE_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const FRESH_SESSION: u64 = 10 * 60;
 const MAX_PASSKEYS: usize = 20;
 
+/// Days a user can get a deleted file back.
+pub const TRASH_DAYS: u64 = 29;
+/// Days the stored bytes stay after the last deletion. One more than the trash,
+/// so that getting a file back never depends on anyone else still having it,
+/// and nobody can tell from it.
+pub const KEEP_DAYS: u64 = 30;
+const DAY: u64 = 24 * 3600;
+
+fn valid_blob(b: &str) -> bool {
+    b.len() == 64
+        && b.bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+
 pub struct Vault {
     users_dir: PathBuf,
     /// Per-user playlists and presets (`userdata/<hash of the name>/`).
     userdata_dir: PathBuf,
     files_dir: PathBuf,
+    /// The stored bytes, by their hash: the same bytes are kept once.
+    blobs_dir: PathBuf,
+    /// When stored bytes were last deleted by someone.
+    released: Mutex<HashMap<String, u64>>,
+    /// Goes into the key of contents kept apart: the bytes of a song differ
+    /// from server to server, so a list of known files is of no use elsewhere.
+    content_salt: Vec<u8>,
     invites_dir: PathBuf,
     sessions_path: PathBuf,
     pepper: Vec<u8>,
@@ -508,6 +568,31 @@ impl Vault {
             }
         }
 
+        let blobs_dir = dir.join("blobs");
+        std::fs::create_dir_all(&blobs_dir)
+            .map_err(|e| format!("cannot create {}: {e}", blobs_dir.display()))?;
+        let released: HashMap<String, u64> = read_json(&dir.join("released.json"))
+            .and_then(|v| {
+                v.as_object().map(|o| {
+                    o.iter()
+                        .filter_map(|(k, t)| Some((k.to_string(), t.as_u64()?)))
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        let salt_path = dir.join("content-salt");
+        let content_salt = match std::fs::read(&salt_path) {
+            Ok(s) if s.len() == 32 => s,
+            _ => {
+                let mut s = vec![0u8; 32];
+                crate::random::fill(&mut s).map_err(|e| e.to_string())?;
+                util::write_atomic(&salt_path, &s)
+                    .map_err(|e| format!("cannot write {}: {e}", salt_path.display()))?;
+                util::make_private(&salt_path);
+                s
+            }
+        };
+
         let now = util::now_secs();
         let mut files = HashMap::new();
         for e in std::fs::read_dir(&files_dir)
@@ -534,7 +619,11 @@ impl Vault {
                 }
             };
             let blob = p.with_extension("blob");
-            rec.received = std::fs::metadata(&blob).map_or(0, |m| m.len());
+            rec.received = if rec.blob.is_some() {
+                rec.size
+            } else {
+                std::fs::metadata(&blob).map_or(0, |m| m.len())
+            };
             let stale = !rec.complete() && now.saturating_sub(rec.created) > PENDING_LIFETIME;
             if rec.received > rec.size || stale || !users.contains_key(&rec.owner) {
                 let _ = std::fs::remove_file(&blob);
@@ -592,6 +681,9 @@ impl Vault {
             userdata_dir: dir.join("userdata"),
             users_dir,
             files_dir,
+            blobs_dir,
+            released: Mutex::new(released),
+            content_salt,
             invites_dir: invites_dir(data),
             sessions_path,
             pepper,
@@ -848,9 +940,19 @@ impl Vault {
             }
             ["files"] if get => {
                 let files = self.files.read().unwrap_or_else(|e| e.into_inner());
+                // The files, or with `?trash=1` what is in the trash.
+                let trash = req.query("trash").is_some();
                 let mut list: Vec<&FileRec> = files
                     .values()
                     .filter(|f| f.keys.contains_key(&me) && (f.complete() || f.owner == me))
+                    .filter(|f| {
+                        if trash {
+                            // Only one's own deletion can be undone.
+                            f.trash.contains_key(&me)
+                        } else {
+                            f.trashed_for(&me).is_none()
+                        }
+                    })
                     .collect();
                 list.sort_by(|a, b| a.created.cmp(&b.created).then(a.id.cmp(&b.id)));
                 let used: u64 = files
@@ -864,7 +966,9 @@ impl Vault {
                         Value::Array(list.into_iter().map(|f| f.entry(&me)).collect()),
                     )
                     .with("used", used)
-                    .with("quota", self.quota());
+                    .with("quota", self.quota())
+                    .with("contentSalt", b64(&self.content_salt))
+                    .with("trashDays", TRASH_DAYS);
                 Ok(Response::json(200, &v))
             }
             ["files"] if post => self.create_file(req, &me),
@@ -1463,9 +1567,13 @@ impl Vault {
             for id in ids {
                 let f = files.get_mut(&id).expect("listed");
                 if f.owner == me {
+                    if let Some(blob) = f.blob.clone() {
+                        self.note_released(&blob, util::now_secs());
+                    }
                     self.remove_file(&id);
                     files.remove(&id);
                 } else if f.keys.remove(me).is_some() {
+                    f.trash.remove(me);
                     let _ = save_json(&self.files_dir.join(format!("{id}.json")), &f.to_json());
                 }
             }
@@ -1489,6 +1597,137 @@ impl Vault {
         let _ = std::fs::remove_file(self.files_dir.join(format!("{id}.json")));
     }
 
+    /// Where a file's bytes are.
+    fn stored_path(&self, f: &FileRec) -> PathBuf {
+        match &f.blob {
+            Some(b) => self.blobs_dir.join(b),
+            None => self.files_dir.join(format!("{}.blob", f.id)),
+        }
+    }
+
+    /// Keeps a finished upload's bytes once: by their hash, whoever brought
+    /// them. The server cannot read them and needs no help to compare them, and
+    /// a false upload cannot take the place of a real one.
+    fn store_once(&self, id: &str) {
+        let path = self.files_dir.join(format!("{id}.blob"));
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return;
+        };
+        let mut hash = crate::sha256::Sha256::default();
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            match std::io::Read::read(&mut file, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => hash.update(&buf[..n]),
+                Err(e) => {
+                    crate::warn!("cannot read {}: {e}", path.display());
+                    return;
+                }
+            }
+        }
+        drop(file);
+        let name = util::hex(&hash.finish());
+        let blob = self.blobs_dir.join(&name);
+        let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
+        let Some(f) = files.get_mut(id) else { return };
+        let moved = if blob.exists() {
+            std::fs::remove_file(&path)
+        } else {
+            std::fs::rename(&path, &blob)
+        };
+        if let Err(e) = moved {
+            // In use (Windows) and the like: it stays where it is, and works.
+            crate::warn!("cannot store {}: {e}", path.display());
+            return;
+        }
+        f.blob = Some(name);
+        let _ = self.save_file(f);
+    }
+
+    /// Someone deleted a file with these bytes: they stay for `KEEP_DAYS` more.
+    fn note_released(&self, blob: &str, now: u64) {
+        let mut r = self.released.lock().unwrap_or_else(|e| e.into_inner());
+        r.insert(blob.to_string(), now);
+        self.save_released(&r);
+    }
+
+    fn save_released(&self, r: &HashMap<String, u64>) {
+        let Some(dir) = self.blobs_dir.parent() else {
+            return;
+        };
+        let mut o = Value::object();
+        for (k, t) in r {
+            o = o.with(k, *t);
+        }
+        let _ = save_json(&dir.join("released.json"), &o);
+    }
+
+    /// What the trash holds longer than `TRASH_DAYS` goes, and bytes nobody
+    /// refers to any more once `KEEP_DAYS` have passed since the last deletion.
+    pub fn purge(&self, now: u64) {
+        let keep = TRASH_DAYS * DAY;
+        let mut gone = Vec::new();
+        let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
+        let ids: Vec<String> = files.keys().cloned().collect();
+        for id in ids {
+            let f = files.get_mut(&id).expect("listed");
+            let expired: Vec<String> = f
+                .trash
+                .iter()
+                .filter(|(_, t)| now.saturating_sub(**t) >= keep)
+                .map(|(u, _)| u.clone())
+                .collect();
+            if expired.is_empty() {
+                continue;
+            }
+            if expired.contains(&f.owner) {
+                self.remove_file(&id);
+                files.remove(&id);
+                gone.push(id);
+            } else {
+                for u in &expired {
+                    f.trash.remove(u);
+                    f.keys.remove(u);
+                }
+                let _ = self.save_file(f);
+            }
+        }
+        let referenced: std::collections::HashSet<String> =
+            files.values().filter_map(|f| f.blob.clone()).collect();
+        drop(files);
+        self.drop_links(|file, _| gone.iter().any(|g| g == file));
+
+        let mut released = self.released.lock().unwrap_or_else(|e| e.into_inner());
+        let before = released.clone();
+        for e in std::fs::read_dir(&self.blobs_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let Ok(name) = e.file_name().into_string() else {
+                continue;
+            };
+            if !valid_blob(&name) || referenced.contains(&name) {
+                continue;
+            }
+            match released.get(&name) {
+                Some(t) if now.saturating_sub(*t) >= KEEP_DAYS * DAY => {
+                    if std::fs::remove_file(e.path()).is_ok() {
+                        released.remove(&name);
+                    }
+                }
+                Some(_) => {}
+                // Nobody knows since when (a crash): counts from now.
+                None => {
+                    released.insert(name, now);
+                }
+            }
+        }
+        if *released != before {
+            self.save_released(&released);
+        }
+    }
+
     fn save_file(&self, f: &FileRec) -> Result<(), Failure> {
         save_json(&self.files_dir.join(format!("{}.json", f.id)), &f.to_json())
     }
@@ -1508,6 +1747,8 @@ impl Vault {
         let (meta, signature) = Self::meta_and_signature(&v)?;
         let key = bytes(&v, "key", Some(SEALED_KEY_LEN))?;
         let size = h.encrypted_len();
+        // The stored bytes bring their own header; ours is for the metadata.
+        let whole = v.bool_or("whole", false);
         if size > MAX_FILE {
             return fail(413, "file too large");
         }
@@ -1539,7 +1780,7 @@ impl Vault {
         let rec = FileRec {
             id: id.clone(),
             owner: me.to_string(),
-            received: header.len() as u64,
+            received: if whole { 0 } else { header.len() as u64 },
             header,
             size,
             meta,
@@ -1547,9 +1788,13 @@ impl Vault {
             keys: [(me.to_string(), key)].into_iter().collect(),
             created: now,
             updated: now,
+            whole,
+            blob: None,
+            trash: BTreeMap::new(),
         };
         let blob = self.files_dir.join(format!("{id}.blob"));
-        std::fs::write(&blob, &rec.header).map_err(|e| {
+        let start: &[u8] = if whole { &[] } else { &rec.header };
+        std::fs::write(&blob, start).map_err(|e| {
             crate::warn!("cannot write {}: {e}", blob.display());
             (500, "cannot save".to_string())
         })?;
@@ -1574,12 +1819,12 @@ impl Vault {
             let files = self.files.read().unwrap_or_else(|e| e.into_inner());
             let f = files
                 .get(id)
-                .filter(|f| f.keys.contains_key(me))
+                .filter(|f| f.keys.contains_key(me) && f.trashed_for(me).is_none())
                 .ok_or_else(not_found)?;
             return match rest {
                 [] => Ok(Response::json(200, &f.entry(me))),
                 ["data"] if f.complete() => {
-                    let path = self.files_dir.join(format!("{id}.blob"));
+                    let path = self.stored_path(f);
                     let resp =
                         Response::file(&path, "application/octet-stream", req.header("range"));
                     // Contents never change under an id.
@@ -1596,6 +1841,34 @@ impl Vault {
             .ok_or_else(not_found)?;
         let owner = f.owner == me;
         let now = util::now_secs();
+        // What is in the trash can only come back or go for good.
+        if f.trash.contains_key(me) {
+            return match (m, rest) {
+                ("POST", ["restore"]) => {
+                    f.trash.remove(me);
+                    f.updated = now;
+                    self.save_file(f)?;
+                    Ok(Response::new(204))
+                }
+                ("DELETE", ["forever"]) if owner => {
+                    self.remove_file(id);
+                    files.remove(id);
+                    drop(files);
+                    self.drop_links(|file, _| file == id);
+                    Ok(Response::new(204))
+                }
+                ("DELETE", ["forever"]) => {
+                    f.trash.remove(me);
+                    f.keys.remove(me);
+                    self.save_file(f)?;
+                    Ok(Response::new(204))
+                }
+                _ => Err(not_found()),
+            };
+        }
+        if f.trashed_for(me).is_some() {
+            return Err(not_found());
+        }
         match (m, rest) {
             ("PUT", ["data"]) if owner => {
                 let offset: u64 = req
@@ -1628,16 +1901,24 @@ impl Vault {
                     return fail(500, "cannot save");
                 }
                 f.received += req.body.len() as u64;
-                if f.complete() {
+                let complete = f.complete();
+                if complete {
                     f.updated = now;
                     self.save_file(f)?;
                 }
-                Ok(Response::json(
+                let answer = Response::json(
                     200,
                     &Value::object()
                         .with("received", f.received)
-                        .with("complete", f.complete()),
-                ))
+                        .with("complete", complete),
+                );
+                drop(files);
+                // The same for everyone, also the time it takes: nobody learns
+                // here whether someone else has the same file.
+                if complete {
+                    self.store_once(id);
+                }
+                Ok(answer)
             }
             ("PUT", ["meta"]) if owner => {
                 let v = body(req)?;
@@ -1679,21 +1960,40 @@ impl Vault {
                 self.save_file(f)?;
                 Ok(Response::new(204))
             }
-            // The owner revokes access, or a recipient removes a file
-            // shared with them.
-            ("DELETE", ["keys", user]) if (owner && *user != me) || (!owner && *user == me) => {
-                if f.keys.remove(*user).is_none() {
-                    return fail(404, "not shared with this user");
-                }
+            // A recipient removes a file shared with them: into their trash.
+            ("DELETE", ["keys", user]) if !owner && *user == me => {
+                f.trash.insert(me.to_string(), now);
                 f.updated = now;
                 self.save_file(f)?;
                 Ok(Response::new(204))
             }
-            ("DELETE", []) if owner => {
+            // The owner revokes access.
+            ("DELETE", ["keys", user]) if owner && *user != me => {
+                if f.keys.remove(*user).is_none() {
+                    return fail(404, "not shared with this user");
+                }
+                f.trash.remove(*user);
+                f.updated = now;
+                self.save_file(f)?;
+                Ok(Response::new(204))
+            }
+            // An upload never finished is just gone.
+            ("DELETE", []) if owner && !f.complete() => {
                 self.remove_file(id);
                 files.remove(id);
                 drop(files);
                 self.drop_links(|file, _| file == id);
+                Ok(Response::new(204))
+            }
+            // Into the trash: the links and everyone it is shared with lose
+            // it until it comes back.
+            ("DELETE", []) if owner => {
+                f.trash.insert(me.to_string(), now);
+                f.updated = now;
+                self.save_file(f)?;
+                if let Some(blob) = f.blob.clone() {
+                    self.note_released(&blob, now);
+                }
                 Ok(Response::new(204))
             }
             ("POST", ["links"]) if owner => self.create_link(req, me, f),
