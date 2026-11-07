@@ -22,6 +22,23 @@ Item {
     property var artists: []
     property var labels: []
 
+    // What was looked for lately (kept on this device).
+    readonly property var recent: ((Core.state.settings || {}).ui || {}).recentSearches || []
+    function remember(q) {
+        const rest = recent.filter(r => r.toLowerCase() !== q.toLowerCase())
+        Core.call("settings.set", { key: "ui.recentSearches", value: [q].concat(rest).slice(0, 8) })
+    }
+    function forget(q) {
+        Core.call("settings.set", { key: "ui.recentSearches", value: recent.filter(r => r !== q) })
+    }
+    // Typing paused: it was a search, not just the letters on the way to one.
+    Timer {
+        id: rememberTimer
+        interval: 2500
+        onTriggered: if (page.query.length >= 2) page.remember(page.query)
+    }
+    onQueryChanged: rememberTimer.restart()
+
     function focusField() {
         search.forceActiveFocus()
         search.selectAll()
@@ -154,9 +171,70 @@ Item {
                 clip: true
                 contentWidth: availableWidth
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                GridLayout {
+                ColumnLayout {
                     width: browse.availableWidth - 24
                     x: 12
+                    spacing: 14
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: page.recent.length > 0
+                    spacing: 4
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label {
+                            textFormat: Text.PlainText
+                            Layout.fillWidth: true
+                            text: Theme.tr("Recent searches")
+                            color: Theme.text
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                            Accessible.role: Accessible.Heading
+                            Accessible.name: text
+                        }
+                        Button {
+                            flat: true
+                            text: Theme.tr("Clear")
+                            onClicked: Core.call("settings.set", { key: "ui.recentSearches", value: [] })
+                        }
+                    }
+                    Repeater {
+                        model: page.recent
+                        ItemDelegate {
+                            id: recentRow
+                            required property string modelData
+                            Layout.fillWidth: true
+                            implicitHeight: Theme.fingers ? 48 : 36
+                            leftPadding: 4
+                            rightPadding: 0
+                            Accessible.name: modelData
+                            onClicked: {
+                                search.text = modelData
+                                search.forceActiveFocus()
+                            }
+                            contentItem: RowLayout {
+                                spacing: 10
+                                Icon { name: "search"; size: 18; color: Theme.textDim }
+                                Label {
+                                    textFormat: Text.PlainText
+                                    Layout.fillWidth: true
+                                    text: recentRow.modelData
+                                    color: Theme.text
+                                    elide: Text.ElideRight
+                                }
+                                IconButton {
+                                    iconName: "close"
+                                    iconSize: 16
+                                    implicitWidth: 28
+                                    implicitHeight: 28
+                                    tip: Theme.tr("Remove")
+                                    onClicked: page.forget(recentRow.modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+                GridLayout {
+                    Layout.fillWidth: true
                     columns: Math.max(2, Math.floor(width / 170))
                     columnSpacing: 10
                     rowSpacing: 10
@@ -192,6 +270,7 @@ Item {
                             FocusRing { shown: tile.visualFocus; radius: Theme.smallRadius + 2 }
                         }
                     }
+                }
                 }
             }
 
@@ -277,7 +356,9 @@ Item {
                             Layout.preferredHeight: contentHeight
                             interactive: false
                             tracks: page.songs.slice(0, 100)
+                            selectable: true
                             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                            onSelectionMenu: (ids, a) => songMenu.openFor(ids, a)
                         }
                     }
                 }

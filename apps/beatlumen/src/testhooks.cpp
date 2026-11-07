@@ -198,8 +198,9 @@ void TestHooks::run(const QString &line)
     const QString cmd = line.left(sp);
     const QString rest = sp < 0 ? QString() : line.mid(sp + 1);
     const QStringList a = rest.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     auto mouse = [&](QEvent::Type type, QPointF pos, Qt::MouseButton button, Qt::MouseButtons held) {
-        QMouseEvent e(type, pos, m_window->mapToGlobal(pos), button, held, Qt::NoModifier);
+        QMouseEvent e(type, pos, m_window->mapToGlobal(pos), button, held, modifiers);
         QCoreApplication::sendEvent(m_window, &e);
     };
     if (cmd == QLatin1String("frames") && a.size() >= 2) {
@@ -216,9 +217,17 @@ void TestHooks::run(const QString &line)
         mouse(QEvent::MouseMove, QPointF(a.at(0).toDouble(), a.at(1).toDouble()), Qt::NoButton, Qt::NoButton);
     } else if (cmd == QLatin1String("click") && a.size() >= 2) {
         const QPointF pos(a.at(0).toDouble(), a.at(1).toDouble());
+        if (a.size() >= 3)
+            modifiers = a.at(2) == QLatin1String("shift") ? Qt::ShiftModifier : Qt::ControlModifier;
         mouse(QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton);
         mouse(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
+    } else if (cmd == QLatin1String("press") && a.size() >= 2) {
+        const QPointF pos(a.at(0).toDouble(), a.at(1).toDouble());
+        mouse(QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton);
+        mouse(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
+    } else if (cmd == QLatin1String("release") && a.size() >= 2) {
+        mouse(QEvent::MouseButtonRelease, QPointF(a.at(0).toDouble(), a.at(1).toDouble()), Qt::LeftButton, Qt::NoButton);
     } else if (cmd == QLatin1String("drag") && a.size() >= 4) {
         const QPointF from(a.at(0).toDouble(), a.at(1).toDouble());
         const QPointF to(a.at(2).toDouble(), a.at(3).toDouble());

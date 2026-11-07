@@ -12,6 +12,7 @@ Item {
     signal openFiles()
     signal openAlbum(var album)
     signal openFavorites()
+    signal openLabel(string name)
     signal startTour()
 
     readonly property int trackCount: Core.state.libraryTracks || 0
@@ -26,6 +27,22 @@ Item {
 
     function reload() {
         overview = Core.call("home.overview") || {}
+        // Chips: moods first, then genres; only what has songs.
+        const labels = Core.call("labels.list") || []
+        const of = (kind) => labels.filter(l => Theme.labelKind(l.name) === kind)
+        chips = of("mood").concat(of("genre")).slice(0, 10)
+    }
+    property var chips: []
+    // A dense grid of what is likely wanted again, no two the same.
+    readonly property int quickColumns: width >= 1000 ? 4 : width >= 620 ? 3 : 2
+    readonly property var quick: {
+        const seen = {}
+        return recent.concat(favorites).filter(t => {
+            if (seen[t.id])
+                return false
+            seen[t.id] = true
+            return true
+        }).slice(0, quickColumns * 2)
     }
     Component.onCompleted: reload()
     // Several of these change at once (a song ends, the library arrives).
@@ -70,6 +87,46 @@ Item {
     LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
 
+    // One small entry of the grid.
+    component QuickCard: ItemDelegate {
+        id: qc
+        required property var modelData
+        readonly property string artistLine: page.artistOf(modelData)
+        Layout.fillWidth: true
+        Layout.preferredWidth: 1
+        implicitHeight: 56
+        padding: 0
+        Accessible.name: [modelData.title, artistLine].filter(x => x).join(", ")
+        background: Rectangle {
+            radius: Theme.smallRadius
+            color: qc.down ? Theme.outline : qc.hovered ? Theme.outline : Theme.surfaceVariant
+        }
+        onClicked: Core.call("play", { ids: page.ids(page.quick), start: page.quick.indexOf(modelData) })
+        onPressAndHold: songMenu.openFor([modelData.id], qc)
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: songMenu.openFor([qc.modelData.id], qc)
+        }
+        contentItem: RowLayout {
+            spacing: 10
+            CoverImage {
+                Layout.preferredWidth: 56
+                Layout.preferredHeight: 56
+                radius: Theme.smallRadius
+                source: Covers.url(qc.modelData.id, qc.modelData.cover)
+                seed: qc.modelData.album || qc.modelData.title || ""
+                Component.onCompleted: if ((qc.modelData.local || qc.modelData.source) && !qc.modelData.cover) Covers.request(qc.modelData.id)
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.rightMargin: 8
+                spacing: 0
+                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: qc.modelData.title || ""; color: Theme.text; font.pixelSize: 13; font.weight: Font.Medium; elide: Text.ElideRight }
+                Label { textFormat: Text.PlainText; Layout.fillWidth: true; text: qc.artistLine; color: Theme.textDim; font.pixelSize: 12; elide: Text.ElideRight }
+            }
+        }
+    }
+
     component SongCard: ShelfCard {
         required property var modelData
         required property int index
@@ -105,6 +162,44 @@ Item {
                     highlighted: true
                     icon.source: Theme.icon("radio")
                     onClicked: Core.call("songs.radio", { seed: { taste: true }, name: Theme.tr("My radio") })
+                }
+            }
+
+            // Moods and genres to go to directly.
+            Flickable {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                visible: page.chips.length > 0
+                contentWidth: chipRow.width + 24
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                Row {
+                    id: chipRow
+                    x: 12
+                    spacing: 6
+                    Repeater {
+                        model: page.chips
+                        Chip {
+                            required property var modelData
+                            text: Theme.labelName(modelData.name)
+                            onClicked: page.openLabel(modelData.name)
+                        }
+                    }
+                }
+            }
+
+            GridLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 12
+                Layout.rightMargin: 12
+                visible: page.quick.length > 0
+                columns: page.quickColumns
+                columnSpacing: 8
+                rowSpacing: 8
+                Repeater {
+                    model: page.quick
+                    QuickCard { }
                 }
             }
 

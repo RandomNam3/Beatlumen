@@ -318,6 +318,9 @@ pub struct Core {
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) discord: crate::discord::DiscordState,
+    /// The part of the window the visual fills, in logical pixels from the
+    /// upper left corner (x, y, width, height); the whole window without one.
+    pub(crate) view_part: Option<[f32; 4]>,
     pub(crate) webcheck: crate::webcheck::WebCheckState,
     pub(crate) push: crate::push::PushState,
     started: bool,
@@ -521,6 +524,7 @@ impl Core {
             translate: Default::default(),
             vault: Default::default(),
             discord: Default::default(),
+            view_part: None,
             webcheck: Default::default(),
             push: Default::default(),
             started: false,
@@ -2789,7 +2793,9 @@ impl Core {
             self.menu_blur = self.blur_target;
         }
         let rs = self.settings.render_scale.clamp(0.25, 1.0);
-        let render_size = (((w as f32) * rs) as u32, ((h as f32) * rs) as u32);
+        // Where the picture goes: the part of the window the pages leave free.
+        let (px, py, pw, ph) = visible_part(self.view_part, w, h, dpr);
+        let render_size = (((pw as f32) * rs) as u32, ((ph as f32) * rs) as u32);
         let frame_input = FrameInput {
             dt,
             playing,
@@ -2798,7 +2804,7 @@ impl Core {
             analysis: None,
             live_novelty: live,
             live_energy: self.live.energy(),
-            view_aspect: w as f32 / h as f32,
+            view_aspect: pw as f32 / ph as f32,
             menu_blur: self.menu_blur,
         };
         let overlay = self.overlay;
@@ -2821,7 +2827,7 @@ impl Core {
             gl,
             &frame,
             render_size,
-            Target::Framebuffer(fbo, w, h),
+            Target::FramebufferPart(fbo, px, py, pw, ph),
             dpr * rs,
         );
         if overlay.alpha > 0.01
@@ -2999,4 +3005,55 @@ pub(crate) fn http_stream(
     _headers: &[(String, String)],
 ) -> Result<Box<dyn bl_media::Source>, String> {
     Err("streaming is not available in the browser".into())
+}
+
+/// A part of the window in the framebuffer's pixels: x and y from the lower
+/// left corner, width and height. Always inside the window and never empty.
+fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, u32, u32) {
+    let Some([x, y, pw, ph]) = part.filter(|p| p[2] >= 1.0 && p[3] >= 1.0) else {
+        return (0, 0, w, h);
+    };
+    let px = ((x.max(0.0) * dpr) as u32).min(w - 1);
+    let py = ((y.max(0.0) * dpr) as u32).min(h - 1);
+    let pw = ((pw * dpr) as u32).clamp(1, w - px);
+    let ph = ((ph * dpr) as u32).clamp(1, h - py);
+    (px as i32, (h - py - ph) as i32, pw, ph)
+}
+
+#[cfg(test)]
+mod visible_part_tests {
+    use super::visible_part;
+
+    #[test]
+    fn the_whole_window_without_a_part() {
+        assert_eq!(visible_part(None, 800, 600, 1.0), (0, 0, 800, 600));
+        assert_eq!(
+            visible_part(Some([10.0, 10.0, 0.0, 0.0]), 800, 600, 1.0),
+            (0, 0, 800, 600)
+        );
+    }
+
+    #[test]
+    fn a_part_is_counted_from_the_lower_left_in_real_pixels() {
+        // The right third of a window, above a bar of 100 logical pixels.
+        assert_eq!(
+            visible_part(Some([800.0, 0.0, 400.0, 700.0]), 1200, 800, 1.0),
+            (800, 100, 400, 700)
+        );
+        assert_eq!(
+            visible_part(Some([800.0, 0.0, 400.0, 700.0]), 2400, 1600, 2.0),
+            (1600, 200, 800, 1400)
+        );
+    }
+
+    #[test]
+    fn it_stays_inside_the_window() {
+        assert_eq!(
+            visible_part(Some([-5.0, -5.0, 9000.0, 9000.0]), 800, 600, 1.0),
+            (0, 0, 800, 600)
+        );
+        let (x, y, w, h) = visible_part(Some([5000.0, 5000.0, 100.0, 100.0]), 800, 600, 1.0);
+        assert!(x >= 0 && y >= 0 && w >= 1 && h >= 1);
+        assert!(x as u32 + w <= 800 && y as u32 + h <= 600);
+    }
 }
