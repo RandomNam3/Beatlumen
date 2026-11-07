@@ -539,6 +539,7 @@ impl Core {
                 ok()
             }
             "mix.play" => self.mix_play(host, &s("id"), b("shuffle")),
+            "mix.tracks" => self.mix_tracks(&s("id")),
             "labels.list" => self.labels_list(),
             "labels.tracks" => self.labels_tracks(&s("name")),
             "labels.of" => self.labels_of(&s("id")),

@@ -12,6 +12,8 @@ Item {
     property bool controlsVisible: true
     // The controls are away: the shade reaches the window's edges.
     property bool shadeToEdges: false
+    // What the system covers of the window above this.
+    property int insetTop: 0
     signal addLyrics()
     readonly property var cur: Core.state.current || null
     readonly property bool compact: width < 600 || height < 420
@@ -81,6 +83,10 @@ Item {
                 trackId: np.cur ? np.cur.id : ""
                 iconColor: "white"
                 iconSize: np.compact ? 26 : 30
+                // Goes with the controls, also from where a tap would hit it.
+                opacity: np.controlsVisible ? 1 : 0
+                enabled: np.controlsVisible
+                Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
             }
         }
         Item {
@@ -98,7 +104,7 @@ Item {
         anchors.right: info.right
         anchors.top: parent.top
         anchors.bottom: info.top
-        anchors.topMargin: np.compact ? 64 : 72
+        anchors.topMargin: np.insetTop + (np.compact ? 64 : 72)
         anchors.bottomMargin: np.compact ? 16 : 28
         visible: np.showLyrics && np.cur !== null && !editor.visible
         controlsVisible: np.controlsVisible
@@ -120,7 +126,7 @@ Item {
         anchors.right: info.right
         anchors.top: parent.top
         anchors.bottom: info.top
-        anchors.topMargin: np.compact ? 56 : 64
+        anchors.topMargin: np.insetTop + (np.compact ? 56 : 64)
         anchors.bottomMargin: 8
     }
     function updateOverlay() {
@@ -132,11 +138,17 @@ Item {
         const p = area.mapToItem(null, 0, 0)
         Core.call("ui.overlay", { x: p.x, y: p.y, w: area.width, h: area.height, alpha: np.opacity })
     }
+    // What the core draws slides along with the layout, frame by frame, when the
+    // controls come and go.
+    onVisibleChanged: updateOverlay()
+    onXChanged: updateOverlay()
+    onYChanged: updateOverlay()
+    onWidthChanged: updateOverlay()
+    onHeightChanged: updateOverlay()
     Timer {
-        // Geometry rarely changes; a cheap periodic sync also follows
-        // animations of the surrounding layout.
-        interval: 50
-        running: true
+        // For everything else that moves it.
+        interval: 500
+        running: np.visible
         repeat: true
         onTriggered: np.updateOverlay()
     }

@@ -459,6 +459,19 @@ impl Core {
         (Value::Array(shelves), Value::Array(mixes))
     }
 
+    /// The songs of a mix, to look at before playing it.
+    pub(crate) fn mix_tracks(&self, id: &str) -> Value {
+        let items = self.recommend.mixes.iter().find(|m| m.id == id);
+        Value::Array(
+            items
+                .into_iter()
+                .flat_map(|m| m.items.iter())
+                .filter_map(|i| self.library.track(i))
+                .map(|t| self.track_json(t))
+                .collect(),
+        )
+    }
+
     pub(crate) fn mix_play(&mut self, host: &mut dyn Host, id: &str, shuffle: bool) -> Value {
         let Some(items) = self
             .recommend

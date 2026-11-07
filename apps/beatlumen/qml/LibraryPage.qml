@@ -110,6 +110,10 @@ Item {
         stack.push(collectionView, { ext: ext, itemId: id })
         Core.call("extensions.collection", { ext: ext, id: id })
     }
+    function openMix(id, name) {
+        stack.pop(null)
+        stack.push(mixView, { mixId: id, mixName: name })
+    }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
         stack.pop(null)
@@ -888,6 +892,19 @@ Item {
                 { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) },
                 page.pinItem("label", lv.label, Theme.labelName(lv.label))
             ]
+            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+        }
+    }
+
+    Component {
+        id: mixView
+        DetailPage {
+            property string mixId
+            property string mixName
+            tracks: Core.call("mix.tracks", { id: mixId }) || []
+            title: mixName
+            subtitle: page.count(tracks.length, "song", "songs")
+            placeholder: "queue_music"
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }

@@ -13,6 +13,15 @@
 - **Tablets:** Visuals uses the width of the screen in two columns, the spectrum is wider and the
   shade behind the title reaches the window's edges. The keyboard no longer opens by itself with
   the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
+- **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
+  the title when the controls come and go (it jumped behind at 20 steps a second).
+- **To the edges on Android:** the app reaches under the status bar and the notch, and the window
+  keeps its size when the bars come and go.
+- **Mixes:** tapping one shows its songs first; the button on the cover starts it right away.
+- **Start page:** its rows are only made anew when something in them changed (they kept jumping
+  back to their start), and the covers of the top cards sit straight in their cards.
+- **Less to do while playing on Android:** a look at the state 30 times a second instead of 60,
+  fewer frames when paused or behind a page, and audio in the system's power saving mode.
 - **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
   offers is in its manifest. Rows of suggestions on the start page, collections that open
   like an album, a radio for a song, and search results next to the library's. Extensions

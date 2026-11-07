@@ -366,6 +366,17 @@ def swiping_pages():
     app.shows("Epilepsy mode")
     app.quit()
 
+    # A row that scrolls sideways keeps the finger: the page stays. (That the row
+    # moves takes a real finger: a mouse does not move it here.)
+    app = start((500, 844), True)
+    app.set("page", 5)
+    card = app.wait("a row of cards", lambda: [i for i in app.items() if "ShelfCard" in i["type"] or "SongCard" in i["type"]])[0]
+    y = card["y"] + card["h"] / 2
+    app.send(f"drag 460 {y} 100 {y}")
+    time.sleep(0.8)
+    assert not app.labels("Recent searches") and not app.named("Search music"), "the page changed"
+    app.quit()
+
 
 def main():
     make_music()

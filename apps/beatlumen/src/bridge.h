@@ -6,6 +6,7 @@
 #include <QJSValue>
 #include <QElapsedTimer>
 #include <QObject>
+#include <QMargins>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -25,6 +26,12 @@ class Bridge : public QObject
     Q_PROPERTY(double seekPosition READ seekPosition NOTIFY seekPositionChanged)
     Q_PROPERTY(bool systemDark READ systemDark NOTIFY systemThemeChanged)
     Q_PROPERTY(QColor systemAccent READ systemAccent NOTIFY systemThemeChanged)
+    // What the system's bars and a notch cover of the window (Android: the
+    // window reaches under them).
+    Q_PROPERTY(int safeTop READ safeTop NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeLeft READ safeLeft NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeRight READ safeRight NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeBottom READ safeBottom NOTIFY safeAreaChanged)
     Q_PROPERTY(QString platform READ platform CONSTANT)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
@@ -38,6 +45,10 @@ public:
 
     QVariantMap state() const { return m_state; }
     double seekPosition() const { return m_seekPosition; }
+    int safeTop() const { return m_safe.top(); }
+    int safeLeft() const { return m_safe.left(); }
+    int safeRight() const { return m_safe.right(); }
+    int safeBottom() const { return m_safe.bottom(); }
     double position() const { return m_position; }
     bool systemDark() const;
     QColor systemAccent() const;
@@ -65,6 +76,8 @@ public:
     Q_INVOKABLE void setKeepScreenOn(bool on);
     // Hides Android's status and navigation bars (immersive mode).
     Q_INVOKABLE void setSystemBarsHidden(bool hidden);
+    // Dark icons in the system's bars, for a light page under them.
+    Q_INVOKABLE void setSystemBarsLight(bool light);
     Q_INVOKABLE void requestMediaPermission();
     Q_INVOKABLE void copyText(const QString &text);
     // Android: sends the app to the background (returns false elsewhere).
@@ -79,6 +92,7 @@ signals:
     void stateChanged();
     void positionChanged();
     void seekPositionChanged();
+    void safeAreaChanged();
     void systemThemeChanged();
     void nativeDialogsChanged();
     void toast(const QString &text, bool error);
@@ -103,6 +117,9 @@ private:
     double m_seekPosition = 0;
     bool m_visualCovered = false;
     QTimer m_frameTimer;
+    QMargins m_safe;
+    bool m_safeWide = false;
+    void updateSafeArea();
     QTimer m_timer;
     QQuickWindow *m_window = nullptr;
     class DesktopMedia *m_desktopMedia = nullptr;

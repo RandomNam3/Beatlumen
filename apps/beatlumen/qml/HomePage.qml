@@ -12,6 +12,7 @@ Item {
     signal openFiles()
     signal openAlbum(var album)
     signal openFavorites()
+    signal openMix(string id, string name)
     signal openLabel(string name)
     signal openCollection(string ext, string id)
     signal startTour()
@@ -20,14 +21,25 @@ Item {
     readonly property var current: Core.state.current || null
     readonly property bool hasContent: trackCount > 0 || ((Core.state.sources || {}).stations || []).length > 0
     property var overview: ({})
-    readonly property var recent: overview.recent || []
-    readonly property var fresh: overview.new || []
-    readonly property var favorites: overview.favorites || []
-    readonly property var suggestions: overview.shelves || []
-    readonly property var mixes: overview.mixes || []
+    property var recent: []
+    property var fresh: []
+    property var favorites: []
+    property var suggestions: []
+    property var mixes: []
+    // A row made anew jumps back to its start and its covers load again: only
+    // when something in it changed.
+    function take(name, value) {
+        if (JSON.stringify(page[name]) !== JSON.stringify(value))
+            page[name] = value
+    }
 
     function reload() {
         overview = Core.call("home.overview") || {}
+        take("recent", overview.recent || [])
+        take("fresh", overview.new || [])
+        take("favorites", overview.favorites || [])
+        take("suggestions", overview.shelves || [])
+        take("mixes", overview.mixes || [])
         // Chips: moods first, then genres; only what has songs.
         const labels = Core.call("labels.list") || []
         const of = (kind) => labels.filter(l => Theme.labelKind(l.name) === kind)
@@ -111,6 +123,8 @@ Item {
         Layout.preferredWidth: 1
         implicitHeight: 56
         padding: 0
+        // Material pads a delegate above and below whatever `padding` says.
+        verticalPadding: 0
         Accessible.name: [modelData.title, artistLine].filter(x => x).join(", ")
         background: Rectangle {
             radius: Theme.smallRadius
@@ -369,8 +383,11 @@ Item {
                     seed: title
                     placeholder: "queue_music"
                     cover: Covers.url(modelData.coverTrack, modelData.cover)
+                    // Looked at first; the button on the cover starts it right away.
+                    hasPlay: true
+                    onPlayClicked: Core.call("mix.play", { id: modelData.id })
                     Component.onCompleted: if (!modelData.cover) Covers.request(modelData.coverTrack)
-                    onClicked: Core.call("mix.play", { id: modelData.id })
+                    onClicked: page.openMix(modelData.id, title)
                 }
             }
 

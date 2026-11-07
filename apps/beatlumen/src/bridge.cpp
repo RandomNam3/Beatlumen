@@ -415,7 +415,11 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
 
     connect(&m_timer, &QTimer::timeout, this, &Bridge::tick);
     m_timer.setTimerType(Qt::PreciseTimer);
+#ifdef Q_OS_ANDROID
+    m_timer.start(33);
+#else
     m_timer.start(16);
+#endif
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::paletteChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
@@ -452,7 +456,7 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     // its own thread and moves on to the next track by itself.
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
         const bool visible = s == Qt::ApplicationActive;
-        m_timer.setInterval(visible ? 16 : 250);
+        m_timer.setInterval(visible ? 33 : 250);
         call(QStringLiteral("app.visible"), {{QStringLiteral("visible"), visible}});
     });
 #endif
@@ -642,7 +646,9 @@ QJSValue Bridge::call(const QString &cmd, const QVariantMap &args)
     const QByteArray req = QJsonDocument(o).toJson(QJsonDocument::Compact);
     const QByteArray res = takeString(bl_core_command(m_core, req.constData()));
     // Commands often change state; deliver it without waiting for the timer.
-    QMetaObject::invokeMethod(this, &Bridge::tick, Qt::QueuedConnection);
+    // (Layout reports come with every frame and change nothing to be shown.)
+    if (!cmd.startsWith(QLatin1String("ui.")))
+        QMetaObject::invokeMethod(this, &Bridge::tick, Qt::QueuedConnection);
     // Parse in the JS engine so QML gets plain JS arrays and objects.
     QJSEngine *engine = qjsEngine(this);
     if (!engine)
@@ -729,6 +735,14 @@ void Bridge::attachWindow(QQuickWindow *window)
     }, Qt::DirectConnection);
     // Keep animating: the visualizer changes every frame.
 #ifdef Q_OS_ANDROID
+    // Under the system's bars and the notch: the visual fills the screen, and the
+    // window keeps its size when the bars come and go, so nothing has to be laid
+    // out and allocated anew in the middle of fading the controls.
+    window->setFlag(Qt::ExpandedClientAreaHint, true);
+    connect(window, &QWindow::safeAreaMarginsChanged, this, &Bridge::updateSafeArea);
+    connect(window, &QWindow::widthChanged, this, &Bridge::updateSafeArea);
+    connect(window, &QWindow::heightChanged, this, &Bridge::updateSafeArea);
+    updateSafeArea();
     // This thread does everything, and Android's main thread waits for it when
     // it wants to know something (keyboard, accessibility). So it has to come
     // up for air: no more frames than the eye needs, even on a 120 Hz screen.
@@ -736,7 +750,10 @@ void Bridge::attachWindow(QQuickWindow *window)
     m_frameTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_frameTimer, &QTimer::timeout, window, &QQuickWindow::update);
     connect(window, &QQuickWindow::frameSwapped, this, [this]() {
-        const qint64 gap = QAccessible::isActive() ? 66 : m_visualCovered ? 33 : 16;
+        const bool playing = m_core && bl_core_is_playing(m_core);
+        const qint64 gap = QAccessible::isActive() ? 66
+            : m_visualCovered ? (playing ? 50 : 100)
+            : playing ? 16 : 33;
         m_frameTimer.start(int(qMax<qint64>(0, gap - m_frameClock.elapsed())));
     }, Qt::QueuedConnection);
 #else
@@ -744,6 +761,24 @@ void Bridge::attachWindow(QQuickWindow *window)
 #endif
     m_frameClock.start();
     window->update();
+}
+
+void Bridge::updateSafeArea()
+{
+    if (!m_window)
+        return;
+    const QMargins now = m_window->safeAreaMargins();
+    // Bars that hide leave their room empty rather than have everything move.
+    // Only turning the screen changes what they cover.
+    const bool wide = m_window->width() > m_window->height();
+    const QMargins next = wide != m_safeWide ? now
+        : QMargins(qMax(m_safe.left(), now.left()), qMax(m_safe.top(), now.top()),
+                   qMax(m_safe.right(), now.right()), qMax(m_safe.bottom(), now.bottom()));
+    m_safeWide = wide;
+    if (next != m_safe) {
+        m_safe = next;
+        emit safeAreaChanged();
+    }
 }
 
 void Bridge::renderUnderlay()
@@ -861,6 +896,25 @@ void Bridge::setSystemBarsHidden(bool hidden)
     });
 #else
     Q_UNUSED(hidden);
+#endif
+}
+
+void Bridge::setSystemBarsLight(bool light)
+{
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([light]() {
+        if (QNativeInterface::QAndroidApplication::sdkVersion() < 30)
+            return;
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
+        if (ctl.isValid()) {
+            const jint mask = 8 | 16; // APPEARANCE_LIGHT_STATUS_BARS | APPEARANCE_LIGHT_NAVIGATION_BARS
+            ctl.callMethod<void>("setSystemBarsAppearance", "(II)V", light ? mask : jint(0), mask);
+        }
+    });
+#else
+    Q_UNUSED(light);
 #endif
 }
 

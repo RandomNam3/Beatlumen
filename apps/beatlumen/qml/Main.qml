@@ -31,6 +31,16 @@ ApplicationWindow {
     // -1: visualizer only, 0 library, 2 visuals, 3 settings, 4 devices,
     // 5 start page, 6 statistics, 7 search
     property int page: -1
+    // The window reaches under the system's bars and a notch; what must be seen
+    // stays clear of them. The keyboard covers the window instead of shrinking it.
+    readonly property int insetTop: Core.safeTop
+    readonly property int insetLeft: Core.safeLeft
+    readonly property int insetRight: Core.safeRight
+    readonly property int insetBottom: Core.safeBottom
+    readonly property real keyboard: Qt.inputMethod.visible ? Qt.inputMethod.keyboardRectangle.height : 0
+    readonly property real bottomGap: Math.max(insetBottom, keyboard)
+    // Dialogs and sheets stay above the keyboard.
+    Binding { target: Overlay.overlay; property: "height"; value: win.height - win.keyboard; when: win.keyboard > 0 }
     // The queue leaves the visual in sight: a panel at the side, on a narrow
     // window a sheet that covers only the lower part.
     property bool queueOpen: false
@@ -84,6 +94,10 @@ ApplicationWindow {
     // Android's status and navigation bars go with the controls (a swipe
     // from the edge shows them briefly).
     onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
+    // A light page reaches under the status bar: dark icons there. Over the visual
+    // they stay light.
+    readonly property bool lightBars: !Theme.dark && page >= 0
+    onLightBarsChanged: Core.setSystemBarsLight(lightBars)
     // The keyboard brings the controls back like the mouse does.
     onActiveFocusItemChanged: {
         poke()
@@ -213,6 +227,8 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: playerBar.top
         width: implicitWidth
+        insetTop: win.insetTop
+        insetLeft: win.insetLeft
         current: win.page
         // The page floats over the visual: its entry closes it again.
         onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
@@ -234,7 +250,7 @@ ApplicationWindow {
     }
     // What moves sideways by itself keeps the finger: sliders, rows to scroll.
     function holdsSwipe(x, y) {
-        let item = win.contentItem
+        let item = pageSwipe
         for (;;) {
             const p = win.contentItem.mapToItem(item, x, y)
             item = item.childAt(p.x, p.y)
@@ -264,6 +280,8 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.margins: 8
+        anchors.topMargin: 8 + win.insetTop
+        anchors.rightMargin: 8 + (queueSide.visible ? 0 : win.insetRight)
         visible: win.page < 0 || win.docked
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
@@ -299,16 +317,17 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         // Slides down when the controls fade out.
-        anchors.bottomMargin: !win.chromeVisible ? 8
+        anchors.bottomMargin: !win.chromeVisible ? 8 + win.insetBottom
                               : win.bigPlayer ? expanded.height + nav.height
                               : win.compact ? playerBar.height + nav.height
-                              : playerBar.height
+                              : playerBar.height + win.bottomGap
         Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.ms(450); easing.type: Easing.OutCubic } }
         visible: win.page < 0 || win.docked
         showSpectrum: true
         showLyrics: win.showLyrics
         controlsVisible: win.chromeVisible
         shadeToEdges: !win.chromeVisible && !win.docked
+        insetTop: win.insetTop
         onAddLyrics: dialogs.openLyrics()
     }
 
@@ -347,17 +366,13 @@ ApplicationWindow {
         anchors.bottom: playerBar.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
 
-        PointHandler {
-            acceptedButtons: Qt.LeftButton
-            onActiveChanged: {
-                const p = panel.mapToItem(win.contentItem, point.pressPosition.x, point.pressPosition.y)
-                win.swipeHeld = active && win.holdsSwipe(p.x, p.y)
-            }
-        }
         // Follows a finger sideways and springs back: see swipePage().
         Flickable {
             id: pageSwipe
             anchors.fill: parent
+            anchors.topMargin: win.insetTop
+            anchors.leftMargin: win.compact ? win.insetLeft : 0
+            anchors.rightMargin: queueSide.visible ? 0 : win.insetRight
             contentWidth: width
             contentHeight: height
             flickableDirection: Flickable.HorizontalFlick
@@ -423,6 +438,10 @@ ApplicationWindow {
                         onOpenFiles: dialogs.openAudio()
                         onConnectServer: win.page = 3
                         onOpenAlbum: (album) => win.showAlbum(album)
+                        onOpenMix: (id, name) => {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openMix(id, name))
+                        }
                         onOpenFavorites: {
                             win.page = 0
                             Qt.callLater(() => library.item && library.item.openFavorites())
@@ -453,6 +472,17 @@ ApplicationWindow {
                 }
             }
         }
+        // On top, to see a press before the items below take it, without taking it.
+        Item {
+            anchors.fill: parent
+            PointHandler {
+                acceptedButtons: Qt.LeftButton
+                onActiveChanged: {
+                    const p = panel.mapToItem(win.contentItem, point.pressPosition.x, point.pressPosition.y)
+                    win.swipeHeld = active && win.holdsSwipe(p.x, p.y)
+                }
+            }
+        }
     }
 
     // The queue as a side panel.
@@ -476,6 +506,8 @@ ApplicationWindow {
         Loader {
             anchors.fill: parent
             anchors.margins: 8
+            anchors.topMargin: 8 + win.insetTop
+            anchors.rightMargin: 8 + win.insetRight
             active: queueSide.visible
             sourceComponent: QueuePage { onCloseRequested: win.queueOpen = false }
         }
@@ -504,6 +536,7 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: win.compact ? nav.top : parent.bottom
+        anchors.bottomMargin: win.compact ? 0 : win.bottomGap
         height: visible ? implicitHeight : 0
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
@@ -517,12 +550,26 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.bottomMargin: win.keyboard
+        insetBottom: win.keyboard > 0 ? 0 : win.insetBottom
+        insetLeft: win.insetLeft
         height: visible ? implicitHeight : 0
         current: win.page
         onSelected: (i) => win.page = i
         onShowHelp: help.open()
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
+    }
+
+    // Under the system's navigation, the bar goes on to the window's edge.
+    Rectangle {
+        visible: !win.compact && !win.bigPlayer && win.keyboard === 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: win.insetBottom
+        color: Theme.surfaceStrong
+        opacity: playerBar.opacity
     }
 
     // ---- toasts -------------------------------------------------------------
