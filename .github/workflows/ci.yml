@@ -67,7 +67,7 @@ jobs:
           # No GPU and no screen on the runner: Mesa's software OpenGL and a
           # virtual display, for this test only.
           sudo apt-get install -y xvfb libgl1-mesa-dri
-          LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH="$QT_ROOT_DIR/lib" \
+          LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH="$QT_ROOT_DIR/lib" UI_TEST_NO_SHORTCUTS=1 \
             xvfb-run -a -s "-screen 0 1600x1000x24" \
             python3 apps/beatlumen/tests/ui_test.py build/appimage/beatlumen
       - uses: actions/upload-artifact@v4
