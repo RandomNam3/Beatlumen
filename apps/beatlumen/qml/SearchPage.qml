@@ -327,12 +327,18 @@ Item {
                                         onClicked: page.source = section.modelData.id
                                     }
                                 }
-                                Repeater {
-                                    model: section.mine.slice(0, 6)
-                                    ExtensionRow {
-                                        Layout.fillWidth: true
-                                        onOpenCollection: (entry) => page.openCollection(entry.ext, entry.id)
-                                        onMenu: (t, a) => songMenu.openFor([t.id], a)
+                                // A column, not the layout: a row's width follows its
+                                // list, and from its own content that never settles.
+                                Column {
+                                    id: sectionRows
+                                    Layout.fillWidth: true
+                                    Repeater {
+                                        model: section.mine.slice(0, 6)
+                                        ExtensionRow {
+                                            width: sectionRows.width
+                                            onOpenCollection: (entry) => page.openCollection(entry.ext, entry.id)
+                                            onMenu: (t, a) => songMenu.openFor([t.id], a)
+                                        }
                                     }
                                 }
                             }

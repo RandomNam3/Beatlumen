@@ -88,7 +88,7 @@
     "days": "Tagen",
     "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never.": "Songs, die eine Erweiterung heruntergeladen hat, werden nach so vielen Tagen ohne Wiedergabe gelöscht, um Speicher zu sparen. Die eigenen Songs der Bibliothek bleiben immer erhalten. 0 = nie.",
     "Keep extension songs in lists": "Songs von Erweiterungen in Listen behalten",
-    "Songs in anyone's playlist or favorites stay, however long ago they were played.": "Songs in den Playlists oder Favoriten eines Kontos bleiben erhalten, egal wie lange sie nicht gespielt wurden.",
+    "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played.": "Songs, die jemand bewusst aufgenommen hat oder die in den Playlists oder Favoriten eines Kontos stehen, bleiben erhalten, egal wie lange sie nicht gespielt wurden.",
     "Songs from extensions: %1, %2 MB": "Songs von Erweiterungen: %1, %2 MB",
     "0 = only when asked.": "0 = nur auf Anfrage.",
     "Scan threads": "Threads beim Durchsuchen",
@@ -453,7 +453,7 @@
     autoLabels: { label: "Labels from the sound", type: "switch", hint: "Works out tempo, key and energy of the songs in the music folders, one song at a time on half of one core, for labels and recommendations. Songs of music sources only get labels from their tags." },
     onlineMetadata: { label: "Artist information from the internet", type: "switch", hint: "Looks the library's artists up, for artist pages and recommendations: their names and this server's address go to MusicBrainz and, for artist pages, to Wikimedia and ListenBrainz. Off by default." },
     extensionCleanupDays: { label: "Delete extension songs after", type: "number", unit: "days", hint: "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never." },
-    extensionCleanupKeepListed: { label: "Keep extension songs in lists", type: "switch", hint: "Songs in anyone's playlist or favorites stay, however long ago they were played." },
+    extensionCleanupKeepListed: { label: "Keep extension songs in lists", type: "switch", hint: "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played." },
     verbose: { label: "Detailed log", type: "switch", hint: "Logs every request." },
   };
 

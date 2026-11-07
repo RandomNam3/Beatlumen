@@ -640,6 +640,8 @@ QtObject {
         "Rows from extensions that offer them. Each row is a request to their service.": "Reihen von Erweiterungen, die welche anbieten. Jede Reihe ist eine Anfrage an deren Dienst.",
         "Loading…": "Wird geladen …",
         "Could not load this": "Das konnte nicht geladen werden",
+        "Add to library": "In die Bibliothek",
+        "Add all to library": "Alle in die Bibliothek",
         "Artist information": "Infos zu Interpreten",
         "Artist information from the internet?": "Infos zu Interpreten aus dem Internet?",
         "For artist pages and better recommendations. Everything else works without it.": "Für Interpretenseiten und bessere Empfehlungen. Alles andere funktioniert auch ohne.",

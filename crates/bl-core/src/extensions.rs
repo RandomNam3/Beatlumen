@@ -9,7 +9,7 @@ use crate::core::{Core, Req};
 use crate::host::{Host, HttpResponse};
 use bl_json::Value;
 use bl_net::api::Track;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Track id prefix of songs still being imported (followed by the job id).
 pub(crate) const ID_PREFIX: &str = "ext:";
@@ -25,6 +25,11 @@ const PAGE: usize = 50;
 const RADIO_BATCH: usize = 25;
 /// Songs known but not in the queue, before they are forgotten.
 const MAX_ITEMS: usize = 3000;
+/// Songs added to the library at the same time: the server does three, and
+/// what is being played must still fit.
+const ADDING_AT_ONCE: usize = 2;
+/// Seconds to wait when the server is busy.
+const ADD_WAIT: f64 = 5.0;
 
 fn item_id(ext: &str, item: &str) -> String {
     format!("{ITEM_PREFIX}{ext}:{item}")
@@ -55,6 +60,8 @@ pub(crate) enum ExtReq {
         ext: String,
         start: bool,
     },
+    /// A song goes into the library without being played.
+    Add(String),
 }
 
 struct Job {
@@ -73,6 +80,8 @@ struct Job {
     /// The browser cannot play a file still being written: it plays the
     /// library track once the import is done.
     play_when_done: bool,
+    /// Added to the library without being played.
+    adding: bool,
 }
 
 struct ExtInfo {
@@ -121,6 +130,11 @@ pub(crate) struct ExtState {
     shelves_serial: u64,
     collection: Collection,
     collection_serial: u64,
+    /// Songs still to go into the library, and how many are on their way.
+    adding: VecDeque<String>,
+    add_asked: usize,
+    add_wait_until: f64,
+    added: usize,
 }
 
 fn safe_id(s: &str) -> bool {
@@ -147,6 +161,7 @@ impl Core {
                 Value::object()
                     .with("id", e.id.as_str())
                     .with("name", e.name.as_str())
+                    .with("shelves", e.shelves)
                     .with("collections", e.collections)
                     .with("radio", e.radio)
             })
@@ -155,6 +170,7 @@ impl Core {
             .with("list", Value::Array(list))
             .with("searching", self.ext.pending > 0)
             .with("asking", self.ext.asking)
+            .with("adding", self.adding_count() as u64)
             .with("rev", self.ext.rev)
             .with("error", self.ext.error.clone())
             .with("target", self.settings.extension_target.as_str())
@@ -204,6 +220,7 @@ impl Core {
             "extensions.results" => Value::Array(self.ext.results.clone()),
             "extensions.play" => self.extensions_play(host, c),
             "extensions.target" => self.extensions_target(host, c),
+            "extensions.add" => self.extensions_add(c),
             "extensions.shelves" => {
                 self.extensions_shelves(host);
                 Value::Array(self.ext.shelves.clone())
@@ -310,6 +327,108 @@ impl Core {
             }
         }
         Value::object().with("ok", true)
+    }
+
+    /// Songs go into the library without being played. Whoever asks for this
+    /// wants them there, so nothing is asked and they stay when unplayed.
+    fn extensions_add(&mut self, c: &Value) -> Value {
+        let before = self.ext.adding.len();
+        for id in c.get("ids").as_array().into_iter().flatten() {
+            let Some(id) = id.as_str().filter(|id| split_item(id).is_some()) else {
+                continue;
+            };
+            if !self.ext.adding.iter().any(|a| a == id)
+                && !self.ext.jobs.iter().any(|j| j.adding && j.item == id)
+                && !self.ext.in_library.contains_key(id)
+            {
+                self.ext.adding.push_back(id.to_string());
+            }
+        }
+        if self.ext.adding.len() > before {
+            let msg = self.tr("Adding to the library…").to_string();
+            self.toast(msg, false);
+        }
+        self.ext.rev += 1;
+        Value::object().with("ok", true)
+    }
+
+    fn adding_count(&self) -> usize {
+        self.ext.adding.len()
+            + self.ext.add_asked
+            + self.ext.jobs.iter().filter(|j| j.adding).count()
+    }
+
+    /// Sends the next songs on their way; says so when all have arrived.
+    fn extension_add_next(&mut self, host: &mut dyn Host) {
+        if self.time < self.ext.add_wait_until || !self.server.is_connected() {
+            return;
+        }
+        while self.ext.add_asked + self.ext.jobs.iter().filter(|j| j.adding).count()
+            < ADDING_AT_ONCE
+        {
+            let Some(id) = self.ext.adding.pop_front() else {
+                break;
+            };
+            let Some((ext, item)) = split_item(&id).filter(|(e, i)| safe_id(e) && safe_id(i))
+            else {
+                continue;
+            };
+            let body = Value::object()
+                .with("id", item)
+                .with("keep", true)
+                .with("pin", true)
+                .to_json()
+                .into_bytes();
+            let path = format!("/api/extensions/{ext}/import");
+            let rid = self
+                .server
+                .send(host, "POST", &path, body, "application/json");
+            self.requests.insert(rid, Req::Ext(ExtReq::Add(id)));
+            self.ext.add_asked += 1;
+        }
+        if self.ext.added > 0 && self.adding_count() == 0 {
+            let msg = if self.ext.added == 1 {
+                self.tr("Added to the library").to_string()
+            } else {
+                format!("{}: {}", self.tr("Added to the library"), self.ext.added)
+            };
+            self.ext.added = 0;
+            self.toast(msg, false);
+        }
+    }
+
+    /// A waiting song turned out to be, or has become, a library track.
+    fn song_in_library(&mut self, id: &str, track: &str) {
+        self.ext
+            .in_library
+            .insert(id.to_string(), track.to_string());
+        if let Some(t) = self.extra_tracks.get(id).cloned() {
+            if self.library.track(track).is_none() {
+                self.extra_tracks.insert(
+                    track.to_string(),
+                    Track {
+                        id: track.to_string(),
+                        ..t
+                    },
+                );
+            }
+        }
+        // Not the one that is just starting: that takes its own way there.
+        if self.queue.current().map(String::as_str) != Some(id) {
+            self.queue_replace(id, track);
+        }
+        let mark = |list: &mut Vec<Value>| {
+            for r in list.iter_mut().filter(|r| r.str_or("songId", "") == id) {
+                *r = r
+                    .clone()
+                    .with("inLibrary", true)
+                    .with("track", track)
+                    .with("songId", track);
+            }
+        };
+        mark(&mut self.ext.results);
+        mark(&mut self.ext.collection.items);
+        self.ext.rev += 1;
     }
 
     /// The queue reached a song not imported yet: now it is.
@@ -749,6 +868,7 @@ impl Core {
                     done: false,
                     started: self.time,
                     play_when_done: !host.has_threads() || host.audio_is_push(),
+                    adding: false,
                 });
                 let later = self.ext.jobs.last().is_some_and(|j| j.play_when_done);
                 self.extra_tracks.insert(new_id.clone(), t);
@@ -852,6 +972,46 @@ impl Core {
                     .collect();
                 self.radio_play(host, fresh, start);
             }
+            ExtReq::Add(id) => {
+                self.ext.add_asked = self.ext.add_asked.saturating_sub(1);
+                let busy = matches!(&res, Ok(r) if r.status == 503);
+                let Some(v) = json else {
+                    if busy {
+                        // Too many at once on the server: a little later.
+                        self.ext.adding.push_front(id);
+                        self.ext.add_wait_until = self.time + ADD_WAIT;
+                    } else {
+                        let msg = format!("{}: {}", self.tr("Could not load the song"), error());
+                        self.toast(msg, true);
+                    }
+                    return;
+                };
+                if let Some(track) = v.get("track").as_str().filter(|t| !t.is_empty()) {
+                    let track = track.to_string();
+                    self.song_in_library(&id, &track);
+                    self.ext.added += 1;
+                    return;
+                }
+                let job = v.str_or("job", "").to_string();
+                let audio = v.str_or("audio", "").to_string();
+                if safe_id(&job) && audio.starts_with("/api/extensions/jobs/") {
+                    self.ext.jobs.push(Job {
+                        job,
+                        item: id,
+                        keep: true,
+                        title: v.str_or("title", "").to_string(),
+                        artist: v.str_or("artist", "").to_string(),
+                        audio,
+                        cover: String::new(),
+                        polled_at: self.time,
+                        asked: false,
+                        done: false,
+                        started: self.time,
+                        play_when_done: false,
+                        adding: true,
+                    });
+                }
+            }
             ExtReq::Job(job) => {
                 if let Some(j) = self.ext.jobs.iter_mut().find(|j| j.job == job) {
                     j.asked = false;
@@ -923,6 +1083,16 @@ impl Core {
             }
             return;
         };
+        if j.adding {
+            let item = j.item.clone();
+            self.ext.jobs.retain(|j| j.job != job);
+            self.ext.added += 1;
+            self.song_in_library(&item, &track);
+            self.refresh_server_data(host);
+            return;
+        }
+        let item = j.item.clone();
+        self.song_in_library(&item, &track);
         let old = format!("{ID_PREFIX}{job}");
         // The library track replaces the import everywhere.
         if let Some(t) = self.extra_tracks.remove(&old) {
@@ -963,6 +1133,7 @@ impl Core {
 
     /// Polls running imports (every tick).
     pub(crate) fn update_extensions(&mut self, host: &mut dyn Host) {
+        self.extension_add_next(host);
         if self.ext.jobs.is_empty() || !self.server.is_connected() {
             return;
         }

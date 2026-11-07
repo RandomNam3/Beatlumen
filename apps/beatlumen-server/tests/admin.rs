@@ -290,12 +290,14 @@ fn admin_interface() {
     let (code, _) = http.json(
         "PUT",
         "settings",
-        Some(Value::object().with(
-            "values",
-            Value::object()
-                .with("extensionCleanupDays", 30u64)
-                .with("extensionCleanupKeepListed", false),
-        )),
+        Some(
+            Value::object().with(
+                "values",
+                Value::object()
+                    .with("extensionCleanupDays", 30u64)
+                    .with("extensionCleanupKeepListed", false),
+            ),
+        ),
     );
     assert_eq!(code, 200);
     assert_eq!(server.state.config().extension_cleanup_days, 30);
@@ -310,7 +312,10 @@ fn admin_interface() {
     );
     assert_eq!(code, 400);
     let (_, overview) = http.json("GET", "overview", None);
-    assert_eq!(overview.get("extensionSongs").get("songs").as_u64(), Some(0));
+    assert_eq!(
+        overview.get("extensionSongs").get("songs").as_u64(),
+        Some(0)
+    );
     let (_, all) = http.json("GET", "settings", None);
     let fixed = all
         .get("settings")

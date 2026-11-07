@@ -62,7 +62,7 @@ pub struct Config {
     /// Songs an extension brought in are deleted after this many days without
     /// being played (0: never).
     pub extension_cleanup_days: u32,
-    /// Songs in a playlist or among favorites stay anyway.
+    /// Songs added on purpose, in a playlist or among favorites stay anyway.
     pub extension_cleanup_keep_listed: bool,
     /// Whisper model (ggml file) for timing song texts.
     pub speech_model: Option<PathBuf>,
@@ -734,8 +734,8 @@ OPTIONS:
                             docs/EXTENSIONS.md)
     --extension-cleanup-days DAYS
                             Delete songs an extension brought in after this many
-                            days without being played, not those in a playlist or
-                            among favorites (default 90, 0: never)
+                            days without being played, not those added on purpose,
+                            in a playlist or among favorites (default 90, 0: never)
     --extension-token-file FILE
                             Secret sent to the extensions (they check it)
     --speech-model FILE     Speech recognition model (Whisper in ggml format, e.g.

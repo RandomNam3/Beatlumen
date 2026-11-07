@@ -23,7 +23,7 @@ extension should listen on localhost or a private container network only.
 | `BEATLUMEN_EXTENSIONS=youtube=http://127.0.0.1:7790,other=http://…` / `--extension youtube=http://…` / `"extensions": {"youtube": "http://…"}` | The extensions: id (1-32 of `a-z 0-9 -`, not `jobs`) and base URL |
 | `BEATLUMEN_EXTENSION_TOKEN_FILE` / `--extension-token-file` / `"extensionTokenFile"` | A file with one line, at least 16 characters: sent as `Authorization: Bearer <token>` to every extension |
 | `BEATLUMEN_EXTENSION_CLEANUP_DAYS` / `--extension-cleanup-days` / `"extensionCleanupDays"` | Songs an extension downloaded are deleted after this many days without being played. Default 90, 0: never. Also in the admin area |
-| `BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED` / `"extensionCleanupKeepListed"` | Songs in anyone's playlist or favorites stay anyway. Default on. Also in the admin area |
+| `BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED` / `"extensionCleanupKeepListed"` | Songs someone added on purpose, or in anyone's playlist or favorites, stay anyway. Default on. Also in the admin area |
 
 Kept imports are written to `<data>/extensions/library/<id>/`, which the
 server adds as one more music folder. Temporary imports (for the users'
@@ -37,9 +37,10 @@ downloads them. Once an hour the server deletes those not played for
 `extensionCleanupDays`. Only songs on its list of imports
 (`<data>/extensions/imported.json`) and only inside
 `<data>/extensions/library/` are deleted: the library's own songs are never
-touched, not even with the same name. Songs from before this list kept times
-get the full period from the first start with it. A deleted song can simply
-be imported again.
+touched, not even with the same name. Songs someone added on purpose (`"pin"`
+below) stay, like those in a playlist or among favorites, unless the admin turns
+that off. Songs from before this list kept times get the full period from the
+first start with it. A deleted song can simply be imported again.
 
 ## Protocol
 
@@ -169,7 +170,7 @@ Every endpoint needs a logged-in user (the server password or an account).
 | `GET /api/extensions/<ext>/collections/<id>?limit=&after=` | `{"id", "title", "artist", "detail", "image", "items": [songs], "next"}`; 404 if not offered |
 | `GET /api/extensions/<ext>/radio/<id>?limit=` | `{"items": [songs]}`; 404 if not offered |
 | `GET /api/extensions/<ext>/image/<id>?size=32-1024` | JPEG |
-| `POST /api/extensions/<ext>/import` `{"id", "keep": true}` | A job (below); `keep: false` imports temporarily for the user's encrypted files. A song already imported answers `{"state": "done", "track"}` right away |
+| `POST /api/extensions/<ext>/import` `{"id", "keep": true, "pin": false}` | A job (below); `keep: false` imports temporarily for the user's encrypted files, `pin: true` says the user added the song on purpose. A song already imported answers `{"state": "done", "track"}` right away |
 | `GET /api/extensions/jobs/<job>` | `{"job", "state": "running"/"done"/"failed", "bytes", "track", "error", "audio", "keep", "title", "artist", "album", "duration", "mime"}` |
 | `GET /api/extensions/jobs/<job>/audio` | The imported file. While it is written: what is there so far and the rest as it arrives (chunked); `Range: bytes=N-` answers `206` with `Content-Range: bytes N-*/*` (length not known yet). When done: an ordinary file with ranges |
 
@@ -191,6 +192,10 @@ encrypted files (the app downloads the finished import and encrypts it; the
 server deletes its temporary copy after two hours). The choice is remembered
 and can be changed in the settings. When a library import is finished, playback
 continues with the library track and its full analysis.
+
+A result can also go straight into the library, without playing it: the button
+on its row, its menu, or "Add all to library" on a collection. Those songs are
+brought in a few at a time, and nothing is asked because the choice is clear.
 
 A song added to the queue only waits there: the server fetches nothing until
 its turn comes, so a long list or a radio costs nothing up front. A song that

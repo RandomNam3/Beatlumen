@@ -79,7 +79,20 @@ Menu {
         icon.source: Theme.icon(all ? "favorite" : "favorite_border")
         onTriggered: Favorites.set(marks, !all)
     }
+    // Songs of an extension: into the library without playing them.
     MenuItem {
+        readonly property var waiting: menu.ids.filter(id => String(id).indexOf("extitem:") === 0)
+        visible: waiting.length > 0
+        height: visible ? implicitHeight : 0
+        text: Theme.tr("Add to library")
+        icon.source: Theme.icon("add")
+        onTriggered: Core.call("extensions.add", { ids: waiting })
+    }
+    MenuItem {
+        // A song of an extension only has a radio if the extension offers one.
+        visible: !menu.ids.some(id => String(id).indexOf("extitem:") === 0)
+            || ((Core.state.extensions || {}).list || []).some(e => e.radio === true)
+        height: visible ? implicitHeight : 0
         text: Theme.tr("Start radio")
         icon.source: Theme.icon("radio")
         onTriggered: Core.call("songs.radio", { seed: { tracks: menu.ids.slice(0, 50) }, name: "" })

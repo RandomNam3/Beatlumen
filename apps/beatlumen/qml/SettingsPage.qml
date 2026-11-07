@@ -914,7 +914,7 @@ Item {
                     }
                 }
                 SwitchRow {
-                    visible: (((Core.state.extensions || {}).list) || []).length > 0
+                    visible: (((Core.state.extensions || {}).list) || []).some(e => e.shelves === true)
                     Layout.fillWidth: true
                     title: Theme.tr("Suggestions on the start page")
                     detail: Theme.tr("Rows from extensions that offer them. Each row is a request to their service.")

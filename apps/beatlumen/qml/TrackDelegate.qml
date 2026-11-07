@@ -11,6 +11,10 @@ ItemDelegate {
     property bool current: false
     property bool showCover: true
     property bool showMenu: true
+    // One more action on the row, if any.
+    property string actionIcon: ""
+    property string actionTip: ""
+    signal rowAction()
     signal play()
     signal menu(var track, Item anchor)
 
@@ -99,6 +103,13 @@ ItemDelegate {
             color: Theme.textFaint
             font.pixelSize: 13
             font.features: { "tnum": 1 }
+        }
+        IconButton {
+            visible: d.actionIcon !== ""
+            iconName: d.actionIcon
+            iconColor: Theme.textDim
+            tip: d.actionTip
+            onClicked: d.rowAction()
         }
         // On narrow screens the row needs the room; the menu has it too.
         FavoriteButton {

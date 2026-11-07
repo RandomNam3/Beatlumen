@@ -832,6 +832,7 @@ Item {
     Component {
         id: collectionView
         DetailPage {
+            id: collectionPage
             property string ext
             property string itemId
             readonly property int rev: (Core.state.extensions || {}).rev || 0
@@ -848,6 +849,21 @@ Item {
             subtitle: [info.artist, info.detail, tracks.length > 0 ? page.count(tracks.length, "song", "songs") : ""].filter(x => x).join(" · ")
             cover: info.image || ""
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+            readonly property var waiting: ids.filter(id => String(id).indexOf("extitem:") === 0)
+            extra: Component {
+                Flow {
+                    AccentButton {
+                        visible: collectionPage.waiting.length > 0
+                        text: Theme.tr("Add all to library")
+                        highlighted: true
+                        icon.source: Theme.icon("add")
+                        onClicked: {
+                            enabled = false
+                            Core.call("extensions.add", { ids: collectionPage.waiting })
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -822,3 +822,105 @@ fn a_radio_of_an_extension_goes_on_by_itself() {
     app.cmd(Value::object().with("cmd", "songs.radioStop"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_song_can_go_into_the_library_without_playing_and_then_it_stays() {
+    let Some((mut app, asked, dir, server)) = app_with_extension("add", &[]) else {
+        eprintln!("ffmpeg not found, skipping");
+        return;
+    };
+    let results = search(&mut app);
+    let first = results[0].str_or("songId", "").to_string();
+    // The album's songs too, and nothing asks where they go.
+    app.cmd(
+        Value::object()
+            .with("cmd", "extensions.collection")
+            .with("ext", "tube")
+            .with("id", "a:1"),
+    );
+    until(&mut app, "the collection", |app, _| {
+        !app.cmd(Value::object().with("cmd", "extensions.collectionData"))
+            .bool_or("loading", true)
+    });
+    app.cmd(Value::object().with("cmd", "extensions.add").with(
+        "ids",
+        vec![
+            first.as_str(),
+            "extitem:tube:s:2",
+            "extitem:tube:s:3",
+            "not-a-waiting-song",
+        ],
+    ));
+    let s = until(&mut app, "the songs on their way", |_, s| {
+        s.get("extensions").f64_or("adding", 0.0) > 0.0
+    });
+    assert!(
+        !s.get("extensions").bool_or("asking", false),
+        "nothing to ask"
+    );
+
+    let s = until(&mut app, "all songs in the library", |_, s| {
+        s.get("extensions").f64_or("adding", 1.0) == 0.0 && s.f64_or("libraryTracks", 0.0) >= 3.0
+    });
+    assert_eq!(asked.audio.load(Ordering::Relaxed), 3);
+    assert_eq!(s.str_or("play", ""), "stopped", "nothing started playing");
+    assert!(s.get("current").is_null(), "{}", s.get("current").to_json());
+    assert!(
+        queue(&mut app).is_empty(),
+        "and nothing went into the queue"
+    );
+
+    // The results know.
+    let found = app.cmd(Value::object().with("cmd", "extensions.results"));
+    let r = &found.as_array().unwrap()[0];
+    assert!(r.bool_or("inLibrary", false), "{}", r.to_json());
+    assert!(!r.str_or("songId", "").starts_with("extitem:"));
+    let d = app.cmd(Value::object().with("cmd", "extensions.collectionData"));
+    assert!(d
+        .get("items")
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| i.bool_or("inLibrary", false)));
+
+    // Asked for again: nothing happens.
+    app.cmd(
+        Value::object()
+            .with("cmd", "extensions.add")
+            .with("ids", vec![first.as_str()]),
+    );
+    for _ in 0..20 {
+        app.core.tick(&mut app.host);
+    }
+    assert_eq!(asked.audio.load(Ordering::Relaxed), 3);
+
+    // Unplayed for ages, they stay.
+    let later = beatlumen_server::util::now_secs() + 1000 * DAY;
+    assert_eq!(server.state.extensions.cleanup(&server.state, later), 0);
+    // Unless the admin wants otherwise.
+    let mut cfg = (*server.state.config()).clone();
+    cfg.extension_cleanup_keep_listed = false;
+    server.state.apply_config(cfg, false);
+    assert_eq!(server.state.extensions.cleanup(&server.state, later), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_song_only_played_is_pinned_when_added_later() {
+    let Some(c) = Cleanup::new("pin-later", |_| {}) else {
+        eprintln!("ffmpeg not found, skipping");
+        return;
+    };
+    let (_, file) = import(&c.server, "s:1");
+    let r = post(
+        &c.base,
+        "/api/extensions/tube/import",
+        &Value::object()
+            .with("id", "s:1")
+            .with("keep", true)
+            .with("pin", true),
+    );
+    assert_eq!(json(&r).str_or("state", ""), "done");
+    assert_eq!(c.after(1000), 0);
+    assert!(file.is_file());
+}

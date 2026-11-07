@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,8 @@ struct Imported {
     /// Seconds since 1970.
     added: u64,
     played: u64,
+    /// Added to the library on purpose (not just by playing it): it stays.
+    pinned: bool,
 }
 
 /// A song as the extension describes it.
@@ -138,6 +141,8 @@ struct Job {
     id: String,
     key: String,
     keep: bool,
+    /// Added to the library on purpose.
+    pin: AtomicBool,
     item: Item,
     st: Mutex<JobState>,
     cv: Condvar,
@@ -410,15 +415,16 @@ impl Extensions {
                 for (k, entry) in o.iter() {
                     // Before times were kept: the file only; it gets the full
                     // time from now on.
-                    let (rel, added, played) = match entry.as_str() {
+                    let (rel, added, played, pinned) = match entry.as_str() {
                         Some(rel) => {
                             older = true;
-                            (rel, now, now)
+                            (rel, now, now, false)
                         }
                         None => (
                             entry.str_or("path", ""),
                             entry.get("added").as_u64().unwrap_or(now),
                             entry.get("played").as_u64().unwrap_or(now),
+                            entry.bool_or("pinned", false),
                         ),
                     };
                     if let Some(path) = util::join_rel(&self.imports, rel) {
@@ -428,6 +434,7 @@ impl Extensions {
                                 path,
                                 added,
                                 played,
+                                pinned,
                             },
                         );
                     }
@@ -454,12 +461,28 @@ impl Extensions {
                     Value::object()
                         .with("path", rel)
                         .with("added", imp.added)
-                        .with("played", imp.played),
+                        .with("played", imp.played)
+                        .with("pinned", imp.pinned),
                 );
             }
         }
         if let Err(e) = util::write_atomic(&self.imported_file, o.to_json().as_bytes()) {
             crate::warn!("cannot write {}: {e}", self.imported_file.display());
+        }
+    }
+
+    /// A kept import stays whether it is played or not.
+    fn pin(&self, ext: &str, item: &str) {
+        let changed = self
+            .imported
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&format!("{ext}/{item}"))
+            .filter(|i| !i.pinned)
+            .map(|i| i.pinned = true)
+            .is_some();
+        if changed {
+            self.save_imported();
         }
     }
 
@@ -510,6 +533,9 @@ impl Extensions {
             .unwrap_or_else(|e| e.into_inner())
             .retain(|key, imp| {
                 if imp.played.max(imp.added) >= cutoff || !imp.path.starts_with(&self.imports) {
+                    return true;
+                }
+                if imp.pinned && cfg.extension_cleanup_keep_listed {
                     return true;
                 }
                 if track_of
@@ -747,7 +773,8 @@ impl Extensions {
                     return Response::error(400, "invalid id");
                 }
                 let keep = body.get("keep").as_bool().unwrap_or(true);
-                match self.import(state, e, item, keep) {
+                let pin = keep && body.get("pin").as_bool().unwrap_or(false);
+                match self.import(state, e, item, keep, pin) {
                     Ok(v) => Response::json(200, &v),
                     Err((code, msg)) => Response::error(code, &msg),
                 }
@@ -1049,9 +1076,13 @@ impl Extensions {
         e: &Ext,
         item_id: &str,
         keep: bool,
+        pin: bool,
     ) -> Result<Value, (u16, String)> {
         if keep {
             if let Some(track) = self.imported_track(state, &e.id, item_id) {
+                if pin {
+                    self.pin(&e.id, item_id);
+                }
                 return Ok(Value::object()
                     .with("state", "done")
                     .with("track", track)
@@ -1065,6 +1096,10 @@ impl Extensions {
                 .values()
                 .find(|j| j.key == key && j.lock().error.is_none())
             {
+                if pin {
+                    j.pin.store(true, Ordering::Relaxed);
+                    self.pin(&e.id, item_id);
+                }
                 return Ok(j.json());
             }
             let running = jobs.values().filter(|j| !j.lock().done).count();
@@ -1115,6 +1150,7 @@ impl Extensions {
             id: id.clone(),
             key,
             keep,
+            pin: AtomicBool::new(pin),
             item,
             st: Mutex::new(JobState {
                 path: part.clone(),
@@ -1264,6 +1300,7 @@ fn finish_import(
                                 path: final_path.to_path_buf(),
                                 added: now,
                                 played: now,
+                                pinned: job.pin.load(Ordering::Relaxed),
                             },
                         );
                     exts.save_imported();
