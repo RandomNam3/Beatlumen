@@ -241,7 +241,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence", "Current line in the player"])
+                visible: page.shows("playback", ["Crossfade", "No silent gaps between songs.", "Normalize volume", "Off", "Playback", "Plays all songs at a similar loudness.", "Skip silence", "Current line in the player", "Now playing beside pages"])
                 SectionLabel { text: Theme.tr("Playback") }
                 SwitchRow {
                     Layout.fillWidth: true
@@ -279,6 +279,13 @@ Item {
                     detail: Theme.tr("No silent gaps between songs.")
                     on: page.settings.skipSilence !== false
                     onSwitched: (on) => Core.call("settings.set", { key: "skipSilence", value: on })
+                }
+                SwitchRow {
+                    Layout.fillWidth: true
+                    title: Theme.tr("Now playing beside pages")
+                    detail: Theme.tr("In wide windows the visual stays at the side while a page is open.")
+                    on: (page.settings.ui || {}).docked !== false
+                    onSwitched: (on) => Core.call("settings.set", { key: "ui.docked", value: on })
                 }
                 SwitchRow {
                     Layout.fillWidth: true

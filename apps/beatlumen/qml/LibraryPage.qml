@@ -56,6 +56,51 @@ Item {
         stack.pop(null)
         stack.push(labelView, { label: name })
     }
+    // Wide enough for the sections at the side.
+    readonly property bool wide: width >= 860
+    // What is pinned to the side (of this device).
+    readonly property var pinned: ((Core.state.settings || {}).ui || {}).pinned || []
+    function isPinned(kind, id) {
+        return pinned.some(p => p.kind === kind && p.id === id)
+    }
+    function setPinned(kind, id, name, on) {
+        const rest = pinned.filter(p => !(p.kind === kind && p.id === id))
+        Core.call("settings.set", { key: "ui.pinned", value: on ? rest.concat([{ kind: kind, id: id, name: name }]) : rest })
+    }
+    // The entry for a detail page's menu.
+    function pinItem(kind, id, name) {
+        const on = isPinned(kind, id)
+        return { text: on ? Theme.tr("Unpin") : Theme.tr("Pin to the side"), action: () => setPinned(kind, id, name, !on) }
+    }
+    function openPinned(p) {
+        switch (p.kind) {
+        case "album": {
+            const a = albums.find(x => x.id === p.id)
+            if (a)
+                openAlbum(a)
+            break
+        }
+        case "artist": openArtist(p.id); break
+        case "label": openLabel(p.id); break
+        case "playlist": {
+            const l = playlists.find(x => x.id === p.id)
+            if (l) {
+                stack.pop(null)
+                stack.push(playlistView, { playlist: l })
+            }
+            break
+        }
+        }
+    }
+    function filtered(list, filter) {
+        switch (filter) {
+        case "favorites": return list.filter(t => t.favorite === true)
+        case "local": return list.filter(t => t.local === true)
+        case "server": return list.filter(t => !t.local && !t.source)
+        case "offline": return list.filter(t => t.offline === true)
+        default: return list
+        }
+    }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
         stack.pop(null)
@@ -157,6 +202,15 @@ Item {
             id: main
             spacing: 0
             property int section: 0
+            property string filter: "all"
+            readonly property var sectionList: [
+                { label: Theme.tr("Songs"), icon: "music_note" },
+                { label: Theme.tr("Albums"), icon: "album" },
+                { label: Theme.tr("Artists"), icon: "person" },
+                { label: Theme.tr("Folders"), icon: "folder" },
+                { label: Theme.tr("Playlists"), icon: "queue_music" },
+                { label: Theme.tr("Labels"), icon: "label" }
+            ].concat((Core.state.sources || {}).available === true ? [{ label: Theme.tr("Radio"), icon: "radio" }] : [])
 
             PageHeader {
                 Layout.fillWidth: true
@@ -199,7 +253,7 @@ Item {
                 Layout.preferredHeight: 36
                 Layout.topMargin: 10
                 Layout.bottomMargin: 6
-                visible: page.hasContent
+                visible: page.hasContent && !page.wide
                 contentWidth: chipRow.width + 24
                 flickableDirection: Flickable.HorizontalFlick
                 boundsBehavior: Flickable.StopAtBounds
@@ -218,8 +272,7 @@ Item {
                     x: 12
                     spacing: 6
                     Repeater {
-                        model: [Theme.tr("Songs"), Theme.tr("Albums"), Theme.tr("Artists"), Theme.tr("Folders"), Theme.tr("Playlists"), Theme.tr("Labels")]
-                               .concat((Core.state.sources || {}).available === true ? [Theme.tr("Radio")] : [])
+                        model: main.sectionList.map(s => s.label)
                         Chip {
                             required property string modelData
                             required property int index
@@ -246,7 +299,26 @@ Item {
                 }
             }
 
+            LibrarySidebar {
+                id: sidebar
+                parent: libraryBody
+                visible: page.wide && page.hasContent
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.topMargin: 10
+                width: 200
+                sections: main.sectionList
+                section: main.section
+                filter: main.filter
+                pinned: page.pinned
+                onSectionChosen: (i) => main.section = i
+                onFilterChosen: (f) => main.filter = f
+                onPinnedOpened: (p) => page.openPinned(p)
+                onUnpin: (p) => page.setPinned(p.kind, p.id, p.name, false)
+            }
             Item {
+                id: libraryBody
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
@@ -278,13 +350,18 @@ Item {
 
                 StackLayout {
                     anchors.fill: parent
+                    anchors.leftMargin: sidebar.visible ? sidebar.width + 8 : 0
                     visible: page.hasContent
                     currentIndex: main.section
 
                     // Songs: play/shuffle scroll away with the list.
                     TrackListView {
-                        tracks: page.tracks
+                        id: songsList
+                        readonly property var shown: page.filtered(page.tracks, main.filter)
+                        tracks: shown
+                        selectable: true
                         onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                        onSelectionMenu: (ids, a) => songMenu.openFor(ids, a)
                         header: Item {
                             width: ListView.view.width
                             height: 60
@@ -297,7 +374,7 @@ Item {
                                 readonly property bool narrow: width < 340
                                 AccentButton {
                                     text: Theme.tr("Play all"); icon.source: Theme.icon("play_arrow"); highlighted: true
-                                    onClicked: page.play(page.tracks.map(t => t.id), false)
+                                    onClicked: page.play(songsList.shown.map(t => t.id), false)
                                 }
                                 Button {
                                     display: parent.narrow ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
@@ -621,9 +698,10 @@ Item {
             tracks: dp.tracks
             numbered: dp.numbered
             showCovers: !dp.numbered
+            selectable: true
             topMargin: 0
-            bottomMargin: 8
             onTrackMenu: (t, a) => dp.trackMenu(t, a)
+            onSelectionMenu: (ids, a) => songMenu.openFor(ids, a)
             header: Item {
                 id: hero
                 width: ListView.view.width
@@ -798,7 +876,8 @@ Item {
             subtitle: page.count(tracks.length, "song", "songs")
             placeholder: "label"
             menuItems: [
-                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) }
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) },
+                page.pinItem("label", lv.label, Theme.labelName(lv.label))
             ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
@@ -816,7 +895,8 @@ Item {
             cover: album.coverTrack ? Covers.url(album.coverTrack, album.cover) : (album.cover || "")
             numbered: true
             menuItems: [
-                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { album: album.id }, name: page.albumTitle(album) }) }
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { album: album.id }, name: page.albumTitle(album) }) },
+                page.pinItem("album", album.id, page.albumTitle(album))
             ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
@@ -844,7 +924,8 @@ Item {
                 }
             }
             menuItems: [
-                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { artist: artist }, name: page.artistName(artist) }) }
+                { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { artist: artist }, name: page.artistName(artist) }) },
+                page.pinItem("artist", artist, page.artistName(artist))
             ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }

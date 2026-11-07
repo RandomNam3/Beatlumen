@@ -154,6 +154,9 @@ pub enum Target<'a> {
     /// An externally owned framebuffer object (id, width, height), e.g.
     /// the window surface of a UI toolkit.
     Framebuffer(u32, u32, u32),
+    /// A part of such a framebuffer: id, x and y from its lower left corner,
+    /// width, height.
+    FramebufferPart(u32, i32, i32, u32, u32),
     Offscreen(&'a RenderTarget),
 }
 
@@ -168,12 +171,18 @@ impl Target<'_> {
                 gl.bind_framebuffer(*fbo);
                 gl.viewport(0, 0, *w as i32, *h as i32);
             }
+            Target::FramebufferPart(fbo, x, y, w, h) => {
+                gl.bind_framebuffer(*fbo);
+                gl.viewport(*x, *y, *w as i32, *h as i32);
+            }
             Target::Offscreen(rt) => rt.bind(gl),
         }
     }
     pub fn size(&self) -> (u32, u32) {
         match self {
-            Target::Screen(w, h) | Target::Framebuffer(_, w, h) => (*w, *h),
+            Target::Screen(w, h)
+            | Target::Framebuffer(_, w, h)
+            | Target::FramebufferPart(_, _, _, w, h) => (*w, *h),
             Target::Offscreen(rt) => (rt.width, rt.height),
         }
     }
