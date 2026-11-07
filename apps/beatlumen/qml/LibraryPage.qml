@@ -101,6 +101,11 @@ Item {
         default: return list
         }
     }
+    function openCollection(ext, id) {
+        stack.pop(null)
+        stack.push(collectionView, { ext: ext, itemId: id })
+        Core.call("extensions.collection", { ext: ext, id: id })
+    }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
         stack.pop(null)
@@ -899,6 +904,46 @@ Item {
                 page.pinItem("album", album.id, page.albumTitle(album))
             ]
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+        }
+    }
+
+    // An album or playlist of a server extension: its songs are imported one
+    // by one as they start.
+    Component {
+        id: collectionView
+        DetailPage {
+            id: collectionPage
+            property string ext
+            property string itemId
+            readonly property int rev: (Core.state.extensions || {}).rev || 0
+            property var info: ({})
+            function reload() {
+                const d = Core.call("extensions.collectionData") || {}
+                if (d.ext === ext && d.id === itemId)
+                    info = d
+            }
+            onRevChanged: reload()
+            tracks: (info.items || []).map(r => ({ id: r.songId, title: r.title, artist: r.artist, album: r.album,
+                                                   duration: r.duration, cover: r.image }))
+            title: info.title || (info.loading ? Theme.tr("Loading…") : info.error ? Theme.tr("Could not load this") : "")
+            subtitle: [info.artist, info.detail, tracks.length > 0 ? page.count(tracks.length, "song", "songs") : ""].filter(x => x).join(" · ")
+            cover: info.image || ""
+            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+            readonly property var waiting: ids.filter(id => String(id).indexOf("extitem:") === 0)
+            extra: Component {
+                Flow {
+                    AccentButton {
+                        visible: collectionPage.waiting.length > 0
+                        text: Theme.tr("Add all to library")
+                        highlighted: true
+                        icon.source: Theme.icon("add")
+                        onClicked: {
+                            enabled = false
+                            Core.call("extensions.add", { ids: collectionPage.waiting })
+                        }
+                    }
+                }
+            }
         }
     }
 

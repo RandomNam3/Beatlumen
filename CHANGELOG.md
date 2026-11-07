@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
+  offers is in its manifest. Rows of suggestions on the start page, collections that open
+  like an album, a radio for a song, and search results next to the library's. Extensions
+  of protocol 1 keep working and only search.
+- **Add to the library without playing:** a button on every result of an extension, in its
+  menu, and "Add all to library" for an album. Added like this, a song stays.
+- **Songs of extensions in the queue:** they have a menu now, can be added to the queue and
+  only get imported when their turn comes. A song that cannot be fetched leaves the queue.
+- **Songs nobody plays:** songs an extension downloaded by playing them are deleted after 90
+  days without being played, to save storage. Those added on purpose or in anyone's playlist
+  or favorites stay, and the library's own songs are never touched. All of it can be changed
+  in the admin area (0 days: never). Songs imported earlier get the full 90 days from the
+  first start.
 - **Status in Discord (Linux, Windows):** shows the song you are listening to in the
   Discord program on the same computer (Settings, Playback; off by default). Needs the
   Application ID of a Discord application of your own. Only title, artist, album,

@@ -542,6 +542,18 @@ impl Core {
 
     /// `songs.radio`: replaces the queue with a radio.
     pub(crate) fn radio_start(&mut self, host: &mut dyn Host, seed: Value, name: String) -> Value {
+        // A song of an extension: the extension knows what follows.
+        let first = seed
+            .get("tracks")
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if let Some(first) = first {
+            if let Some(answer) = self.extensions_radio_start(host, &first, name.clone()) {
+                return answer;
+            }
+        }
         let Some(parsed) = parse_seed(&seed) else {
             return Value::object().with("error", "unknown seed");
         };
@@ -595,11 +607,22 @@ impl Core {
     }
 
     fn radio_songs(&mut self, host: &mut dyn Host, items: Vec<String>, start: bool) {
-        self.recommend.extending = false;
         let items: Vec<String> = items
             .into_iter()
             .filter(|i| self.library.track(i).is_some())
             .collect();
+        self.radio_play(host, items, start);
+    }
+
+    /// A radio starts, its songs still to come.
+    pub(crate) fn radio_began(&mut self, seed: Value, name: String) {
+        self.recommend.radio = Some(RadioState { seed, name });
+        self.recommend.extending = true;
+    }
+
+    /// The radio's songs: they start it or go to the end of the queue.
+    pub(crate) fn radio_play(&mut self, host: &mut dyn Host, items: Vec<String>, start: bool) {
+        self.recommend.extending = false;
         if items.is_empty() {
             self.recommend.wait_until = self.time + RETRY;
             if start {
@@ -681,6 +704,10 @@ impl Core {
                 Value::object().with("tracks", last)
             }
         };
+        if seed.get("extRadio").as_object().is_some() {
+            self.recommend.extending = self.extensions_radio_more(host, &seed);
+            return;
+        }
         let Some(parsed) = parse_seed(&seed) else {
             return;
         };

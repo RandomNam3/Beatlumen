@@ -573,6 +573,14 @@ fn library(state: &State, req: &Request) -> Response {
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
+    // From the start: a song being played (not a client seeking around).
+    if req
+        .header("range")
+        .map_or(true, |r| r.trim().starts_with("bytes=0-"))
+        && req.query("start").is_none_or(|s| s == "0")
+    {
+        state.extensions.note_played(&e.abs);
+    }
     if req.query("format") == Some("opus") {
         return transcoded(state, req, e);
     }

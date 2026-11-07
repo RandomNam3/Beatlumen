@@ -956,7 +956,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("server", ["Ask", "Library on the server", "My encrypted files", "Save in", "Songs from"])
+                visible: page.shows("server", ["Ask", "Library on the server", "My encrypted files", "Save in", "Songs from", "Suggestions on the start page"])
                 SectionLabel {
                     text: Theme.tr("Songs from") + " " + ((((Core.state.extensions || {}).list || [])[0] || {}).name || "")
                     visible: (((Core.state.extensions || {}).list) || []).length > 0
@@ -975,6 +975,14 @@ Item {
                         currentIndex: Math.max(0, choices.indexOf(page.settings.extensionTarget || ""))
                         onActivated: (i) => Core.call("settings.set", { key: "extensionTarget", value: choices[i] })
                     }
+                }
+                SwitchRow {
+                    visible: (((Core.state.extensions || {}).list) || []).some(e => e.shelves === true)
+                    Layout.fillWidth: true
+                    title: Theme.tr("Suggestions on the start page")
+                    detail: Theme.tr("Rows from extensions that offer them. Each row is a request to their service.")
+                    on: (page.settings.ui || {}).extShelves !== false
+                    onSwitched: (on) => Core.call("settings.set", { key: "ui.extShelves", value: on })
                 }
             }
             // ---- AirPlay ----

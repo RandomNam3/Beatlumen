@@ -84,6 +84,12 @@
     "Folders on the server; subfolders are included.": "Ordner auf dem Server; Unterordner gehören dazu.",
     "Background image folders": "Ordner mit Hintergrundbildern",
     "Rescan interval": "Abstand zwischen Durchsuchungen",
+    "Delete extension songs after": "Songs von Erweiterungen löschen nach",
+    "days": "Tagen",
+    "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never.": "Songs, die eine Erweiterung heruntergeladen hat, werden nach so vielen Tagen ohne Wiedergabe gelöscht, um Speicher zu sparen. Die eigenen Songs der Bibliothek bleiben immer erhalten. 0 = nie.",
+    "Keep extension songs in lists": "Songs von Erweiterungen in Listen behalten",
+    "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played.": "Songs, die jemand bewusst aufgenommen hat oder die in den Playlists oder Favoriten eines Kontos stehen, bleiben erhalten, egal wie lange sie nicht gespielt wurden.",
+    "Songs from extensions: %1, %2 MB": "Songs von Erweiterungen: %1, %2 MB",
     "0 = only when asked.": "0 = nur auf Anfrage.",
     "Scan threads": "Threads beim Durchsuchen",
     "0 = automatic.": "0 = automatisch.",
@@ -446,6 +452,8 @@
     autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped." },
     autoLabels: { label: "Labels from the sound", type: "switch", hint: "Works out tempo, key and energy of the songs in the music folders, one song at a time on half of one core, for labels and recommendations. Songs of music sources only get labels from their tags." },
     onlineMetadata: { label: "Artist information from the internet", type: "switch", hint: "Looks the library's artists up, for artist pages and recommendations: their names and this server's address go to MusicBrainz and, for artist pages, to Wikimedia and ListenBrainz. Off by default." },
+    extensionCleanupDays: { label: "Delete extension songs after", type: "number", unit: "days", hint: "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never." },
+    extensionCleanupKeepListed: { label: "Keep extension songs in lists", type: "switch", hint: "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played." },
     verbose: { label: "Detailed log", type: "switch", hint: "Logs every request." },
   };
 
@@ -691,9 +699,12 @@
   }
 
   async function library() {
-    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "onlineMetadata"]);
+    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "onlineMetadata", "extensionCleanupDays", "extensionCleanupKeepListed"]);
     try {
       const o = await api("GET", "overview");
+      if (o.extensionSongs && o.extensionSongs.songs > 0) {
+        main.append(h("p", { class: "hint" }, t("Songs from extensions: %1, %2 MB").replace("%1", o.extensionSongs.songs).replace("%2", Math.round(o.extensionSongs.bytes / 1048576))));
+      }
       if (o.sound && o.sound.total > 0) {
         main.append(h("p", { class: "hint" }, t("Sound analysis: %1 of %2 songs").replace("%1", o.sound.done).replace("%2", o.sound.total)));
       }

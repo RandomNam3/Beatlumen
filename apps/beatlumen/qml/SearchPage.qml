@@ -3,12 +3,14 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import Beatlumen.Core
 
-// Search: the library or a server extension. Before typing, labels to browse.
+// Search: the library and, next to it, server extensions; or one extension
+// alone. Before typing, labels to browse.
 Item {
     id: page
     signal openAlbum(var album)
     signal openArtist(string name)
     signal openLabel(string name)
+    signal openCollection(string ext, string id)
 
     readonly property string query: search.text.trim()
     readonly property bool searching: query.length > 0
@@ -144,7 +146,7 @@ Item {
             spacing: 6
             visible: page.extList.length > 0
             Chip {
-                text: Theme.tr("Library")
+                text: Theme.tr("All")
                 checked: page.source === "library"
                 onClicked: page.source = "library"
             }
@@ -291,20 +293,10 @@ Item {
                         Layout.leftMargin: 16
                         Layout.rightMargin: 24
                         Layout.topMargin: 16
-                        visible: page.songs.length === 0 && page.albums.length === 0 && page.artists.length === 0 && !searchTimer.running
+                        visible: page.songs.length === 0 && page.albums.length === 0 && page.artists.length === 0 && !searchTimer.running && mixed.total === 0 && !mixed.searching
                         iconName: "search"
                         title: Theme.tr("No results")
                         text: Theme.tr("Try a different title, artist or album.")
-                        Repeater {
-                            model: page.extList
-                            AccentButton {
-                                required property var modelData
-                                text: Theme.tr("Search on") + " " + modelData.name
-                                highlighted: true
-                                icon.source: Theme.icon("search")
-                                onClicked: page.source = modelData.id
-                            }
-                        }
                     }
 
                     Shelf {
@@ -361,6 +353,78 @@ Item {
                             onSelectionMenu: (ids, a) => songMenu.openFor(ids, a)
                         }
                     }
+                    // What extensions found, next to the library's songs.
+                    ColumnLayout {
+                        id: mixed
+                        Layout.fillWidth: true
+                        spacing: 16
+                        readonly property var ext: Core.state.extensions || ({})
+                        readonly property bool searching: ext.searching === true
+                        property var found: []
+                        readonly property int total: found.length
+                        readonly property int rev: ext.rev || 0
+                        onRevChanged: found = Core.call("extensions.results") || []
+                        // Every search is a request to the outside world: wait
+                        // for a pause in the typing, and for more than a letter.
+                        Timer {
+                            id: mixedTimer
+                            interval: 600
+                            onTriggered: Core.call("extensions.search", { query: page.query.length >= 3 ? page.query : "" })
+                        }
+                        Connections {
+                            target: page
+                            function onQueryChanged() {
+                                if (page.extList.length > 0)
+                                    mixedTimer.restart()
+                            }
+                        }
+                        Repeater {
+                            model: page.extList
+                            ColumnLayout {
+                                id: section
+                                required property var modelData
+                                readonly property var mine: mixed.found.filter(r => r.ext === modelData.id)
+                                Layout.fillWidth: true
+                                visible: mine.length > 0
+                                spacing: 4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: 8
+                                    Label {
+                                        textFormat: Text.PlainText
+                                        Layout.fillWidth: true
+                                        text: section.modelData.name
+                                        color: Theme.text
+                                        font.pixelSize: 20
+                                        font.weight: Font.DemiBold
+                                        Accessible.role: Accessible.Heading
+                                        Accessible.name: text
+                                    }
+                                    Button {
+                                        flat: true
+                                        visible: section.mine.length > 6
+                                        text: Theme.tr("Show all")
+                                        onClicked: page.source = section.modelData.id
+                                    }
+                                }
+                                // A column, not the layout: a row's width follows its
+                                // list, and from its own content that never settles.
+                                Column {
+                                    id: sectionRows
+                                    Layout.fillWidth: true
+                                    Repeater {
+                                        model: section.mine.slice(0, 6)
+                                        ExtensionRow {
+                                            width: sectionRows.width
+                                            onOpenCollection: (entry) => page.openCollection(entry.ext, entry.id)
+                                            onMenu: (t, a) => songMenu.openFor([t.id], a)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -368,7 +432,12 @@ Item {
             Loader {
                 anchors.fill: parent
                 active: page.searching && page.source !== "library"
-                sourceComponent: ExtensionSearch { query: page.query }
+                sourceComponent: ExtensionSearch {
+                    query: page.query
+                    only: page.source
+                    onOpenCollection: (entry) => page.openCollection(entry.ext, entry.id)
+                    onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+                }
             }
         }
     }

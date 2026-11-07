@@ -374,6 +374,21 @@ impl State {
         self.prune_caches(&idx);
     }
 
+    /// Songs in a playlist or among the favorites of anyone on this server.
+    pub fn listed_tracks(&self) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        let mut take = |lists: &playlists::Playlists, favorites: &favorites::Favorites| {
+            out.extend(lists.track_items().into_iter().flatten());
+            out.extend(favorites.ids().into_iter().map(|f| f.id));
+        };
+        take(&self.playlists, &self.favorites);
+        for user in vault::list_users(&self.data.root) {
+            let store = self.user_data.get(self.vault.user_data_dir(&user));
+            take(&store.playlists, &store.favorites);
+        }
+        out
+    }
+
     /// Removes cached covers/analyses of tracks that no longer exist or
     /// changed, and scaled images of removed images.
     fn prune_caches(&self, idx: &Index) {
@@ -778,6 +793,21 @@ pub fn start(config: Config) -> Result<Server, String> {
             })
         })
         .map_err(|e| format!("cannot start the source listing: {e}"))?;
+
+    if state.extensions.enabled() {
+        // Songs from extensions nobody played for a long time.
+        let weak = Arc::downgrade(&state);
+        std::thread::Builder::new()
+            .name("extension-cleanup".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(3600));
+                let Some(state) = weak.upgrade() else {
+                    return;
+                };
+                state.extensions.cleanup(&state, util::now_secs());
+            })
+            .map_err(|e| format!("cannot start the extension cleanup: {e}"))?;
+    }
 
     let scanner = state.clone();
     std::thread::Builder::new()

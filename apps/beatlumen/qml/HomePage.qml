@@ -13,6 +13,7 @@ Item {
     signal openAlbum(var album)
     signal openFavorites()
     signal openLabel(string name)
+    signal openCollection(string ext, string id)
     signal startTour()
 
     readonly property int trackCount: Core.state.libraryTracks || 0
@@ -48,8 +49,22 @@ Item {
     // Several of these change at once (a song ends, the library arrives).
     readonly property string revisions: [Core.state.historyRev, Core.state.favoritesRev, Core.state.libraryRev, Core.state.recommendRev, Core.state.labelsRev].join()
     onRevisionsChanged: if (visible) reloadTimer.restart()
-    onVisibleChanged: if (visible) reloadTimer.restart()
+    onVisibleChanged: {
+        if (visible)
+            reloadTimer.restart()
+        reloadExtensions()
+    }
     Timer { id: reloadTimer; interval: 150; onTriggered: page.reload() }
+
+    // Rows of suggestions from server extensions.
+    readonly property bool extOn: ((Core.state.settings || {}).ui || {}).extShelves !== false
+    readonly property int extRev: (Core.state.extensions || {}).rev || 0
+    property var extShelves: []
+    function reloadExtensions() {
+        extShelves = visible && extOn ? (Core.call("extensions.shelves") || []) : []
+    }
+    onExtRevChanged: reloadExtensions()
+    onExtOnChanged: reloadExtensions()
 
     function ids(list) {
         return list.map(t => t.id)
@@ -407,6 +422,32 @@ Item {
                     title: page.shelfTitle(modelData)
                     items: modelData.items
                     delegate: SongCard { row: modelData.items; note: page.reasonText(modelData) }
+                }
+            }
+
+            Repeater {
+                model: page.extShelves
+                delegate: Shelf {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    title: [modelData.title, modelData.extName].filter(x => x).join(" · ")
+                    items: modelData.items
+                    delegate: ShelfCard {
+                        required property var modelData
+                        readonly property bool collection: modelData.kind === "collection"
+                        focus: ListView.isCurrentItem
+                        title: modelData.title || ""
+                        subtitle: modelData.artist || ""
+                        placeholder: collection ? "album" : "music_note"
+                        cover: modelData.image || ""
+                        onClicked: {
+                            if (collection)
+                                page.openCollection(modelData.ext, modelData.id)
+                            else
+                                Core.call("extensions.play", { ext: modelData.ext, id: modelData.id })
+                        }
+                        onMenuRequested: (anchor) => { if (!collection) songMenu.openFor([modelData.songId], anchor) }
+                    }
                 }
             }
 

@@ -585,8 +585,10 @@ impl Core {
     }
 
     fn sync_settings_state(&mut self) {
-        self.settings.audio_queue = self.queue.items.clone();
-        self.settings.audio_index = self.queue.current_index();
+        // What only an extension knows does not outlive the app.
+        let (items, index) = lasting_queue(&self.queue.items, self.queue.current_index());
+        self.settings.audio_queue = items;
+        self.settings.audio_index = index;
         self.settings.shuffle = self.queue.shuffle;
         self.settings.backgrounds = self.bg_queue.items.clone();
         self.settings.background_index = self.bg_queue.current_index();
@@ -1389,6 +1391,9 @@ impl Core {
             // Already playing (gapless advance).
         } else if id.starts_with(crate::sources::RADIO_PREFIX) {
             self.play_radio(host, &id, autoplay);
+        } else if id.starts_with(crate::extensions::ITEM_PREFIX) {
+            self.player.stop(host);
+            self.extension_item_start(host, &id, autoplay);
         } else if let Some(opener) = self.track_opener(host, &id) {
             self.player.load_opener(host, opener, autoplay);
         } else if let Some(path) = library::local_path(&id) {
@@ -1526,6 +1531,10 @@ impl Core {
         if let Some(o) = self.offline_opener(id) {
             return Some(o);
         }
+        if id.starts_with(crate::extensions::ITEM_PREFIX) {
+            // Not imported yet: that starts when its turn comes.
+            return None;
+        }
         if id.starts_with(crate::extensions::ID_PREFIX) {
             // Still being imported: the server streams what it has so far.
             let url = self.ext_stream_url(id)?;
@@ -1592,6 +1601,7 @@ impl Core {
     fn track_gain(&mut self, host: &mut dyn Host, id: &str) -> Option<f32> {
         if !self.settings.normalize
             || id.starts_with(crate::extensions::ID_PREFIX)
+            || id.starts_with(crate::extensions::ITEM_PREFIX)
             || id.starts_with(crate::sources::RADIO_PREFIX)
         {
             return Some(1.0);
@@ -1946,6 +1956,7 @@ impl Core {
         if track.id.starts_with(crate::airplay::ID_PREFIX)
             || track.id.starts_with(crate::capture::ID_PREFIX)
             || track.id.starts_with(crate::extensions::ID_PREFIX)
+            || track.id.starts_with(crate::extensions::ITEM_PREFIX)
             || track.id.starts_with(crate::sources::RADIO_PREFIX)
         {
             // Live or foreign stream: the visuals follow the audio as it plays.
@@ -2107,7 +2118,9 @@ impl Core {
             self.dlna.cover_url().to_string()
         } else if t.id.starts_with(crate::capture::ID_PREFIX) {
             self.capture.cover_url().to_string()
-        } else if t.id.starts_with(crate::extensions::ID_PREFIX) {
+        } else if t.id.starts_with(crate::extensions::ID_PREFIX)
+            || t.id.starts_with(crate::extensions::ITEM_PREFIX)
+        {
             self.ext_cover_url(&t.id)
         } else if library::is_local(&t.id) || t.id.starts_with(crate::sources::ID_PREFIX) {
             match self.covers.get(&t.id) {
@@ -3055,5 +3068,47 @@ mod visible_part_tests {
         let (x, y, w, h) = visible_part(Some([5000.0, 5000.0, 100.0, 100.0]), 800, 600, 1.0);
         assert!(x >= 0 && y >= 0 && w >= 1 && h >= 1);
         assert!(x as u32 + w <= 800 && y as u32 + h <= 600);
+    }
+}
+
+/// The queue as it is kept between starts, without songs that only exist
+/// through a running extension import.
+fn lasting_queue(items: &[String], current: Option<usize>) -> (Vec<String>, Option<usize>) {
+    let passing = |id: &String| {
+        id.starts_with(crate::extensions::ID_PREFIX)
+            || id.starts_with(crate::extensions::ITEM_PREFIX)
+    };
+    let kept: Vec<String> = items.iter().filter(|id| !passing(id)).cloned().collect();
+    let index = current
+        .map(|c| {
+            items[..c.min(items.len())]
+                .iter()
+                .filter(|id| !passing(id))
+                .count()
+        })
+        .filter(|i| *i < kept.len());
+    (kept, index)
+}
+
+#[cfg(test)]
+mod lasting_queue_tests {
+    use super::lasting_queue;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn songs_of_extensions_are_left_out_and_the_position_follows() {
+        let q = ids(&["a", "extitem:t:1", "b", "ext:job", "c"]);
+        assert_eq!(lasting_queue(&q, Some(2)), (ids(&["a", "b", "c"]), Some(1)));
+        assert_eq!(lasting_queue(&q, Some(4)), (ids(&["a", "b", "c"]), Some(2)));
+        // Playing one of them: on with the next that stays.
+        assert_eq!(lasting_queue(&q, Some(1)), (ids(&["a", "b", "c"]), Some(1)));
+        assert_eq!(
+            lasting_queue(&ids(&["a", "ext:j"]), Some(1)),
+            (ids(&["a"]), None)
+        );
+        assert_eq!(lasting_queue(&ids(&["a"]), None), (ids(&["a"]), None));
     }
 }

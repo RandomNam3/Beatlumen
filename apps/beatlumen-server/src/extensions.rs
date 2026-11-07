@@ -10,16 +10,23 @@
 //! and stores it in the library ("keep") or for a while only (the app then
 //! keeps it in the user's encrypted files). The file can be played while it
 //! is still being written.
+//!
+//! An extension of protocol 2 can also offer rows of suggestions, collections
+//! (albums, playlists) and a radio for a song; what it offers is in its
+//! manifest. Songs it brought into the library are deleted when they were not
+//! played for a while (the admin decides how long); the library's own songs
+//! are never touched.
 
 use crate::util;
 use crate::State;
 use bl_json::Value;
 use bl_net::client::{self, Options};
 use bl_net::server::{Body, Request, Response};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -32,6 +39,14 @@ const JOB_KEEP: Duration = Duration::from_secs(3600);
 const MAX_JSON: usize = 1 << 20;
 const MAX_IMAGE: usize = 4 << 20;
 const MAX_TEXT: usize = 300;
+/// Suggestions and search results change slowly, and every request here is
+/// one more request to the outside world.
+const SEARCH_KEEP: Duration = Duration::from_secs(10 * 60);
+const BROWSE_KEEP: Duration = Duration::from_secs(15 * 60);
+const MAX_CACHED: usize = 256;
+const MAX_SHELVES: usize = 20;
+/// A paging position is the extension's, but it travels through URLs.
+const MAX_CURSOR: usize = 2048;
 
 struct Ext {
     id: String,
@@ -40,10 +55,47 @@ struct Ext {
     manifest: Mutex<Option<(Instant, Option<Manifest>)>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 struct Manifest {
     name: String,
     search: bool,
+    shelves: bool,
+    collections: bool,
+    radio: bool,
+}
+
+/// What an extension says about itself; other protocol versions are refused.
+fn parse_manifest(v: &Value, id: &str) -> Option<Manifest> {
+    let protocol = v.get("protocol").as_u64()?;
+    if !(1..=2).contains(&protocol) {
+        return None;
+    }
+    let can = |what: &str| {
+        protocol >= 2
+            && v.get("capabilities")
+                .as_array()
+                .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(what)))
+    };
+    Some(Manifest {
+        name: Some(text(v, "name"))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.to_string()),
+        search: v.get("search").as_bool().unwrap_or(false) || can("search"),
+        shelves: can("shelves"),
+        collections: can("collections"),
+        radio: can("radio"),
+    })
+}
+
+/// A song the extension brought into the library.
+#[derive(Clone, Debug)]
+struct Imported {
+    path: PathBuf,
+    /// Seconds since 1970.
+    added: u64,
+    played: u64,
+    /// Added to the library on purpose (not just by playing it): it stays.
+    pinned: bool,
 }
 
 /// A song as the extension describes it.
@@ -89,6 +141,8 @@ struct Job {
     id: String,
     key: String,
     keep: bool,
+    /// Added to the library on purpose.
+    pin: AtomicBool,
     item: Item,
     st: Mutex<JobState>,
     cv: Condvar,
@@ -134,9 +188,11 @@ pub struct Extensions {
     temp: PathBuf,
     images: PathBuf,
     imported_file: PathBuf,
-    /// "ext/item" -> file of a kept import.
-    imported: Mutex<HashMap<String, PathBuf>>,
+    /// "ext/item" -> the kept import.
+    imported: Mutex<HashMap<String, Imported>>,
     jobs: Mutex<HashMap<String, Arc<Job>>>,
+    /// What extensions answered lately, by extension and request.
+    answers: Mutex<HashMap<String, (Instant, Value)>>,
     state: OnceLock<Weak<State>>,
 }
 
@@ -179,6 +235,17 @@ fn valid_item_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
         && !id.contains("..")
+}
+
+fn valid_cursor(c: &str) -> bool {
+    !c.is_empty() && c.len() <= MAX_CURSOR && c.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn limit_of(req: &Request) -> usize {
+    req.query("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(20)
+        .clamp(1, 50)
 }
 
 fn parse_item(v: &Value) -> Option<Item> {
@@ -311,6 +378,7 @@ impl Extensions {
             imported_file: ext_root.join("imported.json"),
             imported: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
+            answers: Mutex::new(HashMap::new()),
             state: OnceLock::new(),
         };
         if e.enabled() {
@@ -339,31 +407,199 @@ impl Extensions {
         let Ok(v) = bl_json::parse_bytes(&data) else {
             return;
         };
-        let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(o) = v.as_object() {
-            for (k, p) in o.iter() {
-                if let Some(rel) = p.as_str().and_then(|r| util::join_rel(&self.imports, r)) {
-                    m.insert(k.to_string(), rel);
+        let now = util::now_secs();
+        let mut older = false;
+        {
+            let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(o) = v.as_object() {
+                for (k, entry) in o.iter() {
+                    // Before times were kept: the file only; it gets the full
+                    // time from now on.
+                    let (rel, added, played, pinned) = match entry.as_str() {
+                        Some(rel) => {
+                            older = true;
+                            (rel, now, now, false)
+                        }
+                        None => (
+                            entry.str_or("path", ""),
+                            entry.get("added").as_u64().unwrap_or(now),
+                            entry.get("played").as_u64().unwrap_or(now),
+                            entry.bool_or("pinned", false),
+                        ),
+                    };
+                    if let Some(path) = util::join_rel(&self.imports, rel) {
+                        m.insert(
+                            k.to_string(),
+                            Imported {
+                                path,
+                                added,
+                                played,
+                                pinned,
+                            },
+                        );
+                    }
                 }
             }
+        }
+        if older {
+            self.save_imported();
         }
     }
 
     fn save_imported(&self) {
         let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
         let mut o = Value::object();
-        for (k, p) in m.iter() {
-            if let Some(rel) = p
+        for (k, imp) in m.iter() {
+            if let Some(rel) = imp
+                .path
                 .strip_prefix(&self.imports)
                 .ok()
                 .and_then(util::rel_string)
             {
-                o = o.with(k, rel);
+                o = o.with(
+                    k,
+                    Value::object()
+                        .with("path", rel)
+                        .with("added", imp.added)
+                        .with("played", imp.played)
+                        .with("pinned", imp.pinned),
+                );
             }
         }
         if let Err(e) = util::write_atomic(&self.imported_file, o.to_json().as_bytes()) {
             crate::warn!("cannot write {}: {e}", self.imported_file.display());
         }
+    }
+
+    /// A kept import stays whether it is played or not.
+    fn pin(&self, ext: &str, item: &str) {
+        let changed = self
+            .imported
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&format!("{ext}/{item}"))
+            .filter(|i| !i.pinned)
+            .map(|i| i.pinned = true)
+            .is_some();
+        if changed {
+            self.save_imported();
+        }
+    }
+
+    /// A song is being played: an import stays for longer. Written about
+    /// once an hour per song.
+    pub fn note_played(&self, path: &Path) {
+        if !path.starts_with(&self.imports) {
+            return;
+        }
+        let now = util::now_secs();
+        let changed = {
+            let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+            m.values_mut()
+                .find(|i| i.path == path && now.saturating_sub(i.played) >= 3600)
+                .map(|i| i.played = now)
+                .is_some()
+        };
+        if changed {
+            self.save_imported();
+        }
+    }
+
+    /// Deletes imports not played for as long as the admin set. Only what an
+    /// extension brought in, by the list kept here and only inside its
+    /// folder: the library's own songs are not on that list.
+    pub fn cleanup(&self, state: &State, now: u64) -> usize {
+        let cfg = state.config();
+        if !self.enabled() || cfg.extension_cleanup_days == 0 {
+            return 0;
+        }
+        let cutoff = now.saturating_sub(u64::from(cfg.extension_cleanup_days) * 24 * 3600);
+        let listed = if cfg.extension_cleanup_keep_listed {
+            state.listed_tracks()
+        } else {
+            HashSet::new()
+        };
+        let idx = state.library();
+        let track_of: HashMap<&Path, &str> = idx
+            .entries
+            .iter()
+            .filter(|e| e.abs.starts_with(&self.imports))
+            .map(|e| (e.abs.as_path(), e.track.id.as_str()))
+            .collect();
+        let mut removed = Vec::new();
+        let mut forgotten = false;
+        self.imported
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|key, imp| {
+                if imp.played.max(imp.added) >= cutoff || !imp.path.starts_with(&self.imports) {
+                    return true;
+                }
+                if imp.pinned && cfg.extension_cleanup_keep_listed {
+                    return true;
+                }
+                if track_of
+                    .get(imp.path.as_path())
+                    .is_some_and(|id| listed.contains(*id))
+                {
+                    return true;
+                }
+                // A link in there could lead anywhere: only plain files.
+                match std::fs::symlink_metadata(&imp.path) {
+                    Ok(m) if !m.file_type().is_file() => return true,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        forgotten = true;
+                        return false;
+                    }
+                    Err(_) => return true,
+                    Ok(_) => {}
+                }
+                match std::fs::remove_file(&imp.path) {
+                    Ok(()) => {
+                        crate::info!("extension song not played for a while, deleted: {key}");
+                        removed.push(format!("{key}/true"));
+                        false
+                    }
+                    // In use (Windows) and the like: next time.
+                    Err(e) => {
+                        crate::warn!("cannot delete {}: {e}", imp.path.display());
+                        true
+                    }
+                }
+            });
+        if !removed.is_empty() || forgotten {
+            self.save_imported();
+        }
+        if !removed.is_empty() {
+            // The finished imports must not answer for a file that is gone.
+            self.jobs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|_, j| !removed.contains(&j.key));
+            state.request_scan();
+        }
+        removed.len()
+    }
+
+    /// Makes every import look `age` seconds older (for tests).
+    #[doc(hidden)]
+    pub fn backdate_for_tests(&self, age: u64) {
+        let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        for i in m.values_mut() {
+            i.added = i.added.saturating_sub(age);
+            i.played = i.played.saturating_sub(age);
+        }
+    }
+
+    /// Songs and bytes the extensions keep in the library (admin overview).
+    pub fn storage(&self) -> (usize, u64) {
+        let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        let bytes = m
+            .values()
+            .filter_map(|i| std::fs::metadata(&i.path).ok())
+            .map(|m| m.len())
+            .sum();
+        (m.len(), bytes)
     }
 
     /// Removes old temporary imports and image thumbnails.
@@ -430,15 +666,12 @@ impl Extensions {
             }
         }
         let fetched = match self.get_json(ext, "/manifest", 10) {
-            Ok(v) if v.get("protocol").as_u64() == Some(1) => Some(Manifest {
-                name: Some(text(&v, "name"))
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| ext.id.clone()),
-                search: v.get("search").as_bool().unwrap_or(false),
-            }),
-            Ok(_) => {
-                crate::warn!("extension {}: unsupported protocol version", ext.id);
-                None
+            Ok(v) => {
+                let parsed = parse_manifest(&v, &ext.id);
+                if parsed.is_none() {
+                    crate::warn!("extension {}: unsupported protocol version", ext.id);
+                }
+                parsed
             }
             Err(e) => {
                 crate::warn!("{e}");
@@ -455,8 +688,9 @@ impl Extensions {
             .imported
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&format!("{ext}/{item}"))
-            .cloned()?;
+            .get(&format!("{ext}/{item}"))?
+            .path
+            .clone();
         let idx = state.library();
         idx.entries
             .iter()
@@ -480,7 +714,10 @@ impl Extensions {
                             Value::object()
                                 .with("id", e.id.as_str())
                                 .with("name", man.name)
-                                .with("search", man.search),
+                                .with("search", man.search)
+                                .with("shelves", man.shelves)
+                                .with("collections", man.collections)
+                                .with("radio", man.radio),
                         )
                     })
                     .collect();
@@ -506,6 +743,24 @@ impl Extensions {
                 };
                 self.image(e, item, req)
             }
+            [ext, "shelves"] if get => {
+                let Some(e) = self.ext(ext).filter(|e| self.can(e, |m| m.shelves)) else {
+                    return Response::error(404, "not offered by this extension");
+                };
+                self.shelves(state, e, req)
+            }
+            [ext, "collections", item] if get => {
+                let Some(e) = self.ext(ext).filter(|e| self.can(e, |m| m.collections)) else {
+                    return Response::error(404, "not offered by this extension");
+                };
+                self.collection(state, e, item, req)
+            }
+            [ext, "radio", item] if get => {
+                let Some(e) = self.ext(ext).filter(|e| self.can(e, |m| m.radio)) else {
+                    return Response::error(404, "not offered by this extension");
+                };
+                self.radio(state, e, item, req)
+            }
             [ext, "import"] if m == "POST" => {
                 let Some(e) = self.ext(ext) else {
                     return Response::error(404, "extension not found");
@@ -518,7 +773,8 @@ impl Extensions {
                     return Response::error(400, "invalid id");
                 }
                 let keep = body.get("keep").as_bool().unwrap_or(true);
-                match self.import(state, e, item, keep) {
+                let pin = keep && body.get("pin").as_bool().unwrap_or(false);
+                match self.import(state, e, item, keep, pin) {
                     Ok(v) => Response::json(200, &v),
                     Err((code, msg)) => Response::error(code, &msg),
                 }
@@ -554,7 +810,200 @@ impl Extensions {
             .and_then(|l| l.parse::<u32>().ok())
             .unwrap_or(20)
             .clamp(1, 50);
-        let v = match self.get_json(e, &format!("/search?q={}&limit={limit}", pct(&q)), 30) {
+        let path = format!("/search?q={}&limit={limit}", pct(&q));
+        let v = match self.get_cached(e, &path, 30, SEARCH_KEEP) {
+            Ok(v) => v,
+            Err(msg) => {
+                crate::warn!("{msg}");
+                return Response::error(502, &msg);
+            }
+        };
+        let items = self.entries(state, e, v.get("items"), limit as usize);
+        Response::json(200, &Value::object().with("items", Value::Array(items)))
+    }
+
+    fn can(&self, e: &Ext, what: impl Fn(&Manifest) -> bool) -> bool {
+        self.manifest(e).is_some_and(|m| what(&m))
+    }
+
+    /// An answer given a moment ago, or a new one.
+    fn get_cached(
+        &self,
+        e: &Ext,
+        path: &str,
+        io_secs: u64,
+        keep: Duration,
+    ) -> Result<Value, String> {
+        let key = format!("{}{path}", e.id);
+        {
+            let answers = self.answers.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, v)) = answers.get(&key) {
+                if at.elapsed() < keep {
+                    return Ok(v.clone());
+                }
+            }
+        }
+        let v = self.get_json(e, path, io_secs)?;
+        let mut answers = self.answers.lock().unwrap_or_else(|e| e.into_inner());
+        if answers.len() >= MAX_CACHED {
+            answers.retain(|_, (at, _)| at.elapsed() < keep);
+            if answers.len() >= MAX_CACHED {
+                answers.clear();
+            }
+        }
+        answers.insert(key, (Instant::now(), v.clone()));
+        Ok(v)
+    }
+
+    /// Songs and collections as the apps see them; anything else is left out.
+    fn entries(&self, state: &State, e: &Ext, list: &Value, limit: usize) -> Vec<Value> {
+        let collections = self.can(e, |m| m.collections);
+        list.as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|raw| match raw.str_or("kind", "song") {
+                "song" => self.song_json(state, e, raw),
+                "collection" if collections => self.collection_json(e, raw),
+                _ => None,
+            })
+            .take(limit)
+            .collect()
+    }
+
+    fn image_path(&self, e: &Ext, item: &str, has_image: bool) -> Option<String> {
+        has_image.then(|| format!("/api/extensions/{}/image/{item}", e.id))
+    }
+
+    fn song_json(&self, state: &State, e: &Ext, raw: &Value) -> Option<Value> {
+        if raw.str_or("kind", "song") != "song" {
+            return None;
+        }
+        let it = parse_item(raw)?;
+        let detail = text(raw, "detail");
+        Some(
+            Value::object()
+                .with("kind", "song")
+                .with("id", it.id.as_str())
+                .with("title", it.title.as_str())
+                .with("artist", it.artist.as_str())
+                .with("album", it.album.as_str())
+                .with("duration", it.duration)
+                .with("detail", detail)
+                .with("image", self.image_path(e, &it.id, it.image))
+                .with("track", self.imported_track(state, &e.id, &it.id)),
+        )
+    }
+
+    fn collection_json(&self, e: &Ext, raw: &Value) -> Option<Value> {
+        let id = raw.str_or("id", "");
+        if !valid_item_id(id) {
+            return None;
+        }
+        Some(
+            Value::object()
+                .with("kind", "collection")
+                .with("id", id)
+                .with("title", text(raw, "title"))
+                .with("artist", text(raw, "artist"))
+                .with("detail", text(raw, "detail"))
+                .with("count", raw.get("count").as_u64())
+                .with(
+                    "image",
+                    self.image_path(e, id, raw.get("image").as_bool().unwrap_or(false)),
+                ),
+        )
+    }
+
+    /// `GET .../shelves`: rows of suggestions.
+    fn shelves(&self, state: &State, e: &Ext, req: &Request) -> Response {
+        let limit = limit_of(req);
+        let v = match self.get_cached(e, &format!("/shelves?limit={limit}"), 30, BROWSE_KEEP) {
+            Ok(v) => v,
+            Err(msg) => {
+                crate::warn!("{msg}");
+                return Response::error(502, &msg);
+            }
+        };
+        let shelves: Vec<Value> = v
+            .get("shelves")
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|shelf| {
+                let items = self.entries(state, e, shelf.get("items"), limit);
+                (!items.is_empty()).then(|| {
+                    Value::object()
+                        .with("title", text(shelf, "title"))
+                        .with("items", Value::Array(items))
+                })
+            })
+            .take(MAX_SHELVES)
+            .collect();
+        Response::json(200, &Value::object().with("shelves", Value::Array(shelves)))
+    }
+
+    /// `GET .../collections/<id>`: the songs of an album or playlist, a page
+    /// at a time.
+    fn collection(&self, state: &State, e: &Ext, item: &str, req: &Request) -> Response {
+        if !valid_item_id(item) {
+            return Response::error(400, "invalid id");
+        }
+        let limit = limit_of(req);
+        let mut path = format!("/collection/{item}?limit={limit}");
+        if let Some(after) = req.query("after").filter(|a| !a.is_empty()) {
+            if !valid_cursor(after) {
+                return Response::error(400, "invalid position");
+            }
+            path.push_str(&format!("&after={}", pct(after)));
+        }
+        let v = match self.get_cached(e, &path, 30, BROWSE_KEEP) {
+            Ok(v) => v,
+            Err(msg) => {
+                crate::warn!("{msg}");
+                return Response::error(502, &msg);
+            }
+        };
+        // Only songs in a collection.
+        let items: Vec<Value> = v
+            .get("items")
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|raw| self.song_json(state, e, raw))
+            .take(limit)
+            .collect();
+        Response::json(
+            200,
+            &Value::object()
+                .with("id", item)
+                .with("title", text(&v, "title"))
+                .with("artist", text(&v, "artist"))
+                .with("detail", text(&v, "detail"))
+                .with(
+                    "image",
+                    self.image_path(e, item, v.get("image").as_bool().unwrap_or(false)),
+                )
+                .with("items", Value::Array(items))
+                .with(
+                    "next",
+                    v.get("next")
+                        .as_str()
+                        .filter(|n| valid_cursor(n))
+                        .map(str::to_string),
+                ),
+        )
+    }
+
+    /// `GET .../radio/<id>`: songs to follow a song.
+    fn radio(&self, state: &State, e: &Ext, item: &str, req: &Request) -> Response {
+        if !valid_item_id(item) {
+            return Response::error(400, "invalid id");
+        }
+        let limit = limit_of(req);
+        let v = match self.get_json(e, &format!("/radio/{item}?limit={limit}"), 30) {
             Ok(v) => v,
             Err(msg) => {
                 crate::warn!("{msg}");
@@ -567,26 +1016,8 @@ impl Extensions {
             .map(|a| a.as_slice())
             .unwrap_or(&[])
             .iter()
-            .take(limit as usize)
-            .filter_map(|raw| {
-                let it = parse_item(raw)?;
-                let detail = text(raw, "detail");
-                Some(
-                    Value::object()
-                        .with("id", it.id.as_str())
-                        .with("title", it.title.as_str())
-                        .with("artist", it.artist.as_str())
-                        .with("album", it.album.as_str())
-                        .with("duration", it.duration)
-                        .with("detail", detail)
-                        .with(
-                            "image",
-                            it.image
-                                .then(|| format!("/api/extensions/{}/image/{}", e.id, it.id)),
-                        )
-                        .with("track", self.imported_track(state, &e.id, &it.id)),
-                )
-            })
+            .filter_map(|raw| self.song_json(state, e, raw))
+            .take(limit)
             .collect();
         Response::json(200, &Value::object().with("items", Value::Array(items)))
     }
@@ -645,9 +1076,13 @@ impl Extensions {
         e: &Ext,
         item_id: &str,
         keep: bool,
+        pin: bool,
     ) -> Result<Value, (u16, String)> {
         if keep {
             if let Some(track) = self.imported_track(state, &e.id, item_id) {
+                if pin {
+                    self.pin(&e.id, item_id);
+                }
                 return Ok(Value::object()
                     .with("state", "done")
                     .with("track", track)
@@ -661,6 +1096,10 @@ impl Extensions {
                 .values()
                 .find(|j| j.key == key && j.lock().error.is_none())
             {
+                if pin {
+                    j.pin.store(true, Ordering::Relaxed);
+                    self.pin(&e.id, item_id);
+                }
                 return Ok(j.json());
             }
             let running = jobs.values().filter(|j| !j.lock().done).count();
@@ -711,6 +1150,7 @@ impl Extensions {
             id: id.clone(),
             key,
             keep,
+            pin: AtomicBool::new(pin),
             item,
             st: Mutex::new(JobState {
                 path: part.clone(),
@@ -850,12 +1290,18 @@ fn finish_import(
             if job.keep {
                 if let Some(state) = state {
                     let exts = &state.extensions;
+                    let now = util::now_secs();
                     exts.imported
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .insert(
                             format!("{ext_id}/{}", job.item.id),
-                            final_path.to_path_buf(),
+                            Imported {
+                                path: final_path.to_path_buf(),
+                                added: now,
+                                played: now,
+                                pinned: job.pin.load(Ordering::Relaxed),
+                            },
                         );
                     exts.save_imported();
                     state.request_scan();
@@ -917,4 +1363,46 @@ fn job_audio(req: &Request, job: &Arc<Job>) -> Response {
         pos: start.unwrap_or(0),
     }));
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(json: &str) -> Option<Manifest> {
+        parse_manifest(&bl_json::parse(json).unwrap(), "ext")
+    }
+
+    #[test]
+    fn protocol_1_can_only_search() {
+        let m = manifest(r#"{"protocol":1,"name":"Old","search":true,"capabilities":["radio"]}"#);
+        let m = m.unwrap();
+        assert_eq!(m.name, "Old");
+        assert!(m.search);
+        assert!(!m.radio, "capabilities belong to protocol 2");
+    }
+
+    #[test]
+    fn protocol_2_says_what_it_can() {
+        let m = manifest(r#"{"protocol":2,"capabilities":["search","shelves","radio","future"]}"#)
+            .unwrap();
+        assert_eq!(m.name, "ext", "no name: the configured id");
+        assert!(m.search && m.shelves && m.radio);
+        assert!(!m.collections);
+    }
+
+    #[test]
+    fn other_protocols_are_refused() {
+        assert!(manifest(r#"{"protocol":3,"search":true}"#).is_none());
+        assert!(manifest(r#"{"search":true}"#).is_none());
+    }
+
+    #[test]
+    fn a_paging_position_has_limits() {
+        assert!(valid_cursor("abc-DEF_123=="));
+        assert!(!valid_cursor(""));
+        assert!(!valid_cursor("a b"));
+        assert!(!valid_cursor("a\nb"));
+        assert!(!valid_cursor(&"x".repeat(MAX_CURSOR + 1)));
+    }
 }

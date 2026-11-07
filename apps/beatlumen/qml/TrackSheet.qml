@@ -47,8 +47,15 @@ BottomSheet {
         r.push({ icon: "queue_music", text: Theme.tr("Add to queue"), run: () => Core.call("enqueue", { ids: ids }) })
         if (marks.length > 0)
             r.push({ icon: all ? "favorite" : "favorite_border", text: all ? Theme.tr("Remove from favorites") : Theme.tr("Add to favorites"), run: () => Favorites.set(marks, !all) })
-        r.push({ icon: "playlist_add", text: Theme.tr("Add to playlist…"), run: () => sheet.addToPlaylist(ids) })
-        r.push({ icon: "radio", text: Theme.tr("Start radio"), run: () => Core.call("songs.radio", { seed: { tracks: ids.slice(0, 50) }, name: "" }) })
+        // Songs of an extension are not in the library yet: into it, without playing.
+        const waiting = ids.filter(id => String(id).indexOf("extitem:") === 0)
+        if (waiting.length > 0)
+            r.push({ icon: "add", text: Theme.tr("Add to library"), run: () => Core.call("extensions.add", { ids: waiting }) })
+        else
+            r.push({ icon: "playlist_add", text: Theme.tr("Add to playlist…"), run: () => sheet.addToPlaylist(ids) })
+        // Such a song only has a radio if the extension offers one.
+        if (waiting.length === 0 || ((Core.state.extensions || {}).list || []).some(e => e.radio === true))
+            r.push({ icon: "radio", text: Theme.tr("Start radio"), run: () => Core.call("songs.radio", { seed: { tracks: ids.slice(0, 50) }, name: "" }) })
         const win = sheet.ApplicationWindow.window
         if (track && track.albumId && win)
             r.push({ icon: "album", text: Theme.tr("Go to album"), run: () => win.showAlbum({ id: track.albumId, title: track.album, artist: track.artist, year: track.year }) })
