@@ -210,7 +210,7 @@ impl Core {
                         "/api/extensions/{ext}/search?q={}&limit=25",
                         bl_net::http::percent_encode(&q)
                     );
-                    let id = self.account_send(host, "GET", &path, Vec::new());
+                    let id = self.device_request(host, "GET", &path, Vec::new(), None);
                     self.requests
                         .insert(id, Req::Ext(ExtReq::Search(self.ext.serial, ext)));
                     self.ext.pending += 1;
@@ -380,7 +380,7 @@ impl Core {
                 .to_json()
                 .into_bytes();
             let path = format!("/api/extensions/{ext}/import");
-            let rid = self.account_send(host, "POST", &path, body);
+            let rid = self.device_request(host, "POST", &path, body, Some("application/json"));
             self.requests.insert(rid, Req::Ext(ExtReq::Add(id)));
             self.ext.add_asked += 1;
         }
@@ -461,7 +461,7 @@ impl Core {
             .to_json()
             .into_bytes();
         let path = format!("/api/extensions/{ext}/import");
-        let rid = self.account_send(host, "POST", &path, body);
+        let rid = self.device_request(host, "POST", &path, body, Some("application/json"));
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Item {
@@ -590,11 +590,12 @@ impl Core {
             .map(|e| e.id.clone())
             .collect();
         for ext in exts {
-            let rid = self.account_send(
+            let rid = self.device_request(
                 host,
                 "GET",
                 &format!("/api/extensions/{ext}/shelves"),
                 Vec::new(),
+                None,
             );
             self.requests
                 .insert(rid, Req::Ext(ExtReq::Shelves(self.ext.shelves_serial, ext)));
@@ -628,7 +629,7 @@ impl Core {
             path.push_str(&format!("&after={}", bl_net::http::percent_encode(after)));
         }
         let ext = c.ext.clone();
-        let rid = self.account_send(host, "GET", &path, Vec::new());
+        let rid = self.device_request(host, "GET", &path, Vec::new(), None);
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Collection(self.ext.collection_serial, ext)),
@@ -714,7 +715,7 @@ impl Core {
 
     fn ask_extension_radio(&mut self, host: &mut dyn Host, ext: &str, item: &str, start: bool) {
         let path = format!("/api/extensions/{ext}/radio/{item}?limit={RADIO_BATCH}");
-        let rid = self.account_send(host, "GET", &path, Vec::new());
+        let rid = self.device_request(host, "GET", &path, Vec::new(), None);
         self.requests.insert(
             rid,
             Req::Ext(ExtReq::Radio {

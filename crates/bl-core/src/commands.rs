@@ -337,7 +337,7 @@ impl Core {
                 } else {
                     "/api/library/restore"
                 };
-                let rid = self.account_send(host, "POST", path, body);
+                let rid = self.device_request(host, "POST", path, body, Some("application/json"));
                 self.requests.insert(rid, Req::HiddenChanged);
                 let msg = self
                     .tr(if remove {

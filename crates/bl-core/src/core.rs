@@ -827,7 +827,7 @@ impl Core {
     }
 
     pub(crate) fn refresh_server_data(&mut self, host: &mut dyn Host) {
-        let id = self.account_send(host, "GET", "/api/library/hidden", Vec::new());
+        let id = self.device_request(host, "GET", "/api/library/hidden", Vec::new(), None);
         self.requests.insert(id, Req::Hidden);
         let reqs = [
             (bl_net::api::paths::LIBRARY, Req::Library),
@@ -943,7 +943,7 @@ impl Core {
                 }
             }
             Req::HiddenChanged => {
-                let id = self.account_send(host, "GET", "/api/library/hidden", Vec::new());
+                let id = self.device_request(host, "GET", "/api/library/hidden", Vec::new(), None);
                 self.requests.insert(id, Req::Hidden);
             }
             Req::Playlists => {

@@ -69,31 +69,6 @@ impl ServerClient {
         }
     }
 
-    /// A request for one account, with its login where there is one: what belongs
-    /// to an account must not land in what a server password shares.
-    pub fn send_as(
-        &self,
-        host: &mut dyn Host,
-        account: Option<&str>,
-        method: &str,
-        path: &str,
-        body: Vec<u8>,
-    ) -> u64 {
-        let mut headers = match account.filter(|t| !t.is_empty()) {
-            Some(t) => vec![("Authorization".to_string(), format!("Bearer {t}"))],
-            None => self.headers(),
-        };
-        if !body.is_empty() {
-            headers.push(("Content-Type".into(), "application/json".into()));
-        }
-        host.http_request(HttpRequest {
-            method: method.into(),
-            url: self.url(path),
-            headers,
-            body,
-        })
-    }
-
     pub fn get(&self, host: &mut dyn Host, path: &str) -> u64 {
         host.http_request(HttpRequest {
             method: "GET".into(),

@@ -436,28 +436,6 @@ impl Core {
         self.vault_request(host, "DELETE", path, None, VaultReq::Quiet);
     }
 
-    /// The account's login, if it is unlocked.
-    pub(crate) fn account_token(&self) -> Option<String> {
-        self.vault
-            .account
-            .as_ref()
-            .map(|_| self.vault.token.clone())
-            .filter(|t| !t.is_empty())
-    }
-
-    /// A request for this account (see `ServerConn::send_as`).
-    pub(crate) fn account_send(
-        &self,
-        host: &mut dyn Host,
-        method: &str,
-        path: &str,
-        body: Vec<u8>,
-    ) -> u64 {
-        let token = self.account_token();
-        self.server
-            .send_as(host, token.as_deref(), method, path, body)
-    }
-
     pub(crate) fn vault_unlocked(&self) -> bool {
         self.vault.account.is_some()
     }
