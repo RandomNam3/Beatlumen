@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Status in Discord (Linux, Windows):** shows the song you are listening to in the
+  Discord program on the same computer (Settings, Playback; off by default). Needs the
+  Application ID of a Discord application of your own. Only title, artist, album,
+  start and end time and that application's picture go out, and only to the Discord
+  program: no cover links, no account token. Encrypted songs and what other devices
+  send here (AirPlay, DLNA, other programs) never show up, and pausing removes the status.
+
 ## 0.12.0 (beta)
 
 A start page with recommendations and statistics, an equalizer and bit-perfect

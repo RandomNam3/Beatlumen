@@ -516,7 +516,7 @@ impl Core {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::core::LaunchArgs;
     use crate::host::{AudioDeviceInfo, AudioSource, DirEntry};
@@ -526,7 +526,7 @@ mod tests {
 
     /// Everything goes nowhere; requests are counted and answered from a list.
     #[derive(Default)]
-    struct TestHost {
+    pub(crate) struct TestHost {
         time: f64,
         storage: RefCell<HashMap<String, Vec<u8>>>,
         requests: Vec<HttpRequest>,
