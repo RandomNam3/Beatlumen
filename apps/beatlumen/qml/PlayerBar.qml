@@ -12,6 +12,9 @@ Item {
     property string mode: "full"
     // Little height (a phone held sideways).
     property bool dense: false
+    // The line being sung may show under the title (not while the whole
+    // text is on screen anyway).
+    property bool showLine: true
     signal openNowPlaying()
     signal openQueue()
 
@@ -24,6 +27,37 @@ Item {
     readonly property bool overVisual: mode === "expanded"
     readonly property color fg: overVisual ? "white" : Theme.text
     readonly property color fgDim: overVisual ? Qt.rgba(1, 1, 1, 0.75) : Theme.textDim
+
+    // ---- the line being sung ------------------------------------------------
+    readonly property bool lineOn: showLine && visible && mode !== "expanded"
+        && ((Core.state.settings || {}).ui || {}).barLyrics !== false
+    readonly property string curId: cur ? cur.id : ""
+    readonly property int lyricsRev: Core.state.lyricsRev || 0
+    property var timedLines: []
+    property string line: ""
+    function loadLines() {
+        line = ""
+        const info = lineOn && curId !== "" ? (Core.call("lyrics.get") || {}) : {}
+        timedLines = info.status === "ready" && info.synced === true ? info.lines : []
+    }
+    function lineAt(t) {
+        let lo = 0, hi = timedLines.length - 1, found = -1
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1
+            if (timedLines[mid].t <= t) { found = mid; lo = mid + 1 } else hi = mid - 1
+        }
+        return found < 0 ? "" : timedLines[found].text
+    }
+    onCurIdChanged: loadLines()
+    onLyricsRevChanged: loadLines()
+    onLineOnChanged: loadLines()
+    Timer {
+        interval: 200
+        repeat: true
+        // The same small lead as the full text: a line lights up as it starts.
+        running: bar.lineOn && bar.timedLines.length > 0
+        onTriggered: bar.line = bar.lineAt(Core.position + 0.15)
+    }
 
     implicitHeight: mode === "mini" ? (Theme.fingers ? 72 : 56) : mode === "expanded" ? 196 : dense ? 64 : 76
 
@@ -120,7 +154,8 @@ Item {
             Label {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
-                text: bar.cur ? (bar.cur.artist || Theme.tr("Unknown artist")) : Theme.tr("Pick something from your library")
+                text: bar.line !== "" ? bar.line
+                      : bar.cur ? (bar.cur.artist || Theme.tr("Unknown artist")) : Theme.tr("Pick something from your library")
                 font.pixelSize: 13
                 elide: Text.ElideRight
                 color: Theme.textDim
@@ -164,12 +199,46 @@ Item {
             Keys.onReturnPressed: clicked()
             Keys.onEnterPressed: clicked()
         }
+        // A tap opens the visual; sideways goes to the next or the previous
+        // song. The button above stays for the keyboard and screen readers.
+        MouseArea {
+            id: swipe
+            anchors.fill: parent
+            property real startX: 0
+            property bool moved: false
+            function sceneX(mouse) { return mapToItem(null, mouse.x, mouse.y).x }
+            onPressed: (mouse) => { startX = sceneX(mouse); moved = false }
+            onPositionChanged: (mouse) => {
+                const dx = sceneX(mouse) - startX
+                if (Math.abs(dx) > Qt.styleHints.startDragDistance)
+                    moved = true
+                if (moved)
+                    miniInfo.shift = dx
+            }
+            onReleased: {
+                if (Math.abs(miniInfo.shift) > Math.min(96, bar.width * 0.25) && bar.cur)
+                    Core.call(miniInfo.shift < 0 ? "next" : "prev")
+                miniInfo.shift = 0
+            }
+            onClicked: if (!moved) bar.openNowPlaying()
+        }
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 12
             anchors.rightMargin: 4
             spacing: 4
-            TrackInfo { Layout.fillWidth: true; coverSize: Theme.fingers ? 48 : 40 }
+            TrackInfo {
+                id: miniInfo
+                Layout.fillWidth: true
+                coverSize: Theme.fingers ? 48 : 40
+                property real shift: 0
+                opacity: 1 - Math.min(0.6, Math.abs(shift) / 300)
+                transform: Translate { x: miniInfo.shift }
+                Behavior on shift {
+                    enabled: !swipe.pressed
+                    NumberAnimation { duration: Theme.ms(180); easing.type: Easing.OutCubic }
+                }
+            }
             IconButton {
                 iconName: bar.playing ? "pause" : "play_arrow"
                 iconSize: 32

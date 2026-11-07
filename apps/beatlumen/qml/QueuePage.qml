@@ -4,8 +4,10 @@ import QtQuick.Layouts
 import Beatlumen.Core
 
 // The play queue: tap to jump, drag the handle to reorder, swipe to remove.
+// It stays beside or over the visual (a side panel or a sheet, see Main.qml).
 Item {
     id: page
+    signal closeRequested()
     readonly property int rev: Core.state.queueRev || 0
     // Position of the current song; the rows follow it without a reload.
     readonly property int current: Core.state.queueIndex ?? -1
@@ -30,7 +32,7 @@ Item {
     onRevChanged: reload()
     Component.onCompleted: reload()
 
-    TrackMenu { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
+    TrackActions { id: songMenu; onAddToPlaylist: (ids) => picker.show(ids); canEditLabels: true; onEditLabels: (id) => labelsDialog.show(id) }
     LabelsDialog { id: labelsDialog }
     PlaylistPicker { id: picker }
     TextPrompt {
@@ -61,6 +63,10 @@ Item {
                 iconName: "delete"; tip: Theme.tr("Clear queue")
                 enabled: page.items.length > 0
                 onClicked: Core.call("queue.clear")
+            }
+            IconButton {
+                iconName: "close"; tip: Theme.tr("Close")
+                onClicked: page.closeRequested()
             }
         }
 
