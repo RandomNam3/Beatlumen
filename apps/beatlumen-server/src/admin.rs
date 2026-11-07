@@ -802,6 +802,12 @@ fn overview(state: &State) -> Value {
         .with("speech", state.lyrics_sync.summary())
         .with("sound", state.sound.summary(state))
         .with("artists", state.artists.summary())
+        .with("extensionSongs", {
+            let (songs, bytes) = state.extensions.storage();
+            Value::object()
+                .with("songs", songs as u64)
+                .with("bytes", bytes)
+        })
         .with("downloads", state.models.active())
         .with("disk", disk)
         .with("data", data.root.display().to_string())
@@ -927,6 +933,10 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "autoSyncLyrics" => cfg.auto_sync_lyrics = d.auto_sync_lyrics,
         "autoLabels" => cfg.auto_labels = d.auto_labels,
         "onlineMetadata" => cfg.online_metadata = d.online_metadata,
+        "extensionCleanupDays" => cfg.extension_cleanup_days = d.extension_cleanup_days,
+        "extensionCleanupKeepListed" => {
+            cfg.extension_cleanup_keep_listed = d.extension_cleanup_keep_listed
+        }
         "verbose" => cfg.verbose = d.verbose,
         _ => {}
     }

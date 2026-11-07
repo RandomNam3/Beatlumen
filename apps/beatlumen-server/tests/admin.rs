@@ -286,6 +286,36 @@ fn admin_interface() {
         Some(Value::object().with("values", Value::object().with("rescanInterval", "often"))),
     );
     assert_eq!(s, 400);
+    // Songs from extensions: how long they stay, live.
+    let (code, _) = http.json(
+        "PUT",
+        "settings",
+        Some(
+            Value::object().with(
+                "values",
+                Value::object()
+                    .with("extensionCleanupDays", 30u64)
+                    .with("extensionCleanupKeepListed", false),
+            ),
+        ),
+    );
+    assert_eq!(code, 200);
+    assert_eq!(server.state.config().extension_cleanup_days, 30);
+    assert!(!server.state.config().extension_cleanup_keep_listed);
+    let (code, _) = http.json(
+        "PUT",
+        "settings",
+        Some(Value::object().with(
+            "values",
+            Value::object().with("extensionCleanupDays", "soon"),
+        )),
+    );
+    assert_eq!(code, 400);
+    let (_, overview) = http.json("GET", "overview", None);
+    assert_eq!(
+        overview.get("extensionSongs").get("songs").as_u64(),
+        Some(0)
+    );
     let (_, all) = http.json("GET", "settings", None);
     let fixed = all
         .get("settings")
