@@ -29,6 +29,8 @@ ColumnLayout {
         switch (path.verdict) {
         case "bitperfect": return route.shared
             ? Theme.tr("Exact, as long as no other program makes sound.")
+            : Core.platform === "android"
+            ? Theme.tr("Exact as far as Android tells, as long as no other app makes sound: its bit-perfect mixer is set, and the music plays on this device in that format.")
             : Theme.tr("Every sample arrives as it is in the file.")
         case "unverified": return Theme.tr("What happens after the sound server could not be found out.")
         case "unprocessed": return Theme.tr("A lossy or float file has no exact samples to keep.")

@@ -132,7 +132,8 @@ pub(crate) fn assess(f: &Facts) -> (Verdict, Vec<Change>) {
     if f.speaker.is_none() && f.volume < 1.0 {
         changes.push(Change::Volume);
     }
-    let direct = f.speaker.is_none() && f.card.is_some();
+    // The switch and a prepared card say nothing: only what opened counts.
+    let direct = f.speaker.is_none() && f.card.is_some() && t.opened.is_some();
     if direct {
         if let Some(bits) = t.bits {
             let room = FLOAT_BITS.min(t.opened.map_or(FLOAT_BITS, |o| o.format.bits()));
@@ -568,6 +569,41 @@ mod tests {
         let mut f = facts(t);
         f.card = None;
         assert_eq!(assess(&f), (Verdict::Shared, vec![]));
+    }
+
+    #[test]
+    fn a_card_that_has_not_opened_for_this_track_is_not_called_direct() {
+        // Switched on with a track from before: it still plays through the mixer.
+        let mut t = track(44100, 44100, Some(16), PcmFormat::S16);
+        t.opened = None;
+        assert_eq!(assess(&facts(t)), (Verdict::Shared, vec![]));
+    }
+
+    #[test]
+    fn what_opened_decides_whatever_was_asked_for() {
+        // Asked for the file's 16 bits at 44.1 kHz, as WASAPI or Android may answer.
+        let bits = |format| assess(&facts(track(44100, 44100, Some(16), format)));
+        assert_eq!(bits(PcmFormat::S16), (Verdict::BitPerfect, vec![]));
+        assert_eq!(bits(PcmFormat::S24Packed), (Verdict::BitPerfect, vec![]));
+        assert_eq!(bits(PcmFormat::S32), (Verdict::BitPerfect, vec![]));
+        // 24 bits in a 32-bit word: all of them stay.
+        let t = track(96000, 96000, Some(24), PcmFormat::S32);
+        assert_eq!(assess(&facts(t)), (Verdict::BitPerfect, vec![]));
+        // A card that only has 48 kHz and 16 bits for a 24-bit 44.1 kHz file.
+        let t = track(44100, 48000, Some(24), PcmFormat::S16);
+        assert_eq!(
+            assess(&facts(t)),
+            (
+                Verdict::Changed,
+                vec![
+                    Change::Resampled {
+                        from: 44100,
+                        to: 48000
+                    },
+                    Change::Narrowed { from: 24, to: 16 }
+                ]
+            )
+        );
     }
 
     #[test]

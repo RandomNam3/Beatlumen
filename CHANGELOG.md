@@ -11,21 +11,27 @@ playback, artist pages and smart playlists, and a more compact interface.
   points and the curve that results (Settings, Playback). Boosts lower the level
   by themselves so that nothing clips. It applies at once, also on speakers in
   the network, and stays on this device. Switched off nothing is computed.
-- **Bit-perfect playback (Linux):** hands the music on exactly as it is in the file, at
-  its own rate (Settings, Playback; off by default). Songs of the same format stay
-  gapless, another rate means a short gap. Equalizer, normalizing, crossfade and
-  skipping silence are off meanwhile. Two ways:
-  - **Through PipeWire,** the default: other programs stay audible. The sound server
-    runs at each song's rate. Exact as long as nothing else makes sound.
-  - **A sound card alone:** the sound server is asked to let go of the card, and after
-    30 s of pause it gets it back. Other programs have no sound on it meanwhile. Exact
-    whatever else is going on.
+- **Bit-perfect playback (Linux, Windows, Android 14 and newer):** hands the music on
+  exactly as it is in the file, at its own rate (Settings, Playback; off by default).
+  Songs of the same format stay gapless, another rate means a short gap. Equalizer,
+  normalizing, crossfade and skipping silence are off meanwhile. The ways there:
+  - **Through PipeWire (Linux),** the default: other programs stay audible. The sound
+    server runs at each song's rate. Exact as long as nothing else makes sound.
+  - **A sound card alone (Linux):** the sound server is asked to let go of the card, and
+    after 30 s of pause it gets it back. Other programs have no sound on it meanwhile.
+    Exact whatever else is going on.
+  - **A sound card alone (Windows):** WASAPI in exclusive mode, on every output except
+    Bluetooth, also given back after 30 s of pause. Windows has to allow exclusive use
+    of the device; if it does not, or another program holds it, playback stops with that
+    message instead of going through the mixer.
+  - **A USB sound card (Android 14 and newer):** the system's bit-perfect mixer, where
+    the device has one. A track that leaves the device stops instead of playing on.
 - **Signal path:** says what really happens to the music, from what opened and not
   from the switch: the file, the output and whatever changes the samples, for
   example a card that cannot do 44.1 kHz, a volume below 100 % or another program
   making sound. Through PipeWire it looks at the graph and the card every few seconds.
-  "Bit-perfect" only appears when all of it holds. Lossy files never get that word. On Windows, Android
-  and in the browser the direct path does not exist yet, and the app says so.
+  "Bit-perfect" only appears when all of it holds. Lossy files never get that word. Below
+  Android 14 the settings say the direct path is not available; in the browser there is none.
 
 ### Start page and favorites
 
