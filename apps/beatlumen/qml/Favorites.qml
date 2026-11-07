@@ -24,8 +24,10 @@ QtObject {
     function toggle(id) {
         set([id], !has(id))
     }
-    // Radio stations and other live streams have no lasting song to mark.
+    // Radio stations and other live streams have no lasting song to mark, and
+    // neither has a song of an extension until it is in the library.
     function canMark(id) {
-        return !!id && String(id).indexOf("radio:") !== 0
+        const s = String(id)
+        return !!id && s.indexOf("radio:") !== 0 && s.indexOf("ext:") !== 0 && s.indexOf("extitem:") !== 0
     }
 }

@@ -59,6 +59,11 @@ pub struct Config {
     pub extensions: Vec<(String, String)>,
     /// File holding the secret the server sends to its extensions.
     pub extension_token_file: Option<PathBuf>,
+    /// Songs an extension brought in are deleted after this many days without
+    /// being played (0: never).
+    pub extension_cleanup_days: u32,
+    /// Songs in a playlist or among favorites stay anyway.
+    pub extension_cleanup_keep_listed: bool,
     /// Whisper model (ggml file) for timing song texts.
     pub speech_model: Option<PathBuf>,
     /// Time the song texts of the whole library in the background.
@@ -128,6 +133,8 @@ impl Default for Config {
             auto_sync_lyrics: false,
             auto_labels: true,
             online_metadata: false,
+            extension_cleanup_days: 90,
+            extension_cleanup_keep_listed: true,
             admin_password_file: None,
             model_source: None,
             origins: Vec::new(),
@@ -202,6 +209,14 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: false,
     },
     AdminSetting {
+        key: "extensionCleanupDays",
+        live: true,
+    },
+    AdminSetting {
+        key: "extensionCleanupKeepListed",
+        live: true,
+    },
+    AdminSetting {
         key: "speechModel",
         live: true,
     },
@@ -268,6 +283,8 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
         "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
         "autoLabels" => Value::from(cfg.auto_labels),
         "onlineMetadata" => Value::from(cfg.online_metadata),
+        "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
+        "extensionCleanupKeepListed" => Value::from(cfg.extension_cleanup_keep_listed),
         "verbose" => Value::from(cfg.verbose),
         _ => Value::Null,
     }
@@ -300,6 +317,11 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
     ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
+    ("BEATLUMEN_EXTENSION_CLEANUP_DAYS", "extensionCleanupDays"),
+    (
+        "BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED",
+        "extensionCleanupKeepListed",
+    ),
     ("BEATLUMEN_VERBOSE", "verbose"),
     ("BEATLUMEN_ADMIN_PASSWORD_FILE", "adminPassword"),
 ];
@@ -332,6 +354,7 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--auto-sync-lyrics" => "autoSyncLyrics",
         "--no-auto-labels" => "autoLabels",
         "--online-metadata" => "onlineMetadata",
+        "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
     })
 }
@@ -590,6 +613,17 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     if let Some(v) = get("BEATLUMEN_EXTENSION_TOKEN_FILE") {
         cfg.extension_token_file = Some(PathBuf::from(v.trim()));
     }
+    if let Some(v) = get("BEATLUMEN_EXTENSION_CLEANUP_DAYS") {
+        cfg.extension_cleanup_days = v.trim().parse().map_err(|_| {
+            "BEATLUMEN_EXTENSION_CLEANUP_DAYS: expected a number of days".to_string()
+        })?;
+    }
+    if let Some(v) = get("BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED") {
+        cfg.extension_cleanup_keep_listed = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_PUSH_ALLOW_PRIVATE") {
         cfg.push_allow_private = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -684,7 +718,8 @@ OPTIONS:
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
-                            androidCerts, extensions, extensionTokenFile, speechModel,
+                            androidCerts, extensions, extensionTokenFile,
+                            extensionCleanupDays, extensionCleanupKeepListed, speechModel,
                             autoSyncLyrics, autoLabels, onlineMetadata, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
@@ -697,6 +732,10 @@ OPTIONS:
     --extension ID=URL      Source extension reached at URL, e.g.
                             youtube=http://127.0.0.1:7790 (repeatable; see
                             docs/EXTENSIONS.md)
+    --extension-cleanup-days DAYS
+                            Delete songs an extension brought in after this many
+                            days without being played, not those in a playlist or
+                            among favorites (default 90, 0: never)
     --extension-token-file FILE
                             Secret sent to the extensions (they check it)
     --speech-model FILE     Speech recognition model (Whisper in ggml format, e.g.
@@ -886,6 +925,16 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoLabels" => {
                 cfg.auto_labels = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "extensionCleanupDays" => {
+                cfg.extension_cleanup_days = val
+                    .as_u64()
+                    .and_then(|d| u32::try_from(d).ok())
+                    .ok_or_else(|| err("expected a number of days"))?
+            }
+            "extensionCleanupKeepListed" => {
+                cfg.extension_cleanup_keep_listed =
+                    val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "onlineMetadata" => {
                 cfg.online_metadata = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
@@ -1009,6 +1058,7 @@ fn build(
                 .push(v.replace(':', "").to_ascii_lowercase()),
             "--extension" => cfg.extensions.push(parse_extension(&v)?),
             "--extension-token-file" => cfg.extension_token_file = Some(PathBuf::from(v)),
+            "--extension-cleanup-days" => cfg.extension_cleanup_days = num(flag, &v)? as u32,
             "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
             "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
             "--no-auto-labels" => cfg.auto_labels = false,
@@ -1087,6 +1137,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--android-cert"
                 | "--extension"
                 | "--extension-token-file"
+                | "--extension-cleanup-days"
                 | "--speech-model"
                 | "--model-source"
                 | "--days"

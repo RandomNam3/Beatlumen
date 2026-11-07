@@ -92,6 +92,9 @@ Menu {
         onTriggered: menu.editLabels(menu.ids[0])
     }
     MenuItem {
+        // A song of an extension is not in the library yet.
+        visible: menu.ids.every(id => String(id).indexOf("extitem:") !== 0)
+        height: visible ? implicitHeight : 0
         text: Theme.tr("Add to playlist…")
         icon.source: Theme.icon("playlist_add")
         onTriggered: menu.addToPlaylist(menu.ids)

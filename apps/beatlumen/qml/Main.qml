@@ -91,6 +91,10 @@ ApplicationWindow {
         }
         return false
     }
+    function showCollection(ext, id) {
+        page = 0
+        Qt.callLater(() => library.item && library.item.openCollection(ext, id))
+    }
     function toggleFullscreen() {
         if (visibility === Window.FullScreen)
             showNormal()
@@ -320,6 +324,7 @@ ApplicationWindow {
                         win.page = 0
                         Qt.callLater(() => library.item && library.item.openFavorites())
                     }
+                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
                 }
             }
             Loader {
@@ -342,6 +347,7 @@ ApplicationWindow {
                         win.page = 0
                         Qt.callLater(() => library.item && library.item.openLabel(name))
                     }
+                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
                 }
             }
         }
@@ -427,6 +433,7 @@ ApplicationWindow {
         if (currentTitle !== "" && Accessible.announce)
             Accessible.announce(Theme.tr("Now playing") + ": " + currentTitle)
     }
+    ExtensionTarget { }
     HelpDialog {
         id: help
         onStartTour: win.startTour()

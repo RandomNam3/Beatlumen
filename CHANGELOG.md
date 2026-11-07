@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
+  offers is in its manifest. Rows of suggestions on the start page, collections that open
+  like an album, a radio for a song, and search results next to the library's. Extensions
+  of protocol 1 keep working and only search.
+- **Songs of extensions in the queue:** they have a menu now, can be added to the queue and
+  only get imported when their turn comes. A song that cannot be fetched leaves the queue.
+- **Songs nobody plays:** songs an extension downloaded are deleted after 90 days without
+  being played, to save storage. Those in anyone's playlist or favorites stay, and the
+  library's own songs are never touched. All of it can be changed in the admin area (0 days:
+  never). Songs imported earlier get the full 90 days from the first start.
+
 ## 0.12.0 (beta)
 
 A start page with recommendations and statistics, an equalizer and bit-perfect
