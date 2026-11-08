@@ -1,7 +1,7 @@
 //! Speech recognition in the browser: not available (the server can do it).
 
 use crate::core::Core;
-use crate::host::Host;
+use crate::host::{Host, HttpResponse};
 use bl_json::Value;
 
 #[derive(Default)]
@@ -26,4 +26,7 @@ impl Core {
     }
 
     pub(crate) fn poll_speech(&mut self, _host: &mut dyn Host) {}
+
+    /// The server's speech models are never asked for here.
+    pub(crate) fn speech_offers_fetched(&mut self, _res: &Result<HttpResponse, String>) {}
 }
