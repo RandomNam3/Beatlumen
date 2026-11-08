@@ -377,6 +377,21 @@ pub fn local_track(
     t
 }
 
+/// Text that was UTF-8 but read as Latin-1 ("FrÃ©dÃ©ric"), as earlier versions
+/// did when a tagger marked it so: such songs are read again.
+fn misread_utf8(t: &Track) -> bool {
+    let looks = |s: &str| {
+        let chars: Vec<char> = s.chars().collect();
+        chars
+            .windows(2)
+            .any(|w| ('\u{c2}'..='\u{f4}').contains(&w[0]) && ('\u{80}'..='\u{bf}').contains(&w[1]))
+    };
+    [&t.title, &t.album, &t.album_artist, &t.genre]
+        .into_iter()
+        .chain(&t.artists)
+        .any(|s| looks(s))
+}
+
 /// Scans local folders on a background thread (native only). Previously
 /// known tracks with unchanged size and modification time are reused.
 #[cfg(not(target_arch = "wasm32"))]
@@ -409,7 +424,7 @@ pub fn start_local_scan(
             let mut out = Vec::with_capacity(files.len());
             for (i, (path, size, mtime)) in files.iter().enumerate() {
                 if let Some(k) = known.get(path) {
-                    if k.size == *size && k.modified == *mtime {
+                    if k.size == *size && k.modified == *mtime && !misread_utf8(k) {
                         out.push(k.clone());
                         continue;
                     }
@@ -515,6 +530,18 @@ pub fn list_images(dir: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf8_read_as_latin1_is_noticed() {
+        let track = |artist: &str| Track {
+            artists: vec![artist.to_string()],
+            ..Default::default()
+        };
+        assert!(misread_utf8(&track("FrÃ©dÃ©ric Chopin")));
+        assert!(misread_utf8(&track("Ã¼ber")));
+        assert!(!misread_utf8(&track("Frédéric Chopin")));
+        assert!(!misread_utf8(&track("Beyoncé, Ångström, Ça va")));
+    }
 
     #[test]
     fn artists_split() {

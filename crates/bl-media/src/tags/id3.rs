@@ -385,10 +385,12 @@ fn split_text(enc: u8, data: &[u8]) -> (String, &[u8]) {
 }
 
 fn decode_8bit(enc: u8, data: &[u8]) -> String {
-    if enc == 3 {
-        String::from_utf8_lossy(data).into_owned()
-    } else {
-        data.iter().map(|&b| b as char).collect()
+    match (enc, std::str::from_utf8(data)) {
+        (3, _) => String::from_utf8_lossy(data).into_owned(),
+        // Many taggers write UTF-8 but mark it as Latin-1. Other players read it
+        // as UTF-8 when it is valid as such; Latin-1 text hardly ever is.
+        (_, Ok(text)) => text.to_string(),
+        _ => data.iter().map(|&b| b as char).collect(),
     }
 }
 
@@ -749,6 +751,22 @@ pub(crate) mod tests {
             assert_eq!(pics[0].kind, 3);
             assert_eq!(pics[0].description, "cover");
         }
+    }
+
+    #[test]
+    fn utf8_marked_as_latin1() {
+        let mut tags = Tags::default();
+        let tag = build_tag(
+            4,
+            &[
+                ("TPE1", [&[0u8][..], "Frédéric Chopin".as_bytes()].concat()),
+                ("TALB", vec![0, b'C', 0xe9, b'z', b'a', b'n', b'n', b'e']),
+            ],
+        );
+        parse_id3v2_bytes(&tag, &mut tags, None);
+        assert_eq!(tags.artist.as_deref(), Some("Frédéric Chopin"));
+        // Real Latin-1 stays Latin-1.
+        assert_eq!(tags.album.as_deref(), Some("Cézanne"));
     }
 
     #[test]

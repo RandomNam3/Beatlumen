@@ -20,6 +20,8 @@
 - **Covers that did not show:** some taggers write a stray byte or the picture's description
   before the picture itself. Its start is found now, as other players do, and such covers kept
   from before are read again.
+- **Names like "FrÃ©dÃ©ric":** many taggers write UTF-8 but mark it as Latin-1. Such text is read
+  as UTF-8 now, and songs already in the library with such names are read again at the next scan.
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window
