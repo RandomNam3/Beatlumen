@@ -7,7 +7,9 @@ version = "0.12.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/RandomNam3/Beatlumen"
-rust-version = "1.80"
+# 1.81: a panic that reaches the C interface aborts instead of being
+# undefined behaviour (the app catches them before); 1.82: Option::is_none_or.
+rust-version = "1.82"
 
 [profile.dev]
 opt-level = 1

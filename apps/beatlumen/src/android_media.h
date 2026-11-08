@@ -34,6 +34,7 @@ private:
     };
 
     void sync(bool force);
+    void sendCover(const QString &source);
     void checkPosition();
     void askNotificationPermission();
 

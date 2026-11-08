@@ -417,7 +417,7 @@ impl Core {
             self.capture.cover_url = match new_cover.as_deref() {
                 Some(p) if !p.is_empty() => {
                     // A new URL per picture, so image caches show the new one.
-                    format!("{}#{}", crate::core::file_url(p), self.capture.serial)
+                    format!("{}#{}", self.picture_url(p), self.capture.serial)
                 }
                 _ => String::new(),
             };

@@ -12,7 +12,6 @@
 #include <QStringList>
 
 class Bridge;
-class QNetworkAccessManager;
 class QWindow;
 
 class DesktopMedia : public QObject
@@ -70,9 +69,8 @@ private:
     Snapshot m_last;
     QString m_coverId;     // track whose extracted cover we asked the core for
     QString m_coverUrl;    // and the URL it reported (coverReady)
-    QString m_coverSource; // server cover being or been downloaded
-    QString m_coverFile;   // its local copy
-    QNetworkAccessManager *m_net = nullptr;
+    QString m_coverSource; // cover picture being or been written for the shell
+    QString m_coverFile;   // that PNG
     double m_lastPos = 0;
     QElapsedTimer m_posClock;
     class Backend;

@@ -6,8 +6,9 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include <QImage>
+#include <QSaveFile>
+#include <QThreadPool>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QWindow>
@@ -525,8 +526,10 @@ void DesktopMedia::sync()
                  : play == QLatin1String("paused") ? QStringLiteral("Paused")
                  : QStringLiteral("Stopped");
 
-        // Cover: an extracted local file, or a server image. Server URLs
-        // carry the login token: they are downloaded here, never shown.
+        // Cover: a picture of the core (image://thumb for local files,
+        // image://server for the network). Desktop shells get a PNG made
+        // here from the core's decoded pixels: never the original bytes,
+        // and never a URL with the login token.
         QString cover = cur.value(QStringLiteral("cover")).toString();
         if (s.id != m_coverId) {
             m_coverId = s.id;
@@ -536,9 +539,7 @@ void DesktopMedia::sync()
         }
         if (cover.isEmpty())
             cover = m_coverUrl;
-        if (cover.startsWith(QLatin1String("file:")))
-            s.artUrl = cover;
-        else if (cover.startsWith(QLatin1String("http://")) || cover.startsWith(QLatin1String("https://"))) {
+        if (cover.startsWith(QLatin1String("image://"))) {
             fetchCover(cover);
             if (cover == m_coverSource && !m_coverFile.isEmpty())
                 s.artUrl = QUrl::fromLocalFile(m_coverFile).toString();
@@ -590,41 +591,37 @@ void DesktopMedia::fetchCover(const QString &url)
     m_coverFile.clear();
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/media-covers");
     QDir().mkpath(dir);
-    // Named after the URL without its query (the token changes).
-    const QString key = url.section(QLatin1Char('?'), 0, 0);
-    const QString file = dir + QLatin1Char('/') + QString::fromLatin1(QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256).toHex().left(32));
+    // Named after the picture without its query (a server URL's login token
+    // changes; it is percent-encoded inside the provider URL).
+    const QString key = QUrl::fromPercentEncoding(url.toUtf8()).section(QLatin1Char('?'), 0, 0);
+    const QString file = dir + QLatin1Char('/')
+        + QString::fromLatin1(QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256).toHex().left(32))
+        + QStringLiteral(".png");
     if (QFile::exists(file)) {
         m_coverFile = file;
         return;
     }
-#if !defined(Q_OS_WASM) && !defined(Q_OS_ANDROID)
-    if (!m_net)
-        m_net = tls::pinnedNetworkAccess(this);
-    QNetworkReply *r = m_net->get(QNetworkRequest(QUrl(url)));
-    connect(r, &QNetworkReply::finished, this, [this, r, url, file, dir]() {
-        r->deleteLater();
-        const QByteArray data = r->readAll();
-        if (r->error() != QNetworkReply::NoError || data.isEmpty() || data.size() > 16 * 1024 * 1024)
+    QPointer<DesktopMedia> self = this;
+    QThreadPool::globalInstance()->start([self, url, file, dir]() {
+        const QImage img = tls::loadPicture(url, QSize(512, 512));
+        if (img.isNull())
             return;
         // Keep the cache small: covers of the last few tracks.
         QDir d(dir);
         const QFileInfoList old = d.entryInfoList(QDir::Files, QDir::Time);
         for (int i = 20; i < old.size(); ++i)
             QFile::remove(old[i].absoluteFilePath());
-        QFile f(file + QStringLiteral(".part"));
-        if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size())
+        QSaveFile f(file);
+        if (!f.open(QIODevice::WriteOnly) || !img.save(&f, "PNG") || !f.commit())
             return;
-        f.close();
-        QFile::remove(file);
-        if (!f.rename(file))
-            return;
-        if (url == m_coverSource) {
-            m_coverFile = file;
-            m_last.artUrl.clear(); // force an update
-            sync();
-        }
+        QMetaObject::invokeMethod(qApp, [self, url, file]() {
+            if (self && url == self->m_coverSource) {
+                self->m_coverFile = file;
+                self->m_last.artUrl.clear(); // force an update
+                self->sync();
+            }
+        }, Qt::QueuedConnection);
     });
-#endif
 }
 
 #if defined(BEATLUMEN_MPRIS)

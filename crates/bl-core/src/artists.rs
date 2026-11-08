@@ -476,14 +476,15 @@ impl Core {
             Some((artist, saved)) => {
                 let image = if saved {
                     host.storage_path(&image_key(name))
-                        .map(|p| format!("file://{p}"))
                 } else {
                     None
                 };
                 let mut json = artist.to_json();
                 json.set(
                     "image",
-                    Value::from(image.unwrap_or_else(|| artist.image_url.clone())),
+                    Value::from(
+                        self.picture_url(&image.unwrap_or_else(|| artist.image_url.clone())),
+                    ),
                 );
                 result(if fresh && complete {
                     "ready"

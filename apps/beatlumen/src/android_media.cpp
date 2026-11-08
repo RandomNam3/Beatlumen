@@ -6,8 +6,10 @@
 #include <QGuiApplication>
 #include <QJniEnvironment>
 #include <QJniObject>
+#include <QImage>
 #include <QMutex>
 #include <QSettings>
+#include <QThreadPool>
 #include <QUrl>
 #include <QtCore/private/qandroidextras_p.h>
 
@@ -144,7 +146,7 @@ void AndroidMedia::sync(bool force)
         }
         if (cover.isEmpty())
             cover = m_coverUrl;
-        s.cover = cover.startsWith(QLatin1String("file:")) ? QUrl(cover).toLocalFile() : cover;
+        s.cover = cover;
     } else {
         s.state = Stopped;
         m_coverId.clear();
@@ -156,20 +158,12 @@ void AndroidMedia::sync(bool force)
         return;
     if (s.state == Playing && m_last.state != Playing)
         askNotificationPermission();
-    m_last = s;
     m_lastPos = m_bridge->position();
     m_posClock.restart();
 
+    const bool coverChanged = s.cover != m_last.cover;
+    m_last = s;
     QJniObject ctx = QNativeInterface::QAndroidApplication::context();
-    // The cover may come from an https server with a certificate the user
-    // trusts by fingerprint: hand that to the Java loader.
-    const QUrl coverUrl(s.cover);
-    if (coverUrl.scheme() == QLatin1String("https")) {
-        const QString key = coverUrl.host() + QLatin1Char(':') + QString::number(coverUrl.port(443));
-        QJniObject::callStaticMethod<void>(kJavaClass, "setCertificatePin", "(Ljava/lang/String;Ljava/lang/String;)V",
-                                           QJniObject::fromString(key).object<jstring>(),
-                                           QJniObject::fromString(QString::fromLatin1(tls::pinFor(key))).object<jstring>());
-    }
     QJniObject::callStaticMethod<void>(
         kJavaClass, "update",
         "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJI)V",
@@ -181,6 +175,31 @@ void AndroidMedia::sync(bool force)
         jlong(s.durationMs),
         jlong(m_lastPos * 1000.0),
         jint(s.state));
+    if (coverChanged && !s.cover.isEmpty())
+        sendCover(s.cover);
+}
+
+// The cover for the media session, decoded by the core (the URL is one of
+// the core's image://server or image://thumb pictures) on a worker thread
+// and handed to Java as pixels: Android's own decoders never see it.
+void AndroidMedia::sendCover(const QString &source)
+{
+    QThreadPool::globalInstance()->start([source]() {
+        const QImage img = tls::loadPicture(source, QSize(512, 512)).convertToFormat(QImage::Format_ARGB32);
+        if (img.isNull())
+            return;
+        const int w = img.width(), h = img.height();
+        QJniEnvironment env;
+        jintArray pixels = env->NewIntArray(jsize(w) * h);
+        if (!pixels)
+            return;
+        // Format_ARGB32 rows are 0xAARRGGBB words, as Android's ARGB_8888 ints.
+        for (int y = 0; y < h; ++y)
+            env->SetIntArrayRegion(pixels, jsize(y) * w, w, reinterpret_cast<const jint *>(img.constScanLine(y)));
+        QJniObject::callStaticMethod<void>(kJavaClass, "setCover", "(Ljava/lang/String;II[I)V",
+                                           QJniObject::fromString(source).object<jstring>(), jint(w), jint(h), pixels);
+        env->DeleteLocalRef(pixels);
+    });
 }
 
 // The media session extrapolates the position from the last update; only

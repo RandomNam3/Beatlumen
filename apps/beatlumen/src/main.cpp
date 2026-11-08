@@ -18,6 +18,9 @@
 #include "heic_decode.h"
 #include "tls.h"
 #include "web.h"
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
+#include "single_instance.h"
+#endif
 
 namespace {
 
@@ -129,6 +132,13 @@ int main(int argc, char *argv[])
         }
     }
 
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
+    // One app per data folder: a second start hands its files over and ends.
+    SingleInstance *instance = SingleInstance::claim(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), args, &app);
+    if (!instance)
+        return 0;
+#endif
+
     // The browser build first loads its persistent storage (async).
     QQmlApplicationEngine *engine = nullptr;
     Bridge *bridge = nullptr;
@@ -143,8 +153,21 @@ int main(int argc, char *argv[])
         QObject::connect(engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() { QCoreApplication::exit(1); }, Qt::QueuedConnection);
         engine->loadFromModule("Beatlumen", "Main");
         if (!engine->rootObjects().isEmpty()) {
-            if (auto *w = qobject_cast<QQuickWindow *>(engine->rootObjects().first()))
+            if (auto *w = qobject_cast<QQuickWindow *>(engine->rootObjects().first())) {
                 bridge->attachWindow(w);
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
+                // A later start: play its files here and come to the front.
+                QObject::connect(instance, &SingleInstance::received, bridge, [bridge, w](const QStringList &files) {
+                    if (!files.isEmpty())
+                        bridge->openPaths(files, true);
+                    if (w->visibility() == QWindow::Minimized)
+                        w->showNormal();
+                    w->show();
+                    w->raise();
+                    w->requestActivate();
+                });
+#endif
+            }
         }
     };
     web::initStorage(start);
