@@ -42,6 +42,11 @@ const MAX_TEXT: usize = 300;
 /// one more request to the outside world.
 const SEARCH_KEEP: Duration = Duration::from_secs(10 * 60);
 const BROWSE_KEEP: Duration = Duration::from_secs(15 * 60);
+/// Albums and playlists change seldom: one opened again is shown from the disk
+/// at once and asked for anew in the background when it is older than this.
+const COLLECTION_REFRESH: Duration = Duration::from_secs(3600);
+/// Answers and pictures kept on disk go when nobody looked at them this long.
+const STORED_KEEP: Duration = Duration::from_secs(30 * 24 * 3600);
 const MAX_CACHED: usize = 256;
 const MAX_SHELVES: usize = 20;
 /// A paging position is the extension's, but it travels through URLs.
@@ -191,6 +196,10 @@ pub struct Extensions {
     pub imports: PathBuf,
     temp: PathBuf,
     images: PathBuf,
+    /// Suggestions, albums and playlists as last answered, by request.
+    stored: PathBuf,
+    /// Stored answers being asked for anew.
+    refreshing: Mutex<HashSet<String>>,
     imported_file: PathBuf,
     /// "ext/item" -> the kept import.
     imported: Mutex<HashMap<String, Imported>>,
@@ -198,6 +207,35 @@ pub struct Extensions {
     /// What extensions answered lately, by extension and request.
     answers: Mutex<HashMap<String, (Instant, Value)>>,
     state: OnceLock<Weak<State>>,
+}
+
+/// A stored answer and when it was given, when the file holds the one for
+/// `key` (two requests could share a file name).
+fn read_stored(file: &Path, key: &str) -> Option<(u64, Value)> {
+    let len = std::fs::metadata(file).ok()?.len();
+    if len > 2 * MAX_JSON as u64 {
+        return None;
+    }
+    let v = bl_json::parse_bytes(&std::fs::read(file).ok()?).ok()?;
+    if v.str_or("key", "") != key {
+        return None;
+    }
+    Some((v.get("fetched").as_u64()?, v.get("answer").clone()))
+}
+
+/// Marks a kept file as looked at, at most once a day, so it is not pruned.
+fn touch(path: &Path) {
+    let day = Duration::from_secs(24 * 3600);
+    let stale = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age > day);
+    if stale {
+        if let Ok(f) = File::options().write(true).open(path) {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
+    }
 }
 
 fn opts(io_secs: u64) -> Options {
@@ -388,6 +426,8 @@ impl Extensions {
             imports: ext_root.join("library"),
             temp: ext_root.join("temporary"),
             images: data_root.join("cache").join("extension-images"),
+            stored: data_root.join("cache").join("extension-answers"),
+            refreshing: Mutex::new(HashSet::new()),
             imported_file: ext_root.join("imported.json"),
             imported: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
@@ -395,7 +435,7 @@ impl Extensions {
             state: OnceLock::new(),
         };
         if e.enabled() {
-            for d in [&e.imports, &e.temp, &e.images] {
+            for d in [&e.imports, &e.temp, &e.images, &e.stored] {
                 std::fs::create_dir_all(d)
                     .map_err(|err| format!("cannot create {}: {err}", d.display()))?;
             }
@@ -705,7 +745,8 @@ impl Extensions {
         (m.len(), bytes)
     }
 
-    /// Removes old temporary imports and image thumbnails.
+    /// Removes old temporary imports, and pictures and answers nobody looked
+    /// at for a long time.
     pub fn prune_temp(&self) {
         let old = |p: &Path, age: Duration| {
             std::fs::metadata(p)
@@ -716,7 +757,8 @@ impl Extensions {
         };
         for (dir, age) in [
             (&self.temp, TEMP_KEEP),
-            (&self.images, Duration::from_secs(7 * 24 * 3600)),
+            (&self.images, STORED_KEEP),
+            (&self.stored, STORED_KEEP),
         ] {
             for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
                 if old(&e.path(), age) {
@@ -960,6 +1002,86 @@ impl Extensions {
         Ok(v)
     }
 
+    /// An answer kept on disk: shown at once, also after a restart, and asked
+    /// for anew in the background once it is older than `refresh`. Only the
+    /// first time is it waited for.
+    fn get_stored(
+        &self,
+        e: &Ext,
+        path: &str,
+        io_secs: u64,
+        refresh: Duration,
+    ) -> Result<Value, String> {
+        let key = format!("{}{path}", e.id);
+        let file = self.stored_file(&key);
+        if let Some((fetched, v)) = read_stored(&file, &key) {
+            touch(&file);
+            if util::now_secs().saturating_sub(fetched) >= refresh.as_secs() {
+                self.refresh_stored(e, path, io_secs);
+            }
+            return Ok(v);
+        }
+        let v = self.get_json(e, path, io_secs)?;
+        self.store(&key, &v);
+        Ok(v)
+    }
+
+    fn stored_file(&self, key: &str) -> PathBuf {
+        self.stored
+            .join(format!("{:016x}.json", util::fnv1a64(key.as_bytes())))
+    }
+
+    fn store(&self, key: &str, v: &Value) {
+        let json = Value::object()
+            .with("key", key)
+            .with("fetched", util::now_secs())
+            .with("answer", v.clone())
+            .to_json();
+        if let Err(err) = util::write_atomic(&self.stored_file(key), json.as_bytes()) {
+            crate::warn!("cannot keep an extension's answer: {err}");
+        }
+    }
+
+    /// Asks for a stored answer anew, on a thread of its own. The new answer
+    /// replaces it; a failure leaves it as it was.
+    fn refresh_stored(&self, e: &Ext, path: &str, io_secs: u64) {
+        let key = format!("{}{path}", e.id);
+        let mut refreshing = self.refreshing.lock().unwrap_or_else(|e| e.into_inner());
+        if refreshing.contains(&key) {
+            return;
+        }
+        let Some(state) = self.state.get().cloned() else {
+            return;
+        };
+        refreshing.insert(key.clone());
+        drop(refreshing);
+        let (id, path, k) = (e.id.clone(), path.to_string(), key.clone());
+        let spawned = std::thread::Builder::new()
+            .name("ext-refresh".into())
+            .spawn(move || {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let x = &state.extensions;
+                if let Some(e) = x.ext(&id) {
+                    match x.get_json(e, &path, io_secs) {
+                        Ok(v) => x.store(&k, &v),
+                        Err(msg) => crate::debug!("{msg}"),
+                    }
+                }
+                x.refreshing
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&k);
+            });
+        if spawned.is_err() {
+            self.refreshing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+        }
+    }
+
     /// Songs and collections as the apps see them; anything else is left out.
     fn entries(
         &self,
@@ -1031,7 +1153,7 @@ impl Extensions {
     fn shelves(&self, state: &State, e: &Ext, req: &Request) -> Response {
         let limit = limit_of(req);
         let account = state.account_of(req);
-        let v = match self.get_cached(e, &format!("/shelves?limit={limit}"), 30, BROWSE_KEEP) {
+        let v = match self.get_stored(e, &format!("/shelves?limit={limit}"), 30, BROWSE_KEEP) {
             Ok(v) => v,
             Err(msg) => {
                 crate::warn!("{msg}");
@@ -1072,7 +1194,7 @@ impl Extensions {
             }
             path.push_str(&format!("&after={}", pct(after)));
         }
-        let v = match self.get_cached(e, &path, 30, BROWSE_KEEP) {
+        let v = match self.get_stored(e, &path, 30, COLLECTION_REFRESH) {
             Ok(v) => v,
             Err(msg) => {
                 crate::warn!("{msg}");
@@ -1151,6 +1273,7 @@ impl Extensions {
         let key = util::fnv1a64(format!("{}/{item}", e.id).as_bytes());
         let cache = self.images.join(format!("{key:016x}_{size}.jpg"));
         if cache.is_file() {
+            touch(&cache);
             return Response::file(&cache, "image/jpeg", None)
                 .with_header("Cache-Control", "private, max-age=86400");
         }

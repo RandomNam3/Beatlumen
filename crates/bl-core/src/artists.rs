@@ -143,7 +143,9 @@ impl Core {
     }
 
     /// Looks through the library for artists not known yet. Songs of a server
-    /// are left to the server, which has its own switch.
+    /// are left to the server, which has its own switch. A page is left alone:
+    /// it is asked for anew when it is opened, and the genres alone would take
+    /// its place.
     fn artists_look_through_library(&mut self, now: u64) {
         if self.artists.library_seen == self.library.revision {
             return;
@@ -159,7 +161,11 @@ impl Core {
                 if key.is_empty() || key == "unknown artist" || !seen.insert(key) {
                     continue;
                 }
-                if self.artists.book.get(name).is_some_and(|e| e.fresh(now))
+                if self
+                    .artists
+                    .book
+                    .get(name)
+                    .is_some_and(|e| e.fresh(now) || e.has_page())
                     || self.artists.wanted_contains(name, Depth::Genres)
                 {
                     continue;
@@ -260,15 +266,8 @@ impl Core {
             let Some(done) = self.artists.running.take() else {
                 return;
             };
-            let name = done.name;
             let artist = done.lookup.finish();
-            if artist.as_ref().is_some_and(|a| !a.image_url.is_empty()) {
-                let url = artist.as_ref().map(|a| a.image_url.clone());
-                self.artists
-                    .images_wanted
-                    .push_back((name.clone(), url.unwrap_or_default()));
-            }
-            self.artists_remember(&name, artist, unix, now);
+            self.artists_remember(host, &done.name, artist, unix, now);
             return;
         };
         if !self.artists.pacer.ready(request.service, now) {
@@ -280,25 +279,49 @@ impl Core {
         self.requests.insert(id, Req::Artist);
     }
 
+    /// Keeps what was found (`fetched`: when it was asked). The page only looks
+    /// again when something changed, and the picture is fetched only when it
+    /// is a new one.
     fn artists_remember(
         &mut self,
+        host: &dyn Host,
         name: &str,
         artist: Option<bl_meta::Artist>,
-        unix: u64,
+        fetched: u64,
         now: f64,
     ) {
-        if artist.as_ref().is_some_and(|a| !a.genres.is_empty()) {
+        let old = self.artists.book.get(name);
+        // A page known before stays when the services find nobody this time.
+        let artist = artist.or_else(|| old.filter(|e| e.has_page()).and_then(|e| e.artist.clone()));
+        let image_url = artist
+            .as_ref()
+            .map(|a| a.image_url.clone())
+            .unwrap_or_default();
+        let image_saved = !image_url.is_empty()
+            && old.is_some_and(|e| {
+                e.image_saved && e.artist.as_ref().is_some_and(|a| a.image_url == image_url)
+            })
+            && !host.storage_list(&image_key(name)).is_empty();
+        let unchanged = old.is_some_and(|e| e.artist == artist && e.image_saved == image_saved);
+        if !unchanged && artist.as_ref().is_some_and(|a| !a.genres.is_empty()) {
             self.artists.genres_changed = true;
+        }
+        if !image_saved && !image_url.is_empty() {
+            self.artists
+                .images_wanted
+                .push_back((name.to_string(), image_url));
         }
         self.artists.book.put(
             name,
             Entry {
                 artist,
-                fetched: unix,
-                image_saved: false,
+                fetched,
+                image_saved,
             },
         );
-        self.artists.rev += 1;
+        if !unchanged {
+            self.artists.rev += 1;
+        }
         self.artists.save_at.get_or_insert(now + 5.0);
     }
 
@@ -404,14 +427,12 @@ impl Core {
         {
             Some(("ready", a)) => {
                 let artist = bl_meta::Artist::from_json(a.get("artist"));
-                if !artist.image_url.is_empty() {
-                    self.artists
-                        .images_wanted
-                        .push_back((w.name.clone(), artist.image_url.clone()));
-                }
-                self.artists_remember(&w.name, Some(artist), unix, now);
+                // A page from long ago, which the server is asking for anew:
+                // its own time, so that this device asks again later.
+                let fetched = a.get("fetched").as_u64().map_or(unix, |f| f.min(unix));
+                self.artists_remember(host, &w.name, Some(artist), fetched, now);
             }
-            Some(("none", _)) => self.artists_remember(&w.name, None, unix, now),
+            Some(("none", _)) => self.artists_remember(host, &w.name, None, unix, now),
             Some(("pending", _)) => {
                 self.artists.server_again = Some((w, now + SERVER_RETRY));
             }
@@ -777,6 +798,7 @@ pub(crate) mod tests {
         core.settings.online_metadata = true;
         core.artists.loaded = true;
         core.artists_remember(
+            &host,
             "The Band",
             Some(bl_meta::Artist {
                 name: "The Band".into(),
@@ -791,5 +813,136 @@ pub(crate) mod tests {
         again.settings.online_metadata = true;
         run(&mut again, &mut host, 0.2);
         assert_eq!(again.artists.book.len(), 1);
+    }
+
+    fn page(image: &str) -> bl_meta::Artist {
+        bl_meta::Artist {
+            mbid: ID.to_string(),
+            name: "The Band".into(),
+            genres: vec!["rock".to_string()],
+            biography: "A band.".into(),
+            image_url: image.to_string(),
+            complete: true,
+            ..Default::default()
+        }
+    }
+
+    /// A page with its picture on this device, asked for `days` ago.
+    fn known_page(core: &mut Core, host: &TestHost, days: u64) {
+        core.artists.loaded = true;
+        core.artists.book.put(
+            "The Band",
+            Entry {
+                artist: Some(page("https://upload.wikimedia.org/a.jpg")),
+                fetched: host.unix_time() as u64 - days * 86_400,
+                image_saved: true,
+            },
+        );
+        host.storage_write(&image_key("The Band"), b"picture");
+    }
+
+    #[test]
+    fn a_page_from_long_ago_is_shown_at_once_and_asked_for_anew_when_opened() {
+        let mut host = TestHost::default();
+        let mut core = Core::new(&mut host, LaunchArgs::default(), "de");
+        core.library.local.push(song("The Band"));
+        core.library.rebuild();
+        core.settings.online_metadata = true;
+        known_page(&mut core, &host, 40);
+        // Looking through the library leaves the page alone: the genres alone
+        // would take its place.
+        run(&mut core, &mut host, 5.0);
+        assert_eq!(outward(&host), 0, "{:?}", host.requests);
+
+        let info = core.artist_info(&mut host, "The Band");
+        assert_eq!(info.get("artist").str_or("biography", ""), "A band.");
+        assert_eq!(
+            info.get("artist").str_or("image", ""),
+            format!("file:///test/{}", image_key("The Band"))
+        );
+        run(&mut core, &mut host, 0.5);
+        assert_eq!(outward(&host), 1, "asked for anew");
+        // Nobody is found this time: the page stays, with its picture.
+        let rev = core.artists.rev;
+        let unix = host.unix_time() as u64;
+        core.artists_remember(&host, "The Band", None, unix, host.now());
+        let e = core.artists.book.get("The Band").unwrap();
+        assert!(e.has_page() && e.image_saved && e.fresh(unix));
+        assert_eq!(core.artists.rev, rev, "nothing changed on the page");
+    }
+
+    #[test]
+    fn the_same_picture_is_not_fetched_again_and_a_new_one_is() {
+        let mut host = TestHost::default();
+        let mut core = Core::new(&mut host, LaunchArgs::default(), "de");
+        core.settings.online_metadata = true;
+        known_page(&mut core, &host, 40);
+        let unix = host.unix_time() as u64;
+        core.artists_remember(
+            &host,
+            "The Band",
+            Some(page("https://upload.wikimedia.org/a.jpg")),
+            unix,
+            0.0,
+        );
+        assert!(core.artists.book.get("The Band").unwrap().image_saved);
+        assert!(core.artists.images_wanted.is_empty());
+
+        let rev = core.artists.rev;
+        core.artists_remember(
+            &host,
+            "The Band",
+            Some(page("https://upload.wikimedia.org/b.jpg")),
+            unix,
+            0.0,
+        );
+        assert!(!core.artists.book.get("The Band").unwrap().image_saved);
+        assert_eq!(core.artists.images_wanted.len(), 1);
+        assert!(core.artists.rev > rev);
+    }
+
+    #[test]
+    fn a_page_the_server_has_from_long_ago_keeps_its_time() {
+        let mut host = TestHost::default();
+        let mut core = Core::new(&mut host, LaunchArgs::default(), "de");
+        core.settings.online_metadata = true;
+        core.artists.loaded = true;
+        let long_ago = host.unix_time() as u64 - 40 * 86_400;
+        let answer = |core: &mut Core, host: &mut TestHost| {
+            core.artists.server_again = Some((
+                Wanted {
+                    name: "The Band".into(),
+                    mbid: None,
+                    depth: Depth::Page,
+                    asked_server: false,
+                },
+                f64::MAX,
+            ));
+            let body = Value::object()
+                .with("enabled", true)
+                .with("state", "ready")
+                .with("fetched", long_ago)
+                .with("artist", page("").to_json())
+                .to_json();
+            core.artist_server_http(
+                host,
+                Ok(HttpResponse {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: body.into_bytes(),
+                }),
+            );
+        };
+        answer(&mut core, &mut host);
+        let e = core.artists.book.get("The Band").unwrap();
+        assert_eq!(e.fetched, long_ago);
+        assert!(e.has_page());
+        // Shown, and asked for again while it is open, but the same answer
+        // again does not make the page look again (no back and forth).
+        let info = core.artist_info(&mut host, "The Band");
+        assert_eq!(info.get("artist").str_or("name", ""), "The Band");
+        let rev = core.artists.rev;
+        answer(&mut core, &mut host);
+        assert_eq!(core.artists.rev, rev);
     }
 }

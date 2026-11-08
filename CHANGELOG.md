@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Artist and album information stays:** an artist page asked for once is shown at once
+  from then on, also after 30 days: it is asked for anew in the background when it is opened,
+  in the language of whoever opened it. Before, looking through the library replaced an old
+  page with the genres alone, so the page had to load again, and the server showed nothing
+  until it had asked anew. A picture that did not change is not fetched again, and a page stays
+  when the services find nobody the next time. Albums, playlists and rows of suggestions from
+  extensions are kept on the server's disk: they appear at once, also after a restart, and are
+  asked for anew in the background (albums after an hour, suggestions after 15 minutes). Their
+  pictures stay until nobody looked at them for 30 days instead of 7.
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable

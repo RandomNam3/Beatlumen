@@ -117,28 +117,52 @@ impl ArtistIndex {
         }
         let now = unix_now();
         let book = self.book.read().unwrap_or_else(|e| e.into_inner());
-        let entry = book.get(name).filter(|e| e.fresh(now));
-        match entry.map(|e| e.artist.as_ref()) {
-            Some(Some(a)) if a.complete => {
-                return answer.with("state", "ready").with("artist", a.to_json())
+        let entry = book.get(name);
+        let fresh = entry.is_some_and(|e| e.fresh(now));
+        match entry.map(|e| (e.artist.as_ref(), e.fetched)) {
+            // A page from long ago is shown all the same while it is asked for
+            // anew, with its time, so that the app asks again later too.
+            Some((Some(a), fetched)) if a.complete => {
+                let ready = answer
+                    .with("state", "ready")
+                    .with("artist", a.to_json())
+                    .with("fetched", fetched);
+                drop(book);
+                if !fresh {
+                    self.want_page(name, mbid, language);
+                }
+                return ready;
             }
-            Some(None) => return answer.with("state", "none"),
+            Some((None, _)) if fresh => return answer.with("state", "none"),
             _ => {}
         }
         drop(book);
+        self.want_page(name, mbid, language);
+        answer.with("state", "pending")
+    }
+
+    /// Queues a page for the worker.
+    fn want_page(&self, name: &str, mbid: Option<String>, language: &str) {
         let mut pages = self.pages.lock().unwrap_or_else(|e| e.into_inner());
         let key = Book::key(name);
-        if pages.len() < 64 && !pages.iter().any(|w| Book::key(&w.name) == key) {
+        let working = self
+            .working
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref()
+            .is_some_and(|w| Book::key(w) == key);
+        if pages.len() < 64 && !working && !pages.iter().any(|w| Book::key(&w.name) == key) {
             pages.push_back(Wanted {
                 name: name.to_string(),
                 mbid,
                 language: language.to_string(),
             });
         }
-        answer.with("state", "pending")
     }
 
-    /// The next artist of the library not known yet.
+    /// The next artist of the library not known yet. A page is left alone:
+    /// it is asked for anew when somebody opens it, in their language, and the
+    /// genres alone would take its place.
     fn next_in_library(&self, state: &State, tried: &HashSet<String>) -> Option<Wanted> {
         let now = unix_now();
         let lib = state.library();
@@ -150,7 +174,7 @@ impl ArtistIndex {
                 if key.is_empty()
                     || key == "unknown artist"
                     || tried.contains(&key)
-                    || book.get(name).is_some_and(|e| e.fresh(now))
+                    || book.get(name).is_some_and(|e| e.fresh(now) || e.has_page())
                 {
                     continue;
                 }
@@ -263,13 +287,19 @@ impl ArtistIndex {
                 }
             }
         }
-        *self.working.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if failed {
+            *self.working.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return false;
         }
         let artist = lookup.finish();
         let genres = artist.as_ref().is_some_and(|a| !a.genres.is_empty());
         let mut book = self.book.write().unwrap_or_else(|e| e.into_inner());
+        // A page known before stays when the services find nobody this time.
+        let artist = artist.or_else(|| {
+            book.get(&wanted.name)
+                .filter(|e| e.has_page())
+                .and_then(|e| e.artist.clone())
+        });
         book.put(
             &wanted.name,
             Entry {
@@ -280,6 +310,8 @@ impl ArtistIndex {
         );
         let json = book.to_json().to_json();
         drop(book);
+        // Only now: until the page is in the book, it is not asked for again.
+        *self.working.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if let Err(e) = crate::util::write_atomic(&self.path, json.as_bytes()) {
             crate::warn!("cannot write {}: {e}", self.path.display());
         }
@@ -445,5 +477,51 @@ mod tests {
         assert!(i.revision() > rev);
         assert!(i.genres("the band").is_empty());
         assert!(!i.info("the band", None, "de").bool_or("enabled", true));
+    }
+
+    #[test]
+    fn a_page_from_long_ago_is_served_at_once_and_asked_for_anew() {
+        let i = index("old", true);
+        let long_ago = unix_now() - 40 * 86_400;
+        i.book.write().unwrap().put(
+            "The Band",
+            Entry {
+                artist: Some(bl_meta::Artist {
+                    name: "The Band".into(),
+                    biography: "A band.".into(),
+                    complete: true,
+                    ..Default::default()
+                }),
+                fetched: long_ago,
+                image_saved: false,
+            },
+        );
+        let info = i.info("the band", None, "de");
+        assert_eq!(info.str_or("state", ""), "ready");
+        assert_eq!(info.get("artist").str_or("biography", ""), "A band.");
+        assert_eq!(info.get("fetched").as_u64(), Some(long_ago));
+        assert_eq!(i.pages.lock().unwrap().len(), 1, "asked for anew");
+        i.info("The Band", None, "de");
+        assert_eq!(i.pages.lock().unwrap().len(), 1, "once");
+
+        // The services find nobody this time: the page stays, from now.
+        let wanted = i.pages.lock().unwrap().pop_front().unwrap();
+        let time = RefCell::new(100.0);
+        let found = i.look_up(
+            &wanted,
+            Depth::Page,
+            &mut Pacer::default(),
+            &|| *time.borrow(),
+            &|_| Ok((200, br#"{"artists":[]}"#.to_vec())),
+            &|s| *time.borrow_mut() += s,
+        );
+        assert!(!found);
+        let book = i.book.read().unwrap();
+        let e = book.get("the band").unwrap();
+        assert!(e.has_page() && e.fresh(unix_now()));
+        assert_eq!(e.artist.as_ref().unwrap().biography, "A band.");
+        drop(book);
+        assert!(i.working.lock().unwrap().is_none());
+        let _ = std::fs::remove_file(&i.path);
     }
 }
