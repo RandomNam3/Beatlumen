@@ -139,15 +139,19 @@ pub fn audio_mime(ext: &str) -> &'static str {
 }
 
 /// Image extensions served as background images.
-pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "gif", "webp"];
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "apng", "bmp", "gif", "webp", "tif", "tiff",
+];
 
 pub fn image_mime(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
+        "apng" => "image/apng",
         "bmp" => "image/bmp",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "tif" | "tiff" => "image/tiff",
         _ => "application/octet-stream",
     }
 }
@@ -159,6 +163,7 @@ pub fn image_format_ext(f: bl_image::Format) -> &'static str {
         bl_image::Format::Bmp => "bmp",
         bl_image::Format::Gif => "gif",
         bl_image::Format::WebP => "webp",
+        bl_image::Format::Tiff => "tif",
     }
 }
 

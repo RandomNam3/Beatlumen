@@ -12,6 +12,9 @@ use std::path::Path;
 
 /// Largest image file read for thumbnails.
 pub const MAX_IMAGE_FILE: u64 = 64 * 1024 * 1024;
+/// Largest background image file read (a 16K BMP is about 400 MB); decoding
+/// scales while it reads, so only the file is held in memory.
+pub const MAX_BACKGROUND_FILE: u64 = 512 * 1024 * 1024;
 
 /// JPEG quality of generated thumbnails.
 pub const JPEG_QUALITY: u8 = 88;
@@ -54,8 +57,17 @@ pub fn embedded_picture(path: &Path, ext: &str) -> Option<Vec<u8>> {
 
 /// Reads an image file (size limited).
 pub fn read_image_file(path: &Path) -> Option<Vec<u8>> {
+    read_limited(path, MAX_IMAGE_FILE)
+}
+
+/// Reads a background image file (larger limit than covers).
+pub fn read_background_file(path: &Path) -> Option<Vec<u8>> {
+    read_limited(path, MAX_BACKGROUND_FILE)
+}
+
+fn read_limited(path: &Path, max: u64) -> Option<Vec<u8>> {
     let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_IMAGE_FILE {
+    if !meta.is_file() || meta.len() > max {
         return None;
     }
     std::fs::read(path).ok()

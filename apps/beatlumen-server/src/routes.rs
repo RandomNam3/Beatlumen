@@ -864,7 +864,15 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     let wants_scaled = req
         .query("size")
         .is_some_and(|s| !s.trim().is_empty() && s.trim() != "0");
-    if !wants_scaled {
+    // Backgrounds ask with anim=1: animations are sent as they are (the
+    // client decodes their frames at screen size), still images scaled.
+    let keep_animation = req.query("anim").is_some_and(|v| v.trim() == "1")
+        && matches!(
+            util::ext_lower(&item.path).as_str(),
+            "gif" | "png" | "apng" | "webp"
+        )
+        && covers::read_background_file(&item.path).is_some_and(|d| bl_image::is_animated(&d));
+    if !wants_scaled || keep_animation {
         let resp = Response::file(
             &item.path,
             util::image_mime(&util::ext_lower(&item.path)),
@@ -876,7 +884,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
         }
         return resp.with_header("Cache-Control", "private, max-age=3600");
     }
-    let size = size_param(req, 1920, 64, 4096);
+    let size = size_param(req, 1920, 64, 8192);
     let cache = state.images.scaled_path(&item, size);
     let etag = cache
         .file_stem()
@@ -896,7 +904,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::read_image_file(&item.path) else {
+    let Some(src) = covers::read_background_file(&item.path) else {
         return Response::error(404, "image not found");
     };
     match covers::make_thumbnail(&src, size) {
