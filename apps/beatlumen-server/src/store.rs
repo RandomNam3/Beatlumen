@@ -556,12 +556,17 @@ impl Part {
     }
 }
 
-/// A database of its own in the temporary folder, for tests.
+/// A database of its own, for tests. Its file is deleted at once (it stays
+/// usable while open), so nothing is left in the temporary folder, which
+/// may be memory.
 #[cfg(test)]
 pub fn temp_store(name: &str) -> Arc<Store> {
     let dir = std::env::temp_dir().join(format!("bl-db-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    Store::open(&dir).expect("temporary database")
+    let s = Store::open(&dir).expect("temporary database");
+    // (Windows keeps an open file: then it stays.)
+    let _ = std::fs::remove_dir_all(&dir);
+    s
 }
 
 /// Files of the server before 0.13.0, which kept its data as JSON files.
@@ -597,11 +602,27 @@ mod tests {
     use super::*;
     use std::process::{Command, Stdio};
 
-    fn temp(name: &str) -> PathBuf {
+    /// A folder that is removed again at the end of the test.
+    struct TempDir(PathBuf);
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn temp(name: &str) -> TempDir {
         let dir = std::env::temp_dir().join(format!("bl-store-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        TempDir(dir)
     }
 
     fn text(s: &Store, key: &str) -> Option<String> {
