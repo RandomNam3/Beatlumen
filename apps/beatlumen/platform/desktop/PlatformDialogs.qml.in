@@ -40,6 +40,14 @@ Item {
         if (Core.nativeDialogs) exportDialog.open()
         else pick("folder", [], "folder", Theme.tr("Export as file…"), (p) => Core.call("playlist.export", { id: id, folder: p[0] }))
     }
+    function openKaraoke() {
+        if (Core.nativeDialogs) karaokeDialog.open()
+        else pick("file", ["txt", "json"], "mic", Theme.tr("Import UltraStar file…"), (p) => Core.call("karaoke.importFile", { path: p[0] }))
+    }
+    function exportKaraoke() {
+        if (Core.nativeDialogs) karaokeExportDialog.open()
+        else pick("folder", [], "folder", Theme.tr("Export as UltraStar file…"), (p) => Core.call("karaoke.export", { folder: p[0] }))
+    }
     function addImageFolder() {
         if (Core.nativeDialogs) imageFolderDialog.open()
         else pick("folder", [], "folder", Theme.tr("Add folder"), (p) => Core.call("backgrounds.addFolder", { path: p[0] }))
@@ -75,6 +83,26 @@ Item {
             const p = Core.localPaths([selectedFolder])
             if (p.length > 0)
                 Core.call("backgrounds.addFolder", { path: p[0] })
+        }
+    }
+    FileDialog {
+        id: karaokeDialog
+        title: Theme.tr("Import UltraStar file…")
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["UltraStar (*.txt)", "Beatlumen karaoke (*.json)", "* (*)"]
+        onAccepted: {
+            const p = Core.localPaths([selectedFile])
+            if (p.length > 0)
+                Core.call("karaoke.importFile", { path: p[0] })
+        }
+    }
+    FolderDialog {
+        id: karaokeExportDialog
+        title: Theme.tr("Export as UltraStar file…")
+        onAccepted: {
+            const p = Core.localPaths([selectedFolder])
+            if (p.length > 0)
+                Core.call("karaoke.export", { folder: p[0] })
         }
     }
     FolderDialog {

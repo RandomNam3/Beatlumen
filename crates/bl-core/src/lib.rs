@@ -27,6 +27,7 @@ pub mod host;
 pub mod icon;
 pub mod jobs;
 mod karaoke;
+mod karaoke_session;
 pub mod library;
 pub mod lyrics;
 pub mod mic;

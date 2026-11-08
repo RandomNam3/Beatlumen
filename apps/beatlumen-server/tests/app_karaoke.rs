@@ -121,8 +121,8 @@ fn import_export_offline_and_removal() {
         std::thread::sleep(Duration::from_millis(20));
     };
     assert_eq!(on_server.status, 200);
-    let t = bl_pitch::KaraokeTrack::from_json(&bl_json::parse_bytes(&on_server.body).unwrap())
-        .unwrap();
+    let t =
+        bl_pitch::KaraokeTrack::from_json(&bl_json::parse_bytes(&on_server.body).unwrap()).unwrap();
     assert_eq!(t.notes().count(), 3);
     assert_eq!(t.title, "Sine Song");
 
@@ -286,7 +286,10 @@ fn computed_on_the_device() {
         assert!(t0.elapsed() < Duration::from_secs(900), "too slow");
         std::thread::sleep(Duration::from_millis(100));
     };
-    eprintln!("computed on the device in {:.1} s", t0.elapsed().as_secs_f64());
+    eprintln!(
+        "computed on the device in {:.1} s",
+        t0.elapsed().as_secs_f64()
+    );
     assert_eq!(k.str_or("source", ""), "computed");
     assert_eq!(k.str_or("place", ""), "device");
     let t = bl_pitch::KaraokeTrack::from_json(k.get("track")).unwrap();
@@ -297,4 +300,144 @@ fn computed_on_the_device() {
         t.key.map(|k| k.name())
     );
     assert!(t.notes().filter(|n| n.kind.has_pitch()).count() > 10);
+}
+
+/// Two singers on microphones: one sings the notes (an octave higher, and
+/// holds the long note), one sings a semitone and a half off. Points per
+/// singer at the end.
+#[test]
+fn singers_are_scored_against_the_notes() {
+    use bl_core::mic;
+    let mut app = App::new("karaoke-round");
+    let dir = app.dir.join("music");
+    std::fs::create_dir_all(&dir).unwrap();
+    let song = dir.join("Song.wav");
+    std::fs::write(&song, common::wav(4)).unwrap();
+    app.cmd(
+        Value::object()
+            .with("cmd", "open")
+            .with("paths", vec![song.to_string_lossy().to_string()])
+            .with("play", true),
+    );
+    app.wait("playing", |s| s.str_or("play", "") == "playing");
+    app.cmd(Value::object().with("cmd", "pause"));
+    karaoke_loaded(&mut app);
+    // 25 ms steps: A3 from 0.5 to 1.5 s, C4 held from 1.5 to 3 s.
+    let r = app.cmd(Value::object().with("cmd", "karaoke.import").with(
+        "text",
+        "#TITLE:Song\n#BPM:600\n#GAP:0\n: 20 40 57 La\n: 60 60 60 lu\nE\n",
+    ));
+    assert_eq!(r.get("notes").as_u64(), Some(2), "{}", r.to_json());
+
+    // Two microphones.
+    app.host.mic = Some(Default::default());
+    let devices = Value::Array(vec![
+        Value::object()
+            .with("id", "a")
+            .with("name", "A")
+            .with("rate", 48000),
+        Value::object()
+            .with("id", "b")
+            .with("name", "B")
+            .with("rate", 48000),
+    ]);
+    app.cmd(
+        Value::object()
+            .with("cmd", "mic.devices")
+            .with("devices", devices),
+    );
+    let open = |app: &mut App, d: &str| {
+        app.cmd(Value::object().with("cmd", "mic.open").with("device", d))
+            .get("stream")
+            .as_u64()
+            .unwrap()
+    };
+    let (a, b) = (open(&mut app, "a"), open(&mut app, "b"));
+    let r = app.cmd(
+        Value::object()
+            .with("cmd", "karaoke.start")
+            .with("difficulty", "medium")
+            .with(
+                "singers",
+                vec![
+                    Value::object().with("stream", a).with("name", "Ana"),
+                    Value::object().with("stream", b).with("name", "Ben"),
+                ],
+            ),
+    );
+    assert!(r.bool_or("ok", false), "{}", r.to_json());
+    app.cmd(Value::object().with("cmd", "seek").with("position", 0.0));
+    app.cmd(Value::object().with("cmd", "play"));
+
+    let rate = 48000.0;
+    let (mut phase_a, mut phase_b) = (0f64, 0f64);
+    let t0 = Instant::now();
+    let mut rendered = 0f64;
+    let mut since = i64::MIN;
+    let mut seen = 0usize;
+    loop {
+        app.state();
+        // The audio device plays in real time.
+        if let Some(src) = app.host.audio.lock().unwrap().clone() {
+            while rendered < t0.elapsed().as_secs_f64() * rate {
+                let mut buf = vec![0f32; 960];
+                src.render(&mut buf, 0);
+                rendered += 480.0;
+            }
+        }
+        let live = app.cmd(
+            Value::object()
+                .with("cmd", "karaoke.live")
+                .with("since", since),
+        );
+        if live.bool_or("finished", false) {
+            break;
+        }
+        for s in live.get("singers").as_array().unwrap() {
+            let t = s.get("trail").as_array().unwrap();
+            seen += t.len() / 3;
+            if t.len() >= 3 {
+                since = since.max(t[t.len() - 3].as_i64().unwrap());
+            }
+        }
+        let song = live.f64_or("songMs", 0.0) / 1000.0;
+        let note = if (0.5..1.5).contains(&song) {
+            Some(57.0)
+        } else if (1.5..3.0).contains(&song) {
+            Some(60.0)
+        } else {
+            None
+        };
+        // 10 ms of each singer.
+        let n = 480;
+        let mut pcm_a = vec![0i16; n];
+        let mut pcm_b = vec![0i16; n];
+        if let Some(m) = note {
+            let fa = 440.0 * 2f64.powf((m + 12.0 - 69.0) / 12.0);
+            let fb = 440.0 * 2f64.powf((m + 1.5 - 69.0) / 12.0);
+            for i in 0..n {
+                pcm_a[i] = (8000.0 * phase_a.sin()) as i16;
+                pcm_b[i] = (8000.0 * phase_b.sin()) as i16;
+                phase_a += std::f64::consts::TAU * fa / rate;
+                phase_b += std::f64::consts::TAU * fb / rate;
+            }
+        }
+        let at = mic::clock_us() - 10_000;
+        mic::push_pcm(a as u32, &pcm_a, 1, 48000, at);
+        mic::push_pcm(b as u32, &pcm_b, 1, 48000, at);
+        assert!(t0.elapsed() < Duration::from_secs(15), "{}", live.to_json());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(seen > 100, "only {seen} frames scored");
+    let r = app.cmd(Value::object().with("cmd", "karaoke.results"));
+    let singers = r.get("singers").as_array().unwrap();
+    assert_eq!(singers[0].str_or("name", ""), "Ana", "{}", r.to_json());
+    let ana = &singers[0];
+    let ben = &singers[1];
+    // Short of perfect: the tracker needs a moment at each note's start.
+    assert!(ana.f64_or("points", 0.0) > 7000.0, "{}", r.to_json());
+    // Both notes are long enough for the held-note bonus.
+    assert_eq!(ana.get("heldNotes").as_u64(), Some(2), "{}", r.to_json());
+    assert!(ben.f64_or("points", 1.0) < 1000.0, "{}", r.to_json());
+    assert_eq!(ana.get("lines").as_array().unwrap().len(), 1);
 }

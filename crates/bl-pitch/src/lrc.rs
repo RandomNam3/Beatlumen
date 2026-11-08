@@ -235,7 +235,11 @@ mod tests {
         let s = parse("[00:01.00]<00:01.00>go <00:01.50>show<00:01.50>\n[00:05.00]next\n");
         let l = &s.lines[0];
         // To the line's end: three seconds after its last word at most.
-        assert!((l.syllables[1].end - 4.5).abs() < 1e-9, "{:?}", l.syllables[1]);
+        assert!(
+            (l.syllables[1].end - 4.5).abs() < 1e-9,
+            "{:?}",
+            l.syllables[1]
+        );
     }
 
     #[test]

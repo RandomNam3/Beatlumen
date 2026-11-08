@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
+  microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
+  drawn as the song plays, the points at the end. Microphones are only open during a round.
+- **Points for the pitch:** each singer's live pitch against the notes of their voice, the octave
+  does not count. The tolerance depends on the difficulty (2, 1 or half a semitone), golden notes
+  count double, rap notes count when the singer is heard, and a long note held on pitch earns a
+  bonus. Each line gets a rating as it ends.
 - **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
   text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
   computes it on request or for the whole library in the background (`--karaoke`,

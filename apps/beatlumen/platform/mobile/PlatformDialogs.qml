@@ -15,15 +15,21 @@ Item {
     function addMusicFolder() { folderPicker.showFor(false) }
     function addImageFolder() { folderPicker.showFor(true) }
     function exportPlaylist(id) { folderPicker.exportId = id; folderPicker.images = false; folderPicker.show() }
+    // Karaoke data of the current song: the next picked file is imported,
+    // an export goes into a chosen folder.
+    function openKaraoke() { Core.call("karaoke.expectImport"); Core.pickFiles("*/*", false) }
+    function exportKaraoke() { folderPicker.exportId = ""; folderPicker.exportKaraoke = true; folderPicker.images = false; folderPicker.show() }
 
     FolderPicker {
         id: folderPicker
         property bool forImages: false
         // A playlist to export into the chosen folder.
         property string exportId: ""
-        function showFor(img) { exportId = ""; forImages = img; images = img; show() }
+        property bool exportKaraoke: false
+        function showFor(img) { exportId = ""; exportKaraoke = false; forImages = img; images = img; show() }
         onChosen: (p) => {
-            if (exportId) { Core.call("playlist.export", { id: exportId, folder: p }); exportId = "" }
+            if (exportKaraoke) { Core.call("karaoke.export", { folder: p }); exportKaraoke = false }
+            else if (exportId) { Core.call("playlist.export", { id: exportId, folder: p }); exportId = "" }
             else if (forImages) Core.call("backgrounds.addFolder", { path: p })
             else Core.call("library.addFolder", { path: p })
         }

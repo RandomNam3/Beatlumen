@@ -21,6 +21,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Added to the library" => "In die Bibliothek aufgenommen",
         "Already working on a song" => "Es wird schon ein Song bearbeitet",
         "Karaoke data computed" => "Karaoke-Daten berechnet",
+        "Singer" => "Sänger:in",
+        "Choose a microphone for each singer" => "Wähle für jede:n Sänger:in ein Mikrofon",
         "Computing the karaoke data failed" => "Die Karaoke-Daten konnten nicht berechnet werden",
         "Saving the karaoke data failed" => "Die Karaoke-Daten konnten nicht gespeichert werden",
         "Karaoke data needs a song text with times" => "Karaoke-Daten brauchen einen synchronisierten Songtext",

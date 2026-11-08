@@ -132,6 +132,13 @@ impl Core {
 
     /// `karaoke.*` commands.
     pub(crate) fn karaoke_command(&mut self, host: &mut dyn Host, name: &str, c: &Value) -> Value {
+        match name {
+            "karaoke.start" => return self.karaoke_start(host, c),
+            "karaoke.live" => return self.karaoke_live(host, c),
+            "karaoke.results" => return self.karaoke_results(),
+            "karaoke.stop" => return self.karaoke_stop(),
+            _ => {}
+        }
         let id = match c.get("id").as_str() {
             Some(id) if !id.is_empty() => id.to_string(),
             _ => match self.queue.current() {
@@ -151,7 +158,14 @@ impl Core {
             }
             "karaoke.import" => self.karaoke_import(host, &id, c.str_or("text", "").as_bytes()),
             "karaoke.importFile" => match host.fs_read(c.str_or("path", "")) {
-                Ok(d) => self.karaoke_import(host, &id, &d),
+                Ok(d) => {
+                    let r = self.karaoke_import(host, &id, &d);
+                    match r.get("error").as_str() {
+                        Some(e) => self.toast(e.to_string(), true),
+                        None => self.toast(self.tr("Karaoke data added"), false),
+                    }
+                    r
+                }
                 Err(e) => Value::object().with("error", e),
             },
             "karaoke.expectImport" => {

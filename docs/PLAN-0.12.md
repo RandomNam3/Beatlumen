@@ -94,10 +94,10 @@ the results come into Beatlumen.
 
 ## Phase 5: karaoke mode
 
-- [ ] Points for pitch (per note, octave ignored, tolerance by difficulty)
-  and text (CTC score of the sung line against the known line).
-- [ ] Page in the app: song, microphones per singer or voice, text with
-  note bars and live pitch, results; the singing turned down with
+- [~] Points for pitch (per note, octave ignored, tolerance by difficulty;
+  done) and text (CTC score of the sung line against the known line).
+- [~] Page in the app: song, microphones per singer or voice, text with
+  note bars and live pitch, results (done); the singing turned down with
   `bl-sep` on request.
 
 ## Phase 6: voices

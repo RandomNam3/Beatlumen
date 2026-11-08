@@ -22,6 +22,7 @@ pub mod live;
 pub mod lrc;
 pub mod notes;
 pub mod pyin;
+pub mod score;
 pub mod stored;
 pub mod syllables;
 pub mod track;

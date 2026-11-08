@@ -100,14 +100,16 @@ pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
     recordings are not stored or sent anywhere else.
   - Latency calibration per microphone (clap or sing a test note).
 - **Points:**
-  - Pitch: the live pitch of each microphone against the song's notes,
-    octave ignored, tolerance by difficulty.
+  - Done: pitch: the live pitch of each microphone against the song's
+    notes, octave ignored, tolerance by difficulty (2, 1 or half a
+    semitone), a bonus for held long notes (`bl_pitch::score`).
   - Text: each sung line scored against the known line with the CTC
     aligner (how well the sung sounds fit the text), cheap enough for
     phones.
 - **Playback:** the singing can be turned down with the separation.
-- **Screen:** its own page: pick a song, assign microphones to singers or
-  voices, the text with note bars and each singer's live pitch, results.
+- Done: **screen:** its own page (`KaraokePage.qml`): pick a song, assign
+  microphones to singers or voices, the text with note bars and each
+  singer's live pitch, results.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),
