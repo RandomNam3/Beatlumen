@@ -595,9 +595,14 @@ fn auth_login_logout_and_persistence() {
     let logins = s.server.state.store.list("auth/token/");
     assert_eq!(logins.len(), 1);
     assert!(logins.iter().all(|(k, _)| k != &token));
-    let file = std::fs::read(data.join(beatlumen_server::store::FILE_NAME)).unwrap();
-    let has = |needle: &[u8]| file.windows(needle.len()).any(|w| w == needle);
-    assert!(!has(token.as_bytes()) && !has(b"s3cret"));
+    // Nor anywhere in the file (Windows: the running server's locks keep
+    // other handles from reading it).
+    #[cfg(unix)]
+    {
+        let file = std::fs::read(data.join(beatlumen_server::store::FILE_NAME)).unwrap();
+        let has = |needle: &[u8]| file.windows(needle.len()).any(|w| w == needle);
+        assert!(!has(token.as_bytes()) && !has(b"s3cret"));
+    }
 
     let r = s.req("POST", "/api/login", &[], br#"{"password":"s3cret pw"}"#);
     let token2 = body_json(&r).get("token").as_str().unwrap().to_string();

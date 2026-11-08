@@ -359,8 +359,12 @@ fn accounts_files_and_sharing() {
     let blob = std::fs::read(stored).unwrap();
     assert!(!blob.windows(64).any(|w| song.windows(64).next() == Some(w)));
     assert!(!record.to_json().contains("song"));
-    let db = std::fs::read(s.data.join(beatlumen_server::store::FILE_NAME)).unwrap();
-    assert!(!db.windows(9).any(|w| w == b"song.flac"));
+    // (Windows: the running server's locks keep other handles from reading.)
+    #[cfg(unix)]
+    {
+        let db = std::fs::read(s.data.join(beatlumen_server::store::FILE_NAME)).unwrap();
+        assert!(!db.windows(9).any(|w| w == b"song.flac"));
+    }
 
     // Byte ranges for streaming.
     let r = s.req(
