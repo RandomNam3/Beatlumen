@@ -379,7 +379,15 @@ ApplicationWindow {
     // Page panel.
     Rectangle {
         id: panel
-        visible: win.page >= 0
+        opacity: win.page >= 0 ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.motion(win.page >= 0 ? Theme.normal : Theme.fast)
+                easing.type: win.page >= 0 ? Theme.easeOut : Theme.easeIn
+            }
+        }
+        onOpacityChanged: if (opacity > 0 && opacity < 1) Theme.smoothFrames(Theme.fast)
         // The visual beside it is sharp: nothing of it may show through here.
         color: win.docked ? Theme.surfaceStrong : Theme.surface
         anchors.rightMargin: win.docked ? win.dockWidth : 0
@@ -412,10 +420,12 @@ ApplicationWindow {
             }
 
             StackLayout {
+                id: pages
                 anchors.fill: parent
                 anchors.margins: win.compact ? 4 : 8
                 anchors.topMargin: 8
                 currentIndex: Math.max(0, win.page)
+                SwitchMotion { stack: pages; axis: "y" }
                 Loader {
                     id: library
                     active: win.page === 0 || item !== null

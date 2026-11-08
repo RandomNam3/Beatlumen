@@ -119,7 +119,7 @@ Rectangle {
                 else
                     moreMenu.popup(moreButton, moreButton.width - moreMenu.width, -moreMenu.implicitHeight)
             }
-            Menu {
+            AppMenu {
                 id: moreMenu
                 Repeater {
                     model: nav.moreItems.concat([{ icon: "info", label: Theme.tr("Help"), page: -1 }])

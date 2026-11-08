@@ -31,7 +31,7 @@ IconButton {
     tip: remote ? Theme.tr("Playing on") + " " + (outputs.activeName || "") : Theme.tr("Play on…")
     onClicked: { if (Core.platform !== "web") Core.call("outputs.scan"); menu.open() }
 
-    Menu {
+    AppMenu {
         id: menu
         y: -height
         width: 300

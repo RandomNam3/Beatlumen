@@ -467,7 +467,11 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
             QJniObject power = context.callObjectMethod(
                 "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;",
                 QJniObject::fromString(QStringLiteral("power")).object<jstring>());
-            m_powerSaving = power.isValid() && power.callMethod<jboolean>("isPowerSaveMode");
+            const bool saving = power.isValid() && power.callMethod<jboolean>("isPowerSaveMode");
+            if (saving != m_powerSaving) {
+                m_powerSaving = saving;
+                emit powerSavingChanged();
+            }
         }
     });
 #endif
@@ -790,7 +794,9 @@ void Bridge::attachWindow(QQuickWindow *window)
     connect(&m_frameTimer, &QTimer::timeout, window, &QQuickWindow::update);
     connect(window, &QQuickWindow::frameSwapped, this, [this]() {
         const bool playing = m_core && bl_core_is_playing(m_core);
+        const bool animating = m_smoothClock.isValid() && m_smoothClock.elapsed() < m_smoothUntil;
         const qint64 gap = QAccessible::isActive() ? 66
+            : animating ? (m_powerSaving ? 33 : 16)
             : m_visualCovered ? (playing ? 50 : 100)
             : playing && !m_powerSaving ? 16 : 33;
         m_frameTimer.start(int(qMax<qint64>(0, gap - m_frameClock.elapsed())));
@@ -905,6 +911,18 @@ void Bridge::openPaths(const QStringList &paths, bool play)
     for (const QString &p : paths)
         list << p;
     call(QStringLiteral("open"), {{QStringLiteral("paths"), list}, {QStringLiteral("play"), play}});
+}
+
+void Bridge::smoothFrames(int ms)
+{
+    if (!m_smoothClock.isValid())
+        m_smoothClock.start();
+    m_smoothUntil = qMax(m_smoothUntil, m_smoothClock.elapsed() + qBound(0, ms, 2000));
+#ifdef Q_OS_ANDROID
+    // The next frame now, not after a rationed gap.
+    if (m_frameTimer.isActive() && m_frameTimer.remainingTime() > 16)
+        m_frameTimer.start(0);
+#endif
 }
 
 void Bridge::setKeepScreenOn(bool on)

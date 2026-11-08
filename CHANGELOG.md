@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Smooth transitions:** pages, tabs (e.g. Effects → Backgrounds), settings categories and
+  library sections come in with a short fade and slide (about 0.2 s), pushed pages slide in from
+  the side, menus and dialogs grow and fade, bottom sheets slide up, the page panel fades over the
+  visual, and the rows of the start page fade in when it first fills. All share one set of
+  durations and curves and only move opacity and transforms, so nothing is laid out again.
+  "Reduce motion" turns them off; the photosensitive mode and the system's battery saver keep
+  the fading and leave out sliding and growing (shorter on the battery saver). While an
+  animation runs, phones briefly draw at the full frame rate even where frames are otherwise
+  rationed (paused, a page over the visual).
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable
