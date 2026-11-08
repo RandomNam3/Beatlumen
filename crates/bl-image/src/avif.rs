@@ -105,6 +105,7 @@ pub(crate) fn transform(img: Image, props: &Props) -> Image {
 /// YUV rows of a picture (one coded image or a grid), decoded row of
 /// tiles by row of tiles.
 struct Source<'d> {
+    fast: bool,
     datas: &'d [Cow<'d, [u8]>],
     config: &'d [u8],
     rows: usize,
@@ -130,6 +131,7 @@ impl<'d> Source<'d> {
         cols: usize,
         width: usize,
         height: usize,
+        fast: bool,
     ) -> Result<Source<'d>, Error> {
         let first = parse_stream(&datas[0], config)?;
         let c = &first.seq.color;
@@ -155,6 +157,7 @@ impl<'d> Source<'d> {
         }
         let planes = c.num_planes();
         Ok(Source {
+            fast,
             datas,
             config,
             rows,
@@ -196,7 +199,7 @@ impl<'d> Source<'d> {
                 {
                     return Err(Error::InvalidData("avif: grid tiles differ in format"));
                 }
-                self.decs.push(FrameDecoder::new(s));
+                self.decs.push(FrameDecoder::new(s, self.fast));
             }
             self.ready = vec![0; self.cols];
             self.fed = 0;
@@ -347,9 +350,12 @@ pub(crate) fn decode_fit(h: &Heif, fit: &Fit) -> Result<Image, Error> {
         .as_ref()
         .is_some_and(|(a, _)| h.premultiplied(h.primary, *a));
     let (w, hh) = (w as usize, hh as usize);
-    let mut color = Source::new(&cdatas, &ccfg, rows, cols, w, hh)?;
+    // Scaled down at least by half: CDEF and loop restoration change the
+    // result by less than an 8-bit step, and take half the decoding time.
+    let fast = tw as u64 * 2 <= cw as u64 && th as u64 * 2 <= ch as u64;
+    let mut color = Source::new(&cdatas, &ccfg, rows, cols, w, hh, fast)?;
     let mut alpha = match &alpha_parts {
-        Some((d, c, r, k)) => Some(Source::new(d, c, *r, *k, w, hh)?),
+        Some((d, c, r, k)) => Some(Source::new(d, c, *r, *k, w, hh, fast)?),
         None => None,
     };
     let mut ci = color.ci;

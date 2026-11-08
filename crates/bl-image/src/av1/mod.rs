@@ -133,9 +133,10 @@ pub(crate) struct FrameDecoder<'a> {
 }
 
 impl<'a> FrameDecoder<'a> {
-    pub fn new(s: Stream<'a>) -> FrameDecoder<'a> {
+    /// `fast`: skip CDEF and loop restoration (see [`Decoder::new`]).
+    pub fn new(s: Stream<'a>, fast: bool) -> FrameDecoder<'a> {
         FrameDecoder {
-            d: Decoder::new(s.seq, s.fh),
+            d: Decoder::new(s.seq, s.fh, fast),
             tile_data: s.tiles,
             tiles: Vec::new(),
             tile_row: 0,
@@ -197,7 +198,7 @@ pub fn decode_planes(data: &[u8], config: &[u8]) -> Result<Planes, Error> {
     let planes = s.seq.color.num_planes();
     let (ssx, ssy) = (s.seq.color.ssx as usize, s.seq.color.ssy as usize);
     let bit_depth = s.seq.color.bit_depth;
-    let mut f = FrameDecoder::new(s);
+    let mut f = FrameDecoder::new(s, false);
     let (w, h) = (f.width(), f.height());
     let mut out: Vec<Vec<u16>> = Vec::new();
     for p in 0..planes {

@@ -221,7 +221,10 @@ pub(crate) struct Decoder {
 }
 
 impl Decoder {
-    pub fn new(seq: SequenceHeader, fh: FrameHeader) -> Decoder {
+    /// `fast`: skip CDEF and loop restoration (for images that are scaled
+    /// down at least by half, where they change the result by less than a
+    /// step of 8-bit output).
+    pub fn new(seq: SequenceHeader, fh: FrameHeader, fast: bool) -> Decoder {
         let planes = seq.color.num_planes();
         let ssx = seq.color.ssx as usize;
         let ssy = seq.color.ssy as usize;
@@ -255,7 +258,7 @@ impl Decoder {
         let frame = FrameBuf::new(planes, mi_cols * 4, mi_rows * 4, ssx, ssy, rows);
         let mut lr_on = [false; 3];
         for (p, on) in lr_on.iter_mut().enumerate().take(planes) {
-            *on = fh.lr_type[p] != 0;
+            *on = fh.lr_type[p] != 0 && !fast;
         }
         let post = Post::new(
             planes,
@@ -269,6 +272,7 @@ impl Decoder {
             fh.lf_level[0] != 0 || fh.lf_level[1] != 0,
             fh.use_superres,
             lr_on,
+            !fast,
         );
         Decoder {
             planes,

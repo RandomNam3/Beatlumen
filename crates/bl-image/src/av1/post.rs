@@ -13,6 +13,7 @@ use super::tables::*;
 
 pub(crate) struct Post {
     pub lf_on: bool,
+    pub cdef_on: bool,
     pub superres: bool,
     pub lr_on: [bool; 3],
     pub cdef: [Ring; 3],
@@ -49,9 +50,11 @@ impl Post {
         lf_on: bool,
         superres: bool,
         lr_on: [bool; 3],
+        cdef_on: bool,
     ) -> Post {
         let mut p = Post {
             lf_on,
+            cdef_on,
             superres,
             lr_on,
             cdef: [Ring::empty(), Ring::empty(), Ring::empty()],
@@ -328,7 +331,7 @@ impl Decoder {
             }
         }
         let mut r = y0 / 4;
-        while r < (y1 / 4).min(self.mi_rows) {
+        while self.post.cdef_on && r < (y1 / 4).min(self.mi_rows) {
             let mut c = 0;
             while c < self.mi_cols {
                 self.cdef_block(r, c);
@@ -460,7 +463,6 @@ impl Decoder {
         damping: i32,
         dir: usize,
     ) {
-        let coeff_shift = self.bd - 8;
         let (sx, sy) = if plane > 0 {
             (self.ssx, self.ssy)
         } else {
@@ -470,50 +472,159 @@ impl Decoder {
         let y0 = (r * 4) >> sy;
         let w = 8 >> sx;
         let h = 8 >> sy;
-        let pri_tap = &CDEF_PRI_TAPS[((pri >> coeff_shift) & 1) as usize];
-        let sec_tap = &CDEF_SEC_TAPS[((pri >> coeff_shift) & 1) as usize];
-        let mi_rows = self.mi_rows as isize;
-        let mi_cols = self.mi_cols as isize;
+        if pri == 0 && sec == 0 {
+            // Nothing changes (the copy is already in place).
+            return;
+        }
+        let coeff_shift = self.bd - 8;
+        let pri_tap = CDEF_PRI_TAPS[((pri >> coeff_shift) & 1) as usize];
+        let sec_tap = CDEF_SEC_TAPS[((pri >> coeff_shift) & 1) as usize];
+        // The block with a border of 2 samples; unavailable samples (outside
+        // the frame) are marked.
+        const B: usize = 12;
+        // Rows of 8 starting anywhere in the block stay inside.
+        let mut px = [0i32; B * B + 16];
+        let mut avail = [true; B * B];
+        let pw = ((self.mi_cols * 4) >> sx) as isize;
+        let ph = ((self.mi_rows * 4) >> sy) as isize;
         let rec = &self.frame.rec[plane];
-        let get = |y: isize, x: isize| -> Option<i32> {
-            let cr = (y << sy) >> 2;
-            let cc = (x << sx) >> 2;
-            if y >= 0 && x >= 0 && cr < mi_rows && cc < mi_cols {
-                Some(rec.at(x as usize, y as usize) as i32)
-            } else {
-                None
+        let mut edge = false;
+        let inner =
+            x0 >= 2 && y0 >= 2 && (x0 + w + 2) as isize <= pw && (y0 + h + 2) as isize <= ph;
+        if inner {
+            for i in 0..h + 4 {
+                let row = &rec.row(y0 + i - 2)[x0 - 2..x0 + w + 2];
+                for (d, &v) in px[i * B..i * B + w + 4].iter_mut().zip(row) {
+                    *d = v as i32;
+                }
             }
+        }
+        for i in 0..if inner { 0 } else { h + 4 } {
+            let y = y0 as isize + i as isize - 2;
+            if y < 0 || y >= ph {
+                for j in 0..w + 4 {
+                    avail[i * B + j] = false;
+                }
+                edge = true;
+                continue;
+            }
+            let row = rec.row(y as usize);
+            for j in 0..w + 4 {
+                let x = x0 as isize + j as isize - 2;
+                if x < 0 || x >= pw {
+                    avail[i * B + j] = false;
+                    edge = true;
+                } else {
+                    px[i * B + j] = row[x as usize] as i32;
+                }
+            }
+        }
+        let pri_adj = if pri > 0 {
+            (damping - (pri as u32).ilog2() as i32).max(0)
+        } else {
+            0
         };
+        let sec_adj = if sec > 0 {
+            (damping - (sec as u32).ilog2() as i32).max(0)
+        } else {
+            0
+        };
+        // Tap offsets (row, column) in the bordered block.
+        let off = |d: usize, k: usize| -> (usize, usize) {
+            let o = &CDEF_DIRECTIONS[d][k];
+            (o[0] as isize as usize, o[1] as isize as usize)
+        };
+        let po = [off(dir, 0), off(dir, 1)];
+        let s1 = [off((dir + 2) & 7, 0), off((dir + 2) & 7, 1)];
+        let s2 = [off((dir + 6) & 7, 0), off((dir + 6) & 7, 1)];
         let mut out = [0u16; 64];
-        for i in 0..h {
-            for j in 0..w {
-                let (yy, xx) = ((y0 + i) as isize, (x0 + j) as isize);
-                let x = rec.at(xx as usize, yy as usize) as i32;
-                let mut sum = 0i32;
-                let mut max = x;
-                let mut min = x;
-                for k in 0..2 {
-                    for sign in [-1isize, 1] {
-                        let d = &CDEF_DIRECTIONS[dir][k];
-                        if let Some(p) = get(yy + sign * d[0] as isize, xx + sign * d[1] as isize) {
-                            sum += pri_tap[k] as i32 * constrain(p - x, pri, damping);
-                            max = max.max(p);
-                            min = min.min(p);
-                        }
-                        for off in [6usize, 2] {
-                            let d = &CDEF_DIRECTIONS[(dir + off) & 7][k];
-                            if let Some(s) =
-                                get(yy + sign * d[0] as isize, xx + sign * d[1] as isize)
-                            {
-                                sum += sec_tap[k] as i32 * constrain(s - x, sec, damping);
-                                max = max.max(s);
-                                min = min.min(s);
+        if !edge {
+            // All taps available: whole rows of 8 at once (vectorises).
+            let lin = |o: (usize, usize)| -> isize { (o.0 as isize) * B as isize + o.1 as isize };
+            // (offset, strength, adjustment, tap weight) of the 12 taps.
+            let mut taps = [(0isize, 0i32, 0i32, 0i32); 12];
+            let mut n = 0;
+            for k in 0..2 {
+                for sign in [-1isize, 1] {
+                    taps[n] = (sign * lin(po[k]), pri, pri_adj, pri_tap[k] as i32);
+                    taps[n + 1] = (sign * lin(s2[k]), sec, sec_adj, sec_tap[k] as i32);
+                    taps[n + 2] = (sign * lin(s1[k]), sec, sec_adj, sec_tap[k] as i32);
+                    n += 3;
+                }
+            }
+            // The block as 64 lanes (8 x 8; chroma blocks use part of it).
+            let mut xr = [0i32; 64];
+            for i in 0..h {
+                let c0 = (i + 2) * B + 2;
+                xr[i * 8..i * 8 + 8].copy_from_slice(&px[c0..c0 + 8]);
+            }
+            let lanes = h * 8;
+            let mut sum = [0i32; 64];
+            let mut max = xr;
+            let mut min = xr;
+            let mut v = [0i32; 64];
+            for &(o, strength, adj, t) in &taps {
+                for i in 0..h {
+                    let st = ((i + 2) * B + 2) as isize + o;
+                    let st = st.clamp(0, (B * B) as isize) as usize;
+                    v[i * 8..i * 8 + 8].copy_from_slice(&px[st..st + 8]);
+                }
+                for j in 0..lanes {
+                    let d = v[j] - xr[j];
+                    let ad = d.abs();
+                    let m = (strength - (ad >> adj)).max(0).min(ad);
+                    sum[j] += t * if d < 0 { -m } else { m };
+                    max[j] = max[j].max(v[j]);
+                    min[j] = min[j].min(v[j]);
+                }
+            }
+            for i in 0..h {
+                for j in 0..w {
+                    let k = i * 8 + j;
+                    let val = xr[k] + ((8 + sum[k] - (sum[k] < 0) as i32) >> 4);
+                    out[i * 8 + j] = val.clamp(min[k], max[k]) as u16;
+                }
+            }
+        } else {
+            let cons = |diff: i32, threshold: i32, adj: i32| -> i32 {
+                let mag = (threshold - (diff.abs() >> adj)).clamp(0, diff.abs());
+                if diff < 0 {
+                    -mag
+                } else {
+                    mag
+                }
+            };
+            let lin = |o: (usize, usize)| -> isize { (o.0 as isize) * B as isize + o.1 as isize };
+            for i in 0..h {
+                for j in 0..w {
+                    let ci = ((i + 2) * B + j + 2) as isize;
+                    let x = px[ci as usize];
+                    let mut sum = 0i32;
+                    let mut max = x;
+                    let mut min = x;
+                    for k in 0..2 {
+                        for sign in [-1isize, 1] {
+                            let p = (ci + sign * lin(po[k])) as usize;
+                            if avail[p] {
+                                let v = px[p];
+                                sum += pri_tap[k] as i32 * cons(v - x, pri, pri_adj);
+                                max = max.max(v);
+                                min = min.min(v);
+                            }
+                            for so in [s2[k], s1[k]] {
+                                let q = (ci + sign * lin(so)) as usize;
+                                if avail[q] {
+                                    let v = px[q];
+                                    sum += sec_tap[k] as i32 * cons(v - x, sec, sec_adj);
+                                    max = max.max(v);
+                                    min = min.min(v);
+                                }
                             }
                         }
                     }
+                    let v = x + ((8 + sum - (sum < 0) as i32) >> 4);
+                    out[i * 8 + j] = v.clamp(min, max) as u16;
                 }
-                let v = x + ((8 + sum - (sum < 0) as i32) >> 4);
-                out[i * 8 + j] = v.clamp(min, max) as u16;
             }
         }
         let ring = &mut self.post.cdef[plane];
