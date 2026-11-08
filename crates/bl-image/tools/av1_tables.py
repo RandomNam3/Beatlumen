@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Extracts the constant tables of the AV1 decoder from the text of the AV1
+Bitstream & Decoding Process Specification (github.com/AOMediaCodec/av1-spec)
+and writes them as Rust source:
+
+    python3 -I av1_tables.py <av1-spec checkout> <crates/bl-image/src/av1>
+
+Only tables that intra frames need are written (no inter prediction).
+"""
+import os
+import re
+import sys
+
+spec, out_dir = sys.argv[1], sys.argv[2]
+
+ENUMS = {}
+for i, n in enumerate("""BLOCK_4X4 BLOCK_4X8 BLOCK_8X4 BLOCK_8X8 BLOCK_8X16 BLOCK_16X8 BLOCK_16X16
+        BLOCK_16X32 BLOCK_32X16 BLOCK_32X32 BLOCK_32X64 BLOCK_64X32 BLOCK_64X64 BLOCK_64X128
+        BLOCK_128X64 BLOCK_128X128 BLOCK_4X16 BLOCK_16X4 BLOCK_8X32 BLOCK_32X8 BLOCK_16X64
+        BLOCK_64X16 BLOCK_INVALID""".split()):
+    ENUMS[n] = i
+for i, n in enumerate("""TX_4X4 TX_8X8 TX_16X16 TX_32X32 TX_64X64 TX_4X8 TX_8X4 TX_8X16 TX_16X8
+        TX_16X32 TX_32X16 TX_32X64 TX_64X32 TX_4X16 TX_16X4 TX_8X32 TX_32X8 TX_16X64
+        TX_64X16""".split()):
+    ENUMS[n] = i
+for i, n in enumerate("""DCT_DCT ADST_DCT DCT_ADST ADST_ADST FLIPADST_DCT DCT_FLIPADST
+        FLIPADST_FLIPADST ADST_FLIPADST FLIPADST_ADST IDTX V_DCT H_DCT V_ADST H_ADST
+        V_FLIPADST H_FLIPADST""".split()):
+    ENUMS[n] = i
+for i, n in enumerate("RESTORE_NONE RESTORE_WIENER RESTORE_SGRPROJ RESTORE_SWITCHABLE".split()):
+    ENUMS[n] = i
+for i, n in enumerate("""DC_PRED V_PRED H_PRED D45_PRED D135_PRED D113_PRED D157_PRED D203_PRED
+        D67_PRED SMOOTH_PRED SMOOTH_V_PRED SMOOTH_H_PRED PAETH_PRED UV_CFL_PRED""".split()):
+    ENUMS[n] = i
+
+# Constants of the symbols section.
+consts = re.findall(r'^\|\s*`([A-Z0-9_]+)`\s*\|\s*([^|]+?)\s*\|',
+                    open(os.path.join(spec, '03.symbols.md')).read(), re.M)
+for _ in range(4):  # constants may refer to later ones
+    for k, v in consts:
+        try:
+            ENUMS[k] = int(eval(v.replace('\\', ''), {}, dict(ENUMS)))
+        except Exception:
+            pass
+
+def value(expr):
+    expr = " ".join(expr.split())
+    return int(eval(expr, {}, dict(ENUMS)))
+
+TABLES = {}
+pat = re.compile(r'^\s*(?:const\s+)?([A-Z][A-Za-z0-9_]*)((?:\s*\[[^\]]*\])+)\s*=\s*\{', re.M)
+for f in sorted(os.listdir(spec)):
+    if not f.endswith('.md'):
+        continue
+    txt = open(os.path.join(spec, f)).read()
+    for m in pat.finditer(txt):
+        name = m.group(1)
+        dims = re.findall(r'\[([^\]]*)\]', m.group(2))
+        # Body: up to the matching closing brace.
+        i, depth = m.end() - 1, 0
+        while True:
+            c = txt[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        body = txt[m.end() - 1:i + 1]
+        body = re.sub(r'//[^\n]*', '', body)
+        body = re.sub(r'/\*.*?\*/', '', body, flags=re.S)
+        elems = [e.strip() for e in re.sub(r'[{}]', ',', body).split(',')]
+        # The specification text misses a comma in Split_Tx_Size.
+        split = []
+        for e in elems:
+            if re.fullmatch(r'[A-Za-z0-9_]+(\s+[A-Za-z0-9_]+)+', e):
+                split.extend(e.split())
+            elif e:
+                split.append(e)
+        TABLES[name] = (dims, split)
+
+def table(name):
+    dims, toks = TABLES[name]
+    dims = [value(d) for d in dims]
+    vals = [value(t) for t in toks]
+    n = 1
+    for d in dims:
+        n *= d
+    if len(vals) != n:
+        raise SystemExit(f'{name}: {len(vals)} values, expected {n} ({dims})')
+    return dims, vals
+
+def rust_name(n):
+    return re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', n).upper().replace('__', '_')
+
+def rust_type(dims, t):
+    s = t
+    for d in reversed(dims):
+        s = f'[{s}; {d}]'
+    return s
+
+def nested(dims, vals, width):
+    if len(dims) == 1:
+        items = [str(v) for v in vals]
+        lines, cur = [], ''
+        for it in items:
+            if len(cur) + len(it) + 1 > width:
+                lines.append(cur.rstrip())
+                cur = ''
+            cur += it + (', ' if width < 100 else ',')
+        if cur:
+            lines.append(cur.rstrip())
+        return '[\n' + '\n'.join('    ' + l for l in lines) + '\n]'
+    step = len(vals) // dims[0]
+    parts = [nested(dims[1:], vals[k * step:(k + 1) * step], width) for k in range(dims[0])]
+    return '[\n' + ',\n'.join(parts) + ',\n]'
+
+def emit(out, names, typ=None):
+    for name in names:
+        dims, vals = table(name)
+        t = typ
+        if t is None:
+            lo, hi = min(vals), max(vals)
+            t = 'u8' if lo >= 0 and hi < 256 else 'i8' if lo >= -128 and hi < 128 else \
+                'u16' if lo >= 0 and hi < 65536 else 'i16' if lo >= -32768 and hi < 32768 else 'i32'
+        body = nested(dims, vals, 92 if len(vals) < 10000 else 100)
+        out.append(f'pub(crate) static {rust_name(name)}: {rust_type(dims, t)} = {body};\n')
+
+HEADER = ('// Generated by tools/av1_tables.py from the text of the AV1 Bitstream &\n'
+          '// Decoding Process Specification (Alliance for Open Media); do not edit.\n'
+          '#![allow(clippy::all)]\n\n')
+
+def write(fname, parts):
+    src = HEADER + '\n'.join(parts)
+    with open(os.path.join(out_dir, fname), 'w') as fh:
+        fh.write(src)
+
+cdfs = sorted(n for n in TABLES if n.startswith('Default_') and n.endswith('_Cdf'))
+inter_only = ('Mv_Class0_Fr', 'Mv_Class0_Hp', 'Mv_Fr', 'Mv_Hp', 'New_Mv', 'Zero_Mv', 'Ref_Mv', 'Drl_', 'Is_Inter', 'Comp_', 'Skip_Mode',
+              'Single_Ref', 'Compound_', 'Interp_', 'Motion_', 'Inter_Intra',
+              'Wedge', 'Use_Obmc', 'Uni_Comp', 'Y_Mode_Cdf', 'Segment_Id_Predicted')
+cdfs = [n for n in cdfs if not any(n[len('Default_'):].startswith(p) for p in inter_only)]
+parts = []
+emit(parts, cdfs, 'u16')
+write('cdf_tables.rs', parts)
+
+scans = sorted(n for n in TABLES if '_Scan_' in n)
+parts = []
+emit(parts, scans, 'u16')
+write('scan_tables.rs', parts)
+
+# Quantizer matrices: only the fundamental 32x32 and 32x16 matrices are
+# written; the decoder derives the other sizes (subsampling, specification
+# section "Derivation process") and 16x32 by transposition. Both are checked
+# here against the full table.
+_, qm = table('Quantizer_Matrix')
+_, qm_off = table('Qm_Offset')
+TXW = table('Tx_Width')[1]
+TXH = table('Tx_Height')[1]
+QM_TOTAL = len(qm) // 30
+fund32, fund3216 = [], []
+for lvl in range(15):
+    for pl in range(2):
+        m = qm[(lvl * 2 + pl) * QM_TOTAL:(lvl * 2 + pl + 1) * QM_TOTAL]
+        f32 = m[qm_off[3]:qm_off[3] + 1024]
+        f3216 = m[qm_off[10]:qm_off[10] + 512]
+        f1632 = m[qm_off[9]:qm_off[9] + 512]
+        for i in range(32):
+            for j in range(16):
+                assert f1632[i * 16 + j] == f3216[j * 32 + i], 'transpose'
+        for tx in range(19):
+            w, h = min(TXW[tx], 32), min(TXH[tx], 32)
+            fm, fw, fh = (f32, 32, 32) if w == h else (f3216, 32, 16) if w > h else (f1632, 16, 32)
+            rw, rh = fw // w, fh // h
+            pw, ph = (rw + 1) // 2 - 1, (rh + 1) // 2 - 1
+            for i in range(h):
+                for j in range(w):
+                    assert m[qm_off[tx] + i * w + j] == fm[(rh * i + ph) * fw + rw * j + pw], ('derive', tx)
+        fund32.extend(f32)
+        fund3216.extend(f3216)
+TABLES['Qm_32x32'] = (['15', '2', '1024'], [str(v) for v in fund32])
+TABLES['Qm_32x16'] = (['15', '2', '512'], [str(v) for v in fund3216])
+parts = []
+emit(parts, ['Qm_32x32', 'Qm_32x16'], 'u8')
+write('qm_tables.rs', parts)
+
+misc = ['Mi_Width_Log2', 'Mi_Height_Log2', 'Num_4x4_Blocks_Wide', 'Num_4x4_Blocks_High',
+        'Max_Tx_Size_Rect', 'Partition_Subsize', 'Split_Tx_Size', 'Mode_To_Txfm',
+        'Palette_Color_Context', 'Palette_Color_Hash_Multipliers', 'Sm_Weights_Tx_4x4',
+        'Sm_Weights_Tx_8x8', 'Sm_Weights_Tx_16x16', 'Sm_Weights_Tx_32x32', 'Sm_Weights_Tx_64x64',
+        'Mode_To_Angle', 'Dr_Intra_Derivative', 'Intra_Filter_Taps', 'Tx_Size_Sqr',
+        'Tx_Size_Sqr_Up', 'Tx_Width', 'Tx_Height', 'Tx_Width_Log2', 'Tx_Height_Log2',
+        'Sig_Ref_Diff_Offset', 'Adjusted_Tx_Size',
+        'Segmentation_Feature_Bits', 'Segmentation_Feature_Signed', 'Segmentation_Feature_Max',
+        'Remap_Lr_Type', 'Max_Tx_Depth', 'Subsampled_Size',
+        'Tx_Type_In_Set_Intra', 'Tx_Type_Intra_Inv_Set1', 'Tx_Type_Intra_Inv_Set2',
+        'Wiener_Taps_Min', 'Wiener_Taps_Max', 'Wiener_Taps_K', 'Sgrproj_Xqd_Min',
+        'Sgrproj_Xqd_Max', 'Intra_Edge_Kernel', 'Dc_Qlookup', 'Ac_Qlookup',
+        'Cos128_Lookup', 'Transform_Row_Shift', 'Cdef_Uv_Dir', 'Div_Table', 'Cdef_Pri_Taps',
+        'Cdef_Sec_Taps', 'Cdef_Directions', 'Upscale_Filter', 'Sgr_Params', 'Intra_Mode_Context',
+        'Coeff_Base_Ctx_Offset', 'Coeff_Base_Pos_Ctx_Offset', 'Mag_Ref_Offset_With_Tx_Class',
+        'Filter_Intra_Mode_To_Intra_Dir', 'Subpel_Filters', 'Tx_Type_In_Set_Inter',
+        'Tx_Type_Inter_Inv_Set1', 'Tx_Type_Inter_Inv_Set2', 'Tx_Type_Inter_Inv_Set3']
+parts = []
+emit(parts, misc)
+write('tables.rs', parts)
+print('tables:', len(cdfs), 'cdfs,', len(scans), 'scans,', len(misc), 'misc')

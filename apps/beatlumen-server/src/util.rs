@@ -140,7 +140,7 @@ pub fn audio_mime(ext: &str) -> &'static str {
 
 /// Image extensions served as background images.
 pub const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "apng", "bmp", "gif", "webp", "tif", "tiff",
+    "jpg", "jpeg", "png", "apng", "bmp", "gif", "webp", "tif", "tiff", "avif", "heic", "heif",
 ];
 
 pub fn image_mime(ext: &str) -> &'static str {
@@ -152,6 +152,9 @@ pub fn image_mime(ext: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "tif" | "tiff" => "image/tiff",
+        "avif" => "image/avif",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
         _ => "application/octet-stream",
     }
 }
@@ -164,6 +167,8 @@ pub fn image_format_ext(f: bl_image::Format) -> &'static str {
         bl_image::Format::Gif => "gif",
         bl_image::Format::WebP => "webp",
         bl_image::Format::Tiff => "tif",
+        bl_image::Format::Avif => "avif",
+        bl_image::Format::Heic => "heic",
     }
 }
 
@@ -179,7 +184,7 @@ pub fn static_mime(ext: &str) -> &'static str {
         "txt" => "text/plain; charset=utf-8",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => image_mime(ext),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" => image_mime(ext),
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ttf" => "font/ttf",

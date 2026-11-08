@@ -31,6 +31,18 @@ specifications:
 * RFC 9649 (WebP Image Format): VP8L distance map table and code length
   code order.
 
+* AV1 Bitstream & Decoding Process Specification (Alliance for Open Media):
+  src/av1/cdf_tables.rs, scan_tables.rs, qm_tables.rs and tables.rs are
+  extracted from the specification text by tools/av1_tables.py (the
+  quantizer matrices as their fundamental 32x32 and 32x16 matrices, from
+  which the decoder derives the other sizes as the specification
+  describes). The decoder in src/av1 follows the specification's decoding
+  process; no code of libaom, dav1d or other AV1 implementations was used.
+  AV1 is covered by the Alliance for Open Media Patent License 1.0, see
+  PATENTS-AV1.md.
+* ISO/IEC 23008-12 (HEIF) and the AV1 Image File Format (AVIF) for the
+  container in src/heif.rs; they contributed no code or tables.
+
 Algorithms (not code) referenced: Arai-Agui-Nakajima scaled DCT, the
 "fancy" triangle chroma upsampling with the rounding used by the Independent
 JPEG Group's libjpeg, package-merge (Larmore-Hirschberg) for length-limited

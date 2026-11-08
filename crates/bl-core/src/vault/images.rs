@@ -15,7 +15,20 @@ pub(super) fn is_image(f: &VaultFile) -> bool {
     f.mime.starts_with("image/")
         || matches!(
             crate::jobs::extension(&f.name).as_deref(),
-            Some("jpg" | "jpeg" | "png" | "apng" | "webp" | "gif" | "bmp" | "tif" | "tiff")
+            Some(
+                "jpg"
+                    | "jpeg"
+                    | "png"
+                    | "apng"
+                    | "webp"
+                    | "gif"
+                    | "bmp"
+                    | "tif"
+                    | "tiff"
+                    | "avif"
+                    | "heic"
+                    | "heif"
+            )
         )
 }
 

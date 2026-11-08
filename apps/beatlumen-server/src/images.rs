@@ -237,7 +237,7 @@ impl Images {
         }
         let format = bl_image::probe_format(body).ok_or((
             415,
-            "not a supported image format (JPEG, PNG, BMP, GIF, WebP, TIFF)".to_string(),
+            "not a supported image format (JPEG, PNG, BMP, GIF, WebP, TIFF, AVIF, HEIC)".to_string(),
         ))?;
         let raw = filename
             .map(|f| bl_net::http::percent_decode(f, false))

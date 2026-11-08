@@ -343,6 +343,13 @@ pub(crate) fn guess_image_mime(data: &[u8]) -> &'static str {
         "image/bmp"
     } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
         "image/webp"
+    } else if data.len() >= 12 && &data[4..8] == b"ftyp" && matches!(&data[8..12], b"avif" | b"avis") {
+        "image/avif"
+    } else if data.len() >= 12
+        && &data[4..8] == b"ftyp"
+        && matches!(&data[8..12], b"heic" | b"heix" | b"mif1")
+    {
+        "image/heic"
     } else {
         "application/octet-stream"
     }

@@ -12,7 +12,7 @@ Item {
     signal imageFolderChosen(string path)
 
     readonly property var audioExts: ["mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "aif", "aiff", "mka", "webm", "mp2", "hfx", "m3u", "m3u8", "pls", "xspf"]
-    readonly property var imageExts: ["jpg", "jpeg", "png", "apng", "webp", "gif", "bmp", "tif", "tiff"]
+    readonly property var imageExts: ["jpg", "jpeg", "png", "apng", "webp", "gif", "bmp", "tif", "tiff", "avif", "heic", "heif"]
 
     function openAudio() {
         if (Core.nativeDialogs) audioDialog.open()
@@ -114,7 +114,7 @@ Item {
         id: imageDialog
         title: Theme.tr("Add images")
         fileMode: FileDialog.OpenFiles
-        nameFilters: [Theme.tr("Images") + " (*.jpg *.jpeg *.png *.apng *.webp *.gif *.bmp *.tif *.tiff)", "* (*)"]
+        nameFilters: [Theme.tr("Images") + " (*.jpg *.jpeg *.png *.apng *.webp *.gif *.bmp *.tif *.tiff *.avif *.heic *.heif)", "* (*)"]
         onAccepted: {
             const paths = Core.localPaths(selectedFiles)
             Core.call("backgrounds.add", { sources: paths, show: true })

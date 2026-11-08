@@ -386,6 +386,67 @@ pub unsafe extern "C" fn bl_image_thumbnail(
     Box::into_raw(b) as *mut u8
 }
 
+/// Allocates the buffer of an image decoded by the application: `width` x
+/// `height` straight RGBA pixels, top row first. Returns null when the size
+/// is not acceptable (then the decoder should fail).
+pub type BlImageAlloc =
+    unsafe extern "C" fn(ctx: *mut c_void, width: u32, height: u32) -> *mut u8;
+
+/// Decodes a HEIC file holding one image with a decoder of the operating
+/// system: calls `alloc` once with the image size and fills the buffer it
+/// returns. `need_w` x `need_h` is the smallest size needed (the decoder
+/// may decode at a reduced size that still covers it). Returns 1 on
+/// success. Called from any thread.
+pub type BlHeicDecode = unsafe extern "C" fn(
+    data: *const u8,
+    len: usize,
+    need_w: u32,
+    need_h: u32,
+    ctx: *mut c_void,
+    alloc: BlImageAlloc,
+) -> i32;
+
+unsafe extern "C" fn heic_alloc(ctx: *mut c_void, width: u32, height: u32) -> *mut u8 {
+    // SAFETY: `ctx` is the `Option<Image>` slot of `bl_set_heic_decoder`.
+    let slot = &mut *(ctx as *mut Option<bl_image::Image>);
+    if width == 0 || height == 0 || width as u64 * height as u64 > 1 << 28 || slot.is_some() {
+        return std::ptr::null_mut();
+    }
+    let img = slot.insert(bl_image::Image::new(width, height));
+    img.pixels.as_mut_ptr()
+}
+
+/// Registers the application's HEIC decoder (or removes it with null). HEVC
+/// is patent-encumbered, so Beatlumen has no decoder of its own: HEIC
+/// pictures are decoded by the operating system where it can.
+#[no_mangle]
+pub unsafe extern "C" fn bl_set_heic_decoder(f: Option<BlHeicDecode>) {
+    let Some(f) = f else {
+        bl_image::set_system_decoder(None);
+        return;
+    };
+    bl_image::set_system_decoder(Some(Box::new(move |data: &[u8], w: u32, h: u32| {
+        let mut slot: Option<bl_image::Image> = None;
+        // SAFETY: the decoder reads `data` and writes at most the buffer
+        // `heic_alloc` hands out, which stays alive in `slot`.
+        let ok = unsafe {
+            f(
+                data.as_ptr(),
+                data.len(),
+                w,
+                h,
+                &mut slot as *mut Option<bl_image::Image> as *mut c_void,
+                heic_alloc,
+            )
+        };
+        if ok == 1 {
+            slot
+        } else {
+            None
+        }
+    })));
+}
+
 /// Frees a buffer returned by [`bl_http_fetch`] or [`bl_image_thumbnail`].
 #[no_mangle]
 pub unsafe extern "C" fn bl_bytes_free(p: *mut u8, len: usize) {

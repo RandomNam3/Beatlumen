@@ -977,7 +977,11 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
             "gif" | "png" | "apng" | "webp"
         )
         && covers::read_background_file(&item.path).is_some_and(|d| bl_image::is_animated(&d));
-    if !wants_scaled || keep_animation {
+    // HEIC needs a decoder of the operating system, which the server does
+    // not have: the client decodes the original.
+    let keep_heic = matches!(util::ext_lower(&item.path).as_str(), "heic" | "heif")
+        && !bl_image::has_system_decoder();
+    if !wants_scaled || keep_animation || keep_heic {
         let resp = Response::file(
             &item.path,
             util::image_mime(&util::ext_lower(&item.path)),
