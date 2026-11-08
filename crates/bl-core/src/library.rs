@@ -424,7 +424,9 @@ pub fn start_local_scan(
             let mut out = Vec::with_capacity(files.len());
             for (i, (path, size, mtime)) in files.iter().enumerate() {
                 if let Some(k) = known.get(path) {
-                    if k.size == *size && k.modified == *mtime && !misread_utf8(k) {
+                    // Read again what could not be read or was misread before.
+                    let again = k.codec.is_empty() || misread_utf8(k);
+                    if k.size == *size && k.modified == *mtime && !again {
                         out.push(k.clone());
                         continue;
                     }
