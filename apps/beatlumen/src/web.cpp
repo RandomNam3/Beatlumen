@@ -29,6 +29,10 @@ EM_JS(char *, bl_js_origin, (), {
     return stringToNewUTF8(location.origin);
 });
 
+EM_JS(char *, bl_js_room, (), {
+    return stringToNewUTF8(new URLSearchParams(location.search).get("room") || "");
+});
+
 } // namespace
 
 extern "C" {
@@ -148,6 +152,18 @@ void pickFiles(const QString &accept, bool multiple, std::function<void(const QS
     }, a.constData(), multiple ? 1 : 0);
 }
 
+QStringList pageArguments()
+{
+    char *origin = bl_js_origin();
+    char *room = bl_js_room();
+    QStringList args{QStringLiteral("--origin"), QString::fromUtf8(origin)};
+    if (*room)
+        args << QStringLiteral("--room") << QString::fromUtf8(room);
+    free(origin);
+    free(room);
+    return args;
+}
+
 void openUrl(const QString &url)
 {
     const QByteArray u = url.toUtf8();
@@ -183,6 +199,7 @@ void persistStorage() {}
 void httpRequest(void *, uint64_t, const char *, const char *, const char *, const uint8_t *, size_t) {}
 void pickFiles(const QString &, bool, std::function<void(const QString &, const QByteArray &)>) {}
 void openUrl(const QString &) {}
+QStringList pageArguments() { return {}; }
 void listenAuth(std::function<void(const QString &)>) {}
 } // namespace web
 

@@ -117,6 +117,7 @@ int main(int argc, char *argv[])
 
     QStringList args = QGuiApplication::arguments();
     args.removeFirst();
+    args += web::pageArguments();
     for (const QString &a : args) {
         if (a == QLatin1String("-h") || a == QLatin1String("--help")) {
             qInfo("usage: beatlumen [--server URL] [--background PATH] [--preset NAME] [--fullscreen] [audio files...]");

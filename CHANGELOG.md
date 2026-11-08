@@ -17,6 +17,16 @@
   files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
   supported: AVIF would need an AV1 decoder of its own, HEIC an HEVC decoder, whose patents
   stand in the way.
+- **Listen together:** make a room on the Devices page and let others in with its code or
+  link. Everyone hears the same song of the server at the same moment; the host decides what
+  plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and
+  while it plays every device keeps itself in step, in steps too small to be heard. People
+  without a login can join as guests: they get this room's songs and nothing else, and only
+  while it lasts. The host can turn guests off for a room, the admin for the server (Admin
+  area, `--no-room-guests`). The host hears what happens in a new room at once, too: before, that
+  took the host's own next device report.
+- **Devices playing together** ask for the server's time more carefully (corrected by the
+  round trip) and now stay in step while they play.
 - **Android, no more "not responding":** with any accessibility service on (a password manager
   like Bitwarden, KDE Connect's remote mouse), Android's main thread spent minutes waiting for
   Qt's answers about the app's controls. The keyboard did not come up, Android offered to close
