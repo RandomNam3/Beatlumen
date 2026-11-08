@@ -176,6 +176,7 @@ impl Core {
                     .then(|| self.server.url(&bl_net::api::paths::track_cover(&id, 512))),
                 self.server.url(&bl_net::api::paths::track_lyrics(&id)),
                 self.server.url(&self.server.analysis_path(&id, &cfg_json)),
+                self.server.url(&bl_net::api::paths::track_karaoke(&id)),
             );
             let headers = self.server.headers();
             let path = dir.join(format!("{}{id}.blo", self.offline_prefix()));
@@ -319,6 +320,30 @@ impl Core {
         self.offline.entries.get(id)?.header.lyrics.clone()
     }
 
+    pub(crate) fn offline_karaoke(&self, id: &str) -> Option<Value> {
+        self.offline.entries.get(id)?.header.karaoke.clone()
+    }
+
+    /// Keeps the karaoke data of an offline copy current (`None`: removed).
+    pub(crate) fn offline_set_karaoke(
+        &mut self,
+        host: &mut dyn Host,
+        id: &str,
+        karaoke: Option<Value>,
+    ) {
+        let Some(e) = self.offline.entries.get_mut(id) else {
+            return;
+        };
+        if e.header.karaoke == karaoke {
+            return;
+        }
+        e.header.karaoke = karaoke.clone();
+        let path = e.path.clone();
+        host.spawn(Box::new(move || {
+            let _ = bl_offline::set_karaoke(&path, karaoke);
+        }));
+    }
+
     /// The stored analysis when it was made with the same settings.
     pub(crate) fn offline_analysis(&self, id: &str, key: &str) -> Option<Vec<u8>> {
         let e = self.offline.entries.get(id)?;
@@ -423,7 +448,7 @@ impl Core {
 #[cfg(not(target_arch = "wasm32"))]
 fn save_job(
     track: &Track,
-    urls: &(String, Option<String>, String, String),
+    urls: &(String, Option<String>, String, String, String),
     headers: &[(String, String)],
     path: &std::path::Path,
     analysis_key: String,
@@ -451,6 +476,9 @@ fn save_job(
                 v.str_or("source", "server").to_string(),
             ))
         });
+    let karaoke = get(&urls.4)
+        .and_then(|b| bl_json::parse_bytes(&b).ok())
+        .filter(|v| v.get("format").as_str() == Some("beatlumen-karaoke"));
     let mut audio = bl_net::client::HttpStream::open(&urls.0, headers)?;
     let header = Header {
         track: track.to_json(),
@@ -464,6 +492,7 @@ fn save_job(
             .map(|d| d.as_secs())
             .unwrap_or(0),
         lyrics,
+        karaoke,
         analysis_key: if analysis.is_some() {
             analysis_key
         } else {
@@ -500,7 +529,7 @@ fn save_job(
 #[cfg(target_arch = "wasm32")]
 fn save_job(
     _track: &Track,
-    _urls: &(String, Option<String>, String, String),
+    _urls: &(String, Option<String>, String, String, String),
     _headers: &[(String, String)],
     _path: &std::path::Path,
     _analysis_key: String,

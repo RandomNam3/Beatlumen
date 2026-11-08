@@ -71,6 +71,10 @@ pub struct Config {
     /// Work out how the library's songs sound in the background (labels and
     /// recommendations).
     pub auto_labels: bool,
+    /// Compute karaoke data on request (downloads the vocal separation model).
+    pub karaoke: bool,
+    /// Compute the karaoke data of the whole library in the background.
+    pub auto_karaoke: bool,
     /// Look the library's artists up in public databases (their names go out).
     /// Off until the admin agrees.
     pub online_metadata: bool,
@@ -132,6 +136,8 @@ impl Default for Config {
             speech_model: None,
             auto_sync_lyrics: false,
             auto_labels: true,
+            karaoke: false,
+            auto_karaoke: false,
             online_metadata: false,
             extension_cleanup_days: 90,
             extension_cleanup_keep_listed: true,
@@ -229,6 +235,14 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "karaoke",
+        live: true,
+    },
+    AdminSetting {
+        key: "autoKaraoke",
+        live: true,
+    },
+    AdminSetting {
         key: "onlineMetadata",
         live: true,
     },
@@ -282,6 +296,8 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
             .map_or(Value::Null, |p| Value::from(p.display().to_string())),
         "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
         "autoLabels" => Value::from(cfg.auto_labels),
+        "karaoke" => Value::from(cfg.karaoke),
+        "autoKaraoke" => Value::from(cfg.auto_karaoke),
         "onlineMetadata" => Value::from(cfg.online_metadata),
         "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
         "extensionCleanupKeepListed" => Value::from(cfg.extension_cleanup_keep_listed),
@@ -316,6 +332,8 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_SPEECH_MODEL", "speechModel"),
     ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
     ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
+    ("BEATLUMEN_KARAOKE", "karaoke"),
+    ("BEATLUMEN_AUTO_KARAOKE", "autoKaraoke"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
     ("BEATLUMEN_EXTENSION_CLEANUP_DAYS", "extensionCleanupDays"),
     (
@@ -353,6 +371,8 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--speech-model" => "speechModel",
         "--auto-sync-lyrics" => "autoSyncLyrics",
         "--no-auto-labels" => "autoLabels",
+        "--karaoke" => "karaoke",
+        "--auto-karaoke" => "autoKaraoke",
         "--online-metadata" => "onlineMetadata",
         "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
@@ -497,6 +517,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
     (
         "BEATLUMEN_AUTO_LABELS",
         "false: do not work out how the library's songs sound (labels, recommendations)",
+    ),
+    (
+        "BEATLUMEN_KARAOKE",
+        "true: compute karaoke data on request (downloads the vocal separation model)",
+    ),
+    (
+        "BEATLUMEN_AUTO_KARAOKE",
+        "true: compute the karaoke data of the whole library in the background",
     ),
     (
         "BEATLUMEN_ADMIN_PASSWORD_FILE",
@@ -648,6 +676,18 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "1" | "true" | "yes" | "on"
         );
     }
+    if let Some(v) = get("BEATLUMEN_KARAOKE") {
+        cfg.karaoke = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Some(v) = get("BEATLUMEN_AUTO_KARAOKE") {
+        cfg.auto_karaoke = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_ONLINE_METADATA") {
         cfg.online_metadata = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -720,7 +760,8 @@ OPTIONS:
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
                             androidCerts, extensions, extensionTokenFile,
                             extensionCleanupDays, extensionCleanupKeepListed, speechModel,
-                            autoSyncLyrics, autoLabels, onlineMetadata, verbose)
+                            autoSyncLyrics, autoLabels, karaoke, autoKaraoke,
+                            onlineMetadata, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -744,6 +785,11 @@ OPTIONS:
                             background (needs --speech-model)
     --no-auto-labels        Do not work out how the library's songs sound (tempo,
                             key, energy) for labels and recommendations
+    --karaoke               Compute karaoke data (the melody of the singing as
+                            notes) on request; downloads the vocal separation
+                            model (Open-Unmix, 36 MB, from zenodo.org)
+    --auto-karaoke          Also compute the karaoke data of the whole library in
+                            the background (implies --karaoke)
     --online-metadata       Look the library's artists up in public databases, for
                             artist pages and recommendations: their names go to
                             MusicBrainz, Wikimedia and ListenBrainz
@@ -925,6 +971,12 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoLabels" => {
                 cfg.auto_labels = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "karaoke" => {
+                cfg.karaoke = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
+            "autoKaraoke" => {
+                cfg.auto_karaoke = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "extensionCleanupDays" => {
                 cfg.extension_cleanup_days = val
                     .as_u64()
@@ -1062,6 +1114,8 @@ fn build(
             "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
             "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
             "--no-auto-labels" => cfg.auto_labels = false,
+            "--karaoke" => cfg.karaoke = true,
+            "--auto-karaoke" => cfg.auto_karaoke = true,
             "--online-metadata" => cfg.online_metadata = true,
             "--model-source" => cfg.model_source = Some(model_source(&v)?),
             "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
@@ -1150,6 +1204,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             | "--push-allow-private"
             | "--auto-sync-lyrics"
             | "--no-auto-labels"
+            | "--karaoke"
+            | "--auto-karaoke"
             | "--online-metadata" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {

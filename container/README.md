@@ -193,6 +193,8 @@ the push options need a restart, which the admin interface does itself.
 | `BEATLUMEN_MODEL_SOURCE` | huggingface.co (whisper.cpp) | Mirror of the speech model files offered in the admin interface |
 | `BEATLUMEN_AUTO_SYNC_LYRICS` | `false` | `true`: time the song texts of the whole library in the background (needs the model) |
 | `BEATLUMEN_AUTO_LABELS` | `true` | `false`: do not work out how the library's songs sound (labels, recommendations) |
+| `BEATLUMEN_KARAOKE` | `false` | `true`: compute karaoke data on request (downloads the vocal separation model) |
+| `BEATLUMEN_AUTO_KARAOKE` | `false` | `true`: compute the karaoke data of the whole library in the background |
 | `BEATLUMEN_ONLINE_METADATA` | `false` | `true`: look the library's artists up in public databases for artist pages and recommendations; their names go to MusicBrainz, Wikimedia and ListenBrainz |
 | `BEATLUMEN_PUSH_ALLOW_PRIVATE` | `false` | `true`: allow push services (UnifiedPush, e.g. ntfy) in private networks and over plain http |
 | `BEATLUMEN_CA_FILE` | – | Extra root certificates (PEM) for outgoing TLS, e.g. a private CA of a push service at home |
@@ -233,6 +235,8 @@ environment variables:
 | `--model-source URL` | Mirror of the speech model files |
 | `--auto-sync-lyrics` | Time the song texts of the whole library in the background |
 | `--no-auto-labels` | Do not work out how the library's songs sound (labels, recommendations) |
+| `--karaoke` | Compute karaoke data on request (downloads the vocal separation model, 36 MB, from zenodo.org) |
+| `--auto-karaoke` | Also compute the karaoke data of the whole library in the background |
 | `--online-metadata` | Look the library's artists up in public databases for artist pages and recommendations (off by default) |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |

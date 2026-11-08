@@ -312,6 +312,45 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),
             }
         }
+        ["tracks", id, "karaoke", "compute"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            if !state.karaoke.available() {
+                return Response::error(501, "karaoke data is not computed on this server");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &state.karaoke.status_json(&e.track.id)),
+                "POST" => json(202, &state.karaoke.request(&e.track.id)),
+                _ => not_allowed("GET, HEAD, POST"),
+            }
+        }
+        ["tracks", id, "karaoke"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            match m {
+                "GET" | "HEAD" => {
+                    let lyrics = state.lyrics.get(e);
+                    let text = lyrics.as_ref().and_then(|v| v.get("text").as_str());
+                    match state.karaoke.get(&e.track.id, text) {
+                        Some(v) => json(200, &v).with_header("Cache-Control", "private, no-cache"),
+                        None => Response::error(404, "no karaoke data"),
+                    }
+                }
+                "PUT" => match state.karaoke.put(e, &req.body) {
+                    Ok(()) => Response::new(204),
+                    Err(err) => fail(err),
+                },
+                "DELETE" => {
+                    state.karaoke.delete(&e.track.id);
+                    Response::new(204)
+                }
+                _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
         ["tracks", id, "labels"] => {
             let idx = state.library();
             if idx.track(id).is_none() {

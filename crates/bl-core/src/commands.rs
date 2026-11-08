@@ -422,6 +422,7 @@ impl Core {
             n if n.starts_with("devices.") => self.devices_command(host, n, c),
             n if n.starts_with("share.") => self.share_command(host, n, c),
             n if n.starts_with("speech.") => self.speech_command(host, n, c),
+            n if n.starts_with("karaoke.") => self.karaoke_command(host, n, c),
             n if n.starts_with("translate.") => self.translate_command(host, n, c),
             n if n.starts_with("sync.") => self.sync_command(host, n),
             "dlna.answer" => {

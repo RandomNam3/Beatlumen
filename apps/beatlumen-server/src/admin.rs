@@ -801,6 +801,7 @@ fn overview(state: &State) -> Value {
         .with("passwordRequired", state.auth.required())
         .with("speech", state.lyrics_sync.summary())
         .with("sound", state.sound.summary(state))
+        .with("karaoke", state.karaoke.summary())
         .with("artists", state.artists.summary())
         .with("extensionSongs", {
             let (songs, bytes) = state.extensions.storage();
@@ -932,6 +933,8 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "speechModel" => cfg.speech_model = d.speech_model.clone(),
         "autoSyncLyrics" => cfg.auto_sync_lyrics = d.auto_sync_lyrics,
         "autoLabels" => cfg.auto_labels = d.auto_labels,
+        "karaoke" => cfg.karaoke = d.karaoke,
+        "autoKaraoke" => cfg.auto_karaoke = d.auto_karaoke,
         "onlineMetadata" => cfg.online_metadata = d.online_metadata,
         "extensionCleanupDays" => cfg.extension_cleanup_days = d.extension_cleanup_days,
         "extensionCleanupKeepListed" => {

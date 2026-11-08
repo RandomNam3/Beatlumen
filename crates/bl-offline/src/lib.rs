@@ -9,8 +9,8 @@
 //! ...       sections: cover, analysis, then the audio (aligned to 4 KiB)
 //! ```
 //!
-//! The header holds the track's description, the song text and where each
-//! section is (offset, length, CRC-32). The audio is the original file as
+//! The header holds the track's description, the song text, the karaoke
+//! data and where each section is (offset, length, CRC-32). The audio is the original file as
 //! the server has it, not re-encoded; it is read through a window on the
 //! container, so playback seeks within the file directly. Files are written
 //! to `<name>.part` and renamed when complete, so an interrupted download
@@ -66,6 +66,9 @@ pub struct Header {
     pub saved: u64,
     /// Song text and its source, if the track has one.
     pub lyrics: Option<(String, String)>,
+    /// Karaoke data (`bl_pitch::KaraokeTrack` JSON as the server stores
+    /// it), if the track has some.
+    pub karaoke: Option<Value>,
     /// Cache key of the stored analysis (it depends on the analysis settings).
     pub analysis_key: String,
     pub audio: Section,
@@ -88,6 +91,9 @@ impl Header {
                     .with("source", source.as_str()),
             );
         }
+        if let Some(k) = &self.karaoke {
+            v = v.with("karaoke", k.clone());
+        }
         if let Some(c) = self.cover {
             v = v.with("cover", c.to_json());
         }
@@ -109,6 +115,10 @@ impl Header {
                 .get("text")
                 .as_str()
                 .map(|t| (t.to_string(), lyrics.str_or("source", "").to_string())),
+            karaoke: v
+                .get("karaoke")
+                .as_object()
+                .map(|_| v.get("karaoke").clone()),
             analysis_key: v.str_or("analysisKey", "").to_string(),
             audio: Section::from_json(v.get("audio"))?,
             cover: Section::from_json(v.get("cover")),
@@ -351,8 +361,19 @@ pub fn verify(path: &Path) -> io::Result<bool> {
 /// Replaces the song text (in place when it fits into the header room,
 /// else by rewriting the file).
 pub fn set_lyrics(path: &Path, lyrics: Option<(String, String)>) -> io::Result<()> {
+    update_header(path, |h| h.lyrics = lyrics)
+}
+
+/// Replaces the karaoke data (as [`set_lyrics`]).
+pub fn set_karaoke(path: &Path, karaoke: Option<Value>) -> io::Result<()> {
+    update_header(path, |h| h.karaoke = karaoke)
+}
+
+/// Changes the header (in place when it still fits into its room, else by
+/// rewriting the file with a larger one).
+pub fn update_header(path: &Path, change: impl FnOnce(&mut Header)) -> io::Result<()> {
     let mut h = read_header(path)?;
-    h.lyrics = lyrics;
+    change(&mut h);
     let mut f = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -517,6 +538,21 @@ mod tests {
         assert_eq!(h.lyrics.unwrap().0, big);
         assert!(verify(&path).unwrap());
         assert_eq!(read_section(&path, h.cover.unwrap()).unwrap(), b"cover");
+
+        // Karaoke data: kept next to the song text, removed again.
+        let notes: Vec<Value> = (0..2000)
+            .map(|i| Value::object().with("t", i as f64 * 0.25).with("p", 60))
+            .collect();
+        let k = Value::object()
+            .with("format", "beatlumen-karaoke")
+            .with("lines", vec![Value::object().with("notes", notes)]);
+        set_karaoke(&path, Some(k.clone())).unwrap();
+        let h = read_header(&path).unwrap();
+        assert_eq!(h.karaoke.as_ref(), Some(&k));
+        assert_eq!(h.lyrics.unwrap().0, big);
+        assert!(verify(&path).unwrap());
+        set_karaoke(&path, None).unwrap();
+        assert!(read_header(&path).unwrap().karaoke.is_none());
     }
 
     #[test]

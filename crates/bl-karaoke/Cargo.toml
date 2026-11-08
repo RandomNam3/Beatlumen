@@ -1,0 +1,13 @@
+[package]
+name = "bl-karaoke"
+description = "Karaoke data of a song: the melody of its separated vocals as notes on the timed song text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bl-json = { path = "../bl-json" }
+bl-media = { path = "../bl-media" }
+bl-pitch = { path = "../bl-pitch" }
+bl-sep = { path = "../bl-sep" }

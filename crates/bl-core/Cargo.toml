@@ -19,6 +19,8 @@ bl-net = { path = "../bl-net" }
 bl-airplay = { path = "../bl-airplay" }
 bl-vault = { path = "../bl-vault" }
 bl-offline = { path = "../bl-offline" }
+# Karaoke tracks (notes, UltraStar files).
+bl-pitch = { path = "../bl-pitch" }
 
 # Speakers that fetch a stream from the app (not in the browser).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -31,3 +33,6 @@ bl-align = { path = "../bl-align" }
 bl-asr = { path = "../bl-asr", features = ["gpu"] }
 # Translating song texts on the device.
 bl-mt = { path = "../bl-mt" }
+# Karaoke data computed on the device (separated vocals, melody).
+bl-karaoke = { path = "../bl-karaoke" }
+bl-sep = { path = "../bl-sep" }

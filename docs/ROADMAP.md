@@ -81,11 +81,13 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
 Singing along with the song text and getting points for the text and the
 pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
 
-- **Song data:** the melody of the singing (pitch of the separated vocals,
-  own pYIN tracker), one note per syllable from the syllable times, voices
-  per line, key and tempo. Kept like song texts (on the server per song,
-  offline in the song's container), computed on the server in the
-  background or on the device. Import and export as UltraStar text files.
+- Done: **song data:** the melody of the singing (pitch of the separated
+  vocals, own pYIN tracker), one note per syllable from the syllable times,
+  voices per line and key (`crates/bl-pitch`, `crates/bl-karaoke`). Kept
+  like song texts (on the server per song, `GET/PUT/DELETE
+  /api/tracks/<id>/karaoke`; offline in the song's container), computed on
+  the server (`--karaoke`, `--auto-karaoke`) or on the device. Import and
+  export as UltraStar text files. Next: tempo (beat grid) for the export.
 - **Microphones:**
   - Several inputs on a computer (USB microphones, headsets, channels of
     an audio interface), one singer each.

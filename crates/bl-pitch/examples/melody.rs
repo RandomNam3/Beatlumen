@@ -7,7 +7,7 @@
 //! out: the voiced share, the range of the notes, octave jumps, the key
 //! and how long the pitch tracking took.
 
-use bl_pitch::{notes, pyin, syllables, track, ultrastar};
+use bl_pitch::{lrc, notes, pyin, syllables, track, ultrastar};
 use std::time::Instant;
 
 fn main() {
@@ -42,8 +42,8 @@ fn main() {
         std::process::exit(1)
     });
     let secs = samples.len() as f64 / rate as f64;
-    let lrc = std::fs::read_to_string(&files[1]).expect("song text");
-    let song = parse_lrc(&lrc);
+    let text = std::fs::read_to_string(&files[1]).expect("song text");
+    let song = lrc::parse(&text);
 
     let t = Instant::now();
     let frames = pyin::track(&samples, rate, &pyin::PyinOptions::default());
@@ -54,7 +54,7 @@ fn main() {
         .iter()
         .map(|l| notes::LineIn {
             voice: l.voice,
-            syllables: syllables::syllabify(&l.pieces, &lang),
+            syllables: syllables::syllabify(&l.syllables, &lang),
         })
         .collect();
     let opts = notes::NoteOptions {
@@ -200,134 +200,4 @@ fn read_wav(path: &str) -> Result<(Vec<f32>, u32), String> {
         at = body + len + (len & 1);
     }
     Err("no data in the WAV file".into())
-}
-
-struct Song {
-    title: String,
-    artist: String,
-    lines: Vec<Line>,
-}
-
-struct Line {
-    voice: u8,
-    pieces: Vec<notes::Syllable>,
-}
-
-/// "mm:ss.xx" in seconds.
-fn time(s: &str) -> Option<f64> {
-    let (m, s) = s.trim().split_once(':')?;
-    Some(m.parse::<f64>().ok()? * 60.0 + s.parse::<f64>().ok()?)
-}
-
-/// A timed piece as read: start (NaN when the line has no word times),
-/// its own end if given, text.
-type RawPiece = (f64, Option<f64>, String);
-
-/// Enhanced LRC: `[mm:ss.xx]` line times, `<mm:ss.xx>` before each word
-/// or piece (and after a word that ends before the next starts), `[v:N]`
-/// voices, `[ti:]`/`[ar:]`. Lines without word times get their words
-/// spread from the line's start (at most 0.4 s a word).
-fn parse_lrc(text: &str) -> Song {
-    let mut song = Song {
-        title: String::new(),
-        artist: String::new(),
-        lines: Vec::new(),
-    };
-    let mut voice = 0u8;
-    let mut raw: Vec<(f64, u8, Vec<RawPiece>)> = Vec::new();
-    for l in text.lines() {
-        let Some((tag, body)) = l.trim().strip_prefix('[').and_then(|r| r.split_once(']')) else {
-            continue;
-        };
-        if let Some(v) = tag.strip_prefix("ti:") {
-            song.title = v.trim().into();
-        } else if let Some(v) = tag.strip_prefix("ar:") {
-            song.artist = v.trim().into();
-        } else if let Some(v) = tag.strip_prefix("v:") {
-            voice = v.trim().parse().unwrap_or(0);
-        } else if let Some(start) = time(tag) {
-            let mut pieces = if body.contains('<') {
-                timed_pieces(body, start)
-            } else {
-                body.split_whitespace()
-                    .map(|w| (f64::NAN, None, format!("{w} ")))
-                    .collect()
-            };
-            if let Some(last) = pieces.last_mut() {
-                last.2 = last.2.trim_end().to_string();
-            }
-            pieces.retain(|p| !p.2.trim().is_empty() && p.2.trim() != "♪");
-            if !pieces.is_empty() {
-                raw.push((start, voice, pieces));
-            }
-        }
-    }
-    raw.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for i in 0..raw.len() {
-        let next = raw.get(i + 1).map_or(raw[i].0 + 5.0, |n| n.0);
-        let (start, voice, pieces) = (raw[i].0, raw[i].1, &raw[i].2);
-        let n = pieces.len();
-        let untimed = pieces.iter().all(|p| p.0.is_nan());
-        let step = ((next - start) / n as f64).min(0.4);
-        let starts: Vec<f64> = (0..n)
-            .map(|k| {
-                if untimed {
-                    start + k as f64 * step
-                } else {
-                    pieces[k].0
-                }
-            })
-            .collect();
-        let line_end = next.min(starts[n - 1] + 3.0);
-        let syl = (0..n)
-            .map(|k| {
-                let end = pieces[k].1.unwrap_or(if untimed {
-                    starts[k] + step
-                } else {
-                    starts.get(k + 1).copied().unwrap_or(line_end)
-                });
-                notes::Syllable {
-                    start: starts[k],
-                    end: end.max(starts[k]),
-                    text: pieces[k].2.clone(),
-                }
-            })
-            .collect();
-        song.lines.push(Line { voice, pieces: syl });
-    }
-    song
-}
-
-/// The pieces of a line with word times.
-fn timed_pieces(body: &str, start: f64) -> Vec<RawPiece> {
-    let mut pieces: Vec<RawPiece> = Vec::new();
-    let mut t = start;
-    let mut cur = String::new();
-    let mut rest = body;
-    let flush = |pieces: &mut Vec<RawPiece>, cur: &mut String, t: f64, end: Option<f64>| {
-        if !cur.trim().is_empty() {
-            pieces.push((t, end, std::mem::take(cur)));
-        } else if let Some(last) = pieces.last_mut() {
-            // Spaces belong to the word before.
-            last.2.push_str(cur);
-            cur.clear();
-        }
-    };
-    while !rest.is_empty() {
-        if let Some((tt, after)) = rest.strip_prefix('<').and_then(|r| r.split_once('>')) {
-            if let Some(nt) = time(tt) {
-                // A time right after a word, before a space, is its end.
-                let ends = !cur.ends_with(' ') && (after.is_empty() || after.starts_with(' '));
-                flush(&mut pieces, &mut cur, t, ends.then_some(nt));
-                t = nt;
-                rest = after;
-                continue;
-            }
-        }
-        let c = rest.chars().next().unwrap_or(' ');
-        cur.push(c);
-        rest = &rest[c.len_utf8()..];
-    }
-    flush(&mut pieces, &mut cur, t, None);
-    pieces
 }

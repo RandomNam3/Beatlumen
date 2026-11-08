@@ -19,8 +19,10 @@
 
 mod dsp;
 pub mod live;
+pub mod lrc;
 pub mod notes;
 pub mod pyin;
+pub mod stored;
 pub mod syllables;
 pub mod track;
 pub mod ultrastar;

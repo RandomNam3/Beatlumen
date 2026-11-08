@@ -72,11 +72,11 @@ the results come into Beatlumen.
 - [ ] Live pitch for microphones (YIN, 30–50 ms window, octave guard).
 - [ ] Notes: one per syllable (syllable times from `bl-asr`/`bl-hyph`),
   extra notes for melismas, optional beat grid from `bl-analysis`.
-- [ ] Karaoke track (lines, syllables, notes, voices, key); UltraStar
+- [x] Karaoke track (lines, syllables, notes, voices, key); UltraStar
   text import and export (duets as voices).
-- [ ] Stored like song texts: `GET/PUT/DELETE /api/tracks/<id>/karaoke`
+- [x] Stored like song texts: `GET/PUT/DELETE /api/tracks/<id>/karaoke`
   on the server, in the offline container on the device; computed in the
-  server's background jobs or on the device.
+  server's background jobs or on the device (`crates/bl-karaoke`).
 
 ## Phase 4: microphones
 

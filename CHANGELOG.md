@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
+  text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
+  computes it on request or for the whole library in the background (`--karaoke`,
+  `--auto-karaoke`; turning it on downloads the vocal separation model, 36 MB) and keeps it like
+  song texts (`GET/PUT/DELETE /api/tracks/<id>/karaoke`). The app computes it itself where the
+  server does not, keeps it in a song's offline copy, and imports and exports UltraStar text files
+  (duets included). Computed notes are dropped when the song text changes; imported ones stay.
 - **Android, no more "not responding":** with any accessibility service on (a password manager
   like Bitwarden, KDE Connect's remote mouse), Android's main thread spent minutes waiting for
   Qt's answers about the app's controls. The keyboard did not come up, Android offered to close

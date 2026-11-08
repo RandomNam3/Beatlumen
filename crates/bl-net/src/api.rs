@@ -53,6 +53,8 @@ pub struct ServerInfo {
     pub passkeys: bool,
     /// Song texts can be timed by speech recognition.
     pub speech: bool,
+    /// The server computes karaoke data.
+    pub karaoke: bool,
 }
 
 impl ServerInfo {
@@ -69,6 +71,7 @@ impl ServerInfo {
             .with("webIntegrity", self.web_integrity.as_str())
             .with("passkeys", self.passkeys)
             .with("speech", self.speech)
+            .with("karaoke", self.karaoke)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -83,6 +86,7 @@ impl ServerInfo {
             web_integrity: s(v, "webIntegrity"),
             passkeys: v.bool_or("passkeys", false),
             speech: v.bool_or("speech", false),
+            karaoke: v.bool_or("karaoke", false),
         }
     }
 }
@@ -457,6 +461,12 @@ pub mod paths {
     }
     pub fn track_lyrics_sync(id: &str) -> String {
         format!("/api/tracks/{id}/lyrics/sync")
+    }
+    pub fn track_karaoke(id: &str) -> String {
+        format!("/api/tracks/{id}/karaoke")
+    }
+    pub fn track_karaoke_compute(id: &str) -> String {
+        format!("/api/tracks/{id}/karaoke/compute")
     }
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")
