@@ -109,7 +109,9 @@
   writing the singing down first: on 79 songs timed by hand 93 % of the lines within half a
   second instead of 83 %, word starts 0.03 s off instead of 0.1 s, and a 3-minute song in
   about 18 s instead of 43 s on 4 processor cores. A text that does not fit the song is
-  timed the old way. The models offered for download have no such layer yet.
+  timed the old way. Songs without a text are written down as before, and the layer times
+  the words: of the lines whose first word was recognised, 94 % start within half a second
+  instead of 84 %. The models offered for download have no such layer yet.
 - **Speech models from your own server:** the server offers the speech models in its models
   folder to the apps signed in to it, also own ones: a `ggml-<name>.bin` with the timing layer
   made for it (`ggml-<name>.head`) and, if wanted, a `ggml-<name>.json` with a note, a rank and

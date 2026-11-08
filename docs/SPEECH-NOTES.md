@@ -250,8 +250,31 @@ and base, kept private), each with a head made for it.
   moves to the rest: 0.933 instead of 0.923. Splitting lines only between
   words helped less (0.926), because the stray letter is usually the start
   of the first word.
+- **Songs without a text:** the singing is written down as before, and the
+  head gives the word times of each written-down line instead of Whisper's
+  attention. On JamendoLyrics, counting the lines whose first word was
+  recognised (68 % with small, 52 % with base-q5_1) and the recognised words
+  against their hand-annotated times:
+
+  | Model | Lines within 0.5 s | Songs ≥ 90 % | Words within 0.3 s | Word median |
+  |---|---|---|---|---|
+  | small, attention | 0.844 | 32 | 0.776 | 0.102 s |
+  | small, head | **0.936** | 60 | 0.926 | 0.035 s |
+  | base-q5_1, attention | 0.662 | 9 | 0.686 | 0.179 s |
+  | base-q5_1, head | **0.897** | 50 | 0.877 | 0.034 s |
+
+  The words themselves stay the same (word error rate 0.40 with small, 0.60
+  with base-q5_1): what is still missing there is recognition, not timing.
+  The head costs little time here (median seconds per song, five songs of
+  2.5 to 4.5 minutes): small 51.2 instead of 49.9 on 4 cores and 41.4
+  instead of 41.2 on 6, base-q5_1 18.8 instead of 18.0 and 15.2 instead of
+  14.2. GPU and CPU give the same files, except where the recognition itself
+  differs (one song with base-q5_1).
 - **Tried and dropped:**
   - A head with 512 channels: worse in every language (0.904).
+  - Timing a written-down text as a whole like a given one: 0.927 of the
+    lines within 0.5 s instead of 0.936, words within 0.3 s 0.929 instead of
+    0.926.
   - A state for singing outside the text between lines: no change.
   - Vocalisations ("oh ah ah", "aw ah") are the weakest lines (31 % within
     0.5 s): the head does not hear them as letters, so the path squeezes
