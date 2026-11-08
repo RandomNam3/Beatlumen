@@ -220,9 +220,11 @@ impl Scorer {
         {
             self.cursor += 1;
         }
+        // Notes are in time order: none after one that starts later.
         let at = self.targets[self.cursor..]
             .iter()
-            .position(|t| t.start_ms <= time_ms && time_ms < t.end_ms)
+            .take_while(|t| t.start_ms <= time_ms)
+            .position(|t| time_ms < t.end_ms)
             .map(|i| i + self.cursor);
         let Some(i) = at else {
             return Judged {
