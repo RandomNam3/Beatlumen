@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 /// Below this median word score the text was not sung in the stretch
 /// (line times that are off): the words are left to Whisper.
-const MIN_SCORE: f32 = 0.02;
+pub(crate) const MIN_SCORE: f32 = 0.02;
 
 /// The models under `dir` (one folder per model, named by its catalog id).
 pub struct Aligners {
@@ -88,7 +88,7 @@ impl WordAligner for Aligners {
 }
 
 /// A word with its syllables timed by the first aligned letter of each.
-fn syllabled(w: &WordTime, lang: &str) -> Word {
+pub(crate) fn syllabled(w: &WordTime, lang: &str) -> Word {
     // The start of each character of the word as written (None for those
     // not aligned: punctuation, digits).
     let mut times = Vec::new();
