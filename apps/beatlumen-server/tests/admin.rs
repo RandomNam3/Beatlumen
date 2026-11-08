@@ -493,6 +493,45 @@ fn admin_interface() {
     assert!(!data.join("models").join(model.file).exists());
     assert!(server.state.lyrics_sync.model().is_none());
 
+    // An own model put into the folder: listed, used at once, kept while in
+    // use, then deleted with its head.
+    let models_dir = data.join("models");
+    std::fs::write(models_dir.join("ggml-mine.bin"), b"own weights").unwrap();
+    std::fs::write(models_dir.join("ggml-mine.head"), b"head").unwrap();
+    let (_, v) = http.json("GET", "speech", None);
+    assert_eq!(v.str_or("dir", ""), models_dir.display().to_string());
+    let own = v
+        .get("models")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m.str_or("id", "") == "mine")
+        .cloned()
+        .expect("own model listed");
+    assert!(own.bool_or("own", false) && own.bool_or("downloaded", false));
+    let (s, _) = http.json(
+        "POST",
+        "speech/model",
+        Some(Value::object().with("id", "mine")),
+    );
+    assert_eq!(s, 202);
+    assert_eq!(
+        server.state.lyrics_sync.model().as_deref(),
+        Some(models_dir.join("ggml-mine.bin").as_path())
+    );
+    let (s, _) = http.json("DELETE", "speech/models/mine", None);
+    assert_eq!(s, 409);
+    http.json(
+        "POST",
+        "speech/model",
+        Some(Value::object().with("id", Value::Null)),
+    );
+    let (s, _) = http.json("DELETE", "speech/models/mine", None);
+    assert_eq!(s, 204);
+    assert!(
+        !models_dir.join("ggml-mine.bin").exists() && !models_dir.join("ggml-mine.head").exists()
+    );
+
     // Changing the admin password ends the other sessions.
     let mut other = Http {
         base: http.base.clone(),

@@ -161,6 +161,10 @@
     "Models are downloaded from %1 when picked and checked against their checksum.": "Modelle werden beim Auswählen von %1 heruntergeladen und mit ihrer Prüfsumme geprüft.",
     "In use": "In Verwendung",
     "Downloaded": "Heruntergeladen",
+    "Own model": "Eigenes Modell",
+    "Offer models to the apps": "Modelle an die Apps verteilen",
+    "Signed-in apps can download the speech models of this server from it, also own ones in the models folder. They check each file against its checksum.": "Angemeldete Apps können die Sprachmodelle dieses Servers von ihm laden, auch eigene im Modellordner. Sie prüfen jede Datei mit ihrer Prüfsumme.",
+    "Own models: put the model file ggml-NAME.bin and its timing layer ggml-NAME.head into %1. A file ggml-NAME.json can describe it: {\"note\": \"…\", \"rank\": 1, \"memoryMb\": 800}.": "Eigene Modelle: die Modelldatei ggml-NAME.bin und ihre Zeitschicht ggml-NAME.head nach %1 legen. Eine Datei ggml-NAME.json kann es beschreiben: {\"note\": \"…\", \"rank\": 1, \"memoryMb\": 800}.",
     "Use": "Verwenden",
     "Download and use": "Herunterladen und verwenden",
     "Checking…": "Wird geprüft …",
@@ -450,6 +454,7 @@
     sourceUrl: { label: "Source code link", type: "text", hint: "Required by the AGPL when you run a modified version for others." },
     extensions: { label: "Extensions", type: "map", hint: "Source extensions: a name and the address the extension listens on." },
     autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped." },
+    offerModels: { label: "Offer models to the apps", type: "switch", hint: "Signed-in apps can download the speech models of this server from it, also own ones in the models folder. They check each file against its checksum." },
     autoLabels: { label: "Labels from the sound", type: "switch", hint: "Works out tempo, key and energy of the songs in the music folders, one song at a time on half of one core, for labels and recommendations. Songs of music sources only get labels from their tags." },
     onlineMetadata: { label: "Artist information from the internet", type: "switch", hint: "Looks the library's artists up, for artist pages and recommendations: their names and this server's address go to MusicBrainz and, for artist pages, to Wikimedia and ListenBrainz. Off by default." },
     extensionCleanupDays: { label: "Delete extension songs after", type: "number", unit: "days", hint: "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never." },
@@ -955,7 +960,7 @@
     const modelsBox = h("div", { class: "section" });
     const statusBox = h("div", { class: "section" });
     main.append(modelsBox);
-    await withSettings(["autoSyncLyrics"]);
+    await withSettings(["autoSyncLyrics", "offerModels"]);
     main.append(statusBox);
     const pretty = (id) => id.replace(/-(q\d_\d)$/, " ($1)").replace("large-v3-turbo", "large v3 turbo");
     const draw = async () => {
@@ -990,8 +995,8 @@
           }
         }
         return h("div", { class: "model" + (m.current ? " current" : "") },
-          h("div", { class: "spread" }, h("h4", {}, pretty(m.id)), m.downloaded && !m.current ? h("span", { class: "pill" }, t("Downloaded")) : null),
-          h("div", { class: "meta" }, t(m.note)),
+          h("div", { class: "spread" }, h("h4", {}, pretty(m.id)), m.own ? h("span", { class: "pill" }, t("Own model")) : m.downloaded && !m.current ? h("span", { class: "pill" }, t("Downloaded")) : null),
+          m.note ? h("div", { class: "meta" }, t(m.note)) : null,
           h("div", { class: "meta" }, bytes(m.size) + " · " + t("%1 of memory", bytes(m.memoryMb * 1e6))),
           state, h("div", { class: "actions" }, actions));
       });
@@ -1002,7 +1007,8 @@
         locked ? h("p", { class: "locked" }, t("Set by %1", origin(locked))) : null,
         !current ? h("p", { class: "hint" }, t("Speech recognition is off.")) : h("p", { class: "hint mono", title: current }, current.split(/[\\/]/).pop()),
         h("div", { class: "models", style: "margin-top:.75rem" }, cards),
-        h("p", { class: "hint", style: "margin-top:.75rem" }, t("Models are downloaded from %1 when picked and checked against their checksum.", new URL(s.source).host)));
+        h("p", { class: "hint", style: "margin-top:.75rem" }, t("Models are downloaded from %1 when picked and checked against their checksum.", new URL(s.source).host)),
+        h("p", { class: "hint" }, t("Own models: put the model file ggml-NAME.bin and its timing layer ggml-NAME.head into %1. A file ggml-NAME.json can describe it: {\"note\": \"…\", \"rank\": 1, \"memoryMb\": 800}.", s.dir)));
       const sm = s.summary;
       put(statusBox, h("h3", {}, t("Status")),
         h("dl", { class: "kv", style: "margin:.5rem 0" },
