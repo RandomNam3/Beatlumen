@@ -14,6 +14,14 @@ ApplicationWindow {
     visible: true
     title: Core.state.current ? Core.state.current.title + " – Beatlumen" : "Beatlumen"
     color: "black"
+    // On Android the app keeps the room of the system's bars itself (insetTop
+    // and so on), shown or not. Qt's own padding follows only the bars shown:
+    // it came on top, left a strip at the bottom and moved everything when the
+    // bars came and went.
+    leftPadding: Core.platform === "android" ? 0 : SafeArea.margins.left
+    topPadding: Core.platform === "android" ? 0 : SafeArea.margins.top
+    rightPadding: Core.platform === "android" ? 0 : SafeArea.margins.right
+    bottomPadding: Core.platform === "android" ? 0 : SafeArea.margins.bottom
     background: null
 
     Material.theme: Theme.dark ? Material.Dark : Material.Light
