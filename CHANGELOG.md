@@ -25,6 +25,7 @@
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window
   keeps its size when the bars come and go. On Android 16 the bottom of the app no longer hangs
   off the screen once the bars come back, and the keyboard lifts the app by its real height.
+  Dialogs move up above the keyboard instead of disappearing behind it.
 - **Mixes:** tapping one shows its songs first; the button on the cover starts it right away, and
   back leads to the start page.
 - **Start page:** its rows are only made anew when something in them changed (they kept jumping
