@@ -71,9 +71,10 @@ fn vault_images_get_thumbnails() {
         assert!(t0.elapsed().as_secs() < 30, "thumbnail");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let jpeg =
-        bl_net::base64_decode(thumb.strip_prefix("data:image/jpeg;base64,").unwrap()).unwrap();
-    let back = bl_image::decode(&jpeg).unwrap();
+    // A PNG made by the core (the UI's own PNG reader shows it).
+    let png =
+        bl_net::base64_decode(thumb.strip_prefix("data:image/png;base64,").unwrap()).unwrap();
+    let back = bl_image::decode(&png).unwrap();
     assert_eq!((back.width, back.height), (64, 48));
 
     // As a background it is listed with its name and thumbnail.
