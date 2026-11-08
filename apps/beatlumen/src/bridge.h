@@ -52,6 +52,14 @@ public:
     int safeRight() const { return m_safe.right(); }
     int safeBottom() const { return m_safe.bottom(); }
     int keyboardHeight() const { return m_keyboard; }
+    // Android tells it; the UI test pretends a keyboard on other systems.
+    void setKeyboardHeight(int height)
+    {
+        if (height != m_keyboard) {
+            m_keyboard = height;
+            emit safeAreaChanged();
+        }
+    }
     double position() const { return m_position; }
     bool systemDark() const;
     QColor systemAccent() const;

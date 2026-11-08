@@ -47,11 +47,18 @@ ApplicationWindow {
     readonly property int insetBottom: Core.safeBottom
     // Android tells it itself (Qt's rectangle there is in pixels, not in the
     // window's units).
-    readonly property real keyboard: Core.platform === "android" ? Core.keyboardHeight
+    readonly property real keyboard: Core.platform === "android" || Core.keyboardHeight > 0 ? Core.keyboardHeight
         : Qt.inputMethod.visible ? Qt.inputMethod.keyboardRectangle.height : 0
     readonly property real bottomGap: Math.max(insetBottom, keyboard)
-    // Dialogs and sheets stay above the keyboard.
-    Binding { target: Overlay.overlay; property: "height"; value: win.height - win.keyboard; when: win.keyboard > 0 }
+    // Dialogs and sheets stay above the keyboard: the overlay they lie on ends
+    // where it begins. (A Binding on the overlay never took hold, and Qt sets
+    // its size anew when the window changes size.)
+    function fitOverlay() {
+        if (Overlay.overlay)
+            Overlay.overlay.height = win.height - win.keyboard
+    }
+    onKeyboardChanged: fitOverlay()
+    onHeightChanged: Qt.callLater(fitOverlay)
     // The queue leaves the visual in sight: a panel at the side, on a narrow
     // window a sheet that covers only the lower part.
     property bool queueOpen: false

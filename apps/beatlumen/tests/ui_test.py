@@ -351,8 +351,20 @@ def phone_page_menu():
     assert not app.labels("Labels…"), "no labels of a song"
     app.key("Escape")
     app.gone("Rename")
+    # A dialog moves up above the keyboard.
+    app.click_named("Back")
+    app.shows("New smart playlist")
+    time.sleep(0.8)  # the page slides out
+    app.click_text("New playlist")
+    create = app.shows("Create")
+    app.send("keyboard 400")
+    time.sleep(0.5)
+    create = app.wait("the dialog above the keyboard", lambda: [i for i in app.labels("Create") if i["y"] + i["h"] <= 844 - 400])
+    app.send("keyboard 0")
+    app.key("Escape")
+    app.gone("Create")
     app.quit()
-    print("ok: a page's own menu")
+    print("ok: a page's own menu, a dialog above the keyboard")
 
 
 def check_log():
