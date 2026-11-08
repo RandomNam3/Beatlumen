@@ -22,7 +22,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install ffmpeg, ImageMagick, jpegtran and Pillow (test fixtures and references)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick libjpeg-turbo-progs python3-pil
+      # Tests are built without cross-crate LTO: with `lto = "thin"` each of
+      # the ~110 test binaries re-optimizes its whole dependency tree. Still
+      # opt-level 3; the server binary below keeps the release profile's
+      # thin LTO.
+      - name: Build tests
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+        run: cargo test --workspace --release --no-run
       - name: Test
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
         run: cargo test --workspace --release
       - name: Server binary
         run: cargo build --release -p beatlumen-server
@@ -35,10 +45,16 @@ jobs:
     name: Rust core and server (Windows tests)
     runs-on: windows-2022
     timeout-minutes: 60
+    env:
+      # Without cross-crate LTO, as in the Linux test job: the build of the
+      # test binaries took 30 to 52 of the 60 minutes with it.
+      CARGO_PROFILE_RELEASE_LTO: "false"
     steps:
       - uses: actions/checkout@v4
       - name: Install ffmpeg (test fixtures)
         run: choco install ffmpeg -y --no-progress
+      - name: Build tests
+        run: cargo test --workspace --release --exclude bl-ffi --no-run
       - name: Test
         run: cargo test --workspace --release --no-fail-fast --exclude bl-ffi
 
