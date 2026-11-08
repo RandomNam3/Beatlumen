@@ -10,3 +10,8 @@ bl-asr = { path = "../bl-asr" }
 bl-hyph = { path = "../bl-hyph" }
 bl-json = { path = "../bl-json" }
 bl-mt = { path = "../bl-mt" }
+
+[dev-dependencies]
+# The sung_score example reads songs and timed texts.
+bl-media = { path = "../bl-media" }
+bl-pitch = { path = "../bl-pitch" }

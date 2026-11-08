@@ -112,7 +112,9 @@ dependencies = [
  "bl-asr",
  "bl-hyph",
  "bl-json",
+ "bl-media",
  "bl-mt",
+ "bl-pitch",
 ]
 
 [[package]]

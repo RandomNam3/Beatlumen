@@ -441,3 +441,211 @@ fn singers_are_scored_against_the_notes() {
     assert!(ben.f64_or("points", 1.0) < 1000.0, "{}", r.to_json());
     assert_eq!(ana.get("lines").as_array().unwrap().len(), 1);
 }
+
+/// Points for the text with the CTC head (ignored; needs a speech model
+/// with a head, the vocals of a song and its timed text):
+/// `BL_HEAD_MODEL=ggml-lyrics-base1e2-q5_1.bin BL_KARAOKE_VOCALS=vocals.wav
+/// BL_KARAOKE_LRC=song.lrc cargo test --release --test app_karaoke text --
+/// --ignored --nocapture`. The first 45 s of the vocals are the song; one
+/// singer sings them in time, one three seconds late.
+#[test]
+#[ignore]
+fn text_is_scored_with_the_head() {
+    use bl_core::mic;
+    let (Ok(model), Ok(vocals), Ok(lrc)) = (
+        std::env::var("BL_HEAD_MODEL"),
+        std::env::var("BL_KARAOKE_VOCALS"),
+        std::env::var("BL_KARAOKE_LRC"),
+    ) else {
+        eprintln!("BL_HEAD_MODEL / BL_KARAOKE_VOCALS / BL_KARAOKE_LRC not set");
+        return;
+    };
+    let secs = 45.0;
+    let ext = std::path::Path::new(&vocals)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_string);
+    let audio = bl_media::decode_mono(
+        Box::new(std::fs::File::open(&vocals).unwrap()),
+        ext.as_deref(),
+        48000,
+        secs as u32,
+        &mut || true,
+    )
+    .unwrap();
+    let mut app = App::new("karaoke-text");
+    let dir = app.dir.join("music");
+    std::fs::create_dir_all(&dir).unwrap();
+    // The song: the vocals themselves (16-bit WAV).
+    let song = dir.join("Song.wav");
+    let mut wav = Vec::new();
+    let data = audio.len() as u32 * 2;
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&48000u32.to_le_bytes());
+    wav.extend_from_slice(&96000u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data.to_le_bytes());
+    for s in &audio {
+        wav.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    std::fs::write(&song, wav).unwrap();
+    // Notes on every syllable (the pitch does not matter here).
+    let parsed = bl_pitch::lrc::parse(&std::fs::read_to_string(&lrc).unwrap());
+    let mut us = String::from("#TITLE:Song\n#BPM:1500\n#GAP:0\n#LANGUAGE:English\n");
+    for l in parsed
+        .lines
+        .iter()
+        .filter(|l| l.syllables[0].start < secs - 2.0)
+    {
+        for s in &l.syllables {
+            let at = (s.start * 100.0).round() as i64;
+            let len = (((s.end - s.start) * 100.0).round() as i64).max(1);
+            us += &format!(": {at} {len} 60 {}\n", s.text);
+        }
+        us += &format!(
+            "- {}\n",
+            (l.syllables.last().unwrap().end * 100.0).round() as i64 + 1
+        );
+    }
+    us += "E\n";
+    // The model with its head, as if downloaded.
+    let models = app.dir.join("models");
+    std::fs::create_dir_all(&models).unwrap();
+    let mp = std::path::Path::new(&model);
+    std::fs::copy(mp, models.join(mp.file_name().unwrap())).unwrap();
+    let stem = mp.file_stem().unwrap().to_str().unwrap();
+    let plain = stem.rsplit_once("-q").map_or(stem, |(s, _)| s);
+    for s in [stem, plain] {
+        let h = mp.with_file_name(format!("{s}.head"));
+        if h.is_file() {
+            std::fs::copy(&h, models.join(h.file_name().unwrap())).unwrap();
+        }
+    }
+
+    app.cmd(
+        Value::object()
+            .with("cmd", "open")
+            .with("paths", vec![song.to_string_lossy().to_string()])
+            .with("play", true),
+    );
+    app.wait("playing", |s| s.str_or("play", "") == "playing");
+    app.cmd(Value::object().with("cmd", "pause"));
+    karaoke_loaded(&mut app);
+    let r = app.cmd(
+        Value::object()
+            .with("cmd", "karaoke.import")
+            .with("text", us),
+    );
+    assert!(r.get("error").is_null(), "{}", r.to_json());
+    app.host.mic = Some(Default::default());
+    let devices = Value::Array(vec![
+        Value::object()
+            .with("id", "a")
+            .with("name", "A")
+            .with("rate", 48000),
+        Value::object()
+            .with("id", "b")
+            .with("name", "B")
+            .with("rate", 48000),
+    ]);
+    app.cmd(
+        Value::object()
+            .with("cmd", "mic.devices")
+            .with("devices", devices),
+    );
+    let open = |app: &mut App, d: &str| {
+        app.cmd(Value::object().with("cmd", "mic.open").with("device", d))
+            .get("stream")
+            .as_u64()
+            .unwrap()
+    };
+    let (a, b) = (open(&mut app, "a"), open(&mut app, "b"));
+    let r = app.cmd(Value::object().with("cmd", "karaoke.start").with(
+        "singers",
+        vec![
+            Value::object().with("stream", a).with("name", "In time"),
+            Value::object().with("stream", b).with("name", "Late"),
+        ],
+    ));
+    assert!(r.bool_or("text", false), "no text scoring: {}", r.to_json());
+    app.cmd(Value::object().with("cmd", "seek").with("position", 0.0));
+    app.cmd(Value::object().with("cmd", "play"));
+    let t0 = Instant::now();
+    let mut rendered = 0f64;
+    let mut fed = 0f64;
+    loop {
+        app.state();
+        if let Some(src) = app.host.audio.lock().unwrap().clone() {
+            while rendered < t0.elapsed().as_secs_f64() * 48000.0 {
+                let mut buf = vec![0f32; 960];
+                src.render(&mut buf, 0);
+                rendered += 480.0;
+            }
+        }
+        let live = app.cmd(
+            Value::object()
+                .with("cmd", "karaoke.live")
+                .with("since", 1e12),
+        );
+        if live.bool_or("finished", false) || t0.elapsed().as_secs_f64() > secs + 10.0 {
+            break;
+        }
+        // The microphones hear the song at its position (the late one 3 s back).
+        let song_s = live.f64_or("songMs", 0.0) / 1000.0;
+        let upto = (song_s * 48000.0) as usize;
+        let from = (fed as usize).min(upto);
+        if upto > from {
+            let cut = |o: isize| -> Vec<i16> {
+                (from..upto)
+                    .map(|i| {
+                        let j = i as isize - o;
+                        let v = if j >= 0 {
+                            audio.get(j as usize).copied().unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
+                        (v.clamp(-1.0, 1.0) * 32767.0) as i16
+                    })
+                    .collect()
+            };
+            let at = mic::clock_us() - ((upto - from) as i64 * 1_000_000 / 48000);
+            mic::push_pcm(a as u32, &cut(0), 1, 48000, at);
+            mic::push_pcm(b as u32, &cut(3 * 48000), 1, 48000, at);
+            fed = upto as f64;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // The last lines' scores come from the worker.
+    let t1 = Instant::now();
+    let r = loop {
+        app.state();
+        let r = app.cmd(Value::object().with("cmd", "karaoke.results"));
+        if t1.elapsed() > Duration::from_secs(5) {
+            break r;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    eprintln!("{}", r.to_json());
+    let by = |n: &str| {
+        r.get("singers")
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s.str_or("name", "") == n)
+            .unwrap()
+            .f64_or("text", -1.0)
+    };
+    let (in_time, late) = (by("In time"), by("Late"));
+    eprintln!("text points: in time {in_time}, late {late}");
+    assert!(
+        in_time > 500.0 && in_time > late + 200.0,
+        "{in_time} vs {late}"
+    );
+}

@@ -748,6 +748,17 @@ Item {
                 width: parent.width
                 spacing: 10
                 SectionLabel { text: Theme.tr("Results") }
+                Label {
+                    visible: page.results.textScoring === "off"
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textFaint
+                    font.pixelSize: 12
+                    text: Theme.tr("Without points for the text: they need a speech model with a CTC head on this device.")
+                }
                 Repeater {
                     model: page.results.singers || []
                     Rectangle {
@@ -798,8 +809,10 @@ Item {
                                     text: [page.ratingText(resultCard.modelData.rating),
                                            Math.round((resultCard.modelData.accuracy || 0) * 100) + " % " + Theme.tr("on pitch"),
                                            Theme.tr("Notes") + " " + Math.round(resultCard.modelData.notes || 0),
-                                           Theme.tr("Held notes") + " " + (resultCard.modelData.heldNotes || 0) + "/" + (resultCard.modelData.longNotes || 0)
-                                          ].join(" · ")
+                                           Theme.tr("Held notes") + " " + (resultCard.modelData.heldNotes || 0) + "/" + (resultCard.modelData.longNotes || 0),
+                                           resultCard.modelData.text !== null && resultCard.modelData.text !== undefined
+                                               ? Theme.tr("Text") + " " + Math.round(resultCard.modelData.text) : ""
+                                          ].filter(x => x).join(" · ")
                                 }
                             }
                             Label {

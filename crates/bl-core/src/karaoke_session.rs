@@ -2,7 +2,8 @@
 //! voice of the song's karaoke data, their live pitch (`bl_pitch::LiveYin`)
 //! scored against the notes (`bl_pitch::score`) on the song's clock. The
 //! microphones' audio is read from their ring buffers every tick; nothing
-//! of it is kept beyond the current line.
+//! of it is kept beyond the last half minute, for scoring the text of the
+//! lines just sung (`karaoke_text`).
 
 use crate::core::Core;
 use crate::host::Host;
@@ -20,6 +21,12 @@ const HEARD_RMS: f32 = 0.01;
 const END_AFTER_MS: i64 = 1500;
 /// Most singers in a round.
 pub(crate) const MAX_SINGERS: usize = 8;
+/// Rate of the audio kept for the text points.
+const TEXT_RATE: u32 = 16000;
+/// Audio kept for the text points (seconds of song time).
+const TEXT_KEEP_SECS: f64 = 30.0;
+/// Room around a line when its text is scored (seconds).
+const TEXT_ROOM_SECS: f64 = 0.3;
 
 pub(crate) struct Singer {
     pub name: String,
@@ -39,6 +46,14 @@ pub(crate) struct Singer {
     found: Vec<LivePitch>,
     /// Level of the newest frame (RMS).
     level: f32,
+    /// The singing at 16 kHz for the text points, and the song time (s)
+    /// of its first sample.
+    resampler: Option<bl_media::Resampler>,
+    audio: Vec<f32>,
+    audio_t0: Option<f64>,
+    /// Lines sent for text points, and their scores as they come.
+    text_sent: Vec<usize>,
+    text_scores: Vec<(usize, Option<f32>)>,
 }
 
 impl Singer {
@@ -56,7 +71,46 @@ impl Singer {
             trail: VecDeque::new(),
             found: Vec::new(),
             level: 0.0,
+            resampler: None,
+            audio: Vec::new(),
+            audio_t0: None,
+            text_sent: Vec::new(),
+            text_scores: Vec::new(),
         }
+    }
+
+    /// Keeps a block of the singing at 16 kHz, starting again where it does
+    /// not follow on from what is kept (a gap, a seek).
+    fn keep_audio(&mut self, rate: u32, song_s: f64, samples: &[f32]) {
+        let follows = self.audio_t0.is_some_and(|t0| {
+            (t0 + self.audio.len() as f64 / TEXT_RATE as f64 - song_s).abs() < 0.15
+        });
+        if !follows || self.resampler.as_ref().map(|r| r.in_rate()) != Some(rate) {
+            self.resampler = Some(bl_media::Resampler::new(rate, TEXT_RATE, 1));
+            self.audio.clear();
+            self.audio_t0 = Some(song_s);
+        }
+        if let Some(r) = &mut self.resampler {
+            r.process(samples, &mut self.audio);
+        }
+        let keep = (TEXT_KEEP_SECS * TEXT_RATE as f64) as usize;
+        if self.audio.len() > keep + TEXT_RATE as usize * 5 {
+            let cut = self.audio.len() - keep;
+            self.audio.drain(..cut);
+            if let Some(t0) = &mut self.audio_t0 {
+                *t0 += cut as f64 / TEXT_RATE as f64;
+            }
+        }
+    }
+
+    /// The kept singing from song time `a` to `b` (s), when it is there.
+    fn audio_between(&self, a: f64, b: f64) -> Option<Vec<f32>> {
+        let t0 = self.audio_t0?;
+        let at = |t: f64| ((t - t0) * TEXT_RATE as f64).round().max(0.0) as usize;
+        let (i, j) = (at(a), at(b).min(self.audio.len()));
+        // Most of the line must be there.
+        (j > i && (j - i) as f64 >= 0.8 * (b - a) * TEXT_RATE as f64)
+            .then(|| self.audio[i..j].to_vec())
     }
 
     /// The clock time (µs) of stream sample `idx`.
@@ -99,6 +153,9 @@ impl Singer {
             self.marks.push_back((b.index, b.time_us));
             while self.marks.len() > 64 {
                 self.marks.pop_front();
+            }
+            if let Some(song) = mic::song_time(b.time_us) {
+                self.keep_audio(b.rate, song, &b.samples);
             }
             let mut found = std::mem::take(&mut self.found);
             found.clear();
@@ -144,6 +201,21 @@ pub(crate) struct Session {
     end_ms: i64,
     /// Newest song time seen (ms).
     now_ms: i64,
+    /// Points for the text: the scorer (with a speech model that has a
+    /// head), whether it is ready, and each line's text and letters.
+    #[cfg(not(target_arch = "wasm32"))]
+    text: Option<crate::karaoke_text::TextScorer>,
+    pub text_state: TextState,
+    line_texts: Vec<(String, usize)>,
+}
+
+/// Whether a round scores the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextState {
+    /// No speech model with a head here.
+    Off,
+    Loading,
+    Ready,
 }
 
 #[derive(Default)]
@@ -152,11 +224,118 @@ pub(crate) struct SessionState {
     pub rev: u64,
 }
 
+/// Points for the text in all.
+const TEXT_POINTS: f64 = 1000.0;
+
+fn text_state_name(s: TextState) -> &'static str {
+    match s {
+        TextState::Off => "off",
+        TextState::Loading => "loading",
+        TextState::Ready => "ready",
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl Session {
-    /// Points out of 10 000 (notes and held notes; the text's share when
-    /// it is scored).
-    fn points(s: &score::Score) -> f64 {
-        (s.total() * 10_000.0 / (score::NOTE_POINTS + score::HELD_POINTS)).round()
+    /// Sends the lines just sung to the text scorer, takes its answers.
+    fn score_text(&mut self) {
+        use crate::karaoke_text::{Answer, Job};
+        let Some(scorer) = &self.text else {
+            return;
+        };
+        for a in scorer.answers.take() {
+            match a {
+                Answer::Ready => self.text_state = TextState::Ready,
+                Answer::Unavailable => self.text_state = TextState::Off,
+                Answer::Line {
+                    singer,
+                    line,
+                    score,
+                } => {
+                    if let Some(s) = self.singers.get_mut(singer) {
+                        s.text_scores.push((line, score));
+                    }
+                }
+            }
+        }
+        if self.text_state == TextState::Off {
+            self.text = None;
+            return;
+        }
+        let lang = if self.track.language.is_empty() {
+            "en".to_string()
+        } else {
+            self.track.language.clone()
+        };
+        for si in 0..self.singers.len() {
+            for (line, a, b) in self.lines_to_score(&self.singers[si]) {
+                let singer = &mut self.singers[si];
+                singer.text_sent.push(line);
+                match singer.audio_between(a - TEXT_ROOM_SECS, b + TEXT_ROOM_SECS) {
+                    Some(audio) => scorer.send(Job {
+                        singer: si,
+                        line,
+                        audio,
+                        text: self.line_texts[line].0.clone(),
+                        lang: lang.clone(),
+                    }),
+                    // Not heard (paused, a gap): no score either way.
+                    None => singer.text_scores.push((line, None)),
+                }
+            }
+        }
+    }
+}
+
+impl Session {
+    /// Points for the text of a singer so far: the scored lines' shares by
+    /// their letters (lines not scored, e.g. skipped on a slow device, do
+    /// not count either way).
+    fn text_points(&self, s: &Singer) -> Option<f64> {
+        if self.text_state == TextState::Off {
+            return None;
+        }
+        let (mut got, mut all) = (0.0, 0.0);
+        for (line, score) in &s.text_scores {
+            let Some(score) = score else { continue };
+            let letters = self.line_texts.get(*line).map_or(0, |l| l.1) as f64;
+            got += crate::karaoke_text::accuracy(*score) * letters;
+            all += letters;
+        }
+        Some(if all > 0.0 {
+            TEXT_POINTS * got / all
+        } else {
+            0.0
+        })
+    }
+
+    /// Points out of 10 000: notes, held notes and the text; without text
+    /// points the others count for all.
+    fn points(&self, s: &Singer, sc: &score::Score) -> f64 {
+        let max = score::NOTE_POINTS + score::HELD_POINTS;
+        match self.text_points(s) {
+            Some(t) => (sc.total() + t).round(),
+            None => (sc.total() * 10_000.0 / max).round(),
+        }
+    }
+
+    /// The singer's lines that have ended and are not scored for their text
+    /// yet: (line, start s, end s).
+    fn lines_to_score(&self, s: &Singer) -> Vec<(usize, f64, f64)> {
+        self.track
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(i, l)| {
+                (s.voice == 0 || l.voice == 0 || l.voice == s.voice)
+                    && !s.text_sent.contains(i)
+                    && self.line_texts.get(*i).is_some_and(|t| t.1 > 0)
+            })
+            .filter_map(|(i, l)| {
+                let (a, b) = (l.start_ms()?, l.end_ms()?);
+                (b + 400 <= self.now_ms).then_some((i, a as f64 / 1000.0, b as f64 / 1000.0))
+            })
+            .collect()
     }
 
     fn singer_json(&self, s: &Singer, since_ms: Option<i64>, full: bool) -> Value {
@@ -165,7 +344,8 @@ impl Session {
             .with("name", s.name.as_str())
             .with("stream", s.stream as u64)
             .with("voice", s.voice as u64)
-            .with("points", Self::points(&sc))
+            .with("points", self.points(s, &sc))
+            .with("text", self.text_points(s).map(f64::round))
             .with("notes", sc.notes.round())
             .with("held", sc.held.round())
             .with("heldNotes", sc.held_notes as u64)
@@ -211,10 +391,21 @@ impl Session {
                     lines
                         .iter()
                         .map(|l| {
-                            Value::object().with("line", l.line as u64).with(
-                                "accuracy",
-                                l.accuracy.map(|a| (a * 1000.0).round() / 1000.0),
-                            )
+                            let text = s
+                                .text_scores
+                                .iter()
+                                .find(|(i, _)| *i == l.line)
+                                .and_then(|(_, sc)| *sc)
+                                .map(|sc| {
+                                    (crate::karaoke_text::accuracy(sc) * 1000.0).round() / 1000.0
+                                });
+                            Value::object()
+                                .with("line", l.line as u64)
+                                .with(
+                                    "accuracy",
+                                    l.accuracy.map(|a| (a * 1000.0).round() / 1000.0),
+                                )
+                                .with("text", text)
                         })
                         .collect(),
                 ),
@@ -225,6 +416,21 @@ impl Session {
 }
 
 impl Core {
+    /// The text scorer for a round, with a speech model that has a head.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn karaoke_text_scorer(&self, host: &dyn Host) -> Option<crate::karaoke_text::TextScorer> {
+        if !host.has_threads() {
+            return None;
+        }
+        let dir = host.storage_path("models/.keep").and_then(|p| {
+            std::path::PathBuf::from(p)
+                .parent()
+                .map(std::path::PathBuf::from)
+        })?;
+        let model = crate::karaoke_text::model_with_head(&dir, &self.settings.speech_model)?;
+        Some(crate::karaoke_text::TextScorer::start(host, model))
+    }
+
     /// `karaoke.start {singers: [{stream, voice, name}], difficulty}`: a
     /// round on the current song with its loaded karaoke data.
     pub(crate) fn karaoke_start(&mut self, host: &mut dyn Host, c: &Value) -> Value {
@@ -272,6 +478,28 @@ impl Core {
             return Value::object().with("error", self.tr("Choose a microphone for each singer"));
         }
         let end_ms = singers.iter().map(|s| s.scorer.end_ms()).max().unwrap_or(0) + END_AFTER_MS;
+        let line_texts: Vec<(String, usize)> = track
+            .lines
+            .iter()
+            .map(|l| {
+                let text: String = l
+                    .notes
+                    .iter()
+                    .map(|n| n.text.trim_start_matches('~'))
+                    .collect();
+                let letters = text.chars().filter(|c| c.is_alphabetic()).count();
+                (text.trim().to_string(), letters)
+            })
+            .collect();
+        #[cfg(not(target_arch = "wasm32"))]
+        let text = self.karaoke_text_scorer(host);
+        #[cfg(target_arch = "wasm32")]
+        let text: Option<()> = None;
+        let text_state = if text.is_some() {
+            TextState::Loading
+        } else {
+            TextState::Off
+        };
         self.karaoke_session.session = Some(Session {
             track_id: id,
             track,
@@ -280,10 +508,15 @@ impl Core {
             finished: false,
             end_ms,
             now_ms: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            text,
+            text_state,
+            line_texts,
         });
         self.karaoke_session.rev += 1;
-        let _ = host;
-        Value::object().with("ok", true)
+        Value::object()
+            .with("ok", true)
+            .with("text", text_state != TextState::Off)
     }
 
     /// Reads the microphones and scores them (from `tick`).
@@ -306,6 +539,8 @@ impl Core {
             singer.take_audio(playing);
         }
         s.now_ms = s.now_ms.max(position_ms);
+        #[cfg(not(target_arch = "wasm32"))]
+        s.score_text();
         // Over: after the last note, or the song stopped after it.
         let last_note = s.end_ms - END_AFTER_MS;
         if position_ms >= s.end_ms || (!playing && s.now_ms >= last_note) {
@@ -330,6 +565,7 @@ impl Core {
             .with("id", s.track_id.as_str())
             .with("songMs", now)
             .with("difficulty", s.difficulty.name())
+            .with("textScoring", text_state_name(s.text_state))
             .with(
                 "singers",
                 Value::Array(
@@ -359,6 +595,7 @@ impl Core {
             .with("title", s.track.title.as_str())
             .with("artist", s.track.artist.as_str())
             .with("difficulty", s.difficulty.name())
+            .with("textScoring", text_state_name(s.text_state))
             .with("singers", Value::Array(singers))
     }
 

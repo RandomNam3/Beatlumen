@@ -181,6 +181,8 @@ QtObject {
     }
 
     readonly property var de: ({
+        "Text": "Text",
+        "Without points for the text: they need a speech model with a CTC head on this device.": "Ohne Punkte für den Text: Dafür braucht es auf diesem Gerät ein Sprachmodell mit CTC-Kopf.",
         "Add singer": "Sänger:in hinzufügen",
         "Another song": "Anderer Song",
         "Choose a song": "Song wählen",

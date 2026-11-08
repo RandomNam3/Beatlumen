@@ -103,9 +103,10 @@ pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
   - Done: pitch: the live pitch of each microphone against the song's
     notes, octave ignored, tolerance by difficulty (2, 1 or half a
     semitone), a bonus for held long notes (`bl_pitch::score`).
-  - Text: each sung line scored against the known line with the CTC
-    aligner (how well the sung sounds fit the text), cheap enough for
-    phones.
+  - Done: text: each sung line scored against the known line with the
+    CTC head on the speech model's encoder (`Head::sung_score`; the song's
+    own vocals score 0.27-0.34 in the median, another line's words 0.10;
+    0.12 s a line with the base head on four cores).
 - **Playback:** the singing can be turned down with the separation.
 - Done: **screen:** its own page (`KaraokePage.qml`): pick a song, assign
   microphones to singers or voices, the text with note bars and each
