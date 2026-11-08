@@ -121,6 +121,8 @@ pub(crate) enum Req {
     HistorySent(u64),
     HistoryCleared,
     Stats,
+    /// The speech models the server offers.
+    ModelOffers,
     Recommendations,
     Labels,
     LabelsSaved,
@@ -1038,6 +1040,7 @@ impl Core {
             Req::HistorySent(done) => self.history_sent(host, &res, done),
             Req::HistoryCleared => {}
             Req::Stats => self.stats_fetched(&res),
+            Req::ModelOffers => self.speech_offers_fetched(&res),
             Req::Recommendations => self.recommendations_fetched(&res),
             Req::Labels => self.labels_fetched(&res),
             Req::LabelsSaved => self.labels_saved(&res),

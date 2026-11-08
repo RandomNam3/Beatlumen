@@ -54,15 +54,19 @@ the results come into Beatlumen.
 
 ## Phase 2: own model sources
 
-- [ ] `bl-asr` and `bl-align` catalogs: a source per entry instead of one
-  base URL.
-- [ ] Server: lists the models in its model folder (name, size, SHA-256)
-  and serves them to logged-in apps; admin page for own models.
-- [ ] Apps: models from the connected server next to the public catalog,
+- [x] `bl-asr`: own models next to the catalog (`ggml-<id>.bin`, its
+  timing head and a description), downloads from another address (the
+  server), own models ranked above the catalog. `bl-align`'s wav2vec2
+  aligners stay out: the apps do not use them.
+- [x] Server: lists the models in its model folder (name, size, SHA-256)
+  and serves them to logged-in apps (`/api/models`); admin page for own
+  models; `--no-offer-models`.
+- [x] Apps: models from the connected server next to the public catalog,
   downloaded and checked like the others.
 - [ ] Model size picked by device: memory and the GPU check (`bl-gpu`).
-- [ ] The CTC aligner used for word times by default when it measures
-  better (`WordAligner` in `crates/bl-asr/src/transcribe.rs`).
+- [x] The CTC aligner used for word times by default when it measures
+  better: the timing head on the speech model's encoder (`bl-align`
+  `head.rs`), used whenever the model has one.
 
 ## Phase 3: melody and notes (`crates/bl-pitch`)
 

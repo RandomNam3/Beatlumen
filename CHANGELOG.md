@@ -126,6 +126,15 @@
   second instead of 83 %, word starts 0.03 s off instead of 0.1 s, and a 3-minute song in
   about 18 s instead of 43 s on 4 processor cores. A text that does not fit the song is
   timed the old way. The models offered for download have no such layer yet.
+- **Speech models from your own server:** the server offers the speech models in its models
+  folder to the apps signed in to it, also own ones: a `ggml-<name>.bin` with the timing layer
+  made for it (`ggml-<name>.head`) and, if wanted, a `ggml-<name>.json` with a note, a rank and
+  the memory it needs. The apps list them next to the public ones (Settings, Song texts),
+  download them through the server connection and check each file against the checksum the
+  server lists; a public model the server has comes from the server too, without the internet.
+  Own models count as better than the public ones, so songs timed with those are timed again.
+  The admin page uses and deletes own models as well; offering is on by default and turned off
+  there, with `--no-offer-models` or with `BEATLUMEN_OFFER_MODELS=false`.
 
 ## 0.12.0 (beta)
 

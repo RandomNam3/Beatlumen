@@ -507,7 +507,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("texts", ["Delete", "Download", "In use", "Recognise and time song texts", "Turn off", "Use", "Time all songs on this device", "songs left", "A speech model times song texts and writes down songs without one."])
+                visible: page.shows("texts", ["Delete", "Download", "In use", "from your server", "Recognise and time song texts", "Turn off", "Use", "Time all songs on this device", "songs left", "A speech model times song texts and writes down songs without one."])
                 SectionLabel { text: Theme.tr("Recognise and time song texts"); visible: page.speechLocal.available === true }
                 Label {
                     visible: page.speechLocal.available === true
@@ -545,7 +545,10 @@ Item {
                                     font.pixelSize: 12
                                     color: modelData.state === "failed" ? Theme.danger : Theme.textDim
                                     text: modelData.state === "failed" ? modelData.error
-                                        : [Theme.tr(modelData.note), Math.round(modelData.size / 1e6) + " MB", Theme.tr("%1 MB of memory").arg(modelData.memoryMb)].join(" · ")
+                                        : [modelData.note ? Theme.tr(modelData.note) : (modelData.own ? Theme.tr("own model") : ""),
+                                           Math.round(modelData.size / 1e6) + " MB",
+                                           Theme.tr("%1 MB of memory").arg(modelData.memoryMb),
+                                           modelData.server && !modelData.downloaded ? Theme.tr("from your server") : ""].filter(s => s).join(" · ")
                                 }
                                 ProgressBar {
                                     visible: modelData.state === "downloading"

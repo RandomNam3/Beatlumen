@@ -434,6 +434,12 @@ pub mod paths {
     pub const RECOMMENDATIONS: &str = "/api/recommendations";
     pub const RADIO: &str = "/api/radio";
     pub const STATS: &str = "/api/stats";
+    /// The speech models the server offers (`{"models": [...]}`).
+    pub const MODELS: &str = "/api/models";
+
+    pub fn model_file(id: &str, file: &str) -> String {
+        format!("/api/models/{id}/{file}")
+    }
 
     pub fn track_labels(id: &str) -> String {
         format!("/api/tracks/{id}/labels")

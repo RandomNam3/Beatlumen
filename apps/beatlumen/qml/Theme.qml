@@ -515,6 +515,8 @@ QtObject {
         "Song texts on this device": "Songtexte auf diesem Gerät",
         "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway.": "Mit einem Sprachmodell stimmt dieses Gerät einfache Songtexte Wort für Wort ab und schreibt auf, was gesungen wird, wenn ein Song keinen Text hat („Songtext erkennen“ in der Songtext-Ansicht). Ein Server mit Modell macht das für seine Songs ohnehin.",
         "%1 MB of memory": "%1 MB Arbeitsspeicher",
+        "own model": "eigenes Modell",
+        "from your server": "von deinem Server",
         "In use": "In Verwendung",
         "Use": "Verwenden",
         "Download": "Herunterladen",
