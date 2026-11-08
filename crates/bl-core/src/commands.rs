@@ -1456,7 +1456,14 @@ impl Core {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| p.to_string());
-            (name, crate::core::file_url(p))
+            // Thumbnails from the core's decoders (any format and size)
+            // where the UI has the provider, else the file itself.
+            let thumb = if self.server.image_provider {
+                format!("image://thumb/{}", bl_net::http::percent_encode(p))
+            } else {
+                crate::core::file_url(p)
+            };
+            (name, thumb)
         } else if let Some(id) = src.strip_prefix("srv:") {
             let name = self
                 .server_images

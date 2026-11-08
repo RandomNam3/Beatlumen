@@ -471,6 +471,12 @@ pub mod paths {
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")
     }
+    /// A background image: still images scaled by the server (longest
+    /// side `max`), animations as they are (`anim=1`).
+    pub fn background(id: &str, max: u32) -> String {
+        format!("/api/images/{id}?size={max}&anim=1")
+    }
+
     pub fn image(id: &str, max: u32) -> String {
         if max == 0 {
             format!("/api/images/{id}")

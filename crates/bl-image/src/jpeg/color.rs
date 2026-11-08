@@ -2,6 +2,7 @@
 //! with co-sited centres, for any integer or fractional ratio) and color
 //! conversion (YCbCr, RGB, gray, Adobe CMYK / YCCK) to RGBA.
 
+#[cfg(test)]
 use crate::Image;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -20,6 +21,9 @@ pub enum ColorSpace {
 pub struct Plane<'a> {
     pub data: &'a [u8],
     pub stride: usize,
+    /// Plane row stored at the start of `data` (a band of a larger plane;
+    /// rows above it are never read).
+    pub first_row: usize,
     /// Valid samples (edge samples are replicated beyond these).
     pub width: usize,
     pub height: usize,
@@ -130,7 +134,9 @@ impl<'a> Upsampler<'a> {
     #[inline]
     fn plane_row(&self, y: usize) -> &'a [u8] {
         let p = self.p;
-        let y = y.min(p.height - 1);
+        // Rows below the stored band (a truncated image) repeat its last row.
+        let stored = (p.data.len() / p.stride.max(1)).max(1);
+        let y = (y.min(p.height - 1).max(p.first_row) - p.first_row).min(stored - 1);
         &p.data[y * p.stride..y * p.stride + p.width]
     }
 
@@ -170,8 +176,9 @@ impl<'a> Upsampler<'a> {
             Kind::Generic => {
                 let p = self.p;
                 let t = self.vtaps[y];
-                let r0 = &p.data[t.i0 as usize * p.stride..t.i0 as usize * p.stride + p.width];
-                let r1 = &p.data[t.i1 as usize * p.stride..t.i1 as usize * p.stride + p.width];
+                let r0 = self.plane_row(t.i0 as usize);
+                let r1 = self.plane_row(t.i1 as usize);
+                let _ = p;
                 let (w0, w1) = (256 - t.w1 as u16, t.w1 as u16);
                 for ((d, &a), &b) in self.vrow.iter_mut().zip(r0).zip(r1) {
                     *d = a as u16 * w0 + b as u16 * w1;
@@ -324,16 +331,35 @@ fn mul255(a: u8, b: u8) -> u8 {
     ((t + (t >> 8)) >> 8) as u8
 }
 
+/// Converts planes to RGBA rows of a `w` x `h` image (whole image).
+#[cfg(test)]
 pub fn convert(planes: &[Plane], cs: ColorSpace, img: &mut Image) {
-    let w = img.width as usize;
-    let h = img.height as usize;
+    let (w, h) = (img.width as usize, img.height as usize);
+    let n = w * 4;
+    convert_rows(planes, cs, w, h, 0..h, &mut |y, row| {
+        img.pixels[y * n..(y + 1) * n].copy_from_slice(row)
+    });
+}
+
+/// Converts the output rows `rows` of a `w` x `h` image, handing each to
+/// `emit`. The planes must hold the plane rows these output rows read
+/// (one more above and below for interpolated chroma).
+pub fn convert_rows(
+    planes: &[Plane],
+    cs: ColorSpace,
+    w: usize,
+    h: usize,
+    rows: std::ops::Range<usize>,
+    emit: &mut dyn FnMut(usize, &[u8]),
+) {
     let mut ups: Vec<Upsampler> = planes
         .iter()
         .map(|p| Upsampler::new(p, w, h, if cs == ColorSpace::YuvLimited { 8 } else { 7 }))
         .collect();
+    let mut line = vec![0u8; w * 4];
     let ycc = YccTables::new();
     let limited = LimitedTables::new();
-    for y in 0..h {
+    for y in rows {
         for u in ups.iter_mut() {
             u.fill(y, w);
         }
@@ -341,7 +367,7 @@ pub fn convert(planes: &[Plane], cs: ColorSpace, img: &mut Image) {
         for (r, u) in rows.iter_mut().zip(&ups) {
             *r = u.get(y, w);
         }
-        let out = &mut img.pixels[y * w * 4..(y + 1) * w * 4];
+        let out = &mut line[..];
         match cs {
             ColorSpace::Gray => {
                 for (o, &g) in out.chunks_exact_mut(4).zip(rows[0]) {
@@ -392,6 +418,7 @@ pub fn convert(planes: &[Plane], cs: ColorSpace, img: &mut Image) {
                 }
             }
         }
+        emit(y, &line);
     }
 }
 
@@ -406,6 +433,7 @@ mod tests {
             .map(|d| Plane {
                 data: d,
                 stride: 1,
+                first_row: 0,
                 width: 1,
                 height: 1,
                 hn: 1,

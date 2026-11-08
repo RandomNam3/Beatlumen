@@ -6,17 +6,44 @@
 use super::vp8_tables::{
     AC_QLOOKUP, COEFF_UPDATE_PROBS, DC_QLOOKUP, DEFAULT_COEFF_PROBS, KF_BMODE_PROB,
 };
+use crate::jpeg::color::{self, ColorSpace, Plane};
+use crate::scale::RowSink;
 use crate::Error;
 
-/// Decoded 4:2:0 frame; planes are padded to whole macroblocks.
-pub struct Frame {
-    pub width: usize,
-    pub height: usize,
-    pub y: Vec<u8>,
-    pub u: Vec<u8>,
-    pub v: Vec<u8>,
-    pub y_stride: usize,
-    pub uv_stride: usize,
+/// A band of the decoded 4:2:0 frame: `BAND` macroblock rows starting at
+/// luma row `y_org` (chroma row `uv_org`); planes are padded to whole
+/// macroblocks.
+struct Frame {
+    width: usize,
+    height: usize,
+    y: Vec<u8>,
+    u: Vec<u8>,
+    v: Vec<u8>,
+    y_stride: usize,
+    uv_stride: usize,
+    y_org: usize,
+    uv_org: usize,
+}
+
+/// Macroblock rows kept: the row being reconstructed, the one being loop
+/// filtered, the one being output and the chroma row above that.
+const BAND: usize = 4;
+
+/// Supplies the alpha values of the rows in order.
+pub trait AlphaRows {
+    /// Fills `out` (one value per pixel) with the next row; false when no
+    /// more rows are available (the rest stays opaque).
+    fn next_alpha(&mut self, out: &mut [u8]) -> bool;
+}
+
+/// Reads the frame size from a VP8 key frame header.
+pub fn dimensions(data: &[u8]) -> Result<(u32, u32), Error> {
+    if data.len() < 10 || data[3..6] != [0x9d, 0x01, 0x2a] {
+        return Err(Error::InvalidData("vp8: bad start code"));
+    }
+    let width = (u16::from_le_bytes([data[6], data[7]]) & 0x3fff) as u32;
+    let height = (u16::from_le_bytes([data[8], data[9]]) & 0x3fff) as u32;
+    Ok((width, height))
 }
 
 /// Boolean entropy decoder (RFC 6386 section 7) with a 64-bit window.
@@ -215,7 +242,13 @@ struct Header {
     skip_prob: u8,
 }
 
-pub fn decode(data: &[u8]) -> Result<Frame, Error> {
+/// Decodes a key frame and hands its RGBA rows (alpha from `alpha`, else
+/// opaque) to `sink` in order, holding only a band of macroblock rows.
+pub fn decode_rows(
+    data: &[u8],
+    mut alpha: Option<&mut dyn AlphaRows>,
+    sink: &mut dyn RowSink,
+) -> Result<(), Error> {
     if data.len() < 10 {
         return Err(Error::InvalidData("vp8: truncated frame"));
     }
@@ -359,7 +392,7 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
 
     let mb_cols = width.div_ceil(16);
     let mb_rows = height.div_ceil(16);
-    if (mb_cols * 16) as u64 * (mb_rows * 16) as u64 > crate::MAX_PIXELS {
+    if (mb_cols * 16) as u64 * (mb_rows * 16) as u64 > crate::MAX_SOURCE_PIXELS {
         return Err(Error::Unsupported("image too large"));
     }
     let y_stride = mb_cols * 16;
@@ -367,14 +400,22 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
     let mut f = Frame {
         width,
         height,
-        y: vec![0; y_stride * mb_rows * 16],
-        u: vec![0; uv_stride * mb_rows * 8],
-        v: vec![0; uv_stride * mb_rows * 8],
+        y: vec![0; y_stride * BAND * 16],
+        u: vec![0; uv_stride * BAND * 8],
+        v: vec![0; uv_stride * BAND * 8],
         y_stride,
         uv_stride,
+        y_org: 0,
+        uv_org: 0,
     };
-
-    let mut mb_info = vec![MbInfo::default(); mb_cols * mb_rows];
+    let mut out = Output {
+        rgba: vec![0; width * 4],
+        alpha: vec![255; width],
+        alpha_ok: alpha.is_some(),
+    };
+    // Filter levels of the current and the previous macroblock row.
+    let mut mb_info = vec![MbInfo::default(); mb_cols * 2];
+    let mut decoded_rows = 0;
     // Above contexts: token non-zero flags (9 per MB) and subblock modes.
     let mut above_nz = vec![[0u8; 9]; mb_cols];
     let mut above_modes = vec![[B_DC_PRED; 4]; mb_cols];
@@ -382,6 +423,14 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
         let mut left_nz = [0u8; 9];
         let mut left_modes = [B_DC_PRED; 4];
         let tp = &mut parts[my % num_parts];
+        if my >= BAND {
+            // Slide the band down by one macroblock row.
+            f.y.copy_within(16 * y_stride.., 0);
+            f.u.copy_within(8 * uv_stride.., 0);
+            f.v.copy_within(8 * uv_stride.., 0);
+            f.y_org += 16;
+            f.uv_org += 8;
+        }
         for mx in 0..mb_cols {
             // --- Modes (first partition).
             let segment = if h.update_map {
@@ -492,19 +541,122 @@ pub fn decode(data: &[u8]) -> Result<Frame, Error> {
                 }
                 level = level.clamp(0, 63);
             }
-            mb_info[my * mb_cols + mx] = MbInfo {
+            mb_info[(my % 2) * mb_cols + mx] = MbInfo {
                 filter_level: level as u8,
                 inner: any_nz || ymode == B_PRED,
             };
+        }
+        decoded_rows = my + 1;
+        if my >= 1 && h.filter_level > 0 {
+            let prev = &mb_info[((my - 1) % 2) * mb_cols..((my - 1) % 2 + 1) * mb_cols];
+            loop_filter_row(&mut f, &h, prev, my - 1);
+        }
+        if my >= 2 {
+            out.emit(&f, my - 2, &mut alpha, sink);
         }
         if bd.exhausted() {
             break; // truncated mode partition: keep what was decoded
         }
     }
-    if h.filter_level > 0 {
-        loop_filter(&mut f, &h, &mb_info, mb_cols, mb_rows);
+    // Finish the last rows.
+    if decoded_rows >= 1 {
+        let last = decoded_rows - 1;
+        if h.filter_level > 0 {
+            let info = &mb_info[(last % 2) * mb_cols..(last % 2 + 1) * mb_cols];
+            loop_filter_row(&mut f, &h, info, last);
+        }
+        for r in last.saturating_sub(1)..=last {
+            out.emit(&f, r, &mut alpha, sink);
+        }
     }
-    Ok(f)
+    Ok(())
+}
+
+/// Converts finished macroblock rows to RGBA rows.
+struct Output {
+    rgba: Vec<u8>,
+    alpha: Vec<u8>,
+    alpha_ok: bool,
+}
+
+impl Output {
+    /// Emits the pixel rows of macroblock row `r` (final once row r + 1
+    /// was loop filtered).
+    fn emit(
+        &mut self,
+        f: &Frame,
+        r: usize,
+        alpha: &mut Option<&mut dyn AlphaRows>,
+        sink: &mut dyn RowSink,
+    ) {
+        let (w, h) = (f.width, f.height);
+        let y0 = r * 16;
+        if y0 >= h {
+            return;
+        }
+        let y1 = (y0 + 16).min(h);
+        let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+        let planes = [
+            Plane {
+                data: &f.y,
+                stride: f.y_stride,
+                first_row: f.y_org,
+                width: w,
+                height: h,
+                hn: 1,
+                hd: 1,
+                vn: 1,
+                vd: 1,
+            },
+            Plane {
+                data: &f.u,
+                stride: f.uv_stride,
+                first_row: f.uv_org,
+                width: cw,
+                height: ch,
+                hn: 1,
+                hd: 2,
+                vn: 1,
+                vd: 2,
+            },
+            Plane {
+                data: &f.v,
+                stride: f.uv_stride,
+                first_row: f.uv_org,
+                width: cw,
+                height: ch,
+                hn: 1,
+                hd: 2,
+                vn: 1,
+                vd: 2,
+            },
+        ];
+        let (rgba, abuf, alpha_ok) = (&mut self.rgba, &mut self.alpha, &mut self.alpha_ok);
+        color::convert_rows(
+            &planes,
+            ColorSpace::YuvLimited,
+            w,
+            h,
+            y0..y1,
+            &mut |y, row| {
+                rgba.copy_from_slice(&row[..w * 4]);
+                if *alpha_ok {
+                    if let Some(a) = alpha.as_mut() {
+                        *alpha_ok = a.next_alpha(abuf);
+                        if !*alpha_ok {
+                            abuf.fill(255);
+                        }
+                    }
+                }
+                if alpha.is_some() {
+                    for (p, &v) in rgba.chunks_exact_mut(4).zip(abuf.iter()) {
+                        p[3] = v;
+                    }
+                }
+                sink.row(y, rgba);
+            },
+        );
+    }
 }
 
 /// Reads the tokens of one 4x4 block; returns whether any coefficient was
@@ -656,8 +808,17 @@ fn idct_add(coef: &[i16; 16], dst: &mut [u8], off: usize, stride: usize) {
 
 /// Predicts a size x size block (16 for luma, 8 for chroma) with a
 /// macroblock-level mode, writing into the plane.
-fn predict_mb(plane: &mut [u8], stride: usize, mx: usize, my: usize, size: usize, mode: usize) {
-    let (x0, y0) = (mx * size, my * size);
+fn predict_mb(
+    plane: &mut [u8],
+    stride: usize,
+    mx: usize,
+    my: usize,
+    size: usize,
+    mode: usize,
+    org: usize,
+) {
+    // Rows relative to the band starting at plane row `org`.
+    let (x0, y0) = (mx * size, my * size - org);
     let mut above = [127u8; 16];
     let mut left = [129u8; 16];
     if my > 0 {
@@ -882,7 +1043,8 @@ fn reconstruct_mb(
     if ymode == B_PRED {
         for sb in 0..16 {
             let (bx, by) = (sb % 4, sb / 4);
-            let (x0, y0) = (mx * 16 + bx * 4, my * 16 + by * 4);
+            // Rows relative to the band.
+            let (x0, y0) = (mx * 16 + bx * 4, my * 16 - f.y_org + by * 4);
             let mut a = [127u8; 9];
             let mut l = [129u8; 4];
             if x0 > 0 {
@@ -890,7 +1052,7 @@ fn reconstruct_mb(
                     *v = f.y[(y0 + i) * ys + x0 - 1];
                 }
             }
-            if y0 > 0 {
+            if my > 0 || by > 0 {
                 a[0] = if x0 > 0 {
                     f.y[(y0 - 1) * ys + x0 - 1]
                 } else {
@@ -903,7 +1065,7 @@ fn reconstruct_mb(
                 } else if my == 0 {
                     a[5..9].fill(127);
                 } else {
-                    let row = (my * 16 - 1) * ys;
+                    let row = (my * 16 - 1 - f.y_org) * ys;
                     if bx < 3 {
                         a[5..9].copy_from_slice(&f.y[row + x0 + 4..row + x0 + 8]);
                     } else if mx + 1 < mb_cols {
@@ -921,17 +1083,18 @@ fn reconstruct_mb(
             idct_add(&coeffs[sb], &mut f.y, y0 * ys + x0, ys);
         }
     } else {
-        predict_mb(&mut f.y, ys, mx, my, 16, ymode);
+        predict_mb(&mut f.y, ys, mx, my, 16, ymode, f.y_org);
         for sb in 0..16 {
-            let (x0, y0) = (mx * 16 + (sb % 4) * 4, my * 16 + (sb / 4) * 4);
+            let (x0, y0) = (mx * 16 + (sb % 4) * 4, my * 16 - f.y_org + (sb / 4) * 4);
             idct_add(&coeffs[sb], &mut f.y, y0 * ys + x0, ys);
         }
     }
     let us = f.uv_stride;
+    let uv_org = f.uv_org;
     for (plane, base) in [(&mut f.u, 16), (&mut f.v, 20)] {
-        predict_mb(plane, us, mx, my, 8, uvmode);
+        predict_mb(plane, us, mx, my, 8, uvmode, uv_org);
         for j in 0..4 {
-            let (x0, y0) = (mx * 8 + (j % 2) * 4, my * 8 + (j / 2) * 4);
+            let (x0, y0) = (mx * 8 + (j % 2) * 4, my * 8 - uv_org + (j / 2) * 4);
             idct_add(&coeffs[base + j], plane, y0 * us + x0, us);
         }
     }
@@ -1080,11 +1243,11 @@ fn filter_edge_simple(d: &mut [u8], pos: usize, step: usize, along: usize, limit
     }
 }
 
-fn loop_filter(f: &mut Frame, h: &Header, info: &[MbInfo], mb_cols: usize, mb_rows: usize) {
+/// Loop filters macroblock row `my` (`info`: its macroblocks).
+fn loop_filter_row(f: &mut Frame, h: &Header, info: &[MbInfo], my: usize) {
     let (ys, us) = (f.y_stride, f.uv_stride);
-    for my in 0..mb_rows {
-        for mx in 0..mb_cols {
-            let mi = info[my * mb_cols + mx];
+    {
+        for (mx, &mi) in info.iter().enumerate() {
             let level = mi.filter_level as i32;
             if level == 0 {
                 continue;
@@ -1102,8 +1265,8 @@ fn loop_filter(f: &mut Frame, h: &Header, info: &[MbInfo], mb_cols: usize, mb_ro
             } else {
                 0
             };
-            let (yx, yy) = (mx * 16, my * 16);
-            let (cx, cy) = (mx * 8, my * 8);
+            let (yx, yy) = (mx * 16, my * 16 - f.y_org);
+            let (cx, cy) = (mx * 8, my * 8 - f.uv_org);
             if h.simple_filter {
                 let mb_limit = (level + 2) * 2 + interior;
                 let b_limit = level * 2 + interior;

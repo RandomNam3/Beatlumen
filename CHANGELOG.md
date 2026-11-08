@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
+  PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
+  are read, so they never exist at full size: a 16K image needs about 16 MB of working memory
+  instead of 530 MB, on a tablet as on a PC. Each picture is decoded for the screen (with room
+  for the camera's zoom) and the graphics card's limit, and once more in finer detail when the
+  window becomes much larger. Formerly pictures were cut to 2560 pixels and 8K files failed.
+- **Animated backgrounds:** GIF, animated WebP and animated PNG play behind the visual at
+  screen size (up to 1600 × 900 pixels on phones and tablets, 1440p elsewhere), and small
+  enough that all frames fit 256 MB (512 MB on computers, down to 960 × 540 for very long
+  ones): after the first loop nothing is decoded any more. Frames are decoded ahead on their
+  own thread; nothing runs while the app is hidden.
+- **Backgrounds from the server:** animations come as they are, still images scaled to the
+  screen (up to 8192 pixels instead of 4096). The image folders list TIFF and APNG files,
+  files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
+  supported: AVIF would need an AV1 decoder of its own, HEIC an HEVC decoder, whose patents
+  stand in the way.
 - **Listen together:** make a room on the Devices page and let others in with its code or
   link. Everyone hears the same song of the server at the same moment; the host decides what
   plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and

@@ -106,6 +106,10 @@ void bl_string_free(char *s);
 // Fetches a URL with the core's HTTP client (TLS included), from any
 // thread; returns the body or null. Free with bl_bytes_free.
 uint8_t *bl_http_fetch(const char *url, size_t *out_len);
+// A thumbnail (RGBA, straight alpha) of a local image file covering w x h,
+// decoded by the core (any supported format and size), from any thread;
+// null if unreadable. Free with bl_bytes_free.
+uint8_t *bl_image_thumbnail(const char *path, uint32_t w, uint32_t h, uint32_t *out_w, uint32_t *out_h, size_t *out_len);
 void bl_bytes_free(uint8_t *p, size_t len);
 
 #ifdef __cplusplus

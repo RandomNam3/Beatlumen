@@ -782,6 +782,123 @@ fn presets_crud_and_name_sanitizing() {
     assert_eq!(s.req("DELETE", &path, &[], &[]).status, 404);
 }
 
+/// A two-frame APNG (8x8, red then blue; CRCs are not checked).
+fn apng() -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, ty: &[u8], body: &[u8]) {
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(ty);
+        out.extend_from_slice(body);
+        out.extend_from_slice(&[0; 4]);
+    }
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = 8u32.to_be_bytes().to_vec();
+    ihdr.extend_from_slice(&8u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut png, b"IHDR", &ihdr);
+    let mut actl = 2u32.to_be_bytes().to_vec();
+    actl.extend_from_slice(&0u32.to_be_bytes());
+    chunk(&mut png, b"acTL", &actl);
+    for (i, color) in [[255u8, 0, 0, 255], [0, 0, 255, 255]].iter().enumerate() {
+        let mut fctl = (2 * i as u32).to_be_bytes().to_vec();
+        for v in [8u32, 8, 0, 0] {
+            fctl.extend_from_slice(&v.to_be_bytes());
+        }
+        fctl.extend_from_slice(&[0, 10, 0, 100, 0, 0]);
+        chunk(&mut png, b"fcTL", &fctl);
+        let raw: Vec<u8> = (0..8)
+            .flat_map(|_| std::iter::once(0).chain(color.repeat(8)))
+            .collect();
+        let z = bl_image::deflate::zlib_compress(&raw, 6);
+        if i == 0 {
+            chunk(&mut png, b"IDAT", &z);
+        } else {
+            let mut fdat = (2 * i as u32 + 1).to_be_bytes().to_vec();
+            fdat.extend_from_slice(&z);
+            chunk(&mut png, b"fdAT", &fdat);
+        }
+    }
+    chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+/// A little-endian 8-bit RGB TIFF in one uncompressed strip.
+fn tiff(w: u32, h: u32) -> Vec<u8> {
+    let px: Vec<u8> = (0..w * h * 3).map(|i| (i % 251) as u8).collect();
+    let entries: [(u16, u16, u32); 9] = [
+        (256, 4, w),
+        (257, 4, h),
+        (258, 3, 8),
+        (259, 3, 1),
+        (262, 3, 2),
+        (273, 4, 8 + 2 + 9 * 12 + 4),
+        (277, 3, 3),
+        (278, 4, h),
+        (279, 4, w * h * 3),
+    ];
+    let mut out = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    for (tag, ty, val) in entries {
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&ty.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&val.to_le_bytes());
+    }
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&px);
+    out
+}
+
+#[test]
+fn background_images_animated_tiff_and_large() {
+    let data = temp_dir("bg-data");
+    let imgs = temp_dir("bg-images");
+    let anim = apng();
+    let still = bl_image::encode_png(&test_image(9000, 20));
+    std::fs::write(imgs.join("anim.apng"), &anim).unwrap();
+    std::fs::write(imgs.join("anim2.png"), &anim).unwrap();
+    std::fs::write(imgs.join("wide.png"), &still).unwrap();
+    std::fs::write(imgs.join("scan.tif"), tiff(300, 200)).unwrap();
+    let s = start(config(vec![], vec![imgs.to_path_buf()], &data, None, None));
+    let list: Vec<ImageEntry> = s
+        .json("/api/images")
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(ImageEntry::from_json)
+        .collect();
+    assert_eq!(list.len(), 4, "apng and tif are listed");
+    let id = |n: &str| list.iter().find(|i| i.name == n).unwrap().id.clone();
+    // Animations are sent as they are for backgrounds (anim=1), whatever
+    // the extension; still images are scaled.
+    for (name, mime) in [("anim.apng", "image/apng"), ("anim2.png", "image/png")] {
+        let r = s.get(&bl_net::api::paths::background(&id(name), 2048));
+        assert_eq!((r.status, r.headers.get("content-type")), (200, Some(mime)));
+        assert_eq!(r.body, anim);
+        // Without anim=1: a still JPEG of the first frame.
+        let r = s.get(&bl_net::api::paths::image(&id(name), 64));
+        assert_eq!(r.headers.get("content-type"), Some("image/jpeg"));
+    }
+    // Sizes up to 8192 for large screens.
+    let r = s.get(&bl_net::api::paths::background(&id("wide.png"), 8192));
+    assert_eq!(r.headers.get("content-type"), Some("image/jpeg"));
+    let img = bl_image::decode(&r.body).unwrap();
+    assert_eq!(img.width, 8192);
+    // TIFF is served scaled (browsers cannot show it) and as it is.
+    let r = s.get(&bl_net::api::paths::background(&id("scan.tif"), 100));
+    assert_eq!(r.headers.get("content-type"), Some("image/jpeg"));
+    assert_eq!(bl_image::decode(&r.body).unwrap().width, 100);
+    let r = s.get(&bl_net::api::paths::image(&id("scan.tif"), 0));
+    assert_eq!(r.headers.get("content-type"), Some("image/tiff"));
+    // Uploads accept TIFF.
+    let r = s.req(
+        "POST",
+        "/api/images",
+        &[("X-Filename", "up.tif")],
+        &tiff(4, 4),
+    );
+    assert_eq!(r.status, 201, "{}", String::from_utf8_lossy(&r.body));
+}
+
 #[test]
 fn images_list_fetch_scale_upload_delete() {
     let data = temp_dir("images-data");
@@ -853,7 +970,7 @@ fn images_list_fetch_scale_upload_delete() {
             .count(),
         1
     );
-    // size is clamped to 64..4096 (no upscaling beyond the original).
+    // size is clamped to 64..8192 (no upscaling beyond the original).
     let r = s.get(&bl_net::api::paths::image(&pic.id, 1));
     let small = bl_image::decode(&r.body).unwrap();
     assert_eq!((small.width, small.height), (64, 48));

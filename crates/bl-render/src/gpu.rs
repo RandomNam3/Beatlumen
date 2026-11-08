@@ -46,6 +46,31 @@ impl Texture {
         Texture { id, width, height }
     }
 
+    /// Replaces the pixels (same size, straight alpha, top row first;
+    /// flipped like [`Texture::from_rgba`] in `scratch`, which is reused).
+    pub fn update(&self, gl: &Gl, pixels: &[u8], scratch: &mut Vec<u8>) {
+        let row = self.width as usize * 4;
+        if pixels.len() < row * self.height as usize {
+            return;
+        }
+        let flipped = scratch;
+        flipped.clear();
+        for y in (0..self.height as usize).rev() {
+            flipped.extend_from_slice(&pixels[y * row..(y + 1) * row]);
+        }
+        gl.bind_texture(TEXTURE_2D, self.id);
+        gl.pixel_store(UNPACK_ALIGNMENT, 1);
+        gl.tex_sub_image_2d(
+            0,
+            0,
+            self.width as i32,
+            self.height as i32,
+            RGBA,
+            UNSIGNED_BYTE,
+            flipped,
+        );
+    }
+
     /// Creates a single channel (R8) texture, used for glyph atlases.
     pub fn new_r8(gl: &Gl, width: u32, height: u32) -> Texture {
         let id = gl.create_texture();

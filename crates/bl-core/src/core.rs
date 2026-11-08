@@ -3,6 +3,7 @@
 //! [`Core::command`] (see `commands.rs`), calls [`Core::tick`] regularly and
 //! [`Core::render`] once per displayed frame.
 
+use crate::background::{self, AnimPlayer, BgImage, BgTarget};
 use crate::host::{Host, HttpResponse};
 use crate::jobs::{decode_mono, extension, Mailbox};
 use crate::library::{self, LibraryState, LOCAL_PREFIX};
@@ -140,11 +141,24 @@ pub(crate) struct Gfx {
     pub batch: Batch2d,
 }
 
-/// A decoded background image delivered by a worker.
+/// A decoded background image delivered by a worker (with the size of
+/// its source).
 pub(crate) struct Decoded {
     pub key: String,
-    pub result: Result<bl_image::Image, String>,
+    pub result: Result<(BgImage, (u32, u32)), String>,
     pub animate: bool,
+    /// A new decode of the background on screen (for a larger screen):
+    /// replaces its texture without a transition.
+    pub refresh: bool,
+}
+
+/// The background on screen: its texture and how it was decoded.
+pub(crate) struct BgShown {
+    pub id: u64,
+    pub decoded: (u32, u32),
+    pub source: (u32, u32),
+    /// Animation frames (1 for a still image).
+    pub frames: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +316,14 @@ pub struct Core {
     pub(crate) bg_source: Option<String>,
     pub(crate) bg_pending: Option<String>,
     pub(crate) image_box: Mailbox<Decoded>,
+    /// Screen and GPU limits backgrounds are decoded for.
+    pub(crate) bg_target: BgTarget,
+    pub(crate) bg_shown: Option<BgShown>,
+    bg_anim: Option<AnimPlayer>,
+    /// The next background decode replaces the one on screen.
+    bg_refresh: bool,
+    /// Since when the screen has needed a larger decode.
+    bg_grow_since: Option<f64>,
     /// Extracted local cover files by track id (None = no cover).
     pub(crate) covers: HashMap<String, Option<String>>,
     pub(crate) cover_box: Mailbox<(String, Option<String>)>,
@@ -520,6 +542,15 @@ impl Core {
             bg_source: None,
             bg_pending: None,
             image_box: Mailbox::default(),
+            bg_target: BgTarget {
+                screen: (1920, 1080),
+                max_texture: 4096,
+                mobile: matches!(host.platform(), "android" | "ios"),
+            },
+            bg_shown: None,
+            bg_anim: None,
+            bg_refresh: false,
+            bg_grow_since: None,
             covers: HashMap::new(),
             cover_box: Mailbox::default(),
             server,
@@ -2292,18 +2323,35 @@ impl Core {
         data: Vec<u8>,
         animate: bool,
     ) {
+        let job = self.background_job(host, key, animate, move || Ok(data));
+        host.spawn(job);
+    }
+
+    /// A job that gets the image bytes, decodes them for the screen and
+    /// posts the result.
+    fn background_job(
+        &mut self,
+        host: &dyn Host,
+        key: String,
+        animate: bool,
+        read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static,
+    ) -> Box<dyn FnOnce() + Send> {
         let mailbox = self.image_box.clone();
-        host.spawn(Box::new(move || {
-            let result = std::panic::catch_unwind(|| {
-                bl_image::decode_max(&data, 2560).map_err(|e| e.to_string())
-            })
-            .unwrap_or_else(|_| Err("image decoder failed".to_string()));
+        let target = self.bg_target;
+        let threads = host.has_threads();
+        let refresh = std::mem::take(&mut self.bg_refresh);
+        Box::new(move || {
+            let result = read().and_then(|data| {
+                std::panic::catch_unwind(move || background::decode(data, &target, threads))
+                    .unwrap_or_else(|_| Err("image decoder failed".to_string()))
+            });
             mailbox.post(Decoded {
                 key,
                 result,
                 animate,
+                refresh,
             });
-        }));
+        })
     }
 
     /// Loads a background from a source string: `file:<path>`,
@@ -2321,40 +2369,27 @@ impl Core {
             let img = default_background(960, 540, seed);
             self.image_box.post(Decoded {
                 key: source.to_string(),
-                result: Ok(img),
+                result: Ok((BgImage::Still(img), (960, 540))),
                 animate,
+                refresh: std::mem::take(&mut self.bg_refresh),
             });
         } else if let Some(path) = source.strip_prefix(LOCAL_PREFIX) {
-            let mailbox = self.image_box.clone();
             let (path, key) = (path.to_string(), source.to_string());
             if host.has_threads() {
-                host.spawn(Box::new(move || {
-                    let result = std::fs::read(&path)
-                        .map_err(|e| e.to_string())
-                        .and_then(|d| {
-                            std::panic::catch_unwind(|| {
-                                bl_image::decode_max(&d, 2560).map_err(|e| e.to_string())
-                            })
-                            .unwrap_or_else(|_| Err("image decoder failed".into()))
-                        });
-                    mailbox.post(Decoded {
-                        key,
-                        result,
-                        animate,
-                    });
-                }));
-            } else {
-                let result = host
-                    .fs_read(&path)
-                    .and_then(|d| bl_image::decode_max(&d, 2560).map_err(|e| e.to_string()));
-                mailbox.post(Decoded {
-                    key,
-                    result,
-                    animate,
+                let job = self.background_job(host, key, animate, move || {
+                    std::fs::read(&path).map_err(|e| e.to_string())
                 });
+                host.spawn(job);
+            } else {
+                let data = host.fs_read(&path);
+                let job = self.background_job(host, key, animate, move || data);
+                job();
             }
         } else if let Some(id) = source.strip_prefix("srv:") {
-            let rid = self.server.get(host, &bl_net::api::paths::image(id, 2560));
+            let size = self.bg_target.server_size();
+            let rid = self
+                .server
+                .get(host, &bl_net::api::paths::background(id, size));
             self.requests.insert(rid, Req::BgImage(source.to_string()));
         } else if let Some(id) = source.strip_prefix(crate::vault::BG_PREFIX) {
             // Locked or not listed yet: shown once the vault opens.
@@ -2369,25 +2404,12 @@ impl Core {
         } else if let Some(track_id) = source.strip_prefix("cover:") {
             let track_id = track_id.to_string();
             if let Some(path) = library::local_path(&track_id).map(str::to_string) {
-                let mailbox = self.image_box.clone();
                 let key = source.to_string();
-                let job = move || {
-                    let result = local_cover_bytes(&path)
-                        .ok_or_else(|| "no cover".to_string())
-                        .and_then(|d| {
-                            std::panic::catch_unwind(|| {
-                                bl_image::decode_max(&d, 1600).map_err(|e| e.to_string())
-                            })
-                            .unwrap_or_else(|_| Err("decoder failed".into()))
-                        });
-                    mailbox.post(Decoded {
-                        key,
-                        result,
-                        animate,
-                    });
-                };
+                let job = self.background_job(host, key, animate, move || {
+                    local_cover_bytes(&path).ok_or_else(|| "no cover".to_string())
+                });
                 if host.has_threads() {
-                    host.spawn(Box::new(job));
+                    host.spawn(job);
                 } else {
                     job();
                 }
@@ -2474,21 +2496,68 @@ impl Core {
             }
             self.bg_pending = None;
             match d.result {
-                Ok(img) => {
-                    let id = self.next_image_id;
-                    self.next_image_id += 1;
+                Ok((bg, source)) => {
+                    let decoded = bg.size();
+                    let (w, h) = decoded;
+                    // A refresh keeps the texture id (and the scene).
+                    let same = self.bg_shown.as_ref().filter(|s| {
+                        d.refresh && self.bg_source.as_deref() == Some(d.key.as_str()) && s.id > 0
+                    });
+                    let id = match same {
+                        Some(s) => s.id,
+                        None => {
+                            let id = self.next_image_id;
+                            self.next_image_id += 1;
+                            id
+                        }
+                    };
+                    let pixels: &[u8] = match &bg {
+                        BgImage::Still(img) => &img.pixels,
+                        BgImage::Animated { first, .. } => &first.pixels,
+                    };
                     if let Some(gfx) = &mut self.gfx {
-                        gfx.vis
-                            .set_image(gl, id, img.width, img.height, &img.pixels);
+                        gfx.vis.set_image(gl, id, w, h, pixels);
                     }
-                    let aspect = img.width as f32 / img.height.max(1) as f32;
-                    self.engine
-                        .set_background(Some(ImageRef { id, aspect }), d.animate);
+                    let frames = match &bg {
+                        BgImage::Animated { frames, .. } => *frames,
+                        BgImage::Still(_) => 1,
+                    };
+                    let animated = frames > 1;
+                    host.log(&format!(
+                        "background {}: {w}x{h} of {}x{}{}{}",
+                        d.key,
+                        source.0,
+                        source.1,
+                        if animated { ", animated" } else { "" },
+                        if same.is_some() {
+                            ", decoded again"
+                        } else {
+                            ""
+                        },
+                    ));
+                    self.bg_anim = match bg {
+                        BgImage::Animated { player, .. } => Some(player),
+                        BgImage::Still(_) => None,
+                    };
+                    if same.is_none() {
+                        let aspect = w as f32 / h.max(1) as f32;
+                        self.engine
+                            .set_background(Some(ImageRef { id, aspect }), d.animate);
+                    }
+                    self.bg_shown = Some(BgShown {
+                        id,
+                        decoded,
+                        source,
+                        frames,
+                    });
+                    self.bg_grow_since = None;
                     self.bg_source = Some(d.key);
                 }
                 Err(e) => {
                     host.log(&format!("background {}: {e}", d.key));
-                    if d.key.starts_with("cover:") {
+                    if d.refresh {
+                        // The background on screen stays as it is.
+                    } else if d.key.starts_with("cover:") {
                         self.load_background(host, DEFAULT_BG);
                     } else {
                         self.toast(
@@ -2502,6 +2571,57 @@ impl Core {
         if let Some(gfx) = &mut self.gfx {
             let live = self.engine.live_images();
             gfx.vis.retain_images(gl, &live);
+        }
+    }
+
+    /// Plays animated backgrounds and decodes the background again when
+    /// the screen became much larger than what it was decoded for.
+    fn update_background(&mut self, host: &mut dyn Host, gl: &Gl, w: u32, h: u32, dt: f64) {
+        self.bg_target.screen = (w, h);
+        if let (Some(player), Some(shown), Some(gfx)) =
+            (&mut self.bg_anim, &self.bg_shown, &mut self.gfx)
+        {
+            if let Some(img) = player.tick(dt) {
+                gfx.vis
+                    .update_image(gl, shown.id, img.width, img.height, &img.pixels);
+            }
+        }
+        let Some(shown) = &self.bg_shown else {
+            return;
+        };
+        if self.bg_pending.is_some() {
+            self.bg_grow_since = None;
+            return;
+        }
+        let fit = if shown.frames > 1 {
+            self.bg_target.animated(shown.frames)
+        } else {
+            self.bg_target.still()
+        };
+        let want = fit.target(shown.source.0, shown.source.1);
+        let grows = want.0 as f64 > shown.decoded.0 as f64 * 1.2;
+        if !grows {
+            self.bg_grow_since = None;
+            return;
+        }
+        // Wait until the window has settled.
+        let now = host.now();
+        let since = *self.bg_grow_since.get_or_insert(now);
+        if now - since < 1.0 {
+            return;
+        }
+        self.bg_grow_since = None;
+        if let Some(source) = self.bg_source.clone() {
+            self.bg_refresh = true;
+            self.bg_source = None;
+            self.load_background(host, &source);
+            if self.bg_pending.is_none() {
+                self.bg_refresh = false;
+                self.bg_source = Some(source);
+            } else {
+                // Shown until the new decode arrives.
+                self.bg_source = Some(source);
+            }
         }
     }
 
@@ -2831,9 +2951,13 @@ impl Core {
             gl.get_string(bl_gl::VERSION),
             gl.get_string(bl_gl::RENDERER)
         ));
+        self.bg_target.max_texture =
+            (gl.get_integer(bl_gl::MAX_TEXTURE_SIZE).max(0) as u32).max(2048);
         self.gfx = Some(Gfx { vis, batch });
         self.bg_source = None;
         self.bg_pending = None;
+        self.bg_shown = None;
+        self.bg_anim = None;
         self.show_queue_background(host);
         Ok(())
     }
@@ -2842,6 +2966,8 @@ impl Core {
     pub fn gl_lost(&mut self) {
         self.gfx = None;
         self.bg_source = None;
+        self.bg_shown = None;
+        self.bg_anim = None;
     }
 
     /// The live analysis works at the rate of the output, and on a sound card
@@ -2891,6 +3017,7 @@ impl Core {
         self.last_dt = dt;
         let (w, h) = (w.max(1), h.max(1));
         self.poll_images(host, gl);
+        self.update_background(host, gl, w, h, dt);
         let playing = self.player.state() == PlayState::Playing;
         let position = self.player.position(host);
         let live = self.update_live(host);
