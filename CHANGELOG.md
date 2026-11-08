@@ -29,6 +29,8 @@
   file is named the same. "12 Millionen" by DAME no longer turns into "Millionen".
 - **Statistics:** songs without an album tag no longer show up as blank rows among the top albums,
   and the genres are written as on the start page: a tag "Genre:" with nothing after it is none.
+  A song without a genre tag counts for the first two genres of its artist, when they were looked
+  up on the internet.
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window

@@ -16,6 +16,8 @@ pub struct StatSong {
     pub album: String,
     pub album_id: String,
     pub genre: String,
+    /// Genres of its artist from the internet, for a song without a genre tag.
+    pub artist_genres: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -165,8 +167,20 @@ pub fn stats(
             add(by_album.entry(s.album_id.as_str()).or_default());
         }
         // In one spelling, as on the start page: "Genre: Rock" is rock, and a
-        // bare "Genre:" is no genre.
-        for g in crate::catalog::split_genres(&s.genre) {
+        // bare "Genre:" is no genre. Without a tag, the artist's first two.
+        let mut genres = crate::catalog::split_genres(&s.genre);
+        if genres.is_empty() {
+            for g in s
+                .artist_genres
+                .iter()
+                .filter_map(|g| crate::catalog::normalize_genre(g))
+            {
+                if genres.len() < 2 && !genres.contains(&g) {
+                    genres.push(g);
+                }
+            }
+        }
+        for g in genres {
             add(by_genre.entry(g).or_default());
         }
     }
@@ -329,6 +343,7 @@ mod tests {
                 album: "Album".into(),
                 album_id: "al".into(),
                 genre: "Rock; Pop".into(),
+                artist_genres: Vec::new(),
             },
             StatSong {
                 id: "b".into(),
@@ -376,6 +391,27 @@ mod tests {
         assert_eq!(genres.len(), 2);
         assert_eq!(v.get("topGenres").at(0).str_or("name", ""), "rock");
         assert_eq!(v.get("topGenres").at(0).get("plays").as_u64(), Some(3));
+    }
+
+    #[test]
+    fn without_a_genre_tag_the_artists_genres_count() {
+        let songs = [StatSong {
+            id: "c".into(),
+            title: "Song C".into(),
+            genre: "Genre:".into(),
+            artist_genres: vec!["Hip-Hop".into(), "rap".into(), "trap".into()],
+            ..StatSong::default()
+        }];
+        let v = stats(&songs, &[play(0, NOW - H, 200, false)], Range::All, NOW, 0);
+        let names: Vec<&str> = v
+            .get("topGenres")
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g.str_or("name", ""))
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(!names.contains(&"trap"));
     }
 
     #[test]
