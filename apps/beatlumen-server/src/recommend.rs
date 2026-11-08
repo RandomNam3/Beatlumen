@@ -264,6 +264,7 @@ pub fn stats(state: &State, login: &Login, range: &str, utc_offset: i64) -> Valu
                     album: t.album.clone(),
                     album_id: t.album_id.clone(),
                     genre: t.genre.clone(),
+                    artist_genres: Vec::new(),
                 });
                 known.insert(e.id.clone(), i);
                 Some(i)

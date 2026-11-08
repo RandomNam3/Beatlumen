@@ -1,4 +1,5 @@
 #include "testhooks.h"
+#include "bridge.h"
 
 #include <QAccessible>
 #include <QCoreApplication>
@@ -263,6 +264,10 @@ void TestHooks::run(const QString &line)
     } else if (cmd == QLatin1String("set") && a.size() >= 2) {
         const QJsonDocument d = QJsonDocument::fromJson("[" + a.at(1).toUtf8() + "]");
         m_window->setProperty(a.at(0).toUtf8().constData(), d.array().at(0).toVariant());
+    } else if (cmd == QLatin1String("keyboard") && !a.isEmpty()) {
+        // A keyboard of this height over the window, as Android reports it.
+        if (auto *bridge = qobject_cast<Bridge *>(qmlEngine(m_window)->singletonInstance<QObject *>("Beatlumen.Core", "Core")))
+            bridge->setKeyboardHeight(a.at(0).toInt());
     } else if (cmd == QLatin1String("core") && !a.isEmpty()) {
         const qsizetype args = rest.indexOf(QLatin1Char(' '));
         const QVariantMap map = args < 0 ? QVariantMap()

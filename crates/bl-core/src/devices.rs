@@ -35,6 +35,7 @@ pub(crate) struct DevicesState {
     pub announced: String,
     pub announced_at: f64,
     pub announcing: bool,
+    pub look_at: f64,
     pub refreshing: bool,
     /// Server clock minus this device's clock (milliseconds).
     pub clock_offset_ms: Option<f64>,
@@ -253,7 +254,9 @@ impl Core {
             }
         }
         let id = self.device_id();
-        if !self.devices.announcing {
+        // Once a second is soon enough for the other devices.
+        if !self.devices.announcing && now >= self.devices.look_at {
+            self.devices.look_at = now + 1.0;
             let (state, signature) = self.device_playback(host);
             let position = state.get("position").as_f64().unwrap_or(0.0);
             // A seek also counts as a change.

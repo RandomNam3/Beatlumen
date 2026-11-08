@@ -379,13 +379,17 @@ impl LyricsSync {
         // The song's own text (plain or with line times); a text with word
         // times is timed again from its lines.
         let text = state.lyrics.source_text(e).map(|(t, _)| t);
+        let head = self.model().and_then(|p| bl_align::Head::for_model(&p));
+        let aligner = head.as_ref().map(|h| bl_align::HeadAligner::new(model, h));
         let timed = bl_asr::sync::time_song(
             model,
             model_id,
             &samples,
             text.as_deref(),
             Some(&e.track.title),
-            None,
+            aligner
+                .as_ref()
+                .map(|a| a as &dyn bl_asr::transcribe::WordAligner),
             &mut progress,
         )?;
         let path = if timed.written_down {

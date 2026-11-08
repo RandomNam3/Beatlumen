@@ -141,6 +141,18 @@ pub(crate) fn probe<R: Read + Seek + ?Sized>(
             }
         }
     };
+    // A file named .mp3 with more junk before its first frame: as far as the
+    // MP3 reader itself looks (256 KiB).
+    let result = match result {
+        None if matches!(hint, Some(Format::Mp3)) && n == 16 * 1024 => {
+            r.seek(SeekFrom::Start(0))?;
+            let mut more = vec![0u8; 256 * 1024];
+            let n = read_up_to(r, &mut more)?;
+            more.truncate(n);
+            mp3::find_sync(&more, 2).map(|_| Format::Mp3)
+        }
+        other => other,
+    };
     r.seek(SeekFrom::Start(0))?;
     result.ok_or_else(|| Error::Unsupported("unrecognised container format".into()))
 }
@@ -186,5 +198,26 @@ mod tests {
             d.extend_from_slice(&f);
         }
         assert_eq!(probe(&mut Cursor::new(d), None).unwrap(), Format::Mp3);
+    }
+
+    #[test]
+    fn mp3_after_much_junk() {
+        // A real case: about 19 KB of junk before the first frame of a .mp3.
+        let header = [0xff, 0xfb, 0x90, 0x00];
+        let frame_len = mp3::parse_header(&header).unwrap().frame_len;
+        let mut d = vec![0x11u8; 20_000];
+        for _ in 0..4 {
+            let mut f = vec![0u8; frame_len];
+            f[..4].copy_from_slice(&header);
+            d.extend_from_slice(&f);
+        }
+        assert_eq!(
+            probe(&mut Cursor::new(&d), Some("mp3")).unwrap(),
+            Format::Mp3
+        );
+        assert!(
+            probe(&mut Cursor::new(&d), None).is_err(),
+            "only for a file named so"
+        );
     }
 }

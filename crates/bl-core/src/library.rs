@@ -322,10 +322,12 @@ pub fn local_track(
         title: file_name.clone(),
         ..Default::default()
     };
+    let mut titled = false;
     if let Some(i) = info {
         let tags = &i.tags;
         if let Some(title) = tags.title.as_ref().filter(|s| !s.trim().is_empty()) {
             t.title = title.trim().to_string();
+            titled = true;
         }
         t.artists = tags
             .artist
@@ -346,9 +348,11 @@ pub fn local_track(
         t.has_cover = true;
         t.meta = bl_net::api::TrackMeta::from_tags(tags);
     }
-    if t.artists.is_empty() || t.title == file_name {
+    let guess_title =
+        bl_net::api::title_from_file_name(&t.title, &file_name, titled, !t.artists.is_empty());
+    if t.artists.is_empty() || guess_title {
         let (artist, title) = bl_net::api::guess_from_file_name(&file_name);
-        if t.title == file_name {
+        if guess_title {
             t.title = title;
         }
         if t.artists.is_empty() {
@@ -375,6 +379,21 @@ pub fn local_track(
     };
     t.album_id = format!("la:{:016x}", fnv(&key));
     t
+}
+
+/// Text that was UTF-8 but read as Latin-1 ("FrÃ©dÃ©ric"), as earlier versions
+/// did when a tagger marked it so: such songs are read again.
+fn misread_utf8(t: &Track) -> bool {
+    let looks = |s: &str| {
+        let chars: Vec<char> = s.chars().collect();
+        chars
+            .windows(2)
+            .any(|w| ('\u{c2}'..='\u{f4}').contains(&w[0]) && ('\u{80}'..='\u{bf}').contains(&w[1]))
+    };
+    [&t.title, &t.album, &t.album_artist, &t.genre]
+        .into_iter()
+        .chain(&t.artists)
+        .any(|s| looks(s))
 }
 
 /// Scans local folders on a background thread (native only). Previously
@@ -409,7 +428,9 @@ pub fn start_local_scan(
             let mut out = Vec::with_capacity(files.len());
             for (i, (path, size, mtime)) in files.iter().enumerate() {
                 if let Some(k) = known.get(path) {
-                    if k.size == *size && k.modified == *mtime {
+                    // Read again what could not be read or was misread before.
+                    let again = k.codec.is_empty() || misread_utf8(k);
+                    if k.size == *size && k.modified == *mtime && !again {
                         out.push(k.clone());
                         continue;
                     }
@@ -515,6 +536,18 @@ pub fn list_images(dir: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf8_read_as_latin1_is_noticed() {
+        let track = |artist: &str| Track {
+            artists: vec![artist.to_string()],
+            ..Default::default()
+        };
+        assert!(misread_utf8(&track("FrÃ©dÃ©ric Chopin")));
+        assert!(misread_utf8(&track("Ã¼ber")));
+        assert!(!misread_utf8(&track("Frédéric Chopin")));
+        assert!(!misread_utf8(&track("Beyoncé, Ångström, Ça va")));
+    }
 
     #[test]
     fn artists_split() {

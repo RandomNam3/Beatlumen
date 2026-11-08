@@ -14,6 +14,7 @@ AppDialog {
     width: Math.min(420, (parent ? parent.width : 420) - 32)
     height: Math.min(520, (parent ? parent.height : 520) - 64)
     standardButtons: Dialog.Cancel
+    onAboutToShow: Theme.nameButtons(this)
 
     function show(trackIds) {
         ids = trackIds

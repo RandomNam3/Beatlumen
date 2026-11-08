@@ -58,7 +58,8 @@ AbstractButton {
                 opacity: card.down ? 0.16 : card.hovered ? 0.08 : 0
             }
             RoundButton {
-                visible: card.hasPlay && (card.hovered || card.activeFocus)
+                // Fingers do not hover.
+                visible: card.hasPlay && (Theme.fingers || card.hovered || card.activeFocus)
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: 6

@@ -29,6 +29,7 @@ AppDialog {
     width: Math.min(460, (parent ? parent.width : 460) - 32)
     title: Theme.tr("Where to save songs?")
     standardButtons: Dialog.Cancel
+    onAboutToShow: Theme.nameButtons(this)
     ColumnLayout {
         anchors.fill: parent
         spacing: 6

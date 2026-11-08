@@ -518,6 +518,14 @@ mod tests {
     }
 }
 
+/// Whether a song's title is taken from its file name: when the tags gave none,
+/// or gave the file name itself without an artist ("Artist - Title" is likely in
+/// it then). A tagged title with an artist stays even when it is the file name:
+/// "12 Millionen" by DAME is not track 12 of "Millionen".
+pub fn title_from_file_name(title: &str, stem: &str, tagged: bool, has_artist: bool) -> bool {
+    title == stem && !(tagged && has_artist)
+}
+
 /// Derives artist and title from a file name without tags, e.g.
 /// "Artist - Title [dQw4w9WgXcQ]", "01. Artist – Title" or "Title".
 pub fn guess_from_file_name(stem: &str) -> (Option<String>, String) {
@@ -563,6 +571,25 @@ pub fn guess_from_file_name(stem: &str) -> (Option<String>, String) {
 #[cfg(test)]
 mod guess_tests {
     use super::guess_from_file_name as g;
+    use super::title_from_file_name;
+
+    #[test]
+    fn a_tagged_title_with_an_artist_stays() {
+        assert!(!title_from_file_name(
+            "12 Millionen",
+            "12 Millionen",
+            true,
+            true
+        ));
+        assert!(title_from_file_name(
+            "Band - Song",
+            "Band - Song",
+            true,
+            false
+        ));
+        assert!(title_from_file_name("07 Song", "07 Song", false, false));
+        assert!(!title_from_file_name("Song", "07 Song", true, false));
+    }
 
     #[test]
     fn file_names() {

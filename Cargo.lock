@@ -66,6 +66,7 @@ name = "beatlumen-server"
 version = "0.12.0"
 dependencies = [
  "bl-airplay",
+ "bl-align",
  "bl-analysis",
  "bl-asr",
  "bl-cast",
@@ -138,6 +139,7 @@ name = "bl-core"
 version = "0.12.0"
 dependencies = [
  "bl-airplay",
+ "bl-align",
  "bl-analysis",
  "bl-asr",
  "bl-cast",

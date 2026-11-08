@@ -22,6 +22,17 @@ use bl_render::{Batch2d, Rect, Target, Visualizer};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// About this many pixels for the visual where the device decides (Android). It
+/// is soft anyway: a tablet's whole screen took all of its GPU, for 46 frames a
+/// second, and over a watt more than this, for no difference to see.
+const AUTO_PIXELS: f32 = 1_000_000.0;
+/// Seconds between looks at how many frames there are, and how few are too few.
+const FRAMES_LOOK: f64 = 3.0;
+const TOO_FEW_FRAMES: f64 = 40.0;
+
+/// Seconds between looks at the state while nothing asks for it.
+const STATE_EVERY: f64 = 0.1;
+
 /// Command line / launch options.
 #[derive(Debug, Clone, Default)]
 pub struct LaunchArgs {
@@ -319,6 +330,12 @@ pub struct Core {
     pub(crate) events: Vec<Value>,
     pub(crate) revs: Revisions,
     last_state: String,
+    /// A command ran: what it changed should show at once.
+    pub(crate) state_wanted: bool,
+    state_at: f64,
+    frames_time: f64,
+    frames_count: u32,
+    slow_scale: f32,
     pub(crate) blur_target: f32,
     menu_blur: f32,
     pub(crate) overlay: Overlay,
@@ -536,6 +553,11 @@ impl Core {
             events: Vec::new(),
             revs: Revisions::default(),
             last_state: String::new(),
+            state_wanted: true,
+            state_at: 0.0,
+            frames_time: 0.0,
+            frames_count: 0,
+            slow_scale: 1.0,
             blur_target: 0.0,
             menu_blur: 0.0,
             overlay: Overlay::default(),
@@ -649,13 +671,11 @@ impl Core {
 
     /// Settings as shown to the UI (without queues and secrets).
     pub(crate) fn settings_json(&self) -> Value {
-        let mut v = self.settings.to_json();
+        let mut v = self.settings.without_lists();
         if let Some(m) = v.as_object_mut() {
             for k in [
-                "audioQueue",
                 "audioIndex",
                 "audioPosition",
-                "backgrounds",
                 "backgroundIndex",
                 "serverToken",
                 "version",
@@ -2238,25 +2258,8 @@ impl Core {
         let mailbox = self.cover_box.clone();
         let job = move || {
             for (id, path, base) in jobs {
-                let out = ["jpg", "png", "img"]
-                    .iter()
-                    .map(|e| format!("{base}.{e}"))
-                    .find(|p| std::path::Path::new(p).exists())
-                    .or_else(|| {
-                        let bytes = local_cover_bytes(&path)?;
-                        let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-                            "png"
-                        } else if bytes.starts_with(&[0xff, 0xd8]) {
-                            "jpg"
-                        } else {
-                            "img"
-                        };
-                        let file = format!("{base}.{ext}");
-                        if let Some(parent) = std::path::Path::new(&file).parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        std::fs::write(&file, bytes).ok().map(|_| file)
-                    });
+                let out =
+                    cached_cover(&base).or_else(|| store_cover(&base, &local_cover_bytes(&path)?));
                 mailbox.post((id, out));
             }
         };
@@ -2893,11 +2896,16 @@ impl Core {
                 self.save_settings(host);
             }
         }
-        let state = self.state(host);
-        let json = state.to_json();
-        if json != self.last_state {
-            self.last_state = json;
-            self.emit(Value::object().with("type", "state").with("state", state));
+        // At once after a command; otherwise a few times a second are plenty.
+        if self.state_wanted || self.time - self.state_at >= STATE_EVERY {
+            self.state_wanted = false;
+            self.state_at = self.time;
+            let state = self.state(host);
+            let json = state.to_json();
+            if json != self.last_state {
+                self.last_state = json;
+                self.emit(Value::object().with("type", "state").with("state", state));
+            }
         }
     }
 
@@ -2940,6 +2948,28 @@ impl Core {
 
     /// Renders the visualizer into framebuffer `fbo` (size in physical
     /// pixels). `dpr` is the device pixel ratio, `dt` the frame time.
+    /// How much of the screen's resolution the visual is drawn at.
+    fn render_scale(&mut self, auto: bool, w: u32, h: u32, dt: f64, playing: bool) -> f32 {
+        if !auto || !self.settings.render_auto {
+            return self.settings.render_scale.clamp(0.25, 1.0);
+        }
+        let covered = self.blur_target > 0.0 && (self.menu_blur - self.blur_target).abs() < 0.01;
+        // Too slow all the same: less still. Only what is seen and moving counts.
+        if playing && self.blur_target == 0.0 {
+            self.frames_time += dt;
+            self.frames_count += 1;
+            if self.frames_time >= FRAMES_LOOK {
+                let fps = self.frames_count as f64 / self.frames_time;
+                if fps < TOO_FEW_FRAMES {
+                    self.slow_scale = (self.slow_scale * 0.85).max(0.5);
+                }
+                self.frames_time = 0.0;
+                self.frames_count = 0;
+            }
+        }
+        auto_scale(w, h, self.slow_scale, covered)
+    }
+
     pub fn render(
         &mut self,
         gl: &Gl,
@@ -2962,9 +2992,9 @@ impl Core {
         if (self.menu_blur - self.blur_target).abs() < 0.01 {
             self.menu_blur = self.blur_target;
         }
-        let rs = self.settings.render_scale.clamp(0.25, 1.0);
         // Where the picture goes: the part of the window the pages leave free.
         let (px, py, pw, ph) = visible_part(self.view_part, w, h, dpr);
+        let rs = self.render_scale(host.platform() == "android", pw, ph, dt, playing);
         let render_size = (((pw as f32) * rs) as u32, ((ph as f32) * rs) as u32);
         let frame_input = FrameInput {
             dt,
@@ -3122,6 +3152,35 @@ fn absolute(p: &str) -> String {
     p.to_string()
 }
 
+/// A cover kept at `base` (a path without extension). Only a JPEG or PNG
+/// counts: anything else is read again, since earlier versions kept pictures
+/// there that started a few bytes too early.
+pub(crate) fn cached_cover(base: &str) -> Option<String> {
+    ["jpg", "png"]
+        .iter()
+        .map(|e| format!("{base}.{e}"))
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+/// Keeps a cover at `base` under the extension of its format; returns its path.
+pub(crate) fn store_cover(base: &str, bytes: &[u8]) -> Option<String> {
+    let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else if bytes.starts_with(&[0xff, 0xd8]) {
+        "jpg"
+    } else {
+        "img"
+    };
+    let file = format!("{base}.{ext}");
+    if let Some(parent) = std::path::Path::new(&file).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if ext != "img" {
+        let _ = std::fs::remove_file(format!("{base}.img"));
+    }
+    std::fs::write(&file, bytes).ok().map(|_| file)
+}
+
 /// Cover art for a local file: embedded picture or a cover image next to it.
 pub(crate) fn local_cover_bytes(path: &str) -> Option<Vec<u8>> {
     if let Ok(f) = std::fs::File::open(path) {
@@ -3177,6 +3236,18 @@ pub(crate) fn http_stream(
     Err("streaming is not available in the browser".into())
 }
 
+/// The visual's scale on a device that decides for itself: about `AUTO_PIXELS`,
+/// and a blur behind a page needs far fewer.
+fn auto_scale(w: u32, h: u32, slow: f32, covered: bool) -> f32 {
+    let pixels = (w.max(1) as f32) * (h.max(1) as f32);
+    let scale = (AUTO_PIXELS / pixels).sqrt().min(1.0) * slow;
+    if covered {
+        scale * 0.5
+    } else {
+        scale
+    }
+}
+
 /// A part of the window in the framebuffer's pixels: x and y from the lower
 /// left corner, width and height. Always inside the window and never empty.
 fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, u32, u32) {
@@ -3188,6 +3259,61 @@ fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, 
     let pw = ((pw * dpr) as u32).clamp(1, w - px);
     let ph = ((ph * dpr) as u32).clamp(1, h - py);
     (px as i32, (h - py - ph) as i32, pw, ph)
+}
+
+#[cfg(test)]
+mod cover_cache_tests {
+    use super::{cached_cover, store_cover};
+
+    #[test]
+    fn a_picture_of_unknown_format_is_read_again() {
+        let dir = std::env::temp_dir().join(format!("bl-cover-cache-{}", std::process::id()));
+        let base = dir
+            .join("covers")
+            .join("0123")
+            .to_string_lossy()
+            .into_owned();
+        // An earlier version kept a picture that started a byte too early.
+        assert_eq!(
+            store_cover(&base, &[0, 0xff, 0xd8, 0xff]),
+            Some(format!("{base}.img"))
+        );
+        assert_eq!(cached_cover(&base), None);
+        // Read again, it is a JPEG and the old file goes.
+        assert_eq!(
+            store_cover(&base, &[0xff, 0xd8, 0xff]),
+            Some(format!("{base}.jpg"))
+        );
+        assert_eq!(cached_cover(&base), Some(format!("{base}.jpg")));
+        assert!(!std::path::Path::new(&format!("{base}.img")).exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod auto_scale_tests {
+    use super::{auto_scale, AUTO_PIXELS};
+
+    #[test]
+    fn about_the_same_pixels_on_any_screen() {
+        for (w, h) in [(2960, 1848), (1080, 2400), (1920, 1200)] {
+            let s = auto_scale(w, h, 1.0, false);
+            let pixels = (w as f32 * s) * (h as f32 * s);
+            assert!((pixels / AUTO_PIXELS - 1.0).abs() < 0.01, "{w}x{h}: {s}");
+        }
+    }
+
+    #[test]
+    fn a_small_part_is_not_blown_up() {
+        assert_eq!(auto_scale(800, 600, 1.0, false), 1.0);
+    }
+
+    #[test]
+    fn behind_a_page_and_when_too_slow_there_is_less() {
+        let s = auto_scale(2960, 1848, 1.0, false);
+        assert_eq!(auto_scale(2960, 1848, 1.0, true), s * 0.5);
+        assert_eq!(auto_scale(2960, 1848, 0.5, false), s * 0.5);
+    }
 }
 
 #[cfg(test)]
