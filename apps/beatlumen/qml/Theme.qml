@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Controls.Material
 import Beatlumen.Core
 
@@ -167,6 +168,16 @@ QtObject {
                 return t
         }
         return s
+    }
+    // Qt names the standard buttons of a dialog itself and only in English:
+    // each dialog with them calls this when it opens.
+    function nameButtons(dialog) {
+        const names = [[Dialog.Ok, "OK"], [Dialog.Save, "Save"], [Dialog.Cancel, "Cancel"], [Dialog.Close, "Close"]]
+        for (const n of names) {
+            const button = dialog.standardButton(n[0])
+            if (button)
+                button.text = tr(n[1])
+        }
     }
 
     readonly property var de: ({

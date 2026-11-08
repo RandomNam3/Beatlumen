@@ -106,6 +106,7 @@ Item {
         width: Math.min(420, parent ? parent.width - 32 : 420)
         title: Theme.tr("Delete for good?")
         standardButtons: Dialog.Cancel | Dialog.Ok
+        onAboutToShow: Theme.nameButtons(this)
         Label {
             textFormat: Text.PlainText
             width: parent.width

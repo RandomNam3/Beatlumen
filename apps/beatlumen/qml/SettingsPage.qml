@@ -1154,6 +1154,7 @@ Item {
                     width: Math.min(420, page.width - 32)
                     title: Theme.tr("Delete listening history")
                     standardButtons: Dialog.Cancel | Dialog.Ok
+                    onAboutToShow: Theme.nameButtons(this)
                     onAccepted: {
                         Core.call("history.clear", { server: page.server === "connected" })
                         Core.call("toast", { text: Theme.tr("Listening history deleted") })

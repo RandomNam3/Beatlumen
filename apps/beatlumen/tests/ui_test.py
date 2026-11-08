@@ -275,7 +275,13 @@ def desktop():
     app.click(row[0])
     item = app.shows("Play next")
     assert item[0]["h"] < 60 and item[0]["w"] <= 300, f"a menu: {item[0]}"
-    app.key("Escape")
+    # Qt names a dialog's own buttons in English: in German they say so, too.
+    app.core("settings.set", key="language", value="de")
+    app.click_text("Zur Playlist hinzufügen…")
+    app.shows("Abbrechen")
+    app.click_text("Abbrechen")
+    app.gone("Abbrechen")
+    app.core("settings.set", key="language", value="en")
     app.quit()
     print("ok: side panel and menu on a computer")
 
