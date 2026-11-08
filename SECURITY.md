@@ -145,6 +145,46 @@ In short:
   can verify the server's web client against the release signature
   (Settings → Server → Check).
 
+## Parsers and loaders
+
+Everything read from outside goes through parsers in this repository: music
+files and their tags, images, song texts, playlists, karaoke files, JSON,
+speech models, and what servers and other devices send. Damaged or hostile
+input ends in an error, not in a crash or an endless loop:
+
+* **Sizes before allocations.** Sizes and counts from a file are checked
+  against fixed limits and against the data really there before memory is
+  allocated. Ogg packets up to 64 MiB; after 32 MiB of pages with wrong
+  checksums the reader gives up instead of checking every fake page
+  header. JSON: 256 levels of nesting, up to 1,048,576 keys per object and
+  16,777,216 items per array. Song texts:
+  5,000 lines of up to 4 KiB, times within 100 hours. Karaoke tracks:
+  10,000 lines, 100,000 notes, 9 voices. Animations: 10,000 frames and
+  2^32 pixels per loop. Speech models (ggml) are read in growing pieces, so
+  a header that claims gigabytes allocates at most about twice what the
+  file holds; the tensors the network uses must have the shapes the
+  model's hyperparameters give them (widths up to 4096), and so must those
+  of a timing layer (`.head`). Models reach the apps from servers, so this
+  protects the apps against a malicious server.
+* **Linear time.** Repeated JSON keys are found through a hash index;
+  nested tags and runs of `<` or `&` in TTML, XSPF and UPnP XML are read in
+  one pass.
+* **Checked arithmetic.** Values from files are added and multiplied with
+  checked or saturating arithmetic. The crates that parse outside data
+  (`bl-media`, `bl-json`, `bl-ogg`, `bl-sources`, `bl-upnp`, `bl-cast`,
+  `bl-airplay`, `bl-pitch`, `bl-net`) keep overflow checks in release
+  builds, so an overflow is a caught panic, not a wrong size. `bl-image`
+  does not (its decoders became up to 11 % slower, scaling 74 %); it relies
+  on its size checks and robustness tests.
+* **No `unsafe` where it is not needed.** Crates without SIMD or system
+  calls forbid it (`#![forbid(unsafe_code)]`); the SIMD code of the speech
+  recogniser checks the bounds of every load.
+* **Robustness tests.** Every parser gets damaged copies of sample inputs
+  (bytes changed, cut short, spliced together, ranges repeated or dropped,
+  tokens of the format put in) under `catch_unwind`; a panic or an input
+  that takes seconds fails the test. `BL_FUZZ_ITERS=<n>` runs them longer
+  (`crates/*/tests/*robustness.rs`).
+
 ## Container
 
 * The image (`container/Containerfile`) holds only the static server

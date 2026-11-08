@@ -50,8 +50,14 @@ struct Layer {
     b: Tensor,
 }
 
+/// Widest encoder and hidden layer a head may have (Whisper large is 1280
+/// wide).
+const MAX_WIDTH: usize = 4096;
+
 /// The weights of a head.
 pub struct Head {
+    /// Width of the encoder frames it reads (the model's state).
+    dim: usize,
     hidden: usize,
     norm: Layer,
     a: Layer,
@@ -83,13 +89,36 @@ impl Head {
     pub fn load(path: impl AsRef<Path>) -> Result<Head, String> {
         let f = SafeTensors::open(path)?;
         let shape = |n: &str| f.shape(n).ok_or(format!("head: no tensor {n}"));
-        let dim = shape("norm.weight")?[0];
-        let hidden = shape("b.bias")?[0];
+        // Widths from the vectors; every tensor must then have the shape
+        // they give it, before anything is read or allocated from them.
+        let width = |n: &str| match shape(n)? {
+            &[w] if (1..=MAX_WIDTH).contains(&w) => Ok(w),
+            _ => Err(format!("head: bad shape of {n}")),
+        };
+        let dim = width("norm.weight")?;
+        let hidden = width("b.bias")?;
+        let vocab = Vocab::from_chars(LETTERS, Some('|'));
+        let letters = vocab.texts.len();
         let langs: Vec<String> = f
             .names()
             .filter_map(|n| n.strip_prefix("out.")?.strip_suffix(".weight"))
             .map(str::to_string)
             .collect();
+        let mut shapes: Vec<(String, Vec<usize>)> = vec![
+            ("norm.bias".into(), vec![dim]),
+            ("a.weight".into(), vec![hidden, dim, KERNEL]),
+            ("a.bias".into(), vec![hidden]),
+            ("b.weight".into(), vec![hidden, hidden, KERNEL]),
+        ];
+        for l in &langs {
+            shapes.push((format!("out.{l}.weight"), vec![letters, hidden]));
+            shapes.push((format!("out.{l}.bias"), vec![letters]));
+        }
+        for (n, want) in &shapes {
+            if shape(n)? != want.as_slice() {
+                return Err(format!("head: bad shape of {n}"));
+            }
+        }
         let mut names = vec!["norm".to_string(), "a".to_string(), "b".to_string()];
         names.extend(langs.iter().map(|l| format!("out.{l}")));
         let wanted: Vec<(String, Keep)> = names
@@ -122,12 +151,13 @@ impl Head {
             return Err("head: no layer for any language".into());
         }
         Ok(Head {
+            dim,
             hidden,
             norm,
             a,
             b,
             out,
-            vocab: Vocab::from_chars(LETTERS, Some('|')),
+            vocab,
         })
     }
 
@@ -146,6 +176,12 @@ impl Head {
     fn features(&self, m: &Model, samples: &[f32]) -> std::io::Result<(Vec<f32>, usize)> {
         let p = m.params;
         let dim = p.n_audio_state;
+        if dim != self.dim {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "head made for a model of another width",
+            ));
+        }
         let mel = log_mel(samples, &m.mel_filters, p.n_mels, m.mel_bins).window(0);
         let mut enc = encode(m, &mel)?;
         let all = enc.len() / dim;

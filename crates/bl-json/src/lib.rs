@@ -5,7 +5,15 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
+
+/// Most keys one object of a parsed document may have.
+pub const MAX_OBJECT_KEYS: usize = 1 << 20;
+/// Most items one array of a parsed document may have.
+pub const MAX_ARRAY_ITEMS: usize = 1 << 24;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Value {
@@ -72,11 +80,104 @@ impl Map {
 
 impl FromIterator<(String, Value)> for Map {
     fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
-        let mut m = Map::new();
+        let mut b = MapBuilder::new(RandomState::new());
         for (k, v) in iter {
-            m.insert(k, v);
+            b.insert(k, v);
         }
-        m
+        b.finish()
+    }
+}
+
+/// Hashes a `u64` that already is a (keyed) hash: passes it through.
+#[derive(Default)]
+struct PassThrough(u64);
+
+impl Hasher for PassThrough {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 << 8) | b as u64;
+        }
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = v;
+    }
+}
+
+/// Up to this many keys a [`MapBuilder`] looks for an equal key linearly.
+const LINEAR_KEYS: usize = 16;
+
+/// Builds a [`Map`] key by key in linear time: like [`Map::insert`] (a
+/// repeated key keeps its first position and takes the last value), but
+/// large objects find repeated keys through a hash index.
+struct MapBuilder {
+    entries: Vec<(String, Value)>,
+    /// Keyed hash of a key -> the first entry with that hash; built once
+    /// the object has more than [`LINEAR_KEYS`] keys.
+    index: Option<HashMap<u64, usize, BuildHasherDefault<PassThrough>>>,
+    hasher: RandomState,
+}
+
+impl MapBuilder {
+    fn new(hasher: RandomState) -> MapBuilder {
+        MapBuilder {
+            entries: Vec::new(),
+            index: None,
+            hasher,
+        }
+    }
+
+    /// Position of `key`, if present.
+    fn find(&mut self, key: &str) -> Option<usize> {
+        if self.index.is_none() {
+            if self.entries.len() < LINEAR_KEYS {
+                return self.entries.iter().position(|(k, _)| k == key);
+            }
+            let mut index = HashMap::default();
+            for (i, (k, _)) in self.entries.iter().enumerate() {
+                index.entry(self.hasher.hash_one(k.as_str())).or_insert(i);
+            }
+            self.index = Some(index);
+        }
+        let index = self.index.as_ref()?;
+        let &i = index.get(&self.hasher.hash_one(key))?;
+        if self.entries[i].0 == key {
+            return Some(i);
+        }
+        // Two keys with the same 64-bit keyed hash: practically never, and
+        // not something input can aim for. Correct anyway.
+        self.entries.iter().position(|(k, _)| k == key)
+    }
+
+    /// Inserts or replaces; `false` (and nothing inserted) when a new key
+    /// would make the object longer than `max` keys.
+    fn insert_within(&mut self, key: String, value: Value, max: usize) -> bool {
+        if let Some(i) = self.find(&key) {
+            self.entries[i].1 = value;
+            return true;
+        }
+        if self.entries.len() >= max {
+            return false;
+        }
+        if let Some(index) = self.index.as_mut() {
+            index
+                .entry(self.hasher.hash_one(key.as_str()))
+                .or_insert(self.entries.len());
+        }
+        self.entries.push((key, value));
+        true
+    }
+
+    fn insert(&mut self, key: String, value: Value) {
+        self.insert_within(key, value, usize::MAX);
+    }
+
+    fn finish(self) -> Map {
+        Map {
+            entries: self.entries,
+        }
     }
 }
 
@@ -364,10 +465,17 @@ impl std::error::Error for Error {}
 
 /// Parses a JSON document.
 pub fn parse(text: &str) -> Result<Value, Error> {
+    parse_within(text, MAX_OBJECT_KEYS, MAX_ARRAY_ITEMS)
+}
+
+fn parse_within(text: &str, max_keys: usize, max_items: usize) -> Result<Value, Error> {
     let mut p = Parser {
         s: text.as_bytes(),
         pos: 0,
         depth: 0,
+        hasher: RandomState::new(),
+        max_keys,
+        max_items,
     };
     p.skip_ws();
     let v = p.value()?;
@@ -395,6 +503,12 @@ struct Parser<'a> {
     s: &'a [u8],
     pos: usize,
     depth: usize,
+    /// Hashes keys of large objects (keyed per document, so input cannot
+    /// pick colliding keys).
+    hasher: RandomState,
+    /// [`MAX_OBJECT_KEYS`] and [`MAX_ARRAY_ITEMS`] (smaller in tests).
+    max_keys: usize,
+    max_items: usize,
 }
 
 const MAX_DEPTH: usize = 256;
@@ -455,11 +569,11 @@ impl Parser<'_> {
     fn object(&mut self) -> Result<Value, Error> {
         self.enter()?;
         self.pos += 1;
-        let mut map = Map::new();
+        let mut map = MapBuilder::new(self.hasher.clone());
         self.skip_ws();
         if self.eat(b"}") {
             self.depth -= 1;
-            return Ok(Value::Object(map));
+            return Ok(Value::Object(map.finish()));
         }
         loop {
             self.skip_ws();
@@ -473,7 +587,9 @@ impl Parser<'_> {
             }
             self.skip_ws();
             let v = self.value()?;
-            map.insert(key, v);
+            if !map.insert_within(key, v, self.max_keys) {
+                return Err(self.err("too many keys in object"));
+            }
             self.skip_ws();
             if self.eat(b",") {
                 continue;
@@ -484,7 +600,7 @@ impl Parser<'_> {
             return Err(self.err("expected ',' or '}'"));
         }
         self.depth -= 1;
-        Ok(Value::Object(map))
+        Ok(Value::Object(map.finish()))
     }
 
     fn array(&mut self) -> Result<Value, Error> {
@@ -498,6 +614,9 @@ impl Parser<'_> {
         }
         loop {
             self.skip_ws();
+            if items.len() >= self.max_items {
+                return Err(self.err("too many items in array"));
+            }
             items.push(self.value()?);
             self.skip_ws();
             if self.eat(b",") {
@@ -674,6 +793,72 @@ mod tests {
         }
         let deep = "[".repeat(1000);
         assert!(parse(&deep).is_err());
+    }
+
+    #[test]
+    fn repeated_keys_keep_the_first_place_and_the_last_value() {
+        let v = parse(r#"{"a":1,"b":2,"a":3}"#).unwrap();
+        let keys: Vec<_> = v.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["a", "b"]);
+        assert_eq!(v.get("a").as_i64(), Some(3));
+        // The same in an object large enough for the hash index, compared
+        // with inserting one by one.
+        let mut text = String::from("{");
+        let mut expected = Map::new();
+        for i in 0..2000u32 {
+            let k = format!("k{}", (i * 7919) % 613);
+            text += &format!("\"{k}\":{i},");
+            expected.insert(k, i);
+        }
+        text.pop();
+        text.push('}');
+        let v = parse(&text).unwrap();
+        assert_eq!(v, Value::Object(expected.clone()));
+        let pairs: Vec<(String, Value)> = (0..2000u32)
+            .map(|i| (format!("k{}", (i * 7919) % 613), Value::from(i)))
+            .collect();
+        assert_eq!(pairs.into_iter().collect::<Map>(), expected);
+    }
+
+    #[test]
+    fn objects_with_many_keys_parse_in_linear_time() {
+        let n = 400_000;
+        let mut text = String::with_capacity(n * 16);
+        text.push('{');
+        for i in 0..n {
+            text += &format!("\"key{i}\":{i},");
+        }
+        // A repeated key at the end must still be found.
+        text += "\"key17\":-1}";
+        let t = std::time::Instant::now();
+        let v = parse(&text).unwrap();
+        let took = t.elapsed();
+        let m = v.as_object().unwrap();
+        assert_eq!(m.len(), n);
+        assert_eq!(m.get("key17").and_then(Value::as_i64), Some(-1));
+        assert_eq!(m.keys().nth(n - 1), Some("key399999"));
+        println!("{n} keys parsed in {took:?}");
+        // Quadratic insertion took minutes; linear is about a second even
+        // unoptimised.
+        assert!(took.as_secs() < 20, "{n} keys took {took:?}");
+    }
+
+    #[test]
+    fn key_and_item_limits() {
+        assert!(parse_within(r#"{"a":1,"b":2,"a":3}"#, 2, 10).is_ok());
+        let e = parse_within(r#"{"a":1,"b":2,"c":3}"#, 2, 10).unwrap_err();
+        assert_eq!(e.message, "too many keys in object");
+        assert!(parse_within("[1,2,3]", 2, 3).is_ok());
+        let e = parse_within("[1,2,3,4]", 2, 3).unwrap_err();
+        assert_eq!(e.message, "too many items in array");
+        // The real key limit.
+        let mut text = String::from("{");
+        for i in 0..=MAX_OBJECT_KEYS {
+            text += &format!("\"{i:x}\":0,");
+        }
+        text.pop();
+        text.push('}');
+        assert_eq!(parse(&text).unwrap_err().message, "too many keys in object");
     }
 
     #[test]

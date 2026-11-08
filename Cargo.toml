@@ -20,6 +20,30 @@ lto = "thin"
 codegen-units = 4
 panic = "unwind"
 
+# Parsers of files and data from outside: an arithmetic overflow becomes a
+# caught panic instead of a wrong size or index. Measured on 2026-11-08
+# (best of 5, with and without): decoding FLAC, MP3, AAC, Opus and Vorbis,
+# parsing 24 MB of JSON and pitch tracking stay within 1.2 %. bl-image is
+# left out: JPEG decoding took 11 % longer and scaling 74 %.
+[profile.release.package.bl-media]
+overflow-checks = true
+[profile.release.package.bl-json]
+overflow-checks = true
+[profile.release.package.bl-ogg]
+overflow-checks = true
+[profile.release.package.bl-sources]
+overflow-checks = true
+[profile.release.package.bl-upnp]
+overflow-checks = true
+[profile.release.package.bl-cast]
+overflow-checks = true
+[profile.release.package.bl-airplay]
+overflow-checks = true
+[profile.release.package.bl-pitch]
+overflow-checks = true
+[profile.release.package.bl-net]
+overflow-checks = true
+
 [profile.release-small]
 inherits = "release"
 opt-level = "s"

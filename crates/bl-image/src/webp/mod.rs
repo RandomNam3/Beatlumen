@@ -110,7 +110,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<Parsed, Error> {
             b"VP8X" if p.len() >= 10 => {
                 canvas = Some((1 + u24(&p[4..7]), 1 + u24(&p[7..10])));
             }
-            b"ANMF" if p.len() >= 16 => {
+            b"ANMF" if p.len() >= 16 && frames.len() < crate::anim::MAX_FRAMES => {
                 let Some(image) = bitstream(&p[16..], start + 16) else {
                     continue;
                 };

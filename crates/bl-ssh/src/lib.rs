@@ -27,6 +27,8 @@
 //! Everything read from the network is bounded: packets (256 KiB), SFTP
 //! messages (1 MiB), version lines, handles, entries per folder.
 
+#![forbid(unsafe_code)]
+
 mod base64;
 mod cipher;
 mod conn;

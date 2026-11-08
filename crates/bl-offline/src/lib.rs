@@ -19,6 +19,8 @@
 //! into the same file. A finished container is never changed in place:
 //! readers (playback, the app's list) always see a whole one.
 
+#![forbid(unsafe_code)]
+
 use bl_json::Value;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};

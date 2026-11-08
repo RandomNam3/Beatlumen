@@ -6,6 +6,8 @@
 //! * [`Renderer`]'s methods call the AVTransport and RenderingControl
 //!   services (SOAP).
 
+#![forbid(unsafe_code)]
+
 pub mod renderer;
 pub mod ssdp;
 pub mod xml;

@@ -3,7 +3,10 @@
 //! `F` freestyle, `R`/`G` rap), `- step` line breaks, `P1`/`P2` before
 //! each singer's part of a duet, and `E` at the end. Pitch 0 is C4.
 
-use crate::track::{Grid, KaraokeLine, KaraokeTrack, Note, NoteKind};
+use crate::track::{
+    checked_ms, clamp_pitch, Grid, KaraokeLine, KaraokeTrack, Note, NoteKind, MAX_FIELDS,
+    MAX_LINES, MAX_NOTES, MAX_VOICE,
+};
 
 /// Grid used when the track has none: steps of 25 ms.
 const DEFAULT_BPM: f64 = 600.0;
@@ -147,7 +150,10 @@ fn token(s: &str) -> Option<(&str, &str)> {
 
 /// Reads UltraStar TXT. Notes before any `P` marker have voice 0; `P1`,
 /// `P2` (and `P3`, both) set the voice of the lines after them. The
-/// syllables' spaces are kept as written.
+/// syllables' spaces are kept as written. Fails beyond
+/// [`MAX_NOTES`](crate::track::MAX_NOTES) notes or
+/// [`MAX_LINES`](crate::track::MAX_LINES) lines and on notes timed beyond
+/// [`MAX_TIME_MS`](crate::track::MAX_TIME_MS).
 pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut t = KaraokeTrack::default();
@@ -188,7 +194,10 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
                 "ENCODING" => {}
                 "DUETSINGERP1" | "P1" => singers[0] = v.into(),
                 "DUETSINGERP2" | "P2" => singers[1] = v.into(),
-                _ => t.extra.push((k.trim().to_string(), v.to_string())),
+                _ if t.extra.len() < MAX_FIELDS => {
+                    t.extra.push((k.trim().to_string(), v.to_string()))
+                }
+                _ => {}
             }
             continue;
         }
@@ -200,7 +209,7 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
         match c {
             'E' if rest.trim().is_empty() => break,
             'P' if rest.trim().parse::<u8>().is_ok() => {
-                voice = rest.trim().parse::<u8>().unwrap_or(1).min(9);
+                voice = rest.trim().parse::<u8>().unwrap_or(1).min(MAX_VOICE);
                 line += 1;
                 offset = 0;
             }
@@ -212,7 +221,7 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
                     .next()
                     .ok_or_else(|| err("line break without a step"))?;
                 if relative {
-                    offset += nums.next().unwrap_or(a);
+                    offset = offset.saturating_add(nums.next().unwrap_or(a));
                 }
                 line += 1;
             }
@@ -221,6 +230,9 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
                 let Some(kind) = NoteKind::from_symbol(c) else {
                     return Err(err("unknown line"));
                 };
+                if raw.len() >= MAX_NOTES {
+                    return Err(err("too many notes"));
+                }
                 let mut fields = [0i64; 3];
                 let mut r = rest;
                 for f in &mut fields {
@@ -236,16 +248,19 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
                 raw.push(Raw {
                     voice,
                     line,
-                    step: fields[0] + offset,
+                    step: fields[0].saturating_add(offset),
                     len: fields[1],
                     kind,
-                    pitch: fields[2] as i32 + 60,
+                    pitch: clamp_pitch(fields[2].saturating_add(60)),
                     text: text.to_string(),
                 });
             }
         }
     }
     let bpm = bpm.filter(|b| *b > 0.0).ok_or("no #BPM")?;
+    if !Grid::usable(bpm, gap) {
+        return Err("#BPM or #GAP out of range".into());
+    }
     let grid = Grid { bpm, gap_ms: gap };
     t.grid = Some(grid);
     t.singers = singers.into_iter().collect();
@@ -253,16 +268,23 @@ pub fn from_ultrastar(text: &str) -> Result<KaraokeTrack, String> {
         t.singers.pop();
     }
     let mut current: Option<usize> = None;
+    // As `Grid::to_ms`, in floating point so that no step overflows.
+    let at = |step: f64| checked_ms(grid.gap_ms + step * grid.step_ms());
     for r in raw {
-        let start = grid.to_ms(r.step);
+        let (Some(start), Some(end)) = (at(r.step as f64), at(r.step as f64 + r.len as f64)) else {
+            return Err("note time out of range".into());
+        };
         let note = Note {
             start_ms: start,
-            dur_ms: grid.to_ms(r.step + r.len) - start,
+            dur_ms: end - start,
             pitch: r.pitch,
             kind: r.kind,
             text: r.text,
         };
         if current != Some(r.line) {
+            if t.lines.len() >= MAX_LINES {
+                return Err("too many lines".into());
+            }
             t.lines.push(KaraokeLine {
                 voice: r.voice,
                 notes: Vec::new(),
@@ -304,6 +326,41 @@ P2
 G 30 4 2  oui
 E
 ";
+
+    #[test]
+    fn crafted_files_end_cleanly() {
+        use crate::track::MAX_TIME_MS;
+        for text in [
+            "#BPM:1e-300\n: 0 1 0 a\nE",
+            "#BPM:inf\n: 0 1 0 a\nE",
+            "#BPM:NaN\n: 0 1 0 a\nE",
+            "#BPM:300\n#GAP:1e300\n: 0 1 0 a\nE",
+            "#BPM:300\n#GAP:-inf\n: 0 1 0 a\nE",
+            "#BPM:300\n: 9223372036854775807 9223372036854775807 2147483647 a\nE",
+            "#BPM:300\n: 0 1 -9223372036854775808 a\nE",
+            "#BPM:300\n#RELATIVE:yes\n: 0 1 0 a\n- 9223372036854775807 9223372036854775807\n\
+             : 9223372036854775807 1 0 b\n- 9223372036854775807\n: 1 1 99999999999 c\nE",
+            "#BPM:300\n: 1000000000 1 0 a\nE",
+        ] {
+            if let Ok(t) = from_ultrastar(text) {
+                for n in t.notes() {
+                    assert!(n.start_ms.abs() <= MAX_TIME_MS && n.end_ms().abs() <= MAX_TIME_MS);
+                    assert!((60 - 1000..=60 + 1000).contains(&n.pitch));
+                }
+                let _ = to_ultrastar(&t);
+                let back = KaraokeTrack::from_json(&t.to_json()).unwrap();
+                assert_eq!(back.lines.len(), t.lines.len());
+            }
+        }
+        let many = "#BPM:300\n".to_string() + &": 0 1 0 a\n".repeat(MAX_NOTES + 1);
+        assert!(from_ultrastar(&many)
+            .unwrap_err()
+            .contains("too many notes"));
+        let lines = "#BPM:300\n".to_string() + &": 0 1 0 a\n- 1\n".repeat(MAX_LINES + 1);
+        assert_eq!(from_ultrastar(&lines).unwrap_err(), "too many lines");
+        let fields = "#BPM:300\n".to_string() + &"#X:y\n".repeat(10_000) + ": 0 1 0 a\n";
+        assert_eq!(from_ultrastar(&fields).unwrap().extra.len(), MAX_FIELDS);
+    }
 
     #[test]
     fn round_trip() {

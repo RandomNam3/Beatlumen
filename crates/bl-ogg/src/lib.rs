@@ -5,9 +5,22 @@
 //! determining the last granule position of a stream (for durations) and
 //! bisection seeking by granule position.
 
+#![forbid(unsafe_code)]
+
 use std::io::{self, Read, Seek, SeekFrom};
 
 const CAPTURE: &[u8; 4] = b"OggS";
+
+/// Largest packet reassembled from pages (64 MiB, like the tag limits of
+/// the other containers). Audio packets are a few KiB and tag packets with
+/// cover art a few MiB; a longer one is dropped with an error.
+pub const MAX_PACKET: usize = 64 << 20;
+
+/// Most bytes [`read_page`] checks in pages that turn out damaged before it
+/// gives up (32 MiB). Real damage costs one page; a file made of fake page
+/// headers with wrong checksums would otherwise cost up to a thousand times
+/// its size in checksum work.
+pub const MAX_RESYNC: usize = 32 << 20;
 
 /// A single Ogg page.
 #[derive(Debug, Clone)]
@@ -79,10 +92,12 @@ fn crc_update(mut crc: u32, data: &[u8]) -> u32 {
 }
 
 /// Reads the next valid page starting at the current position. Skips garbage
-/// and pages with bad checksums. Returns `Ok(None)` at end of stream.
+/// and pages with bad checksums. Returns `Ok(None)` at end of stream, and an
+/// `InvalidData` error after [`MAX_RESYNC`] bytes of damaged pages.
 pub fn read_page<R: Read + Seek>(r: &mut R) -> io::Result<Option<Page>> {
     let mut window = [0u8; 4];
     let mut filled = 0usize;
+    let mut wasted = 0usize;
     loop {
         // Find capture pattern.
         let mut b = [0u8; 1];
@@ -137,6 +152,13 @@ pub fn read_page<R: Read + Seek>(r: &mut R) -> io::Result<Option<Page>> {
         c = crc_update(c, &lacing);
         c = crc_update(c, &data);
         if c != crc {
+            wasted += 27 + nseg + len;
+            if wasted > MAX_RESYNC {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "no valid Ogg page among 32 MiB of damaged ones",
+                ));
+            }
             r.seek(SeekFrom::Start(offset + 1))?;
             filled = 0;
             continue;
@@ -175,6 +197,8 @@ pub struct PacketReader<R: Read + Seek> {
     partial_valid: bool,
     pending: std::collections::VecDeque<Packet>,
     eof: bool,
+    /// A packet grew beyond [`MAX_PACKET`]; reported by the next call.
+    too_long: bool,
 }
 
 impl<R: Read + Seek> PacketReader<R> {
@@ -186,6 +210,7 @@ impl<R: Read + Seek> PacketReader<R> {
             partial_valid: false,
             pending: Default::default(),
             eof: false,
+            too_long: false,
         }
     }
 
@@ -209,22 +234,38 @@ impl<R: Read + Seek> PacketReader<R> {
         self.partial_valid = false;
         self.pending.clear();
         self.eof = false;
+        self.too_long = false;
     }
 
     /// Returns the next complete packet, or `None` at the end of the stream.
+    /// A packet longer than [`MAX_PACKET`] is dropped and reported as an
+    /// `InvalidData` error once; reading goes on with the packet after it.
     pub fn next_packet(&mut self) -> io::Result<Option<Packet>> {
         loop {
+            if std::mem::take(&mut self.too_long) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Ogg packet longer than 64 MiB",
+                ));
+            }
             if let Some(p) = self.pending.pop_front() {
                 return Ok(Some(p));
             }
             if self.eof {
                 return Ok(None);
             }
-            let page = match read_page(&mut self.inner)? {
-                Some(p) => p,
-                None => {
+            let page = match read_page(&mut self.inner) {
+                Ok(Some(p)) => p,
+                Ok(None) => {
                     self.eof = true;
                     continue;
+                }
+                Err(e) => {
+                    // Endless damage: the stream ends after this error.
+                    if e.kind() == io::ErrorKind::InvalidData {
+                        self.eof = true;
+                    }
+                    return Err(e);
                 }
             };
             if let Some(s) = self.serial {
@@ -250,7 +291,17 @@ impl<R: Read + Seek> PacketReader<R> {
         for &lace in &page.lacing {
             let l = lace as usize;
             if !skipping {
-                self.partial.extend_from_slice(&page.data[pos..pos + l]);
+                if self.partial.len() + l > MAX_PACKET {
+                    // Too long: drop it and skip to its end. A page holds
+                    // less than 64 KiB, so this packet began on an earlier
+                    // page and is the first on this one: the error comes
+                    // in order, before the packets completed after it.
+                    self.partial = Vec::new();
+                    self.too_long = true;
+                    skipping = true;
+                } else {
+                    self.partial.extend_from_slice(&page.data[pos..pos + l]);
+                }
             }
             pos += l;
             if lace < 255 {
@@ -520,6 +571,70 @@ impl PageWriter {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn fake_pages_cost_bounded_work() {
+        // 300-byte blocks that each start a page claiming 65 KB of data
+        // with a wrong checksum.
+        let mut block = b"OggS\0\0".to_vec();
+        block.extend_from_slice(&[0; 20]);
+        block.push(255);
+        block.extend_from_slice(&[255; 255]);
+        block.resize(300, 0x55);
+        let data = block.repeat(30_000);
+        let t = std::time::Instant::now();
+        let e = read_page(&mut Cursor::new(&data)).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+        let mut r = PacketReader::new(Cursor::new(&data));
+        assert!(r.next_packet().is_err());
+        assert!(r.next_packet().unwrap().is_none());
+        assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+        // Real damage is skipped: a page with a broken checksum, then good ones.
+        let mut out = Vec::new();
+        let mut w = PageWriter::new(9);
+        for i in 0..3 {
+            w.packet(&mut out, &[i as u8; 1000], i);
+            w.flush(&mut out, i == 2);
+        }
+        out[40] ^= 1;
+        let mut r = PacketReader::new(Cursor::new(out));
+        let mut n = 0;
+        while let Some(p) = r.next_packet().unwrap() {
+            assert_eq!(p.data.len(), 1000);
+            n += 1;
+        }
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn overlong_packets_are_dropped_with_an_error() {
+        let big = vec![7u8; MAX_PACKET + 1];
+        let mut out = Vec::new();
+        let mut w = PageWriter::new(3);
+        w.packet(&mut out, b"head", 0);
+        w.flush(&mut out, false);
+        w.packet(&mut out, &big, 0);
+        w.flush(&mut out, false);
+        drop(big);
+        w.packet(&mut out, b"tail", 960);
+        w.flush(&mut out, true);
+        let mut r = PacketReader::new(Cursor::new(out));
+        assert_eq!(r.next_packet().unwrap().unwrap().data, b"head");
+        let e = r.next_packet().unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+        assert!(r.partial.capacity() <= MAX_PACKET);
+        let p = r.next_packet().unwrap().unwrap();
+        assert_eq!(p.data, b"tail");
+        assert!(p.eos);
+        assert!(r.next_packet().unwrap().is_none());
+        // Exactly the limit still passes.
+        let mut out = Vec::new();
+        let mut w = PageWriter::new(3);
+        w.packet(&mut out, &vec![1u8; MAX_PACKET], 0);
+        w.flush(&mut out, true);
+        let mut r = PacketReader::new(Cursor::new(out));
+        assert_eq!(r.next_packet().unwrap().unwrap().data.len(), MAX_PACKET);
+    }
 
     #[test]
     fn page_writer_spans_pages() {

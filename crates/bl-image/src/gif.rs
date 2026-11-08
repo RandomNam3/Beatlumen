@@ -84,7 +84,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<Parsed, Error> {
                 }
             }
             0x2c => {
-                if pos + 10 > data.len() {
+                if pos + 10 > data.len() || frames.len() >= crate::anim::MAX_FRAMES {
                     break;
                 }
                 let d = &data[pos..pos + 9];

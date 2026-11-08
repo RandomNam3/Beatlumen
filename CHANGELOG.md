@@ -207,6 +207,19 @@
   Own models count as better than the public ones, so songs timed with those are timed again.
   The admin page uses and deletes own models as well; offering is on by default and turned off
   there, with `--no-offer-models` or with `BEATLUMEN_OFFER_MODELS=false`.
+- **Damaged and hostile files end in an error, not a crash:** song texts (LRC, TTML),
+  playlists, karaoke files (UltraStar, JSON), JSON from servers and devices, Ogg streams,
+  animations, speech models and their timing layers (`.head`), UPnP answers and AirPlay
+  messages. Sizes in a file are checked against what the file really holds before memory is
+  taken, so a speech model from a server can no longer make an app reserve gigabytes for a
+  small file. New limits: Ogg packets up to 64 MiB, JSON objects up to about a million keys
+  and arrays up to 16 million items, song texts up to 5,000 lines of 4 KiB, karaoke files up
+  to 10,000 lines and 100,000 notes, animations up to 10,000 frames (longer ones loop
+  earlier). JSON objects with many keys and long runs of `<` or `&` in TTML, XSPF and UPnP
+  answers no longer take quadratic time (400,000 keys: 76 ms instead of minutes). Song
+  texts with times like `[00:01.abé]` and timing layers whose sizes do not fit each other no
+  longer crash the app. The parsers of outside data (except images) keep overflow checks
+  in release builds, at no measurable cost.
 
 ## 0.12.0 (beta)
 

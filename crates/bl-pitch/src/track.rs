@@ -3,6 +3,30 @@
 
 use bl_json::{Map, Value};
 
+/// Most lines a read track may have (a song has about a hundred).
+pub const MAX_LINES: usize = 10_000;
+/// Most notes of a read track, all lines together.
+pub const MAX_NOTES: usize = 100_000;
+/// Highest voice number; UltraStar knows P1, P2 and P3 (both).
+pub const MAX_VOICE: u8 = 9;
+/// Most singer names and other header fields kept from a file.
+pub const MAX_FIELDS: usize = 256;
+/// Times and lengths of read notes stay within this (ms, 100 hours either
+/// way), so sums of them cannot overflow.
+pub const MAX_TIME_MS: i64 = 100 * 3_600_000;
+/// Read pitches stay within this many semitones of C4 (MIDI 60).
+pub const MAX_PITCH_OFFSET: i32 = 1000;
+
+/// A time read from a file, if it is a number within [`MAX_TIME_MS`].
+pub(crate) fn checked_ms(ms: f64) -> Option<i64> {
+    (ms.is_finite() && ms.abs() <= MAX_TIME_MS as f64).then(|| ms.round() as i64)
+}
+
+/// A pitch read from a file, kept within [`MAX_PITCH_OFFSET`] of C4.
+pub(crate) fn clamp_pitch(p: i64) -> i32 {
+    p.clamp(60 - MAX_PITCH_OFFSET as i64, 60 + MAX_PITCH_OFFSET as i64) as i32
+}
+
 /// How a note is sung and scored (the UltraStar note types).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NoteKind {
@@ -178,6 +202,12 @@ pub struct Grid {
 }
 
 impl Grid {
+    /// Whether a grid read from a file can place notes: a tempo between
+    /// 1 and 100 000 and a gap within [`MAX_TIME_MS`].
+    pub fn usable(bpm: f64, gap_ms: f64) -> bool {
+        (1.0..=100_000.0).contains(&bpm) && gap_ms.is_finite() && gap_ms.abs() <= MAX_TIME_MS as f64
+    }
+
     pub fn step_ms(&self) -> f64 {
         15_000.0 / self.bpm
     }
@@ -310,12 +340,15 @@ impl KaraokeTrack {
         v.with("lines", lines)
     }
 
-    /// Reads [`to_json`](Self::to_json)'s format.
+    /// Reads [`to_json`](Self::to_json)'s format. Fails beyond
+    /// [`MAX_LINES`] lines or [`MAX_NOTES`] notes and on times beyond
+    /// [`MAX_TIME_MS`]; voices go up to [`MAX_VOICE`], pitches stay near the
+    /// range of voices.
     pub fn from_json(v: &Value) -> Result<KaraokeTrack, String> {
         if v.str_or("format", "") != "beatlumen-karaoke" {
             return Err("not a karaoke track".into());
         }
-        let ms = |x: &Value| x.as_f64().map(|s| (s * 1000.0).round() as i64);
+        let ms = |x: &Value| x.as_f64().and_then(|s| checked_ms(s * 1000.0));
         let mut t = KaraokeTrack {
             title: v.str_or("title", "").to_string(),
             artist: v.str_or("artist", "").to_string(),
@@ -325,12 +358,13 @@ impl KaraokeTrack {
         if let Some(s) = v.get("singers").as_array() {
             t.singers = s
                 .iter()
+                .take(MAX_VOICE as usize)
                 .filter_map(|x| x.as_str().map(str::to_string))
                 .collect();
         }
         let g = v.get("grid");
         if let (Some(bpm), Some(gap)) = (g.get("bpm").as_f64(), g.get("gap").as_f64()) {
-            if bpm > 0.0 {
+            if Grid::usable(bpm, gap) {
                 t.grid = Some(Grid { bpm, gap_ms: gap });
             }
         }
@@ -345,15 +379,26 @@ impl KaraokeTrack {
         if let Some(m) = v.get("extra").as_object() {
             t.extra = m
                 .iter()
+                .take(MAX_FIELDS)
                 .filter_map(|(k, x)| x.as_str().map(|s| (k.to_string(), s.to_string())))
                 .collect();
         }
-        for l in v.get("lines").as_array().map_or(&[][..], |a| a.as_slice()) {
+        let lines = v.get("lines").as_array().map_or(&[][..], |a| a.as_slice());
+        if lines.len() > MAX_LINES {
+            return Err("too many lines".into());
+        }
+        let mut notes = 0usize;
+        for l in lines {
             let mut line = KaraokeLine {
-                voice: l.get("v").as_u64().unwrap_or(0).min(255) as u8,
+                voice: l.get("v").as_u64().unwrap_or(0).min(MAX_VOICE as u64) as u8,
                 notes: Vec::new(),
             };
-            for n in l.get("notes").as_array().map_or(&[][..], |a| a.as_slice()) {
+            let line_notes = l.get("notes").as_array().map_or(&[][..], |a| a.as_slice());
+            notes += line_notes.len();
+            if notes > MAX_NOTES {
+                return Err("too many notes".into());
+            }
+            for n in line_notes {
                 let (Some(start_ms), Some(dur_ms)) = (ms(n.get("t")), ms(n.get("d"))) else {
                     return Err("note without time".into());
                 };
@@ -366,7 +411,7 @@ impl KaraokeTrack {
                 line.notes.push(Note {
                     start_ms,
                     dur_ms,
-                    pitch: n.get("p").as_i64().unwrap_or(60) as i32,
+                    pitch: clamp_pitch(n.get("p").as_i64().unwrap_or(60)),
                     kind,
                     text: n.str_or("s", "").to_string(),
                 });
@@ -389,6 +434,44 @@ mod tests {
             kind: NoteKind::Normal,
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn crafted_json_ends_cleanly() {
+        let track = |body: &str| {
+            let v = bl_json::parse(&format!(r#"{{"format":"beatlumen-karaoke",{body}}}"#)).unwrap();
+            KaraokeTrack::from_json(&v)
+        };
+        assert!(track(r#""lines":[{"notes":[{"t":1e300,"d":1}]}]"#).is_err());
+        assert!(track(r#""lines":[{"notes":[{"t":1,"d":-1e300}]}]"#).is_err());
+        let t = track(
+            r#""singers":["a","b","c","d","e","f","g","h","i","j","k"],
+               "grid":{"bpm":1e-300,"gap":0},
+               "lines":[{"v":1000,"notes":[{"t":1,"d":-1e5,"p":1e15},{"t":-2,"d":3,"p":-1e15}]}]"#,
+        )
+        .unwrap();
+        assert!(t.grid.is_none());
+        assert_eq!(t.singers.len(), MAX_VOICE as usize);
+        assert_eq!(t.lines[0].voice, MAX_VOICE);
+        assert_eq!(
+            t.range(),
+            Some((60 - MAX_PITCH_OFFSET, 60 + MAX_PITCH_OFFSET))
+        );
+        let _ = t.lines[0].end_ms();
+        let _ = crate::ultrastar::to_ultrastar(&t);
+        // Too many lines or notes.
+        let lines = vec![r#"{"notes":[]}"#; MAX_LINES + 1].join(",");
+        assert_eq!(
+            track(&format!(r#""lines":[{lines}]"#)).unwrap_err(),
+            "too many lines"
+        );
+        let notes = vec![r#"{"t":0,"d":0}"#; MAX_NOTES / 4 + 1].join(",");
+        let line = format!(r#"{{"notes":[{notes}]}}"#);
+        let lines = vec![line.as_str(); 4].join(",");
+        assert_eq!(
+            track(&format!(r#""lines":[{lines}]"#)).unwrap_err(),
+            "too many notes"
+        );
     }
 
     #[test]

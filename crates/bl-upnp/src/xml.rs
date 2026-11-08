@@ -3,43 +3,50 @@
 //! are small and regular; nothing here needs a full parser.
 
 /// The inner content of every `<tag …>…</tag>` (also `<x:tag>`), outermost
-/// first; nested elements of the same name are skipped over.
+/// first; nested elements of the same name are skipped over. One pass over
+/// the tags, so any input takes linear time.
 pub fn elements<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let mut out = Vec::new();
-    let mut pos = 0;
-    while let Some((content_start, empty)) = find_open(xml, tag, pos) {
-        if empty {
-            out.push("");
-            pos = content_start;
+    // Open elements of this name, and where the outermost one's content
+    // starts.
+    let mut depth = 0usize;
+    let mut content = 0;
+    let mut i = 0;
+    while let Some(off) = xml.get(i..).and_then(|r| r.find('<')) {
+        let start = i + off + 1;
+        let rest = &xml[start..];
+        if let Some(close) = rest.strip_prefix('/') {
+            // A closing tag; without its '>' nothing more closes.
+            let Some(gt) = close.find('>') else { break };
+            if close[..gt].trim().rsplit(':').next() == Some(tag) && depth > 0 {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(&xml[content..start - 1]);
+                }
+            }
+            i = start + 1 + gt + 1;
             continue;
         }
-        // Matching close, counting nested opens of the same name.
-        let mut depth = 1;
-        let mut p = content_start;
-        let mut end = None;
-        while depth > 0 {
-            let next_open = find_open(xml, tag, p);
-            let next_close = find_close(xml, tag, p);
-            match (next_open, next_close) {
-                (Some((o, e)), Some((c, _))) if o < c => {
-                    if !e {
-                        depth += 1;
-                    }
-                    p = o;
-                }
-                (_, Some((c, ca))) => {
-                    depth -= 1;
-                    p = ca;
-                    if depth == 0 {
-                        end = Some(c);
-                    }
-                }
-                _ => break,
-            }
+        if rest.starts_with('?') || rest.starts_with('!') {
+            i = start;
+            continue;
         }
-        let Some(end) = end else { break };
-        out.push(&xml[content_start..end]);
-        pos = p;
+        if name_is(rest, tag) {
+            // Without its '>' the element cannot open.
+            let Some(gt) = rest.find('>') else { break };
+            let empty = rest[..gt].ends_with('/');
+            if depth == 0 && empty {
+                out.push("");
+            } else if !empty {
+                if depth == 0 {
+                    content = start + gt + 1;
+                }
+                depth += 1;
+            }
+            i = start + gt + 1;
+            continue;
+        }
+        i = start;
     }
     out
 }
@@ -49,46 +56,22 @@ pub fn text(xml: &str, tag: &str) -> Option<String> {
     elements(xml, tag).first().map(|s| unescape(s.trim()))
 }
 
-/// Finds `<tag` or `<prefix:tag` followed by `>`, ` ` or `/` at or after
-/// `from`; returns where its content starts and whether it is empty
-/// (`<tag/>`).
-fn find_open(xml: &str, tag: &str, from: usize) -> Option<(usize, bool)> {
-    let mut i = from;
-    while let Some(off) = xml.get(i..)?.find('<') {
-        let start = i + off + 1;
-        let rest = &xml[start..];
-        if rest.starts_with('/') || rest.starts_with('?') || rest.starts_with('!') {
-            i = start;
-            continue;
+/// Whether the tag name at the start of `rest` (up to `>`, `/` or white
+/// space) is `tag`, also with a prefix. Names are short: only the first
+/// 256 characters are looked at, so a run of `<` costs linear time.
+fn name_is(rest: &str, tag: &str) -> bool {
+    let mut end = rest.len();
+    for (n, (i, c)) in rest.char_indices().enumerate() {
+        if c == '>' || c == '/' || c.is_whitespace() {
+            end = i;
+            break;
         }
-        let name_end = rest
-            .find(|c: char| c == '>' || c == '/' || c.is_whitespace())
-            .unwrap_or(rest.len());
-        let name = &rest[..name_end];
-        let local = name.rsplit(':').next().unwrap_or(name);
-        if local == tag {
-            let gt = rest.find('>')?;
-            return Some((start + gt + 1, rest[..gt].ends_with('/')));
+        if n == 256 {
+            return false;
         }
-        i = start;
     }
-    None
-}
-
-/// Finds `</tag>` or `</prefix:tag>`; returns (its start, after it).
-fn find_close(xml: &str, tag: &str, from: usize) -> Option<(usize, usize)> {
-    let mut i = from;
-    while let Some(off) = xml.get(i..)?.find("</") {
-        let start = i + off;
-        let rest = &xml[start + 2..];
-        let gt = rest.find('>')?;
-        let name = rest[..gt].trim();
-        if name.rsplit(':').next() == Some(tag) {
-            return Some((start, start + 2 + gt + 1));
-        }
-        i = start + 2;
-    }
-    None
+    let name = &rest[..end];
+    name.rsplit(':').next().unwrap_or(name) == tag
 }
 
 pub fn escape(s: &str) -> String {
@@ -112,7 +95,10 @@ pub fn unescape(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         let after = &rest[i..];
-        let Some(semi) = after.find(';').filter(|&j| j <= 10) else {
+        // Only the next few bytes: searching all the rest for each '&'
+        // made a text of many of them quadratic.
+        let near = &after.as_bytes()[..after.len().min(11)];
+        let Some(semi) = near.iter().position(|&b| b == b';') else {
             out.push('&');
             rest = &after[1..];
             continue;
@@ -159,5 +145,29 @@ mod tests {
             "a & b <c> ä€"
         );
         assert_eq!(escape("<a & 'b'>"), "&lt;a &amp; &apos;b&apos;&gt;");
+        // Unclosed, stray closes, comments and empty ones.
+        assert!(elements("<b>open", "b").is_empty());
+        assert_eq!(elements("</b><b>x</b></b><b>y</b>", "b"), vec!["x", "y"]);
+        assert_eq!(elements("<?xml?><b/><x:b >z</x:b >", "b"), vec!["", "z"]);
+        assert_eq!(elements("<bb>no</bb><b\t>yes</b>", "b"), vec!["yes"]);
+    }
+
+    #[test]
+    fn crafted_documents_take_linear_time() {
+        let t = std::time::Instant::now();
+        for x in [
+            "<".repeat(200_000),
+            "</".repeat(200_000) + ">",
+            "<b>".repeat(100_000) + &"</b>".repeat(100_000),
+            "<b ".repeat(100_000) + ">",
+            "&".repeat(200_000) + ";",
+        ] {
+            let _ = elements(&x, "b");
+            let _ = text(&x, "b");
+            let _ = unescape(&x);
+        }
+        let nested = "<b>".repeat(1000) + "x" + &"</b>".repeat(1000);
+        assert_eq!(elements(&nested, "b").len(), 1);
+        assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
     }
 }
