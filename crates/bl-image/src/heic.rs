@@ -218,8 +218,14 @@ pub(crate) fn decode_fit(h: &Heif, fit: &Fit) -> Result<Image, Error> {
                 .item(tiles[0])
                 .ok_or(Error::InvalidData("heic: missing tile"))?;
             let (tw0, th0) = (first.props.width as usize, first.props.height as usize);
-            if tw0 == 0 || th0 == 0 || tw0 * cols < w as usize || th0 * rows < hh as usize {
-                return Err(Error::InvalidData("heic: bad grid"));
+            if tw0 == 0
+                || th0 == 0
+                || tw0 * cols < w as usize
+                || th0 * rows < hh as usize
+                || (cols - 1) * tw0 >= w as usize
+                || (rows - 1) * th0 >= hh as usize
+            {
+                return Err(Error::InvalidData("heic: grid tiles do not fit the image"));
             }
             let alpha_tiles = match &alpha_pic {
                 Some(Picture::Grid {

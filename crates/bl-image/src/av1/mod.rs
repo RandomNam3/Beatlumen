@@ -112,6 +112,15 @@ pub(crate) fn parse_stream<'a>(data: &'a [u8], config: &[u8]) -> Result<Stream<'
     }
     let seq = seq.ok_or(Error::InvalidData("av1: no sequence header"))?;
     let fh = fh.ok_or(Error::InvalidData("av1: no frame"))?;
+    // The rows the decoder keeps are as wide as the frame; intra block copy
+    // keeps the whole frame.
+    let px = fh.upscaled_width as u64 * fh.frame_height as u64;
+    if fh.upscaled_width > 32768 || fh.frame_height > 32768 || px > crate::MAX_SOURCE_PIXELS {
+        return Err(Error::Unsupported("av1: frame too large"));
+    }
+    if fh.allow_intrabc && px > 1 << 24 {
+        return Err(Error::Unsupported("av1: intra block copy in a very large frame"));
+    }
     if tiles.is_empty() || tiles.iter().any(|t| t.is_none()) {
         return Err(Error::InvalidData("av1: missing tiles"));
     }

@@ -261,6 +261,53 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
             v.push((name.to_string(), std::fs::read(&p).unwrap()));
         }
     }
+    // AVIF: AV1 streams of several encoders and tools, and containers with
+    // alpha and a grid.
+    let mut obus: Vec<(&str, Vec<u8>)> = Vec::new();
+    for (name, src, extra) in [
+        ("aom", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30", "-aom-params", "enable-restoration=1"]),
+        ("aom10", "testsrc2=s=67x45,format=yuv444p10le", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30"]),
+        ("ibc", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30", "-aom-params", "tune-content=screen:enable-intrabc=1"]),
+        ("gray", "testsrc2=s=67x45,format=gray", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30"]),
+        ("svt", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libsvtav1", "-crf", "35", "-preset", "8"]),
+    ] {
+        let p = dir.join(format!("{name}.obu"));
+        let t = p.to_str().unwrap().to_string();
+        let mut args = vec!["-f", "lavfi", "-i", src, "-frames:v", "1"];
+        args.extend(extra.iter());
+        args.extend(["-f", "obu", t.as_str()]);
+        if ffmpeg(&args) {
+            obus.push((name, common::heif::strip_td(&std::fs::read(&p).unwrap())));
+        }
+    }
+    use common::heif as hf;
+    let get = |n: &str| obus.iter().find(|(k, _)| *k == n).map(|(_, d)| d.clone());
+    for (name, d) in &obus {
+        let (w, h) = (67, 45);
+        v.push((
+            format!("{name}.avif"),
+            hf::file(b"avif", &[hf::Item::new(b"av01", d.clone(), vec![hf::av1c(d), hf::ispe(w, h)])], 1, &[]),
+        ));
+    }
+    if let (Some(c), Some(a)) = (get("aom"), get("gray")) {
+        v.push((
+            "alpha.avif".to_string(),
+            hf::file(
+                b"avif",
+                &[
+                    hf::Item::new(b"av01", c.clone(), vec![hf::av1c(&c), hf::ispe(67, 45), hf::irot(1)]),
+                    hf::Item::new(b"av01", a.clone(), vec![hf::av1c(&a), hf::ispe(67, 45), hf::auxc_alpha()]),
+                ],
+                1,
+                &[(b"auxl", 2, vec![1])],
+            ),
+        ));
+        let mut items: Vec<hf::Item> = (0..4)
+            .map(|_| hf::Item::new(b"av01", c.clone(), vec![hf::av1c(&c), hf::ispe(67, 45)]))
+            .collect();
+        items.push(hf::Item::new(b"grid", hf::grid(2, 2, 130, 88), vec![hf::ispe(130, 88), hf::clap(120, 80, 0, 0)]));
+        v.push(("grid.avif".to_string(), hf::file(b"avif", &items, 5, &[(b"dimg", 5, vec![1, 2, 3, 4])])));
+    }
     if have_convert() {
         let s = dir.join("a.png");
         for (name, opts) in [
@@ -297,7 +344,21 @@ fn decoders_survive_corruption() {
             .unwrap_or(d)
     };
     let mut rng = Rng(env("OC_IMAGE_FUZZ_SEED", 0xdead_beef) | 1);
-    let fixtures = fuzz_fixtures();
+    let mut fixtures = fuzz_fixtures();
+    // HEIC goes to a system decoder: a stand-in that checks nothing and
+    // returns grey, so that the container code is fuzzed.
+    bl_image::set_system_decoder(Some(Box::new(|_: &[u8], w: u32, h: u32| {
+        let mut img = Image::new(w.clamp(1, 64), h.clamp(1, 64));
+        img.pixels.fill(128);
+        Some(img)
+    })));
+    {
+        use common::heif as hf;
+        let tile = |id: u8| hf::Item::new(b"hvc1", vec![id; 9], vec![hf::hvcc_stub(), hf::ispe(32, 32)]);
+        let mut items: Vec<_> = (0..6).map(tile).collect();
+        items.push(hf::Item::new(b"grid", hf::grid(2, 3, 90, 60), vec![hf::ispe(90, 60), hf::imir(1)]));
+        fixtures.push(("grid.heic".to_string(), hf::file(b"heic", &items, 7, &[(b"dimg", 7, vec![1, 2, 3, 4, 5, 6])])));
+    }
     for (name, data) in &fixtures {
         assert!(decode(data).is_ok(), "{name} must decode before corruption");
         let mut ok = 0;
@@ -362,6 +423,8 @@ fn decoders_survive_corruption() {
         b"II\x2a\x00",
         b"MM\x00\x2a",
         b"II\x2b\x00\x08\x00\x00\x00",
+        b"\0\0\0\x18ftypavif\0\0\0\0avifmif1",
+        b"\0\0\0\x18ftypheic\0\0\0\0heicmif1",
     ] {
         for _ in 0..300 {
             let mut g = magic.to_vec();

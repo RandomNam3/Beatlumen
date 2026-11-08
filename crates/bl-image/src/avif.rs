@@ -146,13 +146,18 @@ impl<'d> Source<'d> {
             matrix: c.matrix as u16,
         };
         let (tile_w, tile_h) = (first.fh.upscaled_width, first.fh.frame_height);
-        if rows * tile_h < height.min(rows * tile_h) || tile_w == 0 || tile_h == 0 {
+        if tile_w == 0 || tile_h == 0 {
             return Err(Error::InvalidData("avif: bad tile size"));
         }
         if rows > 1 || cols > 1 {
-            // Grid tiles must cover the output.
-            if cols * tile_w < width || rows * tile_h < height {
-                return Err(Error::InvalidData("avif: grid smaller than its image"));
+            // Grid tiles cover the output, and reach beyond it by less than
+            // a tile (the decoders of a row of tiles are as wide as that).
+            if cols * tile_w < width
+                || rows * tile_h < height
+                || (cols - 1) * tile_w >= width
+                || (rows - 1) * tile_h >= height
+            {
+                return Err(Error::InvalidData("avif: grid tiles do not fit the image"));
             }
         }
         let planes = c.num_planes();
