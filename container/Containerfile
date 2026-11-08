@@ -14,22 +14,32 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-ARG RUST_IMAGE=docker.io/library/rust:1.99-alpine3.22
+ARG RUST_IMAGE=docker.io/library/rust:1.99-slim-trixie
 
+# Build stage only (Debian with the official Rust toolchain); nothing of it
+# ends up in the image.
 FROM ${RUST_IMAGE} AS build
-RUN apk add --no-cache musl-dev
+# The server is linked statically against musl, so the image needs no C
+# library; musl-tools compiles the few C parts (ring) for it.
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends musl-tools; \
+    rm -rf /var/lib/apt/lists/*; \
+    rustup target add "$(uname -m)-unknown-linux-musl"
 WORKDIR /src
 COPY . .
-# musl targets link statically; symbols are stripped to keep the image small.
+# Symbols are stripped to keep the image small.
 ENV CARGO_PROFILE_RELEASE_STRIP=true
 # Public release key (hex) of official builds: the server then accepts only
 # a web client whose integrity manifest carries the release signature.
 ARG BEATLUMEN_RELEASE_KEY=
 RUN set -eu; \
+    target="$(uname -m)-unknown-linux-musl"; \
+    export "CC_$(uname -m)_unknown_linux_musl=musl-gcc"; \
     if [ -f dist/web/index.html ]; then export BEATLUMEN_EMBED_WEB=/src/dist/web; fi; \
-    cargo build --release --locked -p beatlumen-server; \
+    cargo build --release --locked --target "$target" -p beatlumen-server; \
     mkdir -p /out/data /out/doc; \
-    cp target/release/beatlumen-server /out/; \
+    cp "target/$target/release/beatlumen-server" /out/; \
     cp LICENSE THIRD_PARTY_NOTICES.md /out/doc/; \
     cp crates/bl-vault/NOTICE /out/doc/NOTICE-cryptography; \
     cp apps/beatlumen-server/NOTICE /out/doc/NOTICE-tls
