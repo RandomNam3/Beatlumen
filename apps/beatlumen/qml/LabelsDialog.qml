@@ -14,6 +14,7 @@ AppDialog {
     anchors.centerIn: Overlay.overlay
     width: Math.min(460, (parent ? parent.width : 460) - 32)
     standardButtons: Dialog.Close
+    onAboutToShow: Theme.nameButtons(this)
 
     function reload() {
         const l = Core.call("labels.of", { id: trackId }) || {}

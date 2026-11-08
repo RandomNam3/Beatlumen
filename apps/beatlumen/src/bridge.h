@@ -6,6 +6,7 @@
 #include <QJSValue>
 #include <QElapsedTimer>
 #include <QObject>
+#include <QMargins>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -21,8 +22,18 @@ class Bridge : public QObject
     Q_OBJECT
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
     Q_PROPERTY(double position READ position NOTIFY positionChanged)
+    // For what a screen reader can see: it hears about every change.
+    Q_PROPERTY(double seekPosition READ seekPosition NOTIFY seekPositionChanged)
     Q_PROPERTY(bool systemDark READ systemDark NOTIFY systemThemeChanged)
     Q_PROPERTY(QColor systemAccent READ systemAccent NOTIFY systemThemeChanged)
+    // What the system's bars and a notch cover of the window (Android: the
+    // window reaches under them).
+    Q_PROPERTY(int safeTop READ safeTop NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeLeft READ safeLeft NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeRight READ safeRight NOTIFY safeAreaChanged)
+    Q_PROPERTY(int safeBottom READ safeBottom NOTIFY safeAreaChanged)
+    // The keyboard's height over the window (Android: it covers the window).
+    Q_PROPERTY(int keyboardHeight READ keyboardHeight NOTIFY safeAreaChanged)
     Q_PROPERTY(QString platform READ platform CONSTANT)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
@@ -35,6 +46,20 @@ public:
     ~Bridge() override;
 
     QVariantMap state() const { return m_state; }
+    double seekPosition() const { return m_seekPosition; }
+    int safeTop() const { return m_safe.top(); }
+    int safeLeft() const { return m_safe.left(); }
+    int safeRight() const { return m_safe.right(); }
+    int safeBottom() const { return m_safe.bottom(); }
+    int keyboardHeight() const { return m_keyboard; }
+    // Android tells it; the UI test pretends a keyboard on other systems.
+    void setKeyboardHeight(int height)
+    {
+        if (height != m_keyboard) {
+            m_keyboard = height;
+            emit safeAreaChanged();
+        }
+    }
     double position() const { return m_position; }
     bool systemDark() const;
     QColor systemAccent() const;
@@ -47,6 +72,12 @@ public:
     Q_INVOKABLE QJSValue call(const QString &cmd, const QVariantMap &args = {});
     // Renders the visualizer underneath the QML scene of `window`.
     Q_INVOKABLE void attachWindow(QQuickWindow *window);
+    // A page lies over the visual: fewer frames will do (Android).
+    Q_INVOKABLE void setVisualCovered(bool covered) { m_visualCovered = covered; }
+    // Android: Qt's bridge to accessibility services whatever runs, from the
+    // next start on (Accessibility.java).
+    Q_INVOKABLE bool accessibilityAlways() const;
+    Q_INVOKABLE void setAccessibilityAlways(bool on);
     // Opens files: local paths/URLs, Android content URIs, browser uploads.
     Q_INVOKABLE void openUrls(const QList<QUrl> &urls, bool play = true);
     void openPaths(const QStringList &paths, bool play);
@@ -56,6 +87,8 @@ public:
     Q_INVOKABLE void setKeepScreenOn(bool on);
     // Hides Android's status and navigation bars (immersive mode).
     Q_INVOKABLE void setSystemBarsHidden(bool hidden);
+    // Dark icons in the system's bars, for a light page under them.
+    Q_INVOKABLE void setSystemBarsLight(bool light);
     Q_INVOKABLE void requestMediaPermission();
     Q_INVOKABLE void copyText(const QString &text);
     // Android: sends the app to the background (returns false elsewhere).
@@ -69,6 +102,8 @@ public:
 signals:
     void stateChanged();
     void positionChanged();
+    void seekPositionChanged();
+    void safeAreaChanged();
     void systemThemeChanged();
     void nativeDialogsChanged();
     void toast(const QString &text, bool error);
@@ -90,6 +125,14 @@ private:
 #endif
     QVariantMap m_state;
     double m_position = 0;
+    double m_seekPosition = 0;
+    bool m_visualCovered = false;
+    bool m_powerSaving = false;
+    QTimer m_frameTimer;
+    QMargins m_safe;
+    int m_keyboard = 0;
+    QTimer m_safeTimer;
+    void updateSafeArea();
     QTimer m_timer;
     QQuickWindow *m_window = nullptr;
     class DesktopMedia *m_desktopMedia = nullptr;

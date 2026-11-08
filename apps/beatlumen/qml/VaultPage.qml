@@ -551,6 +551,7 @@ Item {
         width: Math.min(420, page.width - 32)
         title: fileMenu.file.mine ? Theme.tr("Move file to the trash?") : Theme.tr("Remove from my files?")
         standardButtons: Dialog.Cancel | Dialog.Ok
+        onAboutToShow: Theme.nameButtons(this)
         Label {
             textFormat: Text.PlainText
             width: parent.width
@@ -669,6 +670,7 @@ Item {
         width: Math.min(440, page.width - 32)
         title: Theme.tr("Share") + " " + (file.title || "")
         standardButtons: Dialog.Cancel
+        onAboutToShow: Theme.nameButtons(this)
         ColumnLayout {
             anchors.fill: parent
             spacing: 8
@@ -714,6 +716,7 @@ Item {
         width: Math.min(440, page.width - 32)
         title: Theme.tr("Safety number with") + " " + (contact.name || "")
         standardButtons: Dialog.Close
+        onAboutToShow: Theme.nameButtons(this)
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
@@ -799,6 +802,7 @@ Item {
         width: Math.min(420, page.width - 32)
         title: Theme.tr("Change password")
         standardButtons: Dialog.Cancel
+        onAboutToShow: Theme.nameButtons(this)
         onOpened: { cur.clear(); np.clear(); np2.clear(); cur.forceActiveFocus() }
         ColumnLayout {
             anchors.fill: parent
@@ -824,6 +828,7 @@ Item {
         width: Math.min(420, page.width - 32)
         title: Theme.tr("Add a passkey on this device")
         standardButtons: Dialog.Cancel
+        onAboutToShow: Theme.nameButtons(this)
         onOpened: { pkPw.clear(); pkName.text = Theme.tr("Passkey on this device"); (page.vault.passwordOff ? pkName : pkPw).forceActiveFocus() }
         ColumnLayout {
             anchors.fill: parent

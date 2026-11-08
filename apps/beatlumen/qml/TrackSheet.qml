@@ -10,6 +10,9 @@ BottomSheet {
     property var ids: []
     property var extra: []      // [{text, action}] rows shown first
     property var tracks: []
+    // The name and line of a page whose songs these are, for its ⋮ button:
+    // then even a single song is not shown as one.
+    property var heading: null
     property bool canEditLabels: false
     signal addToPlaylist(var ids)
     signal editLabels(string id)
@@ -23,11 +26,12 @@ BottomSheet {
     title: Theme.tr("Song")
     wantedHeight: column.implicitHeight + 8
 
-    readonly property var track: ids.length === 1 && tracks.length === 1 ? tracks[0] : null
+    readonly property var track: !heading && ids.length === 1 && tracks.length === 1 ? tracks[0] : null
 
-    function openFor(trackIds, extraItems) {
+    function openFor(trackIds, extraItems, pageHeading) {
         ids = trackIds
         extra = extraItems || []
+        heading = pageHeading || null
         const avail = Core.state.offline && Core.state.offline.available === true
         tracks = avail || trackIds.length === 1 ? (Core.call("library.tracks", { ids: trackIds }) || []) : []
         toSave = avail ? tracks.filter(t => !t.local && !t.offline && String(t.id).indexOf(":") < 0).map(t => t.id) : []
@@ -61,7 +65,7 @@ BottomSheet {
             r.push({ icon: "album", text: Theme.tr("Go to album"), run: () => win.showAlbum({ id: track.albumId, title: track.album, artist: track.artist, year: track.year }) })
         if (track && track.artist && win)
             r.push({ icon: "person", text: Theme.tr("Go to artist"), run: () => win.showArtist(track.artist.split(", ")[0]) })
-        if (canEditLabels && ids.length === 1)
+        if (canEditLabels && track)
             r.push({ icon: "label", text: Theme.tr("Labels…"), run: () => sheet.editLabels(ids[0]) })
         const songs = Core.state.server === "connected" ? ids.filter(id => String(id).indexOf(":") < 0) : []
         if (songs.length > 0)
@@ -122,7 +126,9 @@ BottomSheet {
                     Label {
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
-                        text: sheet.track ? (sheet.track.title || "") : sheet.ids.length + " " + Theme.tr("songs")
+                        text: sheet.track ? (sheet.track.title || "")
+                            : sheet.heading ? sheet.heading.title || ""
+                            : sheet.ids.length + " " + Theme.tr("songs")
                         color: Theme.text
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
@@ -131,8 +137,9 @@ BottomSheet {
                     Label {
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
-                        visible: sheet.track !== null
-                        text: sheet.track ? [sheet.track.artist || Theme.tr("Unknown artist"), sheet.track.album].filter(x => x).join(" · ") : ""
+                        visible: text !== ""
+                        text: sheet.track ? [sheet.track.artist || Theme.tr("Unknown artist"), sheet.track.album].filter(x => x).join(" · ")
+                            : sheet.heading ? sheet.heading.subtitle || "" : ""
                         color: Theme.textDim
                         font.pixelSize: 13
                         elide: Text.ElideRight

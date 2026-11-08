@@ -3,6 +3,7 @@
 // memory as dynamic code loading; Qt maps such memory for the QML JIT and
 // for the PCRE2 JIT behind QRegularExpression, which Qt's Android plugin
 // already uses before main() runs, so setting these in main() is too late.
+// Qt's bridge to accessibility services is decided here as well.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -26,6 +27,7 @@ public class BeatlumenApplication extends QtApplication {
         } catch (ErrnoException e) {
             Log.w("Beatlumen", "setenv failed: " + e);
         }
+        Accessibility.applyAtStart(this);
         super.onCreate();
     }
 }

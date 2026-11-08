@@ -8,6 +8,10 @@
 #include "tls.h"
 #include "web.h"
 
+#include <QAccessible>
+#include <QInputMethod>
+#include <QPointer>
+#include <cmath>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDateTime>
@@ -414,7 +418,11 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
 
     connect(&m_timer, &QTimer::timeout, this, &Bridge::tick);
     m_timer.setTimerType(Qt::PreciseTimer);
+#ifdef Q_OS_ANDROID
+    m_timer.start(33);
+#else
     m_timer.start(16);
+#endif
     connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::paletteChanged, this, &Bridge::systemThemeChanged);
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
@@ -451,8 +459,16 @@ Bridge::Bridge(const QStringList &args, QObject *parent)
     // its own thread and moves on to the next track by itself.
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
         const bool visible = s == Qt::ApplicationActive;
-        m_timer.setInterval(visible ? 16 : 250);
+        m_timer.setInterval(visible ? 33 : 250);
         call(QStringLiteral("app.visible"), {{QStringLiteral("visible"), visible}});
+        if (visible) {
+            // The system's battery saver: half the frames.
+            QJniObject context = QNativeInterface::QAndroidApplication::context();
+            QJniObject power = context.callObjectMethod(
+                "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;",
+                QJniObject::fromString(QStringLiteral("power")).object<jstring>());
+            m_powerSaving = power.isValid() && power.callMethod<jboolean>("isPowerSaveMode");
+        }
     });
 #endif
     tick();
@@ -641,7 +657,9 @@ QJSValue Bridge::call(const QString &cmd, const QVariantMap &args)
     const QByteArray req = QJsonDocument(o).toJson(QJsonDocument::Compact);
     const QByteArray res = takeString(bl_core_command(m_core, req.constData()));
     // Commands often change state; deliver it without waiting for the timer.
-    QMetaObject::invokeMethod(this, &Bridge::tick, Qt::QueuedConnection);
+    // (Layout reports come with every frame and change nothing to be shown.)
+    if (!cmd.startsWith(QLatin1String("ui.")))
+        QMetaObject::invokeMethod(this, &Bridge::tick, Qt::QueuedConnection);
     // Parse in the JS engine so QML gets plain JS arrays and objects.
     QJSEngine *engine = qjsEngine(this);
     if (!engine)
@@ -665,6 +683,11 @@ void Bridge::tick()
     if (p != m_position) {
         m_position = p;
         emit positionChanged();
+        // A control moving by itself is a question to Android for every step.
+        if (!QAccessible::isActive() || qAbs(p - m_seekPosition) >= 1.0) {
+            m_seekPosition = p;
+            emit seekPositionChanged();
+        }
     }
 #ifdef Q_OS_ANDROID
     const bool playing = bl_core_is_playing(m_core);
@@ -704,6 +727,28 @@ void Bridge::handleEvents(const QByteArray &json)
     }
 }
 
+#ifdef Q_OS_ANDROID
+// The window reaches under the system's bars. Qt asks for that only up to
+// Android 15 and leaves it to the system from Android 16 on: there the content
+// stopped at the bars while Qt kept the window as high as the screen, and the
+// bottom of the app hung off the screen.
+static void layOutUnderBars(const QJniObject &window)
+{
+    if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30)
+        window.callMethod<void>("setDecorFitsSystemWindows", "(Z)V", jboolean(false));
+}
+
+static void layOutUnderBarsNow()
+{
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([]() {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (window.isValid())
+            layOutUnderBars(window);
+    });
+}
+#endif
+
 void Bridge::attachWindow(QQuickWindow *window)
 {
     if (!window || m_window == window)
@@ -722,9 +767,72 @@ void Bridge::attachWindow(QQuickWindow *window)
         m_glReady = false;
     }, Qt::DirectConnection);
     // Keep animating: the visualizer changes every frame.
+#ifdef Q_OS_ANDROID
+    // Under the system's bars and the notch: the visual fills the screen, and the
+    // window keeps its size when the bars come and go, so nothing has to be laid
+    // out and allocated anew in the middle of fading the controls.
+    window->setFlag(Qt::ExpandedClientAreaHint, true);
+    layOutUnderBarsNow();
+    connect(window, &QWindow::safeAreaMarginsChanged, this, &Bridge::updateSafeArea);
+    connect(window, &QWindow::widthChanged, this, &Bridge::updateSafeArea);
+    connect(window, &QWindow::heightChanged, this, &Bridge::updateSafeArea);
+    connect(QGuiApplication::inputMethod(), &QInputMethod::visibleChanged, this, &Bridge::updateSafeArea);
+    connect(QGuiApplication::inputMethod(), &QInputMethod::keyboardRectangleChanged, this, &Bridge::updateSafeArea);
+    // Bars and keyboard move without telling Qt every time: a look now and then.
+    connect(&m_safeTimer, &QTimer::timeout, this, &Bridge::updateSafeArea);
+    m_safeTimer.start(1000);
+    updateSafeArea();
+    // This thread does everything, and Android's main thread waits for it when
+    // it wants to know something (keyboard, accessibility). So it has to come
+    // up for air: no more frames than the eye needs, even on a 120 Hz screen.
+    m_frameTimer.setSingleShot(true);
+    m_frameTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_frameTimer, &QTimer::timeout, window, &QQuickWindow::update);
+    connect(window, &QQuickWindow::frameSwapped, this, [this]() {
+        const bool playing = m_core && bl_core_is_playing(m_core);
+        const qint64 gap = QAccessible::isActive() ? 66
+            : m_visualCovered ? (playing ? 50 : 100)
+            : playing && !m_powerSaving ? 16 : 33;
+        m_frameTimer.start(int(qMax<qint64>(0, gap - m_frameClock.elapsed())));
+    }, Qt::QueuedConnection);
+#else
     connect(window, &QQuickWindow::frameSwapped, window, &QQuickWindow::update, Qt::QueuedConnection);
+#endif
     m_frameClock.start();
     window->update();
+}
+
+void Bridge::updateSafeArea()
+{
+#ifdef Q_OS_ANDROID
+    if (!m_window || !qGuiApp || qGuiApp->applicationState() != Qt::ApplicationActive)
+        return;
+    // Bars that hide keep their room (WindowGaps.java): nothing moves when
+    // they come and go. Asked on Android's main thread, applied here.
+    QPointer<Bridge> self(this);
+    const qreal dpr = m_window->devicePixelRatio();
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([self, dpr]() {
+        QJniObject context = QNativeInterface::QAndroidApplication::context();
+        const QJniObject gaps = QJniObject::callStaticObjectMethod(
+            "io/github/randomnam3/beatlumen/WindowGaps", "of", "(Landroid/content/Context;)[I",
+            context.object<jobject>());
+        QJniEnvironment env;
+        jint v[5] = {};
+        if (!gaps.isValid() || env->GetArrayLength(gaps.object<jintArray>()) < 5)
+            return;
+        env->GetIntArrayRegion(gaps.object<jintArray>(), 0, 5, v);
+        const auto px = [dpr](jint n) { return int(std::ceil(n / dpr)); };
+        const QMargins next(px(v[0]), px(v[1]), px(v[2]), px(v[3]));
+        const int keyboard = px(v[4]);
+        QMetaObject::invokeMethod(qApp, [self, next, keyboard]() {
+            if (!self || (next == self->m_safe && keyboard == self->m_keyboard))
+                return;
+            self->m_safe = next;
+            self->m_keyboard = keyboard;
+            emit self->safeAreaChanged();
+        });
+    });
+#endif
 }
 
 void Bridge::renderUnderlay()
@@ -823,6 +931,7 @@ void Bridge::setSystemBarsHidden(bool hidden)
         QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
         if (!window.isValid())
             return;
+        layOutUnderBars(window);
         if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
             QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
             if (!ctl.isValid())
@@ -842,6 +951,47 @@ void Bridge::setSystemBarsHidden(bool hidden)
     });
 #else
     Q_UNUSED(hidden);
+#endif
+}
+
+void Bridge::setSystemBarsLight(bool light)
+{
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([light]() {
+        if (QNativeInterface::QAndroidApplication::sdkVersion() < 30)
+            return;
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
+        if (ctl.isValid()) {
+            const jint mask = 8 | 16; // APPEARANCE_LIGHT_STATUS_BARS | APPEARANCE_LIGHT_NAVIGATION_BARS
+            ctl.callMethod<void>("setSystemBarsAppearance", "(II)V", light ? mask : jint(0), mask);
+        }
+    });
+#else
+    Q_UNUSED(light);
+#endif
+}
+
+bool Bridge::accessibilityAlways() const
+{
+#ifdef Q_OS_ANDROID
+    return QJniObject::callStaticMethod<jboolean>(
+        "io/github/randomnam3/beatlumen/Accessibility", "always", "(Landroid/content/Context;)Z",
+        QNativeInterface::QAndroidApplication::context().object<jobject>());
+#else
+    return false;
+#endif
+}
+
+void Bridge::setAccessibilityAlways(bool on)
+{
+#ifdef Q_OS_ANDROID
+    QJniObject::callStaticMethod<void>(
+        "io/github/randomnam3/beatlumen/Accessibility", "setAlways", "(Landroid/content/Context;Z)V",
+        QNativeInterface::QAndroidApplication::context().object<jobject>(), jboolean(on));
+#else
+    Q_UNUSED(on);
 #endif
 }
 

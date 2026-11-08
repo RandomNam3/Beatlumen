@@ -385,10 +385,12 @@ fn split_text(enc: u8, data: &[u8]) -> (String, &[u8]) {
 }
 
 fn decode_8bit(enc: u8, data: &[u8]) -> String {
-    if enc == 3 {
-        String::from_utf8_lossy(data).into_owned()
-    } else {
-        data.iter().map(|&b| b as char).collect()
+    match (enc, std::str::from_utf8(data)) {
+        (3, _) => String::from_utf8_lossy(data).into_owned(),
+        // Many taggers write UTF-8 but mark it as Latin-1. Other players read it
+        // as UTF-8 when it is valid as such; Latin-1 text hardly ever is.
+        (_, Ok(text)) => text.to_string(),
+        _ => data.iter().map(|&b| b as char).collect(),
     }
 }
 
@@ -601,10 +603,28 @@ fn handle_frame(
             if mime == "-->" || img.is_empty() {
                 return; // linked picture or empty
             }
-            pics.push(make_picture(&mime, kind, &desc, img.to_vec()));
+            pics.push(make_picture(&mime, kind, &desc, image_start(img).to_vec()));
         }
         _ => {}
     }
+}
+
+/// Some taggers write a stray zero or the description after its end mark, so
+/// the picture starts a few bytes later. Other players find it there: so does
+/// this, for a JPEG or PNG.
+fn image_start(img: &[u8]) -> &[u8] {
+    const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
+    const PNG: &[u8] = &[0x89, b'P', b'N', b'G'];
+    let known: [&[u8]; 5] = [JPEG, PNG, b"GIF8", b"RIFF", b"BM"];
+    if known.iter().any(|k| img.starts_with(k)) {
+        return img;
+    }
+    let head = &img[..img.len().min(256)];
+    [JPEG, PNG]
+        .iter()
+        .filter_map(|sign| head.windows(sign.len()).position(|w| w == *sign))
+        .min()
+        .map_or(img, |at| &img[at..])
 }
 
 /// Parses a 128-byte ID3v1 / ID3v1.1 tag.
@@ -731,6 +751,43 @@ pub(crate) mod tests {
             assert_eq!(pics[0].kind, 3);
             assert_eq!(pics[0].description, "cover");
         }
+    }
+
+    #[test]
+    fn utf8_marked_as_latin1() {
+        let mut tags = Tags::default();
+        let tag = build_tag(
+            4,
+            &[
+                ("TPE1", [&[0u8][..], "Frédéric Chopin".as_bytes()].concat()),
+                ("TALB", vec![0, b'C', 0xe9, b'z', b'a', b'n', b'n', b'e']),
+            ],
+        );
+        parse_id3v2_bytes(&tag, &mut tags, None);
+        assert_eq!(tags.artist.as_deref(), Some("Frédéric Chopin"));
+        // Real Latin-1 stays Latin-1.
+        assert_eq!(tags.album.as_deref(), Some("Cézanne"));
+    }
+
+    #[test]
+    fn picture_after_a_stray_zero_or_text() {
+        let picture_of = |after_kind: &[u8]| {
+            let mut apic = vec![0u8];
+            apic.extend_from_slice(b"image/jpeg\0");
+            apic.push(0);
+            apic.extend_from_slice(after_kind);
+            apic.extend_from_slice(b"\xff\xd8\xff\xe0JFIF");
+            let tag = build_tag(4, &[("APIC", apic)]);
+            let mut pics = Vec::new();
+            parse_id3v2_bytes(&tag, &mut Tags::default(), Some(&mut pics));
+            pics.remove(0).data
+        };
+        // A stray zero after the empty description, and the description after its end mark.
+        assert_eq!(picture_of(b"\0\0"), b"\xff\xd8\xff\xe0JFIF");
+        assert_eq!(picture_of(b"\0\"Album cover\"\0"), b"\xff\xd8\xff\xe0JFIF");
+        // Well-formed and unknown data stay as they are.
+        assert_eq!(picture_of(b"cover\0"), b"\xff\xd8\xff\xe0JFIF");
+        assert_eq!(image_start(&[1, 2, 3]), &[1, 2, 3]);
     }
 
     #[test]

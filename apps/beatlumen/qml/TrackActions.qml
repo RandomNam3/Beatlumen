@@ -9,11 +9,12 @@ Item {
     signal editLabels(string id)
 
     property var actions: null
-    function openFor(trackIds, anchor, extraItems) {
+    // heading: {title, subtitle} of the page whose songs these are (its ⋮ button).
+    function openFor(trackIds, anchor, extraItems, heading) {
         if (!actions)
             actions = (Theme.fingers ? sheet : menu).createObject(root)
         if (Theme.fingers)
-            actions.openFor(trackIds, extraItems)
+            actions.openFor(trackIds, extraItems, heading)
         else
             actions.openFor(trackIds, anchor, extraItems)
     }

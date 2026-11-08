@@ -13,6 +13,8 @@ Item {
     signal connectServer()
     signal uploadVault()
     signal exportPlaylist(string id)
+    // Back from a detail page to the list.
+    signal detailClosed()
 
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
@@ -37,12 +39,17 @@ Item {
         if (!(stack.currentItem instanceof VaultPage))
             stack.push(vaultView)
     }
+    property var folders: null
     function back() {
         if (stack.depth > 1) {
             stack.pop()
             return true
         }
-        return false
+        return !!folders && folders.visible && folders.up()
+    }
+    // Wiping back leaves a detail page first.
+    function swipe(dir) {
+        return dir < 0 && back()
     }
     function openAlbum(album) {
         stack.pop(null)
@@ -106,6 +113,10 @@ Item {
         stack.push(collectionView, { ext: ext, itemId: id })
         Core.call("extensions.collection", { ext: ext, id: id })
     }
+    function openMix(id, name, cover) {
+        stack.pop(null)
+        stack.push(mixView, { mixId: id, mixName: name, cover: cover })
+    }
     function openFavorites() {
         const fav = (Core.call("playlists.list") || []).find(p => p.fixed === true)
         stack.pop(null)
@@ -141,6 +152,7 @@ Item {
 
     StackView {
         id: stack
+        onDepthChanged: if (depth === 1) page.detailClosed()
         anchors.fill: parent
         initialItem: mainView
     }
@@ -485,6 +497,7 @@ Item {
 
                     // Folders
                     FolderView {
+                        Component.onCompleted: page.folders = this
                         onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
                     }
 
@@ -833,7 +846,7 @@ Item {
                             IconButton {
                                 id: moreButton
                                 iconName: "more_vert"; tip: Theme.tr("More")
-                                onClicked: songMenu.openFor(dp.ids, moreButton, dp.menuItems)
+                                onClicked: songMenu.openFor(dp.ids, moreButton, dp.menuItems, { title: dp.title, subtitle: dp.subtitle })
                             }
                         }
                     }
@@ -896,6 +909,19 @@ Item {
                 { text: Theme.tr("Start radio"), action: () => Core.call("songs.radio", { seed: { label: lv.label }, name: Theme.labelName(lv.label) }) },
                 page.pinItem("label", lv.label, Theme.labelName(lv.label))
             ]
+            onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
+        }
+    }
+
+    Component {
+        id: mixView
+        DetailPage {
+            property string mixId
+            property string mixName
+            tracks: Core.call("mix.tracks", { id: mixId }) || []
+            title: mixName
+            subtitle: page.count(tracks.length, "song", "songs")
+            placeholder: "queue_music"
             onTrackMenu: (t, a) => songMenu.openFor([t.id], a)
         }
     }

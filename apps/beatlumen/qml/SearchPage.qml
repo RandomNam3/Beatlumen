@@ -65,7 +65,17 @@ Item {
         })
     }
     Component.onCompleted: reloadLabels()
-    onVisibleChanged: if (visible) { reloadLabels(); focusField() }
+    // With fingers the keyboard waits for a tap: it would hide half of the page.
+    onVisibleChanged: {
+        if (visible) {
+            reloadLabels()
+            if (!Theme.fingers)
+                focusField()
+        } else if (Theme.fingers) {
+            search.focus = false
+            Qt.inputMethod.hide()
+        }
+    }
     readonly property int labelsRev: Core.state.labelsRev || 0
     onLabelsRevChanged: reloadLabels()
 

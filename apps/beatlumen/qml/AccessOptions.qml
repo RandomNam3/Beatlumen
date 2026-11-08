@@ -82,4 +82,13 @@ ColumnLayout {
             wrapMode: Text.WordWrap
         }
     }
+    // Screen readers are recognised by themselves (see Accessibility.java).
+    SwitchRow {
+        Layout.fillWidth: true
+        visible: Core.platform === "android"
+        title: Theme.tr("Always support assistive services")
+        detail: Theme.tr("Screen readers work without this. Turn it on if another assistant cannot read the app. Takes effect after a restart and can make the app slower.")
+        on: Core.accessibilityAlways()
+        onSwitched: (v) => { Core.setAccessibilityAlways(v); on = v }
+    }
 }
