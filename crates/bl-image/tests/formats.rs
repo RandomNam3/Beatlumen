@@ -1215,7 +1215,8 @@ fn reference_frames(path: &Path, w: u32, h: u32, webp: bool) -> Option<Vec<Vec<u
                 "rawvideo",
                 "-pix_fmt",
                 "rgba",
-                "-vsync",
+                // Every frame once (-vsync is gone in ffmpeg 8 and later).
+                "-fps_mode",
                 "passthrough",
                 "-",
             ])
