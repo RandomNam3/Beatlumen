@@ -447,15 +447,18 @@ Item {
 
         // ---- before a round ----
         Flickable {
+            id: setupFlick
             visible: page.stage === "setup"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            contentWidth: width
             contentHeight: setupCol.implicitHeight + 16
+            flickableDirection: Flickable.VerticalFlick
             clip: true
             ScrollBar.vertical: ScrollBar { }
             ColumnLayout {
                 id: setupCol
-                width: parent.width
+                width: setupFlick.width
                 spacing: 10
 
                 EmptyState {
@@ -594,28 +597,40 @@ Item {
                 }
                 Repeater {
                     model: page.track ? page.singers : []
-                    RowLayout {
+                    // A row each; on a narrow screen the microphone goes below the name.
+                    GridLayout {
                         id: singerRow
                         required property var modelData
                         required property int index
+                        readonly property bool narrow: page.width < 600
                         Layout.fillWidth: true
                         Layout.leftMargin: 12
                         Layout.rightMargin: 12
-                        spacing: 8
+                        columns: narrow ? 4 : 6
+                        columnSpacing: 8
+                        rowSpacing: 4
                         Rectangle {
+                            Layout.row: 0
+                            Layout.column: 0
                             width: 14; height: 14; radius: 7
                             color: page.colors[singerRow.index % page.colors.length]
                         }
                         InputField {
+                            Layout.row: 0
+                            Layout.column: 1
                             Layout.preferredWidth: 140
-                            Layout.fillWidth: page.width < 600
+                            Layout.fillWidth: singerRow.narrow
                             placeholderText: Theme.tr("Singer") + " " + (singerRow.index + 1)
                             text: singerRow.modelData.name
                             onEditingFinished: page.setSinger(singerRow.index, "name", text)
                         }
                         Dropdown {
+                            Layout.row: singerRow.narrow ? 1 : 0
+                            Layout.column: singerRow.narrow ? 1 : 2
+                            Layout.columnSpan: singerRow.narrow ? (page.duet ? 2 : 3) : 1
                             Layout.fillWidth: true
-                            Layout.maximumWidth: 320
+                            Layout.maximumWidth: singerRow.narrow ? -1 : 320
+                            Layout.preferredWidth: 160
                             model: page.devices.map(d => d.name)
                             currentIndex: page.devices.findIndex(d => d.id === singerRow.modelData.device)
                             onActivated: (i) => page.setSinger(singerRow.index, "device", page.devices[i].id)
@@ -623,17 +638,23 @@ Item {
                         }
                         Dropdown {
                             visible: page.duet
+                            Layout.row: singerRow.narrow ? 1 : 0
+                            Layout.column: 3
                             model: [Theme.tr("Voice 1"), Theme.tr("Voice 2")]
                             currentIndex: Math.max(0, (singerRow.modelData.voice || 1) - 1)
                             onActivated: (i) => page.setSinger(singerRow.index, "voice", i + 1)
                         }
                         IconButton {
+                            Layout.row: 0
+                            Layout.column: singerRow.narrow ? 2 : 4
                             iconName: "tune"
                             tip: Theme.tr("Measure the microphone's delay")
                             enabled: page.calibrating < 0 && !!singerRow.modelData.device
                             onClicked: page.calibrate(singerRow.index)
                         }
                         IconButton {
+                            Layout.row: 0
+                            Layout.column: singerRow.narrow ? 3 : 5
                             visible: page.singers.length > 1
                             iconName: "close"
                             tip: Theme.tr("Remove")
@@ -656,8 +677,9 @@ Item {
                             ? Theme.tr("Delay of the microphone: %1 ms (%2 clicks heard)").replace("%1", Math.round(page.calResult.offsetMs)).replace("%2", page.calResult.heard)
                             : Theme.tr("Not enough clicks heard. Turn the sound up or hold the microphone closer to the speaker.")
                 }
-                RowLayout {
+                Flow {
                     visible: !!page.track
+                    Layout.fillWidth: true
                     Layout.leftMargin: 8
                     Layout.rightMargin: 8
                     spacing: 8
@@ -668,18 +690,23 @@ Item {
                         icon.source: Theme.icon("add")
                         onClicked: page.addSinger()
                     }
-                    Item { Layout.fillWidth: true }
-                    Label { textFormat: Text.PlainText; text: Theme.tr("Singing in the song"); color: Theme.textDim }
-                    Dropdown {
-                        model: [Theme.tr("As recorded"), Theme.tr("Quieter"), Theme.tr("Off")]
-                        currentIndex: Math.max(0, page.vocalLevels.indexOf(page.vocals))
-                        onActivated: (i) => page.setVocals(page.vocalLevels[i])
+                    RowLayout {
+                        spacing: 6
+                        Label { textFormat: Text.PlainText; text: Theme.tr("Singing in the song"); color: Theme.textDim }
+                        Dropdown {
+                            model: [Theme.tr("As recorded"), Theme.tr("Quieter"), Theme.tr("Off")]
+                            currentIndex: Math.max(0, page.vocalLevels.indexOf(page.vocals))
+                            onActivated: (i) => page.setVocals(page.vocalLevels[i])
+                        }
                     }
-                    Label { textFormat: Text.PlainText; text: Theme.tr("Difficulty"); color: Theme.textDim }
-                    Dropdown {
-                        model: [Theme.tr("Easy"), Theme.tr("Medium"), Theme.tr("Hard")]
-                        currentIndex: ["easy", "medium", "hard"].indexOf(page.difficulty)
-                        onActivated: (i) => page.difficulty = ["easy", "medium", "hard"][i]
+                    RowLayout {
+                        spacing: 6
+                        Label { textFormat: Text.PlainText; text: Theme.tr("Difficulty"); color: Theme.textDim }
+                        Dropdown {
+                            model: [Theme.tr("Easy"), Theme.tr("Medium"), Theme.tr("Hard")]
+                            currentIndex: ["easy", "medium", "hard"].indexOf(page.difficulty)
+                            onActivated: (i) => page.difficulty = ["easy", "medium", "hard"][i]
+                        }
                     }
                 }
                 Label {
@@ -973,14 +1000,17 @@ Item {
 
         // ---- results ----
         Flickable {
+            id: resultFlick
             visible: page.stage === "results"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            contentWidth: width
             contentHeight: resultCol.implicitHeight + 16
+            flickableDirection: Flickable.VerticalFlick
             clip: true
             ColumnLayout {
                 id: resultCol
-                width: parent.width
+                width: resultFlick.width
                 spacing: 10
                 SectionLabel { text: Theme.tr("Results") }
                 Label {
