@@ -34,9 +34,22 @@ jobs:
   rust-windows:
     name: Rust core and server (Windows tests)
     runs-on: windows-2022
-    timeout-minutes: 60
+    # An uncached release build of the workspace alone takes about 55
+    # minutes on this runner.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-windows-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-windows-${{ hashFiles('Cargo.lock') }}-
+            rust-windows-
       - name: Install ffmpeg (test fixtures)
         run: choco install ffmpeg -y --no-progress
       - name: Test
