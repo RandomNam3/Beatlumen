@@ -15,6 +15,9 @@
   the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
 - **Back in a folder** goes one folder up instead of closing the page.
 - **Dialogs in German:** their buttons said "Cancel", "OK", "Close" and "Save" in English.
+- **Covers that did not show:** some taggers write a stray byte or the picture's description
+  before the picture itself. Its start is found now, as other players do, and such covers kept
+  from before are read again.
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window

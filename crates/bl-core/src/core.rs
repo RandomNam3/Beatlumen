@@ -2228,25 +2228,8 @@ impl Core {
         let mailbox = self.cover_box.clone();
         let job = move || {
             for (id, path, base) in jobs {
-                let out = ["jpg", "png", "img"]
-                    .iter()
-                    .map(|e| format!("{base}.{e}"))
-                    .find(|p| std::path::Path::new(p).exists())
-                    .or_else(|| {
-                        let bytes = local_cover_bytes(&path)?;
-                        let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-                            "png"
-                        } else if bytes.starts_with(&[0xff, 0xd8]) {
-                            "jpg"
-                        } else {
-                            "img"
-                        };
-                        let file = format!("{base}.{ext}");
-                        if let Some(parent) = std::path::Path::new(&file).parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        std::fs::write(&file, bytes).ok().map(|_| file)
-                    });
+                let out =
+                    cached_cover(&base).or_else(|| store_cover(&base, &local_cover_bytes(&path)?));
                 mailbox.post((id, out));
             }
         };
@@ -3047,6 +3030,35 @@ fn absolute(p: &str) -> String {
     p.to_string()
 }
 
+/// A cover kept at `base` (a path without extension). Only a JPEG or PNG
+/// counts: anything else is read again, since earlier versions kept pictures
+/// there that started a few bytes too early.
+pub(crate) fn cached_cover(base: &str) -> Option<String> {
+    ["jpg", "png"]
+        .iter()
+        .map(|e| format!("{base}.{e}"))
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+/// Keeps a cover at `base` under the extension of its format; returns its path.
+pub(crate) fn store_cover(base: &str, bytes: &[u8]) -> Option<String> {
+    let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else if bytes.starts_with(&[0xff, 0xd8]) {
+        "jpg"
+    } else {
+        "img"
+    };
+    let file = format!("{base}.{ext}");
+    if let Some(parent) = std::path::Path::new(&file).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if ext != "img" {
+        let _ = std::fs::remove_file(format!("{base}.img"));
+    }
+    std::fs::write(&file, bytes).ok().map(|_| file)
+}
+
 /// Cover art for a local file: embedded picture or a cover image next to it.
 pub(crate) fn local_cover_bytes(path: &str) -> Option<Vec<u8>> {
     if let Ok(f) = std::fs::File::open(path) {
@@ -3125,6 +3137,35 @@ fn visible_part(part: Option<[f32; 4]>, w: u32, h: u32, dpr: f32) -> (i32, i32, 
     let pw = ((pw * dpr) as u32).clamp(1, w - px);
     let ph = ((ph * dpr) as u32).clamp(1, h - py);
     (px as i32, (h - py - ph) as i32, pw, ph)
+}
+
+#[cfg(test)]
+mod cover_cache_tests {
+    use super::{cached_cover, store_cover};
+
+    #[test]
+    fn a_picture_of_unknown_format_is_read_again() {
+        let dir = std::env::temp_dir().join(format!("bl-cover-cache-{}", std::process::id()));
+        let base = dir
+            .join("covers")
+            .join("0123")
+            .to_string_lossy()
+            .into_owned();
+        // An earlier version kept a picture that started a byte too early.
+        assert_eq!(
+            store_cover(&base, &[0, 0xff, 0xd8, 0xff]),
+            Some(format!("{base}.img"))
+        );
+        assert_eq!(cached_cover(&base), None);
+        // Read again, it is a JPEG and the old file goes.
+        assert_eq!(
+            store_cover(&base, &[0xff, 0xd8, 0xff]),
+            Some(format!("{base}.jpg"))
+        );
+        assert_eq!(cached_cover(&base), Some(format!("{base}.jpg")));
+        assert!(!std::path::Path::new(&format!("{base}.img")).exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]

@@ -601,10 +601,28 @@ fn handle_frame(
             if mime == "-->" || img.is_empty() {
                 return; // linked picture or empty
             }
-            pics.push(make_picture(&mime, kind, &desc, img.to_vec()));
+            pics.push(make_picture(&mime, kind, &desc, image_start(img).to_vec()));
         }
         _ => {}
     }
+}
+
+/// Some taggers write a stray zero or the description after its end mark, so
+/// the picture starts a few bytes later. Other players find it there: so does
+/// this, for a JPEG or PNG.
+fn image_start(img: &[u8]) -> &[u8] {
+    const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
+    const PNG: &[u8] = &[0x89, b'P', b'N', b'G'];
+    let known: [&[u8]; 5] = [JPEG, PNG, b"GIF8", b"RIFF", b"BM"];
+    if known.iter().any(|k| img.starts_with(k)) {
+        return img;
+    }
+    let head = &img[..img.len().min(256)];
+    [JPEG, PNG]
+        .iter()
+        .filter_map(|sign| head.windows(sign.len()).position(|w| w == *sign))
+        .min()
+        .map_or(img, |at| &img[at..])
 }
 
 /// Parses a 128-byte ID3v1 / ID3v1.1 tag.
@@ -731,6 +749,27 @@ pub(crate) mod tests {
             assert_eq!(pics[0].kind, 3);
             assert_eq!(pics[0].description, "cover");
         }
+    }
+
+    #[test]
+    fn picture_after_a_stray_zero_or_text() {
+        let picture_of = |after_kind: &[u8]| {
+            let mut apic = vec![0u8];
+            apic.extend_from_slice(b"image/jpeg\0");
+            apic.push(0);
+            apic.extend_from_slice(after_kind);
+            apic.extend_from_slice(b"\xff\xd8\xff\xe0JFIF");
+            let tag = build_tag(4, &[("APIC", apic)]);
+            let mut pics = Vec::new();
+            parse_id3v2_bytes(&tag, &mut Tags::default(), Some(&mut pics));
+            pics.remove(0).data
+        };
+        // A stray zero after the empty description, and the description after its end mark.
+        assert_eq!(picture_of(b"\0\0"), b"\xff\xd8\xff\xe0JFIF");
+        assert_eq!(picture_of(b"\0\"Album cover\"\0"), b"\xff\xd8\xff\xe0JFIF");
+        // Well-formed and unknown data stay as they are.
+        assert_eq!(picture_of(b"cover\0"), b"\xff\xd8\xff\xe0JFIF");
+        assert_eq!(image_start(&[1, 2, 3]), &[1, 2, 3]);
     }
 
     #[test]
