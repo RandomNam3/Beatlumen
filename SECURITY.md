@@ -144,9 +144,13 @@ In short:
 ## Container
 
 * The image (`container/Containerfile`) holds only the static server
-  binary; it runs as an unprivileged user (10001) and is meant to run with
-  a read-only root file system, no capabilities and `no-new-privileges`
-  (as in `container/compose.yml`).
+  binary (musl, no C library, no shell) and the license texts; it runs as
+  an unprivileged user (10001) and is meant to run with a read-only root
+  file system, no capabilities, `no-new-privileges`, no IPC sharing and a
+  seccomp allowlist of the system calls it uses
+  (`container/seccomp/beatlumen-server.json`: no executable memory, no new
+  namespaces, IPv4/IPv6 sockets only), as in `container/compose.yml`. It
+  needs no init process.
 * The password and the account pepper come from files
   (`BEATLUMEN_PASSWORD_FILE`, `BEATLUMEN_VAULT_PEPPER_FILE`; Docker and
   Podman secrets) instead of the environment, which `docker inspect` shows.

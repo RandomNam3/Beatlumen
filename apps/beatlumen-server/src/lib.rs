@@ -280,6 +280,18 @@ impl State {
         }
     }
 
+    /// What keeps the server from working, empty when it is healthy: its
+    /// data folder must take writes (not full, not mounted read-only).
+    pub fn health_problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let probe = self.data.root.join(".health");
+        let written = std::fs::write(&probe, b"ok").and_then(|_| std::fs::remove_file(&probe));
+        if let Err(e) = written {
+            problems.push(format!("the data folder takes no writes: {e}"));
+        }
+        problems
+    }
+
     pub fn info(&self) -> bl_net::api::ServerInfo {
         let idx = self.library();
         bl_net::api::ServerInfo {
@@ -547,8 +559,10 @@ fn absolute(p: &std::path::Path) -> PathBuf {
     std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-/// Asks the server configured by `config` for its info page (container
-/// health checks). True when it answers with 200 within three seconds.
+/// Asks the server configured by `config` whether it is healthy
+/// (`/api/health`, for container health checks): true when it answers with
+/// 200 within three seconds, i.e. it serves requests and its data folder
+/// takes writes.
 pub fn health_check(config: &Config) -> bool {
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -576,7 +590,7 @@ pub fn health_check(config: &Config) -> bool {
     let _ = s.set_write_timeout(Some(timeout));
     let req = format!(
         "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-        bl_net::api::paths::INFO
+        bl_net::api::paths::HEALTH
     );
     if s.write_all(req.as_bytes()).is_err() {
         return false;
@@ -890,7 +904,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         trusted_proxies: cfg.trusted_proxies.clone(),
         // The health check (`--health-check`) gets through when the limits
         // are reached.
-        probe_paths: vec![bl_net::api::paths::INFO, "/api/health"],
+        probe_paths: vec![bl_net::api::paths::HEALTH, bl_net::api::paths::INFO],
         ..Default::default()
     };
     let http = std::thread::Builder::new()

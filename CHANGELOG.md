@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Server container, stricter and smaller:** the image holds only the static server (musl, no C
+  library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
+  image compiles it). A seccomp profile allows only the system calls the server uses: no executable
+  memory, no new namespaces, IPv4/IPv6 sockets only (`container/seccomp/`, used by `compose.yml`
+  and the Quadlet unit, also `--ipc none`). The server stops on SIGTERM itself, so the container
+  needs no init process and `docker stop` / `podman stop` take a second or two instead of the
+  timeout. `GET /api/health` (no login) reports whether the server works and its data folder takes
+  writes; `--health-check` and the image's health check use it. The Quadlet unit's health check
+  works now (it ran through a shell the image does not have).
 - **Server: large bodies only with a login.** Without a login a request may send 64 KiB.
   Larger bodies (4 MiB, image uploads 257 MiB) need the server password, an account or the
   admin login, and that is checked from the request's head before any of the body is read:
