@@ -155,7 +155,8 @@ pub(crate) struct BgShown {
     pub id: u64,
     pub decoded: (u32, u32),
     pub source: (u32, u32),
-    pub animated: bool,
+    /// Animation frames (1 for a still image).
+    pub frames: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2514,7 +2515,11 @@ impl Core {
                     if let Some(gfx) = &mut self.gfx {
                         gfx.vis.set_image(gl, id, w, h, pixels);
                     }
-                    let animated = matches!(bg, BgImage::Animated { .. });
+                    let frames = match &bg {
+                        BgImage::Animated { frames, .. } => *frames,
+                        BgImage::Still(_) => 1,
+                    };
+                    let animated = frames > 1;
                     host.log(&format!(
                         "background {}: {w}x{h} of {}x{}{}{}",
                         d.key,
@@ -2540,7 +2545,7 @@ impl Core {
                         id,
                         decoded,
                         source,
-                        animated,
+                        frames,
                     });
                     self.bg_grow_since = None;
                     self.bg_source = Some(d.key);
@@ -2585,8 +2590,8 @@ impl Core {
             self.bg_grow_since = None;
             return;
         }
-        let fit = if shown.animated {
-            self.bg_target.animated()
+        let fit = if shown.frames > 1 {
+            self.bg_target.animated(shown.frames)
         } else {
             self.bg_target.still()
         };

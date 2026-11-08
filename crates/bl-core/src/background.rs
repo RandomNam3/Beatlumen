@@ -38,12 +38,17 @@ impl BgTarget {
         )
     }
 
-    /// Animations: cover the screen, at most 1600 x 900 pixels on phones
-    /// and tablets and 1440p elsewhere, so that every frame stays cheap to
-    /// decode and upload and typical animations fit the frame budget.
-    pub fn animated(&self) -> Fit {
+    /// Animations of `frames` frames: cover the screen, at most 1600 x 900
+    /// pixels on phones and tablets and 1440p elsewhere, and small enough
+    /// that all frames fit the frame budget (down to 960 x 540), so that
+    /// after the first loop nothing is decoded any more. Measured on a
+    /// tablet: a 1080p GIF of 50 frames decoded in every loop took 70 % of
+    /// a core more than a still image.
+    pub fn animated(&self, frames: usize) -> Fit {
         let (w, h) = self.screen;
         let max_pixels: u64 = if self.mobile { 1600 * 900 } else { 2560 * 1440 };
+        let fits = (self.frame_budget() / (4 * frames.max(1))) as u64;
+        let max_pixels = max_pixels.min(fits.max(960 * 540));
         Fit::cover(w, h, self.max_texture.clamp(1024, 4096), max_pixels)
     }
 
@@ -71,6 +76,7 @@ pub(crate) enum BgImage {
     Still(Image),
     Animated {
         first: Arc<Image>,
+        frames: usize,
         player: AnimPlayer,
     },
 }
@@ -95,8 +101,9 @@ pub(crate) fn decode(
     let size = (info.width, info.height);
     if info.is_animated() {
         if let Some(mut anim) =
-            Animation::new(data, &target.animated()).map_err(|e| e.to_string())?
+            Animation::new(data, &target.animated(info.frames)).map_err(|e| e.to_string())?
         {
+            let frames = anim.frame_count();
             let first = anim.next_frame();
             let first_img = Arc::new(first.image);
             let player = AnimPlayer::new(
@@ -109,6 +116,7 @@ pub(crate) fn decode(
             return Ok((
                 BgImage::Animated {
                     first: first_img,
+                    frames,
                     player,
                 },
                 size,
@@ -367,10 +375,16 @@ mod tests {
         for threads in [false, true] {
             let (bg, size) = decode(apng(), &target(false), threads).unwrap();
             assert_eq!(size, (8, 8));
-            let BgImage::Animated { first, mut player } = bg else {
+            let BgImage::Animated {
+                first,
+                mut player,
+                frames,
+            } = bg
+            else {
                 panic!("not animated");
             };
             assert_eq!(&first.pixels[..4], &[255, 0, 0, 255]);
+            assert_eq!(frames, 3);
             // Frame 0 stays 50 ms, frame 1 100 ms, frame 2 150 ms.
             let mut shown = Vec::new();
             let mut t = 0.0;
@@ -424,9 +438,19 @@ mod tests {
         assert_eq!(t.still().target(15360, 8640), (4107, 2310));
         // Small images are never enlarged.
         assert_eq!(t.still().target(800, 600), (800, 600));
-        // Animations: at most 1600 x 900 pixels on mobile.
-        let (w, h) = t.animated().target(3840, 2160);
+        // Animations: at most 1600 x 900 pixels on mobile, and all frames
+        // within the frame budget.
+        let (w, h) = t.animated(10).target(3840, 2160);
         assert!(w as u64 * h as u64 <= 1600 * 900 && w > 1550, "{w}x{h}");
+        let (w, h) = t.animated(50).target(1920, 1080);
+        assert!(
+            50 * 4 * w as usize * h as usize <= t.frame_budget(),
+            "{w}x{h}"
+        );
+        assert!(w > 1500, "{w}x{h}");
+        // Long animations stop at 960 x 540.
+        let (w, h) = t.animated(5000).target(1920, 1080);
+        assert_eq!((w, h), (960, 540));
         // A GPU with 4096 texels.
         let t = BgTarget {
             screen: (7680, 4320),
