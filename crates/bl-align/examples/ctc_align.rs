@@ -1,7 +1,7 @@
 //! Word times of a known text in a WAV file.
 //!
 //! ```text
-//! cargo run --release -p bl-align --example align -- \
+//! cargo run --release -p bl-align --example ctc_align -- \
 //!     MODEL_DIR FILE.wav "the text" [START END] [--f32] [--dump PREFIX]
 //! ```
 //!
