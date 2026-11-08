@@ -1,5 +1,6 @@
-//! Image decoding (PNG/APNG, JPEG, BMP, GIF, WebP, TIFF), animation,
-//! resizing and simple encoding (PNG, baseline JPEG), std only.
+//! Image decoding (PNG/APNG, JPEG, BMP, GIF, WebP, TIFF, AVIF; HEIC
+//! through a decoder of the operating system), animation, resizing and
+//! simple encoding (PNG, baseline JPEG), std only.
 //!
 //! The crate is used for cover art and background images, so the decoders are
 //! tuned for photos and screenshots and are lenient with damaged files
@@ -23,6 +24,12 @@
 //! * `bmp`, `gif`, `webp` (VP8L lossless and VP8 lossy incl. alpha and
 //!   animation), `tiff`,
 //! * `anim`: frame sequencing and disposal for GIF, APNG and WebP,
+//! * `heif`: the HEIF container of AVIF and HEIC (items, grids, alpha,
+//!   rotation, mirroring, clean aperture),
+//! * `av1`: AV1 intra frame decoder (written from the AV1 specification),
+//!   `avif`: AVIF images, `yuv`: colour conversion,
+//! * `heic`: HEIC through a registered system decoder (HEVC is
+//!   patent-encumbered and not implemented here),
 //! * `resize`: area averaging / bilinear resampling with premultiplied alpha.
 #![forbid(unsafe_code)]
 // `is_multiple_of` needs Rust 1.87; the workspace MSRV is 1.80. Index loops
@@ -32,11 +39,14 @@
 mod anim;
 #[doc(hidden)]
 pub mod av1;
+mod avif;
 mod bmp;
 mod crc32;
 pub mod deflate;
 mod exif;
 mod gif;
+mod heic;
+mod heif;
 mod huffman;
 pub mod inflate;
 mod jpeg;
@@ -45,8 +55,10 @@ mod resize;
 mod scale;
 mod tiff;
 mod webp;
+mod yuv;
 
 pub use anim::{Animation, Frame};
+pub use heic::{has_system_decoder, set_system_decoder, SystemDecoder};
 pub use scale::Fit;
 
 /// Error returned by the decoders.
@@ -75,6 +87,8 @@ pub enum Format {
     Gif,
     WebP,
     Tiff,
+    Avif,
+    Heic,
 }
 
 /// 8-bit RGBA image, rows top to bottom, no padding. Colours are straight
@@ -142,7 +156,21 @@ pub fn probe_format(data: &[u8]) -> Option<Format> {
     {
         Some(Format::Tiff)
     } else {
-        None
+        match heif::probe(data)? {
+            heif::Codec::Hevc => Some(Format::Heic),
+            heif::Codec::Av1 => {
+                // Brand "mif1" alone: the primary item decides.
+                let brand_avif =
+                    data.len() >= 12 && (&data[8..12] == b"avif" || &data[8..12] == b"avis");
+                if brand_avif {
+                    return Some(Format::Avif);
+                }
+                match heif::Heif::parse(data).ok().and_then(|h| h.codec()) {
+                    Some(heif::Codec::Hevc) => Some(Format::Heic),
+                    _ => Some(Format::Avif),
+                }
+            }
+        }
     }
 }
 
@@ -202,6 +230,11 @@ pub fn info(data: &[u8]) -> Result<Info, Error> {
                 (w, h, 1)
             }
         }
+        // Image sequences show their first frame.
+        Format::Avif | Format::Heic => {
+            let (w, h) = avif::dimensions(data)?;
+            (w, h, 1)
+        }
     };
     Ok(Info {
         format,
@@ -221,7 +254,8 @@ pub fn dimensions(data: &[u8]) -> Result<(u32, u32), Error> {
     info(data).map(|i| (i.width, i.height))
 }
 
-/// True for animations with more than one frame (GIF, APNG, WebP).
+/// True for animations with more than one frame (GIF, APNG, WebP; AVIF
+/// and HEIC sequences show their first frame).
 pub fn is_animated(data: &[u8]) -> bool {
     info(data).is_ok_and(|i| i.is_animated())
 }
@@ -243,6 +277,13 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         Some(Format::Gif) => gif::decode(data),
         Some(Format::WebP) => webp::decode(data),
         Some(Format::Tiff) => tiff::decode(data),
+        Some(Format::Avif) | Some(Format::Heic) => {
+            let (w, h) = avif::dimensions(data)?;
+            if w as u64 * h as u64 > MAX_PIXELS {
+                return Err(Error::Unsupported("image too large"));
+            }
+            decode_fit(data, &Fit::full())
+        }
         None => Err(Error::Unsupported("unknown image format")),
     }
 }
@@ -282,6 +323,8 @@ pub fn decode_fit(data: &[u8], fit: &Fit) -> Result<Image, Error> {
         Some(Format::Gif) => gif::parse(data)?.decode_fit(data, fit),
         Some(Format::WebP) => webp::parse(data)?.decode_fit(data, fit),
         Some(Format::Tiff) => tiff::parse(data)?.decode_fit(data, fit),
+        Some(Format::Avif) => avif::decode_fit(&heif::Heif::parse(data)?, fit),
+        Some(Format::Heic) => heic::decode_fit(&heif::Heif::parse(data)?, fit),
         None => Err(Error::Unsupported("unknown image format")),
     }
 }
