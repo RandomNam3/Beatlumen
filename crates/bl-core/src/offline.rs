@@ -430,15 +430,14 @@ fn save_job(
     done: &AtomicU64,
     cancel: &AtomicBool,
 ) -> Result<(PathBuf, Header), String> {
+    // Cover, song text and analysis: small next to the song, which streams
+    // into the file below.
+    let small = bl_net::client::Options {
+        max_body: 32 << 20,
+        ..Default::default()
+    };
     let get = |url: &str| -> Option<Vec<u8>> {
-        let r = bl_net::client::request(
-            "GET",
-            url,
-            headers,
-            &[],
-            &bl_net::client::Options::default(),
-        )
-        .ok()?;
+        let r = bl_net::client::request("GET", url, headers, &[], &small).ok()?;
         (r.status == 200).then_some(r.body)
     };
     let cover = urls.1.as_deref().and_then(get);

@@ -117,6 +117,28 @@ proxy with HTTPS in front of it (and set `BEATLUMEN_ALLOWED_HOSTS` to its
 domain), or use a VPN. Publishing as `127.0.0.1:7878:7878` keeps the port
 reachable for a proxy on the same host only.
 
+### Behind a reverse proxy: trusted proxies
+
+The server allows 32 connections at once per client address (IPv6: per
+/64) and counts failed logins and room codes per address. Behind a reverse
+proxy every request arrives from the proxy, so tell the server which
+addresses are proxies with `BEATLUMEN_TRUSTED_PROXIES` (comma separated
+addresses or ranges, e.g. `172.18.0.1` or `10.0.0.0/8`). Only their
+`X-Forwarded-For` header names the client, and each of their requests counts
+against that client while it runs; the header from anyone else is ignored,
+so clients cannot pose as others. The default trusts only the loopback
+interface, which inside a container is the container itself; `none` trusts
+nobody.
+
+Which address the proxy connects from depends on the network: with a
+published port it is often the gateway of the container network (Docker:
+`172.17.0.1` or the compose network's, e.g. `172.18.0.1`; Podman: `10.88.0.1`),
+for a proxy container in the same network that container's address. The
+server logs a warning with the address the first time a request with
+`X-Forwarded-For` comes from one it does not trust; `BEATLUMEN_VERBOSE=true`
+logs the client of every request. Do not trust a range that ordinary clients
+can connect from.
+
 ## Folders (volumes)
 
 | Path in the container | Mode | Content |
@@ -180,6 +202,7 @@ the push options need a restart, which the admin interface does itself.
 | `BEATLUMEN_PASSWORD` | – | Login password (prefer the file: environment variables show up in `docker inspect`) |
 | `BEATLUMEN_NAME` | `Beatlumen Server` | Name shown in the apps |
 | `BEATLUMEN_ALLOWED_HOSTS` | – | Host names besides IP addresses, `localhost` and `*.local`/`*.lan`/`*.home.arpa`/`*.internal`, comma separated (domain of a reverse proxy) |
+| `BEATLUMEN_TRUSTED_PROXIES` | loopback | Reverse proxies (addresses or ranges, comma separated) whose `X-Forwarded-For` names the client for the limits per client; `none`: no proxy (see [trusted proxies](#behind-a-reverse-proxy-trusted-proxies)) |
 | `BEATLUMEN_SOURCE_URL` | official repository | Source code link shown to users; required by the AGPL when you run a modified version for others |
 | `BEATLUMEN_RESCAN_INTERVAL` | `600` | Seconds between library rescans, `0` = off |
 | `BEATLUMEN_ANALYSIS_MAX_MINUTES` | `20` | Longest track analysed on the server, `0` = unlimited |
@@ -224,6 +247,7 @@ environment variables:
 | `--rescan-interval SECS` | Seconds between rescans |
 | `--name NAME` | Server name |
 | `--allow-host NAME` | Extra host name (repeatable) |
+| `--trusted-proxy ADDR` | Reverse proxy address or range (repeatable; `none`: no proxy) |
 | `--source-url URL` | Source code link |
 | `--analysis-max-minutes M` | Longest track analysed |
 | `--scan-threads N` | Tag reading threads |
@@ -337,6 +361,8 @@ stored separately from it.
 
 The image declares a health check (`/beatlumen-server --health-check`,
 every 30 s), which asks the server's info page on the loopback interface.
+It gets through even when the limits per client are reached (a few
+connections are kept for it).
 Docker uses it directly; Podman uses it when the image is built in Docker
 format (`podman build --format docker`) or through `compose.yml` and the
 Quadlet unit, which declare it themselves. `docker ps` / `podman ps` show

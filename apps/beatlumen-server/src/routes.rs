@@ -18,6 +18,7 @@ media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 
 /// Entry point for every request.
 pub fn handle(state: &std::sync::Arc<State>, req: Request) -> Response {
     let t0 = Instant::now();
+    note_untrusted_forwarding(state, &req);
     let is_api = req.path == "/api" || req.path.starts_with("/api/");
     let mut resp = match check_origin(state, &req) {
         Err(refused) => refused,
@@ -26,7 +27,8 @@ pub fn handle(state: &std::sync::Arc<State>, req: Request) -> Response {
     };
     finish_headers(&mut resp, is_api);
     if crate::log::verbose() || resp.status >= 500 {
-        let remote = req.remote.map(|a| a.to_string()).unwrap_or_default();
+        // The client (behind a trusted proxy the one it forwards for).
+        let remote = req.client.map(|a| a.to_string()).unwrap_or_default();
         // The query string is not logged (it may contain a token).
         crate::info!(
             "{remote} {} {} -> {} ({} ms)",
@@ -567,21 +569,81 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     }
 }
 
-/// The client address used for login rate limiting. Behind a reverse proxy
-/// on the same machine (peer is loopback) the proxy's `X-Forwarded-For` /
-/// `X-Real-IP` is used; remote peers cannot spoof it.
+/// The client address that limits on failed attempts count against: the
+/// peer, or behind a trusted reverse proxy (`--trusted-proxy`) the client it
+/// forwards for; IPv6 grouped by /64, since one client usually owns a whole
+/// /64. Nobody else can name another address.
 pub(crate) fn client_ip(req: &Request) -> Option<std::net::IpAddr> {
-    let peer = req.remote.map(|a| a.ip())?;
-    if peer.is_loopback() {
-        let forwarded = req
-            .header("x-forwarded-for")
-            .and_then(|h| h.rsplit(',').next())
-            .or_else(|| req.header("x-real-ip"));
-        if let Some(ip) = forwarded.and_then(|v| v.trim().parse().ok()) {
-            return Some(ip);
-        }
+    req.client.map(bl_net::server::rate_key)
+}
+
+/// Largest request body without a login (logging in, registering, joining a
+/// room); more needs a login, which is checked before the body is read.
+pub const ANON_BODY: usize = 64 * 1024;
+/// Largest request body with a login, except image uploads.
+pub const MAX_BODY: usize = 4 * 1024 * 1024;
+
+/// How large a request's body may be, decided from its head before any of
+/// it is read (`bl_net::server::ServerConfig::body_limit`): large bodies
+/// only with a login (the server password, an account or the admin's), so
+/// that nobody without one can make the server take in megabytes.
+pub fn body_limit(state: &State, req: &Request) -> Result<usize, Response> {
+    let chunked = req.headers.is_chunked();
+    let announced = req.headers.content_length().unwrap_or(0);
+    if !chunked && announced <= ANON_BODY as u64 {
+        return Ok(ANON_BODY);
     }
-    Some(peer)
+    let limit = match (req.method.as_str(), req.path.as_str()) {
+        ("POST", "/api/images") => crate::images::MAX_UPLOAD + 1024 * 1024,
+        _ => MAX_BODY,
+    };
+    let admin = req.path.starts_with("/api/admin/");
+    let signed_in = state.auth.authorized(req)
+        || state.vault.session_user(req).is_some()
+        || (admin && state.admin.session(req));
+    if signed_in {
+        return Ok(limit);
+    }
+    if chunked {
+        // Its length shows while it is read: up to the small limit.
+        return Ok(ANON_BODY);
+    }
+    crate::debug!(
+        "{} {} {}: refused a body of {announced} bytes without a login",
+        req.client.map(|c| c.to_string()).unwrap_or_default(),
+        req.method,
+        req.path
+    );
+    let mut resp = Response::error(401, "authentication required")
+        .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
+    finish_headers(&mut resp, true);
+    Err(resp)
+}
+
+/// Warns once when requests carry `X-Forwarded-For` from a peer that is not a
+/// trusted proxy: a reverse proxy there would make all its clients one.
+fn note_untrusted_forwarding(state: &State, req: &Request) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED.load(Ordering::Relaxed) || req.header("x-forwarded-for").is_none() {
+        return;
+    }
+    let Some(peer) = req.remote.map(|a| a.ip().to_canonical()) else {
+        return;
+    };
+    if state
+        .config()
+        .trusted_proxies
+        .iter()
+        .any(|n| n.contains(peer))
+    {
+        return;
+    }
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        crate::warn!(
+            "requests from {peer} name other clients in X-Forwarded-For, which is ignored: if a reverse proxy runs there, add it with --trusted-proxy {peer} (or BEATLUMEN_TRUSTED_PROXIES), else all its clients count as one"
+        );
+    }
 }
 
 fn login(state: &State, req: &Request) -> Response {

@@ -183,16 +183,22 @@ pub struct Response {
 pub struct Options {
     pub connect_timeout: Duration,
     pub io_timeout: Duration,
+    /// Largest body [`request`] reads into memory ([`DEFAULT_MAX_BODY`]
+    /// unless a caller states its own). Large downloads (songs, models) go
+    /// through [`request_stream`] or [`HttpStream`] to a file instead.
     pub max_body: usize,
     pub max_redirects: u32,
 }
+
+/// The body limit of [`Options::default`].
+pub const DEFAULT_MAX_BODY: usize = 64 << 20;
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             connect_timeout: Duration::from_secs(8),
             io_timeout: Duration::from_secs(30),
-            max_body: 1 << 30,
+            max_body: DEFAULT_MAX_BODY,
             max_redirects: 3,
         }
     }
@@ -349,6 +355,11 @@ pub fn request(
             }
         }
         let mut reader = body_reader(r, method, status, &h);
+        if h.content_length().is_some_and(|n| n > opts.max_body as u64)
+            && !matches!(reader, Body::Length(ref t) if t.limit() == 0)
+        {
+            return Err("response body too large".into());
+        }
         let mut out = Vec::new();
         let mut chunk = [0u8; 64 * 1024];
         loop {

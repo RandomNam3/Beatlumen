@@ -46,6 +46,28 @@ issue.
   clients are disconnected, connections are limited per address,
   ambiguous request framing (`Content-Length` + `Transfer-Encoding`) is
   rejected.
+* Bodies only with a login: without one a request may send 64 KiB. Larger
+  bodies (4 MiB, image uploads 257 MiB) need the server password, an
+  account or the admin login, which is checked from the request's head
+  before any of the body is read.
+* Connections: 256 at once, 32 per client address (IPv6 per /64), the
+  loopback interface included. Only the trusted reverse proxies
+  (`--trusted-proxy`, `BEATLUMEN_TRUSTED_PROXIES`, default: loopback) may
+  name the client in `X-Forwarded-For`; each of their requests counts
+  against that client while it runs, and the same address counts for
+  failed logins, room codes and passwords of shared links. A few reserved
+  connections let the local health check through when the limits are
+  reached.
+* Panics: a panic in a request, while a body streams (an Opus conversion)
+  or in reading a request ends that connection only and gives its place
+  back. Background threads (scanner, sources, rooms, labels, artist pages,
+  song text timing, trash) log a panic and start again after a pause
+  (1 s, doubling up to a minute).
+* Device control and rooms: a command is at most 16 KiB, a device has at
+  most 64 commands (256 KiB) it has not fetched yet, the event buffer of all
+  logins holds at most 1000 events of 32 MiB, a login has at most 50
+  devices and hosts at most 10 rooms, and room requests are at most
+  16 KiB.
 * Browsers: cross-site writes are refused (`Origin`, `Sec-Fetch-Site`);
   without a password only IP addresses, `localhost`, local network names
   and names given with `--allow-host` are accepted as `Host` (DNS
@@ -140,6 +162,9 @@ In short:
   only; Android backups are disabled. Tokens are removed from log output.
 * Redirects are only followed for reads on the same server, so the login
   token or a password never reaches another host.
+* Answers are read into memory up to 64 MiB unless a request states its
+  own limit (the server API 256 MiB, for the library of a large server);
+  songs, offline copies and speech models stream into files.
 * Android: only the launcher activity is exported; files picked with the
   system picker are copied into app storage under sanitized names with
   size limits.

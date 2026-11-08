@@ -170,54 +170,51 @@ impl ArtistIndex {
     pub fn attach(self: &Arc<Self>, state: &Arc<State>) {
         let index = self.clone();
         let state = Arc::downgrade(state);
-        let _ = std::thread::Builder::new()
-            .name("artists".into())
-            .spawn(move || {
-                let mut pacer = Pacer::default();
-                let start = Instant::now();
-                // Tried without an answer: not again until the next start.
-                let mut tried = HashSet::new();
-                let mut genres_at = Instant::now();
-                let mut genres_changed = false;
-                loop {
-                    let Some(s) = state.upgrade() else {
-                        return;
-                    };
-                    if !index.is_enabled() {
-                        drop(s);
-                        std::thread::sleep(Duration::from_secs(5));
-                        continue;
-                    }
-                    let page = index
-                        .pages
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .pop_front();
-                    let (wanted, depth) = match page {
-                        Some(w) => (Some(w), Depth::Page),
-                        None if s.scanning() => (None, Depth::Genres),
-                        None => (index.next_in_library(&s, &tried), Depth::Genres),
-                    };
+        let _ = crate::util::supervise("artists", move || {
+            let mut pacer = Pacer::default();
+            let start = Instant::now();
+            // Tried without an answer: not again until the next start.
+            let mut tried = HashSet::new();
+            let mut genres_at = Instant::now();
+            let mut genres_changed = false;
+            loop {
+                let Some(s) = state.upgrade() else {
+                    return;
+                };
+                if !index.is_enabled() {
                     drop(s);
-                    let Some(wanted) = wanted else {
-                        if genres_changed {
-                            genres_changed = false;
-                            index.revision.fetch_add(1, Ordering::Relaxed);
-                        }
-                        std::thread::sleep(Duration::from_secs(5));
-                        continue;
-                    };
-                    tried.insert(Book::key(&wanted.name));
-                    let clock = || start.elapsed().as_secs_f64();
-                    genres_changed |=
-                        index.look_up(&wanted, depth, &mut pacer, &clock, &fetch, &sleep);
-                    if genres_changed && genres_at.elapsed() > Duration::from_secs(60) {
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                }
+                let page = index
+                    .pages
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .pop_front();
+                let (wanted, depth) = match page {
+                    Some(w) => (Some(w), Depth::Page),
+                    None if s.scanning() => (None, Depth::Genres),
+                    None => (index.next_in_library(&s, &tried), Depth::Genres),
+                };
+                drop(s);
+                let Some(wanted) = wanted else {
+                    if genres_changed {
                         genres_changed = false;
-                        genres_at = Instant::now();
                         index.revision.fetch_add(1, Ordering::Relaxed);
                     }
+                    std::thread::sleep(Duration::from_secs(5));
+                    continue;
+                };
+                tried.insert(Book::key(&wanted.name));
+                let clock = || start.elapsed().as_secs_f64();
+                genres_changed |= index.look_up(&wanted, depth, &mut pacer, &clock, &fetch, &sleep);
+                if genres_changed && genres_at.elapsed() > Duration::from_secs(60) {
+                    genres_changed = false;
+                    genres_at = Instant::now();
+                    index.revision.fetch_add(1, Ordering::Relaxed);
                 }
-            });
+            }
+        });
     }
 
     /// Asks about one artist; true when genres came in.
