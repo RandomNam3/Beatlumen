@@ -699,6 +699,13 @@ impl Decoder {
     // ---- blocks -------------------------------------------------------------
 
     fn decode_block(&mut self, t: &mut Tile, r: usize, c: usize, size: usize) -> Result<(), Error> {
+        // A conformance requirement that damaged streams break: the chroma
+        // block size must exist for the subsampling.
+        if self.planes > 1 && SUBSAMPLED_SIZE[size][self.ssx][self.ssy] == BLOCK_INVALID {
+            return Err(Error::InvalidData(
+                "av1: block size invalid for the subsampling",
+            ));
+        }
         let mut b = std::mem::take(&mut self.blk);
         b.mi_row = r;
         b.mi_col = c;

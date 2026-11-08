@@ -119,7 +119,9 @@ pub(crate) fn parse_stream<'a>(data: &'a [u8], config: &[u8]) -> Result<Stream<'
         return Err(Error::Unsupported("av1: frame too large"));
     }
     if fh.allow_intrabc && px > 1 << 24 {
-        return Err(Error::Unsupported("av1: intra block copy in a very large frame"));
+        return Err(Error::Unsupported(
+            "av1: intra block copy in a very large frame",
+        ));
     }
     if tiles.is_empty() || tiles.iter().any(|t| t.is_none()) {
         return Err(Error::InvalidData("av1: missing tiles"));

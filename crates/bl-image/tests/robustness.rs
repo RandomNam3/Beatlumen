@@ -265,11 +265,112 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
     // alpha and a grid.
     let mut obus: Vec<(&str, Vec<u8>)> = Vec::new();
     for (name, src, extra) in [
-        ("aom", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30", "-aom-params", "enable-restoration=1"]),
-        ("aom10", "testsrc2=s=67x45,format=yuv444p10le", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30"]),
-        ("ibc", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30", "-aom-params", "tune-content=screen:enable-intrabc=1"]),
-        ("gray", "testsrc2=s=67x45,format=gray", vec!["-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "6", "-crf", "30"]),
-        ("svt", "testsrc2=s=67x45,format=yuv420p", vec!["-c:v", "libsvtav1", "-crf", "35", "-preset", "8"]),
+        (
+            "aom",
+            "testsrc2=s=67x45,format=yuv420p",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "30",
+                "-aom-params",
+                "enable-restoration=1",
+            ],
+        ),
+        (
+            "aom10",
+            "testsrc2=s=67x45,format=yuv444p10le",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "30",
+            ],
+        ),
+        (
+            "ibc",
+            "testsrc2=s=67x45,format=yuv420p",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "30",
+                "-aom-params",
+                "tune-content=screen:enable-intrabc=1",
+            ],
+        ),
+        (
+            "gray",
+            "testsrc2=s=67x45,format=gray",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "30",
+            ],
+        ),
+        (
+            "svt",
+            "testsrc2=s=96x64,format=yuv420p",
+            vec![
+                "-c:v",
+                "libsvtav1",
+                "-crf",
+                "35",
+                "-preset",
+                "8",
+                "-svtav1-params",
+                "superres-mode=1:superres-denom=12:superres-kf-denom=12",
+            ],
+        ),
+        (
+            "aom422",
+            "testsrc2=s=67x45,format=yuv422p",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "30",
+            ],
+        ),
+        (
+            "tiles",
+            "testsrc2=s=160x96,format=yuv420p",
+            vec![
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "6",
+                "-crf",
+                "40",
+                "-tiles",
+                "2x2",
+                "-aom-params",
+                "sb-size=128:enable-restoration=1",
+            ],
+        ),
     ] {
         let p = dir.join(format!("{name}.obu"));
         let t = p.to_str().unwrap().to_string();
@@ -283,10 +384,23 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
     use common::heif as hf;
     let get = |n: &str| obus.iter().find(|(k, _)| *k == n).map(|(_, d)| d.clone());
     for (name, d) in &obus {
-        let (w, h) = (67, 45);
+        let (w, h) = match *name {
+            "svt" => (96, 64),
+            "tiles" => (160, 96),
+            _ => (67, 45),
+        };
         v.push((
             format!("{name}.avif"),
-            hf::file(b"avif", &[hf::Item::new(b"av01", d.clone(), vec![hf::av1c(d), hf::ispe(w, h)])], 1, &[]),
+            hf::file(
+                b"avif",
+                &[hf::Item::new(
+                    b"av01",
+                    d.clone(),
+                    vec![hf::av1c(d), hf::ispe(w, h)],
+                )],
+                1,
+                &[],
+            ),
         ));
     }
     if let (Some(c), Some(a)) = (get("aom"), get("gray")) {
@@ -295,8 +409,16 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
             hf::file(
                 b"avif",
                 &[
-                    hf::Item::new(b"av01", c.clone(), vec![hf::av1c(&c), hf::ispe(67, 45), hf::irot(1)]),
-                    hf::Item::new(b"av01", a.clone(), vec![hf::av1c(&a), hf::ispe(67, 45), hf::auxc_alpha()]),
+                    hf::Item::new(
+                        b"av01",
+                        c.clone(),
+                        vec![hf::av1c(&c), hf::ispe(67, 45), hf::irot(1)],
+                    ),
+                    hf::Item::new(
+                        b"av01",
+                        a.clone(),
+                        vec![hf::av1c(&a), hf::ispe(67, 45), hf::auxc_alpha()],
+                    ),
                 ],
                 1,
                 &[(b"auxl", 2, vec![1])],
@@ -305,8 +427,15 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
         let mut items: Vec<hf::Item> = (0..4)
             .map(|_| hf::Item::new(b"av01", c.clone(), vec![hf::av1c(&c), hf::ispe(67, 45)]))
             .collect();
-        items.push(hf::Item::new(b"grid", hf::grid(2, 2, 130, 88), vec![hf::ispe(130, 88), hf::clap(120, 80, 0, 0)]));
-        v.push(("grid.avif".to_string(), hf::file(b"avif", &items, 5, &[(b"dimg", 5, vec![1, 2, 3, 4])])));
+        items.push(hf::Item::new(
+            b"grid",
+            hf::grid(2, 2, 130, 88),
+            vec![hf::ispe(130, 88), hf::clap(120, 80, 0, 0)],
+        ));
+        v.push((
+            "grid.avif".to_string(),
+            hf::file(b"avif", &items, 5, &[(b"dimg", 5, vec![1, 2, 3, 4])]),
+        ));
     }
     if have_convert() {
         let s = dir.join("a.png");
@@ -354,10 +483,23 @@ fn decoders_survive_corruption() {
     })));
     {
         use common::heif as hf;
-        let tile = |id: u8| hf::Item::new(b"hvc1", vec![id; 9], vec![hf::hvcc_stub(), hf::ispe(32, 32)]);
+        let tile = |id: u8| {
+            hf::Item::new(
+                b"hvc1",
+                vec![id; 9],
+                vec![hf::hvcc_stub(), hf::ispe(32, 32)],
+            )
+        };
         let mut items: Vec<_> = (0..6).map(tile).collect();
-        items.push(hf::Item::new(b"grid", hf::grid(2, 3, 90, 60), vec![hf::ispe(90, 60), hf::imir(1)]));
-        fixtures.push(("grid.heic".to_string(), hf::file(b"heic", &items, 7, &[(b"dimg", 7, vec![1, 2, 3, 4, 5, 6])])));
+        items.push(hf::Item::new(
+            b"grid",
+            hf::grid(2, 3, 90, 60),
+            vec![hf::ispe(90, 60), hf::imir(1)],
+        ));
+        fixtures.push((
+            "grid.heic".to_string(),
+            hf::file(b"heic", &items, 7, &[(b"dimg", 7, vec![1, 2, 3, 4, 5, 6])]),
+        ));
     }
     for (name, data) in &fixtures {
         assert!(decode(data).is_ok(), "{name} must decode before corruption");
