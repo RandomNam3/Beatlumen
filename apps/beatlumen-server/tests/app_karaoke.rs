@@ -375,6 +375,9 @@ fn singers_are_scored_against_the_notes() {
     let mut rendered = 0f64;
     let mut since = i64::MIN;
     let mut seen = 0usize;
+    // The microphones' samples so far (each), from their own start.
+    let (mic_t0, mic_clock0) = (Instant::now(), mic::clock_us());
+    let mut pushed = 0usize;
     loop {
         app.state();
         // The audio device plays in real time.
@@ -408,23 +411,29 @@ fn singers_are_scored_against_the_notes() {
         } else {
             None
         };
-        // 10 ms of each singer.
-        let n = 480;
-        let mut pcm_a = vec![0i16; n];
-        let mut pcm_b = vec![0i16; n];
-        if let Some(m) = note {
-            let fa = 440.0 * 2f64.powf((m + 12.0 - 69.0) / 12.0);
-            let fb = 440.0 * 2f64.powf((m + 1.5 - 69.0) / 12.0);
-            for i in 0..n {
-                pcm_a[i] = (8000.0 * phase_a.sin()) as i16;
-                pcm_b[i] = (8000.0 * phase_b.sin()) as i16;
-                phase_a += std::f64::consts::TAU * fa / rate;
-                phase_b += std::f64::consts::TAU * fb / rate;
+        // Each singer since the last pass: the microphones deliver in real
+        // time without gaps, however long the sleep below takes (on
+        // Windows at least about 15.6 ms; gaps would break held notes).
+        let due = (mic_t0.elapsed().as_secs_f64() * rate) as usize;
+        let n = due.saturating_sub(pushed);
+        if n > 0 {
+            let mut pcm_a = vec![0i16; n];
+            let mut pcm_b = vec![0i16; n];
+            if let Some(m) = note {
+                let fa = 440.0 * 2f64.powf((m + 12.0 - 69.0) / 12.0);
+                let fb = 440.0 * 2f64.powf((m + 1.5 - 69.0) / 12.0);
+                for i in 0..n {
+                    pcm_a[i] = (8000.0 * phase_a.sin()) as i16;
+                    pcm_b[i] = (8000.0 * phase_b.sin()) as i16;
+                    phase_a += std::f64::consts::TAU * fa / rate;
+                    phase_b += std::f64::consts::TAU * fb / rate;
+                }
             }
+            let at = mic_clock0 + (pushed as f64 / rate * 1e6) as i64;
+            mic::push_pcm(a as u32, &pcm_a, 1, 48000, at);
+            mic::push_pcm(b as u32, &pcm_b, 1, 48000, at);
+            pushed = due;
         }
-        let at = mic::clock_us() - 10_000;
-        mic::push_pcm(a as u32, &pcm_a, 1, 48000, at);
-        mic::push_pcm(b as u32, &pcm_b, 1, 48000, at);
         assert!(t0.elapsed() < Duration::from_secs(15), "{}", live.to_json());
         std::thread::sleep(Duration::from_millis(10));
     }
