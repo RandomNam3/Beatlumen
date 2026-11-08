@@ -8,8 +8,12 @@ use crate::library;
 use crate::server::ServerState;
 use bl_json::Value;
 
-/// At most this many lines are kept.
+/// At most this many lines are kept (timed lines, or plain ones).
 const MAX_LINES: usize = 5000;
+/// Longer lines are cut (bytes of the line as written, tags included).
+const MAX_LINE_BYTES: usize = 4096;
+/// Times beyond this (ms, 100 hours either way) are no song's.
+const MAX_TIME_MS: i64 = 100 * 3_600_000;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Line {
@@ -69,31 +73,34 @@ pub(crate) fn fit(text: &str, lyrics: &Lyrics, duration_ms: Option<i64>) -> Fit 
         return Fit::Fine;
     }
     let last = lyrics.lines.iter().filter_map(|l| l.time_ms).max();
-    if last.is_some_and(|t| t > duration + OVERRUN_MS) {
+    if last.is_some_and(|t| t > duration.saturating_add(OVERRUN_MS)) {
         return Fit::Overruns;
     }
     let stated = text.lines().find_map(|l| {
         let tag = l.trim().strip_prefix("[length:")?.strip_suffix(']')?;
         parse_time(tag)
     });
-    if stated.is_some_and(|s| (s - duration).abs() > LENGTH_TOLERANCE_MS) {
+    if stated.is_some_and(|s| s.abs_diff(duration) > LENGTH_TOLERANCE_MS as u64) {
         return Fit::OtherLength;
     }
     Fit::Fine
 }
 
 /// Parses a time like "01:23.45", "1:23", "01:23:45" (hundredths) or
-/// "1:02:03.5" into milliseconds.
+/// "1:02:03.5" into milliseconds; `None` beyond [`MAX_TIME_MS`].
 fn parse_time(s: &str) -> Option<i64> {
+    parse_time_unchecked(s).filter(|t| (0..=MAX_TIME_MS).contains(t))
+}
+
+fn parse_time_unchecked(s: &str) -> Option<i64> {
     let s = s.trim();
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() < 2 || parts.len() > 3 || !parts.iter().all(|p| !p.is_empty()) {
         return None;
     }
+    // Digits only, and few enough that the sums below cannot overflow.
     let num = |p: &str| -> Option<i64> {
-        p.bytes()
-            .all(|b| b.is_ascii_digit())
-            .then(|| p.parse().ok())?
+        (p.len() <= 12 && p.bytes().all(|b| b.is_ascii_digit())).then(|| p.parse().ok())?
     };
     let secs_frac = |p: &str| -> Option<i64> {
         let (sec, frac) = match p.split_once('.') {
@@ -101,6 +108,10 @@ fn parse_time(s: &str) -> Option<i64> {
             None => (p, ""),
         };
         let sec = num(sec)?;
+        // Digits checked before cutting: a cut inside a character panics.
+        if !frac.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
         let frac_ms = if frac.is_empty() {
             0
         } else {
@@ -124,6 +135,18 @@ fn parse_time(s: &str) -> Option<i64> {
             (sec < 60 && parts[2].len() <= 2).then_some(min * 60_000 + sec * 1000 + hund * 10)
         }
     }
+}
+
+/// The line cut to at most `max` bytes (at a character boundary).
+fn cut(line: &str, max: usize) -> &str {
+    if line.len() <= max {
+        return line;
+    }
+    let mut end = max;
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    &line[..end]
 }
 
 /// Splits the leading `[...]` tags off a line.
@@ -177,11 +200,11 @@ fn words(text: &str, line_start: i64, offset: i64) -> (String, Vec<Piece>) {
                         && !word.ends_with(char::is_whitespace)
                         && !after.chars().next().is_some_and(|c| !c.is_whitespace());
                     if ends_word {
-                        flush(&mut out, time, &mut word, Some(t - offset));
+                        flush(&mut out, time, &mut word, Some(t.saturating_sub(offset)));
                     } else {
                         flush(&mut out, time, &mut word, None);
                     }
-                    time = t - offset;
+                    time = t.saturating_sub(offset);
                     rest = after;
                     continue;
                 }
@@ -228,7 +251,8 @@ fn fill_ends(lines: &mut [Line]) {
             let next = if k + 1 < n {
                 line.words[k + 1].t
             } else {
-                next_line.unwrap_or(t + 3000).min(t + 3000)
+                let most = t.saturating_add(3000);
+                next_line.unwrap_or(most).min(most)
             };
             line.words[k].end = next.max(t);
         }
@@ -347,7 +371,8 @@ pub fn parse(text: &str) -> Lyrics {
     let mut voice = 0u8;
     let mut synced: Vec<Line> = Vec::new();
     let mut plain: Vec<Line> = Vec::new();
-    for raw in text.lines() {
+    'lines: for raw in text.lines() {
+        let raw = cut(raw, MAX_LINE_BYTES);
         let (tags, rest) = leading_tags(raw);
         let mut times = Vec::new();
         let mut meta_only = !tags.is_empty();
@@ -356,7 +381,11 @@ pub fn parse(text: &str) -> Lyrics {
                 times.push(ms);
                 meta_only = false;
             } else if let Some(v) = t.strip_prefix("offset:") {
-                offset = v.trim().parse().unwrap_or(0);
+                offset = v
+                    .trim()
+                    .parse::<i64>()
+                    .unwrap_or(0)
+                    .clamp(-MAX_TIME_MS, MAX_TIME_MS);
             }
         }
         if times.is_empty() {
@@ -370,6 +399,11 @@ pub fn parse(text: &str) -> Lyrics {
                 }
                 continue; // [ar:...], [ti:...], ...
             }
+            // Leading empty lines are left out; enough lines are enough
+            // (timed lines further on still count).
+            if (plain.is_empty() && raw.trim().is_empty()) || plain.len() >= MAX_LINES {
+                continue;
+            }
             plain.push(Line {
                 time_ms: None,
                 text: raw.trim().to_string(),
@@ -380,18 +414,18 @@ pub fn parse(text: &str) -> Lyrics {
             continue;
         }
         for t in times {
-            let start = t - offset;
+            if synced.len() > MAX_LINES {
+                break 'lines;
+            }
+            let start = t.saturating_sub(offset);
             let (text, words) = words(rest, start, offset);
             synced.push(Line {
-                time_ms: Some(start.max(0)),
+                time_ms: Some(start.clamp(0, MAX_TIME_MS)),
                 text,
                 words,
                 voice,
                 who: String::new(),
             });
-        }
-        if synced.len() > MAX_LINES {
-            break;
         }
     }
     if !synced.is_empty() {
@@ -405,14 +439,10 @@ pub fn parse(text: &str) -> Lyrics {
             creator,
         };
     }
-    // Plain text: without leading and trailing empty lines.
-    while plain.first().is_some_and(|l| l.text.is_empty()) {
-        plain.remove(0);
-    }
+    // Plain text: without leading (left out above) and trailing empty lines.
     while plain.last().is_some_and(|l| l.text.is_empty()) {
         plain.pop();
     }
-    plain.truncate(MAX_LINES);
     voices_from_names(&mut plain);
     Lyrics {
         synced: false,
@@ -1138,6 +1168,45 @@ mod tests {
         for bad in ["", "ar:Someone", "1:60", "x:10", "1:2:3:4", "01:-1"] {
             assert_eq!(parse_time(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn crafted_texts_end_cleanly() {
+        // Times and offsets at the ends of the number range.
+        for text in [
+            "[offset:-9223372036854775808]\n[00:01.00]a",
+            "[offset:9223372036854775807]\n[00:01.00]<00:02.00>a <00:03.00>b",
+            "[99999999999999999999:00.00]x",
+            "[999999999999:59.99]x\n[00:01]y",
+            "[00:01.abé]x\n[00:01.1é]y",
+            "[00:01]<99999999999:00>a<00:01.é>b",
+        ] {
+            let l = parse(text);
+            for line in &l.lines {
+                assert!(line.time_ms.is_none_or(|t| (0..=MAX_TIME_MS).contains(&t)));
+            }
+            let _ = fit(text, &l, Some(i64::MAX));
+            let _ = fit(text, &l, Some(1));
+            let _ = l.to_enhanced_lrc();
+        }
+        assert_eq!(parse_time("00:01.abé"), None);
+        // Plain lines: capped, and many leading empty lines are cheap.
+        let mut text = "\n".repeat(2_000_000);
+        text += &"a line\n".repeat(20_000);
+        let t = std::time::Instant::now();
+        let l = parse(&text);
+        assert!(!l.synced);
+        assert_eq!(l.lines.len(), MAX_LINES);
+        assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+        // Many time tags on one long line: lines and their length stay bounded.
+        let line = "[00:01.00]".repeat(50_000) + &"x".repeat(1_000_000);
+        let l = parse(&line.repeat(3));
+        assert!(l.lines.len() <= MAX_LINES);
+        assert!(l.lines.iter().all(|x| x.text.len() <= MAX_LINE_BYTES));
+        // A long line is cut at a character boundary.
+        let l = parse(&"ä".repeat(10_000));
+        assert_eq!(l.lines.len(), 1);
+        assert!(l.lines[0].text.len() <= MAX_LINE_BYTES);
     }
 
     #[test]

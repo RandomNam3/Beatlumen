@@ -61,7 +61,10 @@ fn unescape(text: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let Some(end) = rest.find(';').filter(|e| *e <= 10) else {
+        // Only the next few bytes: a search through all the rest for each
+        // '&' made a text of many of them quadratic.
+        let near = &rest.as_bytes()[..rest.len().min(11)];
+        let Some(end) = near.iter().position(|&b| b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -164,10 +167,13 @@ fn read_lines(text: &str) -> Vec<Line> {
     let mut div_agent = String::new();
     while !rest.is_empty() {
         let Some(open) = rest.find('<') else { break };
-        if let Some(l) = line.as_mut().filter(|_| !spans.iter().any(|s| s.2)) {
+        // Each open span's flags include those of the spans around it, so
+        // the innermost one tells (no walk through all open spans).
+        let (in_backing, in_skipped) = spans.last().map_or((false, false), |s| (s.1, s.2));
+        if let Some(l) = line.as_mut().filter(|_| !in_skipped) {
             let t = collapse(&unescape(&rest[..open]));
             let blank = t.trim().is_empty();
-            let backing = spans.iter().any(|s| s.1);
+            let backing = in_backing;
             match l.words.last_mut() {
                 Some(w) if w.open => w.text.push_str(&t),
                 // Space between spans belongs to the word before it.
@@ -230,8 +236,8 @@ fn read_lines(text: &str) -> Vec<Line> {
                     continue;
                 };
                 let role = attribute(tag, "role").unwrap_or_default();
-                let skipped = skipped_role(&role) || spans.iter().any(|s| s.2);
-                let backing = role == "x-bg" || spans.iter().any(|s| s.1);
+                let skipped = skipped_role(&role) || in_skipped;
+                let backing = role == "x-bg" || in_backing;
                 let start = attribute(tag, "begin").and_then(|b| parse_time(&b));
                 // A span that holds other spans (backing voices) is no word.
                 let word = start.is_some() && !skipped && !rest.trim_start().starts_with('<');
@@ -257,10 +263,11 @@ pub fn ttml_to_lrc(text: &str) -> Option<String> {
     let body = text.find("<body").map_or(text, |i| &text[i..]);
     let lines = read_lines(body);
     // A number for each voice, in the order they first sing; one alone is no duet.
-    let mut agents: Vec<&str> = Vec::new();
+    let mut agents: std::collections::HashMap<&str, usize> = Default::default();
     for l in &lines {
-        if !l.agent.is_empty() && !agents.contains(&l.agent.as_str()) {
-            agents.push(&l.agent);
+        if !l.agent.is_empty() {
+            let n = agents.len() + 1;
+            agents.entry(&l.agent).or_insert(n);
         }
     }
     let mut out = String::new();
@@ -271,10 +278,7 @@ pub fn ttml_to_lrc(text: &str) -> Option<String> {
             continue;
         }
         if agents.len() > 1 {
-            let v = agents
-                .iter()
-                .position(|a| *a == l.agent)
-                .map_or(0, |i| i + 1);
+            let v = agents.get(l.agent.as_str()).copied().unwrap_or(0);
             if v != voice && v > 0 {
                 out += &format!("[v:{v}]\n");
             }
@@ -284,18 +288,14 @@ pub fn ttml_to_lrc(text: &str) -> Option<String> {
         if let Some(t) = start {
             out += &format!("[{}]", clock(t));
         }
-        let mut words: Vec<&Word> = l.words.iter().filter(|w| !w.text.is_empty()).collect();
+        let words: Vec<&Word> = l.words.iter().filter(|w| !w.text.is_empty()).collect();
         // The line's ends without their spaces.
         let last = words.len().saturating_sub(1);
         let timed = start.is_some() && words.iter().any(|w| w.start.is_some());
         let mut in_backing = false;
-        for (i, w) in words.drain(..).enumerate() {
-            let next_start = l
-                .words
-                .iter()
-                .filter(|x| !x.text.is_empty())
-                .nth(i + 1)
-                .and_then(|x| x.start);
+        for (i, w) in words.iter().enumerate() {
+            let next = words.get(i + 1);
+            let next_start = next.and_then(|x| x.start);
             let mut word = if i == last {
                 w.text.trim_end().to_string()
             } else {
@@ -308,12 +308,7 @@ pub fn ttml_to_lrc(text: &str) -> Option<String> {
             if w.backing && !in_backing && !word.trim_start().starts_with('(') {
                 word.insert(0, '(');
             }
-            let following_backing = l
-                .words
-                .iter()
-                .filter(|x| !x.text.is_empty())
-                .nth(i + 1)
-                .is_some_and(|x| x.backing);
+            let following_backing = next.is_some_and(|x| x.backing);
             if w.backing && !following_backing && !word.contains(')') {
                 let trimmed = word.trim_end().len();
                 word.insert(trimmed, ')');
@@ -424,5 +419,24 @@ mod tests {
         );
         // Broken input does no harm.
         assert_eq!(ttml_to_lrc("<tt><body><div><p begin="), None);
+    }
+
+    #[test]
+    fn crafted_texts_take_linear_time() {
+        let t = std::time::Instant::now();
+        let p = |body: &str| format!("<tt><body><div><p begin=\"1s\">{body}</p></div></body></tt>");
+        // Many '&' without ';', deeply nested spans, many words in a line,
+        // many voices.
+        let _ = ttml_to_lrc(&p(&"&".repeat(200_000)));
+        let nested = "<span>".repeat(50_000) + &"x<b/>".repeat(50_000);
+        let _ = ttml_to_lrc(&p(&nested));
+        let words = "<span begin=\"1s\" end=\"2s\">w</span> ".repeat(30_000);
+        assert!(ttml_to_lrc(&p(&words)).is_some());
+        let voices: String = (0..20_000)
+            .map(|i| format!("<p begin=\"1s\" ttm:agent=\"v{i}\">x</p>"))
+            .collect();
+        let lrc = ttml_to_lrc(&format!("<tt><body><div>{voices}</div></body></tt>")).unwrap();
+        assert!(lrc.contains("[v:20000]"));
+        assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
     }
 }

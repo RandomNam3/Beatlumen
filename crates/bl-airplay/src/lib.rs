@@ -14,6 +14,8 @@
 //!   with their own service registration use [`Receiver::instance_name`]
 //!   and [`Receiver::txt`] instead).
 
+#![forbid(unsafe_code)]
+
 pub mod ap2;
 pub mod crypto;
 pub mod mdns;

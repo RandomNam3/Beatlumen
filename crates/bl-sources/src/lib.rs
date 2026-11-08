@@ -8,6 +8,8 @@
 //! like its own; the apps can also use sources directly (app-only use).
 //! Only the addresses configured for a source are contacted.
 
+#![forbid(unsafe_code)]
+
 pub mod dlna;
 pub mod jellyfin;
 pub mod md5;

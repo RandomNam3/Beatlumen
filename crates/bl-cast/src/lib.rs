@@ -7,6 +7,8 @@
 //! [`Client::poll`] reads what arrived (reads must time out quickly),
 //! answers the receiver's heartbeat and keeps the session and media state.
 
+#![forbid(unsafe_code)]
+
 pub mod proto;
 
 use bl_json::Value;

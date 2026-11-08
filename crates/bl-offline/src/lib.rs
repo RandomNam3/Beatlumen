@@ -16,6 +16,8 @@
 //! to `<name>.part` and renamed when complete, so an interrupted download
 //! never looks like a finished one.
 
+#![forbid(unsafe_code)]
+
 use bl_json::Value;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
