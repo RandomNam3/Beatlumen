@@ -322,10 +322,12 @@ pub fn local_track(
         title: file_name.clone(),
         ..Default::default()
     };
+    let mut titled = false;
     if let Some(i) = info {
         let tags = &i.tags;
         if let Some(title) = tags.title.as_ref().filter(|s| !s.trim().is_empty()) {
             t.title = title.trim().to_string();
+            titled = true;
         }
         t.artists = tags
             .artist
@@ -346,9 +348,11 @@ pub fn local_track(
         t.has_cover = true;
         t.meta = bl_net::api::TrackMeta::from_tags(tags);
     }
-    if t.artists.is_empty() || t.title == file_name {
+    let guess_title =
+        bl_net::api::title_from_file_name(&t.title, &file_name, titled, !t.artists.is_empty());
+    if t.artists.is_empty() || guess_title {
         let (artist, title) = bl_net::api::guess_from_file_name(&file_name);
-        if t.title == file_name {
+        if guess_title {
             t.title = title;
         }
         if t.artists.is_empty() {

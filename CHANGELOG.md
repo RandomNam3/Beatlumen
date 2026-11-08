@@ -25,6 +25,8 @@
 - **An MP3 with junk before its music** (about 19 KB in a real file) is recognised and plays; the
   check looked only at the first 16 KB. Songs that could not be read before are read again at the
   next scan.
+- **Titles that start with a number:** a tagged title with an artist stays as it is even when the
+  file is named the same. "12 Millionen" by DAME no longer turns into "Millionen".
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window
