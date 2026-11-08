@@ -26,7 +26,11 @@ issue.
 * **Untrusted input is bounded.** Every parser limits sizes before
   allocating (sample tables, image dimensions up to 32 megapixels, JSON
   nesting, preset effects and particles). Panics in the server are caught
-  per request.
+  per request. In the apps every edge of the core catches them: calls from
+  the user interface (`bl-ffi`), worker jobs, the decoder thread, the
+  library scan, speaker outputs and the network listeners. The piece of
+  work ends with an error result (or silence, for audio), the app keeps
+  running and tells the user once a minute at most.
 * **No dynamic code.** The Android app runs QML in the interpreter
   (`QV4_FORCE_INTERPRETER`) and disables the regular expression JIT
   (`QT_ENABLE_REGEXP_JIT=0`), so no code is generated at run time. Both are
@@ -155,6 +159,32 @@ In short:
   the app's own HTTP client so the same rules apply to them.
 * The app warns when a server outside the home network is used without
   encryption.
+* **Pictures are decoded by the core only.** Covers (in music files, next to
+  them, from the server, from AirPlay and DLNA senders and from other apps'
+  media sessions), artist pictures and backgrounds reach the user interface
+  through two image providers, `image://server` (fetched by the core's HTTP
+  client, at most 32 MB) and `image://thumb` (local files, at most 512 MB),
+  which decode with the core's own decoders (`bl-image`: Rust, limits for
+  dimensions and memory before allocating) and hand over plain pixels. The
+  packages contain none of Qt's image readers except SVG for the app's own
+  icons; the views refuse any other picture address. Android's media
+  notification gets decoded pixels (no `BitmapFactory`), the desktop's media
+  controls a PNG made from them. Qt's built-in PNG reader only sees PNGs
+  made by the core (thumbnails of encrypted images).
+* **Listeners.** The live stream for DLNA speakers and Chromecast
+  (random 128-bit address) checks the address first, in constant time,
+  before reading headers; the request head is at most 16 KB and must
+  arrive within 10 seconds; at most eight connections. The sign-in page's
+  return to the app listens on 127.0.0.1 only, reads one request line of
+  at most 256 KB within 10 seconds per connection and stops after
+  15 minutes.
+* **Files.** Settings, the library, covers and other state are written to a
+  temporary file of their own (process id and counter in the name) and
+  renamed over the old one. Offline copies are never changed in place: a
+  new copy is written and renamed, and playback reads header and audio
+  from the same open file. On desktops a lock in the data folder keeps a
+  second instance from running; a second start hands its files to the
+  running app over a local socket of the user and ends.
 
 ## AirPlay receiver
 
@@ -165,9 +195,11 @@ In short:
   others in the same network from playing on the device. Without one,
   anyone in the network can stream to it, as with any AirPlay speaker.
 * Everything read from the network is bounded: request headers (16 KB),
-  bodies (4 MB, cover art), at most eight control connections, at most
-  eight seconds of buffered audio; UDP packets are only accepted from the
-  sender of the current stream. A new sender replaces the current one.
+  bodies (4 MB, cover art, read as they arrive), at most eight control
+  connections, which must send their first request within 10 seconds, at
+  most eight seconds of buffered audio; UDP packets are only accepted from
+  the sender of the current stream. A new sender replaces the current one.
+  A panic while handling a connection ends only that connection.
 * The audio is decrypted with the per-stream AES key that the sender wraps
   with the RSA key of AirPlay 1 receivers. That key is public (published
   in 2011 and used by all open-source receivers), so it protects nothing
@@ -185,9 +217,12 @@ In short:
 * UPnP has no authentication: while it is on, any device in the network
   can make the app fetch and play a stream URL and control its playback.
   It reads, lists and sends none of the user's files.
-* Requests, SOAP bodies and DIDL metadata are size limited; event
-  subscriptions are bounded in number and only call back to the address
-  that subscribed (no requests to third hosts on someone's behalf).
+* Requests, SOAP bodies and DIDL metadata are size limited (bodies up to
+  1 MB, read as they arrive); at most 16 connections, each request must
+  arrive within 15 seconds; event subscriptions are bounded in number and
+  only call back to the address that subscribed (no requests to third
+  hosts on someone's behalf). The sender's cover address is fetched and
+  decoded by the core like every other picture.
 
 ## Other apps' playback (Android)
 
@@ -235,3 +270,6 @@ In short:
 
 * Tokens appear in media URLs (`?token=`) because `<audio>`/`<img>` cannot
   send headers; reverse proxies may log them.
+* The browser build decodes pictures with the browser (and Qt inside the
+  WebAssembly sandbox), and a panic there stops the page (WebAssembly is
+  built with `panic=abort`).

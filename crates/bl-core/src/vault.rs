@@ -698,41 +698,28 @@ impl Core {
     /// A local web server for the browser's redirect (one request).
     #[cfg(not(target_arch = "wasm32"))]
     fn browser_callback(&self, state: &str) -> Result<String, String> {
-        use std::io::{BufRead, BufReader, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         let mailbox = self.vault.browser_box.clone();
-        let expected = format!("state={state}");
         let page = format!(
             "<!doctype html><meta charset=utf-8><title>Beatlumen</title><body style=\"font:1.2rem system-ui;padding:2rem\">{}</body>",
             self.tr("Signed in. You can close this window and return to Beatlumen.")
         );
+        let state = state.to_string();
         std::thread::Builder::new()
             .name("sign-in callback".into())
             .spawn(move || {
-                let _ = listener.set_nonblocking(false);
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15 * 60);
-                for conn in listener.incoming() {
-                    if std::time::Instant::now() > deadline {
-                        break;
-                    }
-                    let Ok(mut conn) = conn else { continue };
-                    let _ = conn.set_read_timeout(Some(std::time::Duration::from_secs(10)));
-                    let mut line = String::new();
-                    let _ = BufReader::new(&conn).read_line(&mut line);
-                    let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
-                    let ok = path.starts_with("/callback?") && path.split(['?', '&']).any(|p| p == expected);
-                    let (status, body) = if ok { ("200 OK", page.as_str()) } else { ("404 Not Found", "") };
-                    let _ = write!(
-                        conn,
-                        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
-                        body.len()
-                    );
-                    if ok {
+                crate::panics::catch("sign-in callback", || {
+                    if let Some(path) = sign_in_callback(
+                        listener,
+                        &state,
+                        &page,
+                        std::time::Duration::from_secs(15 * 60),
+                        std::time::Duration::from_secs(10),
+                    ) {
                         mailbox.post(path);
-                        break;
                     }
-                }
+                });
             })
             .map_err(|e| e.to_string())?;
         Ok(format!("http://127.0.0.1:{port}/callback"))
@@ -2075,4 +2062,131 @@ fn open_stream(
     _header: Header,
 ) -> Result<Box<dyn bl_media::Source>, String> {
     Err("streaming is not available in the browser".into())
+}
+
+/// Longest request line the sign-in callback reads (the sealed result
+/// travels in the query).
+#[cfg(not(target_arch = "wasm32"))]
+const CALLBACK_MAX_LINE: usize = 256 * 1024;
+
+/// Serves the browser's redirect after a sign-in: answers requests one at a
+/// time until one carries `state`, and returns its path. Each request has
+/// `per_request` to arrive in full (its line is at most
+/// [`CALLBACK_MAX_LINE`]); after `wait` the callback gives up.
+#[cfg(not(target_arch = "wasm32"))]
+fn sign_in_callback(
+    listener: std::net::TcpListener,
+    state: &str,
+    page: &str,
+    wait: std::time::Duration,
+    per_request: std::time::Duration,
+) -> Option<String> {
+    use std::io::{BufReader, Write};
+    let expected = format!("state={state}");
+    let end = std::time::Instant::now() + wait;
+    listener.set_nonblocking(true).ok()?;
+    while std::time::Instant::now() < end {
+        let mut conn = match listener.accept() {
+            Ok((c, _)) => c,
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+        };
+        let Ok(reader) = crate::listen::DeadlineReader::new(&conn, per_request) else {
+            continue;
+        };
+        let mut limit = CALLBACK_MAX_LINE;
+        let line = bl_net::http::read_line(&mut BufReader::new(reader), &mut limit)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
+        let ok = path.starts_with("/callback?")
+            && path
+                .split(['?', '&'])
+                .any(|p| crate::listen::same_secret(p, &expected));
+        let (status, body) = if ok { ("200 OK", page) } else { ("404 Not Found", "") };
+        let _ = conn.set_write_timeout(Some(per_request));
+        let _ = write!(
+            conn,
+            "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
+            body.len()
+        );
+        if ok {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod callback_tests {
+    use super::sign_in_callback;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    fn ask(port: u16, request: &[u8]) -> String {
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let _ = c.write_all(request);
+        let mut out = String::new();
+        let _ = c.read_to_string(&mut out);
+        out
+    }
+
+    #[test]
+    fn only_the_right_state_signs_in_and_bad_requests_are_cut_off() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let t = std::thread::spawn(move || {
+            sign_in_callback(
+                listener,
+                "s3cret",
+                "<p>ok</p>",
+                Duration::from_secs(20),
+                Duration::from_millis(300),
+            )
+        });
+        assert!(ask(port, b"GET /callback?state=wrong HTTP/1.1\r\n\r\n").contains("404"));
+        // An endless line: cut at the limit, the callback goes on.
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        c.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+        let junk = vec![b'x'; 64 * 1024];
+        let mut sent = 0;
+        while sent < 8 << 20 && c.write_all(&junk).is_ok() {
+            sent += junk.len();
+        }
+        assert!(sent < 8 << 20, "the callback kept reading an endless line");
+        drop(c);
+        // A silent client is dropped at its deadline.
+        let start = Instant::now();
+        let mut silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        silent.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut buf = String::new();
+        let _ = silent.read_to_string(&mut buf);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        let ok = ask(port, b"GET /callback?state=s3cret&result=abc HTTP/1.1\r\n\r\n");
+        assert!(ok.starts_with("HTTP/1.1 200 OK") && ok.ends_with("<p>ok</p>"), "{ok}");
+        assert_eq!(
+            t.join().unwrap().as_deref(),
+            Some("/callback?state=s3cret&result=abc")
+        );
+    }
+
+    #[test]
+    fn it_gives_up_after_the_wait() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let start = Instant::now();
+        let r = sign_in_callback(
+            listener,
+            "x",
+            "",
+            Duration::from_millis(300),
+            Duration::from_millis(100),
+        );
+        assert!(r.is_none());
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
 }

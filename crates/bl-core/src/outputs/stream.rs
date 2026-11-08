@@ -3,8 +3,9 @@
 //! WAV or raw L16. The URL carries a random token; the audio travels
 //! unencrypted through the local network (renderers cannot decrypt).
 
+use crate::listen::{same_secret, DeadlineReader, Slots};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -13,6 +14,13 @@ use std::time::Duration;
 pub(crate) const RATE: u32 = 44100;
 /// Audio kept for connections that start or lag (frames).
 const KEEP: u64 = RATE as u64 * 20;
+/// Connections at the same time (a speaker opens one or two and may come
+/// back); more are turned away.
+const MAX_CONNECTIONS: usize = 8;
+/// Time a client has to send its request.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
+/// Longest request head (request line and headers).
+const MAX_HEAD: usize = 16 * 1024;
 
 struct Ring {
     samples: VecDeque<i16>,
@@ -102,19 +110,7 @@ impl LiveStream {
         let s = shared.clone();
         let thread = std::thread::Builder::new()
             .name("bl-stream".into())
-            .spawn(move || {
-                while !s.stop.load(Ordering::Relaxed) {
-                    match listener.accept() {
-                        Ok((conn, _)) => {
-                            let s = s.clone();
-                            let _ = std::thread::Builder::new()
-                                .name("bl-stream-conn".into())
-                                .spawn(move || serve(conn, &s));
-                        }
-                        Err(_) => std::thread::sleep(Duration::from_millis(50)),
-                    }
-                }
-            })?;
+            .spawn(move || accept_loop(listener, s, REQUEST_DEADLINE))?;
         Ok(LiveStream {
             shared,
             port,
@@ -171,38 +167,55 @@ fn random_token() -> String {
     bl_airplay::crypto::hash::hex(&bl_airplay::crypto::random_bytes(16))
 }
 
-fn serve(conn: TcpStream, s: &Shared) {
-    let _ = conn.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = conn.set_write_timeout(Some(Duration::from_secs(30)));
-    let mut reader = BufReader::new(match conn.try_clone() {
-        Ok(c) => c,
-        Err(_) => return,
-    });
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_err() {
-        return;
-    }
-    // Skip the headers.
-    loop {
-        let mut h = String::new();
-        match reader.read_line(&mut h) {
-            Ok(0) | Err(_) => return,
-            Ok(_) if h == "\r\n" || h == "\n" => break,
-            Ok(_) => {}
+/// Accepts connections (non-blocking listener) until the stream stops.
+fn accept_loop(listener: TcpListener, s: Arc<Shared>, deadline: Duration) {
+    let slots = Slots::new(MAX_CONNECTIONS);
+    while !s.stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((conn, _)) => {
+                let Some(slot) = slots.take() else {
+                    drop(conn);
+                    continue;
+                };
+                let s = s.clone();
+                let _ = std::thread::Builder::new()
+                    .name("bl-stream-conn".into())
+                    .spawn(move || {
+                        let _slot = slot;
+                        crate::panics::catch("live stream", || serve(conn, &s, deadline));
+                    });
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
+}
+
+fn serve(conn: TcpStream, s: &Shared, deadline: Duration) {
+    let _ = conn.set_write_timeout(Some(Duration::from_secs(30)));
+    let Ok(reader) = DeadlineReader::new(&conn, deadline) else {
+        return;
+    };
+    let mut reader = BufReader::new(reader);
+    let mut limit = MAX_HEAD;
+    let Ok(Some(line)) = bl_net::http::read_line(&mut reader, &mut limit) else {
+        return;
+    };
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut conn = conn;
-    let format = if path == format!("/{}.wav", s.token) {
+    // The token first: without it nothing more is read.
+    let format = if same_secret(path, &format!("/{}.wav", s.token)) {
         Format::Wav
-    } else if path == format!("/{}.l16", s.token) {
+    } else if same_secret(path, &format!("/{}.l16", s.token)) {
         Format::L16
     } else {
         let _ = conn
             .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;
     };
+    if bl_net::http::read_headers(&mut reader, &mut limit).is_err() {
+        return;
+    }
     let head = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nConnection: close\r\nCache-Control: no-cache\r\nAccept-Ranges: none\r\ntransferMode.dlna.org: Streaming\r\ncontentFeatures.dlna.org: DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n\r\n",
         format.mime()
@@ -321,4 +334,105 @@ pub(super) fn live_loop(
         std::thread::sleep(Duration::from_millis(10));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::time::Instant;
+
+    fn started(deadline: Duration) -> (Arc<Shared>, SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shared = Arc::new(Shared {
+            ring: Mutex::new(Ring {
+                samples: VecDeque::new(),
+                start: 0,
+                served_from: None,
+            }),
+            cv: Condvar::new(),
+            stop: AtomicBool::new(false),
+            token: "0123456789abcdef".into(),
+            head_start: 0,
+        });
+        let s = shared.clone();
+        let t = std::thread::spawn(move || accept_loop(listener, s, deadline));
+        (shared, addr, t)
+    }
+
+    fn stop(s: &Shared, t: std::thread::JoinHandle<()>) {
+        s.stop.store(true, Ordering::Relaxed);
+        s.cv.notify_all();
+        t.join().unwrap();
+    }
+
+    /// Sends `request` and reads what comes back within a second.
+    fn ask(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let _ = c.write_all(request);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = c.read(&mut buf) {
+            if n == 0 || out.len() > 1 << 16 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+        out
+    }
+
+    #[test]
+    fn only_the_token_opens_the_stream() {
+        let (s, addr, t) = started(Duration::from_secs(5));
+        let wrong = ask(addr, b"GET /0123456789abcdee.wav HTTP/1.1\r\n\r\n");
+        assert!(wrong.starts_with(b"HTTP/1.1 404"));
+        // Without the token the headers are not even read.
+        let wrong = ask(addr, b"GET /x.wav HTTP/1.1\r\nX: y\r\n");
+        assert!(wrong.starts_with(b"HTTP/1.1 404"));
+        let ok = ask(addr, b"HEAD /0123456789abcdef.wav HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(ok.starts_with(b"HTTP/1.1 200 OK"), "{}", String::from_utf8_lossy(&ok));
+        stop(&s, t);
+    }
+
+    #[test]
+    fn an_endless_line_or_a_slow_client_is_cut_off() {
+        let (s, addr, t) = started(Duration::from_millis(500));
+        // A request line without end: dropped after the head limit.
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+        let junk = vec![b'a'; 64 * 1024];
+        let mut sent = 0;
+        while sent < 4 << 20 && c.write_all(&junk).is_ok() {
+            sent += junk.len();
+        }
+        assert!(sent < 4 << 20, "the server kept reading an endless line");
+        // A client that sends nothing is closed at the deadline.
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let start = Instant::now();
+        let mut buf = [0u8; 8];
+        assert!(matches!(c.read(&mut buf), Ok(0) | Err(_)));
+        assert!(start.elapsed() < Duration::from_secs(2));
+        stop(&s, t);
+    }
+
+    #[test]
+    fn connections_are_capped() {
+        let (s, addr, t) = started(Duration::from_secs(30));
+        let idle: Vec<TcpStream> = (0..MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect(addr).unwrap())
+            .collect();
+        std::thread::sleep(Duration::from_millis(300));
+        // The next one is closed without an answer.
+        let extra = ask(addr, b"HEAD /0123456789abcdef.wav HTTP/1.1\r\n\r\n");
+        assert!(extra.is_empty());
+        drop(idle);
+        std::thread::sleep(Duration::from_millis(300));
+        let ok = ask(addr, b"HEAD /0123456789abcdef.wav HTTP/1.1\r\n\r\n");
+        assert!(ok.starts_with(b"HTTP/1.1 200 OK"));
+        stop(&s, t);
+    }
 }

@@ -334,6 +334,19 @@ pub struct Output {
 }
 
 impl Output {
+    /// After a panic on a thread that held one of the locks: the audio
+    /// path keeps working (it skips poisoned locks, which would mean
+    /// silence until the app restarts).
+    fn clear_poison(&self) {
+        self.ring.clear_poison();
+        self.tap.clear_poison();
+        self.current_gain.clear_poison();
+        self.norm.clear_poison();
+        self.eq.clear_poison();
+        self.direct.clear_poison();
+        self.opening.clear_poison();
+    }
+
     fn new() -> Output {
         Output {
             ring: Mutex::new(Ring {
@@ -1084,7 +1097,20 @@ impl Player {
             let load = output.next_load();
             std::thread::Builder::new()
                 .name("bl-decoder".into())
-                .spawn(move || decoder_thread(opener, output, load, crx, etx))
+                .spawn(move || {
+                    // A panic in a decoder (a damaged file) ends the track
+                    // with an error; the player goes on as for any error.
+                    let errors = etx.clone();
+                    let out = output.clone();
+                    if crate::panics::catch("decoder", || {
+                        decoder_thread(opener, output, load, crx, etx)
+                    })
+                    .is_none()
+                    {
+                        out.clear_poison();
+                        let _ = errors.send(ThreadEvent::Error("internal decoder error".into()));
+                    }
+                })
                 .ok();
             self.native = Some(NativeTrack {
                 commands: ctx,

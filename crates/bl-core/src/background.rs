@@ -132,13 +132,26 @@ pub(crate) fn decode(
 type ThumbCache = Vec<((String, u128, u64), Arc<Image>)>;
 static THUMBS: std::sync::Mutex<ThumbCache> = std::sync::Mutex::new(Vec::new());
 const THUMB_CACHE: usize = 64;
+/// Pixel bytes the thumbnail cache keeps at most (covers in the player can
+/// be large, list pictures are small).
+const THUMB_CACHE_BYTES: usize = 48 << 20;
+
+/// Largest image file read for a picture in the UI.
+pub const MAX_FILE: u64 = 512 << 20;
+/// Largest image fetched from a server or another device for the UI.
+pub const MAX_FETCH: usize = 32 << 20;
 
 /// A small picture of a local image file for lists (covering `w` x `h`),
 /// decoded with the image decoders of the core: any supported format and
 /// size (a 16K picture is scaled while it is read), first frame of
-/// animations. From any thread; the last 64 are kept.
+/// animations. From any thread; the last 64 are kept. Covers and artist
+/// pictures go through here too, so files written by other programs or
+/// taken from music files never reach the UI toolkit's decoders.
 pub fn thumbnail(path: &str, w: u32, h: u32) -> Option<Arc<Image>> {
     let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE {
+        return None;
+    }
     let mtime = meta
         .modified()
         .ok()
@@ -150,20 +163,42 @@ pub fn thumbnail(path: &str, w: u32, h: u32) -> Option<Arc<Image>> {
             return Some(img.clone());
         }
     }
-    let data = std::fs::read(path).ok()?;
-    let fit = Fit::cover(w.clamp(1, 2048), h.clamp(1, 2048), 2048, 1 << 22);
-    let img = std::panic::catch_unwind(move || bl_image::decode_fit_owned(data, &fit).ok())
-        .ok()
-        .flatten()?;
-    let img = Arc::new(img);
+    let data = read_at_most(path, meta.len(), MAX_FILE)?;
+    let img = Arc::new(thumbnail_of(data, w, h)?);
     if let Ok(mut cache) = THUMBS.lock() {
         cache.retain(|(k, _)| k.0 != key.0);
-        if cache.len() >= THUMB_CACHE {
+        let bytes = |c: &ThumbCache| c.iter().map(|(_, i)| i.pixels.len()).sum::<usize>();
+        while !cache.is_empty()
+            && (cache.len() >= THUMB_CACHE || bytes(&cache) + img.pixels.len() > THUMB_CACHE_BYTES)
+        {
             cache.remove(0);
         }
         cache.push((key, img.clone()));
     }
     Some(img)
+}
+
+/// A picture covering `w` x `h` from image file data (any supported format;
+/// corrupt, truncated or oversized data gives `None`).
+pub fn thumbnail_of(data: Vec<u8>, w: u32, h: u32) -> Option<Image> {
+    let fit = Fit::cover(w.clamp(1, 2048), h.clamp(1, 2048), 2048, 1 << 22);
+    crate::panics::catch("image decoder", move || {
+        bl_image::decode_fit_owned(data, &fit).ok()
+    })
+    .flatten()
+}
+
+/// Reads a file of at most `max` bytes (`len`: its size when it was looked
+/// at; it may grow while being read).
+fn read_at_most(path: &str, len: u64, max: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut data = Vec::with_capacity(len.min(max) as usize);
+    std::fs::File::open(path)
+        .ok()?
+        .take(max + 1)
+        .read_to_end(&mut data)
+        .ok()?;
+    (data.len() as u64 <= max).then_some(data)
 }
 
 /// A frame to show and for how long.
@@ -258,11 +293,15 @@ impl AnimPlayer {
             let mut anim = anim;
             std::thread::Builder::new()
                 .name("bg-animation".into())
-                .spawn(move || loop {
-                    let f = cache.next(&mut anim, &first_w, first_delay);
-                    if tx.send(f).is_err() {
-                        return;
-                    }
+                .spawn(move || {
+                    // A panic in the decoder stops the animation (the
+                    // frame shown stays), not the app.
+                    crate::panics::catch("animation", move || loop {
+                        let f = cache.next(&mut anim, &first_w, first_delay);
+                        if tx.send(f).is_err() {
+                            return;
+                        }
+                    });
                 })
                 .ok();
             Source::Worker(rx)

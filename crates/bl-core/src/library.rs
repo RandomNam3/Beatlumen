@@ -435,13 +435,18 @@ pub fn start_local_scan(
                         continue;
                     }
                 }
-                let info = std::fs::File::open(path).ok().and_then(|f| {
-                    let mut r = std::io::BufReader::new(f);
-                    let ext = std::path::Path::new(path)
-                        .extension()
-                        .map(|e| e.to_string_lossy().to_lowercase());
-                    bl_media::read_info(&mut r, ext.as_deref(), false).ok()
-                });
+                // A file whose tags make the reader panic is listed
+                // without them; the scan goes on.
+                let info = crate::panics::catch("library scan", || {
+                    std::fs::File::open(path).ok().and_then(|f| {
+                        let mut r = std::io::BufReader::new(f);
+                        let ext = std::path::Path::new(path)
+                            .extension()
+                            .map(|e| e.to_string_lossy().to_lowercase());
+                        bl_media::read_info(&mut r, ext.as_deref(), false).ok()
+                    })
+                })
+                .flatten();
                 out.push(local_track(path, *size, *mtime, info.as_ref()));
                 if i % 16 == 0 {
                     if let Ok(mut p) = progress.lock() {

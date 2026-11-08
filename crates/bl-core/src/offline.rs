@@ -76,6 +76,8 @@ impl Core {
             return;
         };
         let prefix = self.offline_prefix();
+        // Left by a write that was cut off (a crash, a killed app).
+        bl_offline::remove_stale_temp(&dir, std::time::Duration::from_secs(3600));
         for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.starts_with(&prefix) || !name.ends_with(".blo") {
@@ -306,7 +308,9 @@ impl Core {
         let (path, header) = (e.path.clone(), e.header.clone());
         let ext = (!header.ext.is_empty()).then(|| header.ext.clone());
         Some(Box::new(move || {
-            let w = bl_offline::audio(&path, &header).map_err(|e| e.to_string())?;
+            // Header and audio from the same open file: the container may
+            // have been replaced since it was listed (song text changes).
+            let (_, w) = bl_offline::open(&path).map_err(|e| e.to_string())?;
             Ok((Box::new(w) as Box<dyn bl_media::Source>, ext.clone()))
         }))
     }
@@ -325,7 +329,9 @@ impl Core {
         if e.header.analysis_key != key {
             return None;
         }
-        bl_offline::read_section(&e.path, e.header.analysis?).ok()
+        bl_offline::read_current_section(&e.path, |h| h.analysis)
+            .ok()
+            .flatten()
     }
 
     /// Keeps the song text of an offline copy current (`None`: removed).

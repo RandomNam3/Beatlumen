@@ -425,14 +425,22 @@ impl Core {
         };
         let password = Some(password.to_string()).filter(|p| !p.is_empty());
         let kind = device.kind.clone();
+        let reports = job.reports.clone();
         let thread = std::thread::Builder::new()
             .name("bl-output".into())
-            .spawn(move || match kind {
-                Kind::AirPlay { addr, et } => run_airplay(addr, et, password, job),
-                #[cfg(not(target_arch = "wasm32"))]
-                Kind::Dlna(r) => dlna::run(*r, job),
-                #[cfg(not(target_arch = "wasm32"))]
-                Kind::Cast { addr } => cast::run(addr, job),
+            .spawn(move || {
+                // The speaker's answers are foreign data: a panic while
+                // handling them ends the output with an error.
+                let run = move || match kind {
+                    Kind::AirPlay { addr, et } => run_airplay(addr, et, password, job),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    Kind::Dlna(r) => dlna::run(*r, job),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    Kind::Cast { addr } => cast::run(addr, job),
+                };
+                if crate::panics::catch("speaker output", run).is_none() {
+                    reports.post(Report::Failed("internal error".into()));
+                }
             })
             .ok();
         if thread.is_none() {

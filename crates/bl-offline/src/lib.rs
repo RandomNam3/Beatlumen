@@ -5,7 +5,7 @@
 //! 0      8  magic "BLOFFLN" + format version (1)
 //! 8      4  header capacity (u32 LE)
 //! 12     4  header length (u32 LE)
-//! 16  cap   header: JSON, padded with spaces (room to update it in place)
+//! 16  cap   header: JSON, padded with spaces
 //! ...       sections: cover, analysis, then the audio (aligned to 4 KiB)
 //! ```
 //!
@@ -13,13 +13,19 @@
 //! section is (offset, length, CRC-32). The audio is the original file as
 //! the server has it, not re-encoded; it is read through a window on the
 //! container, so playback seeks within the file directly. Files are written
-//! to `<name>.part` and renamed when complete, so an interrupted download
-//! never looks like a finished one.
+//! under a temporary name of their own (`.<name>.<process>-<n>.part`) and
+//! renamed when complete, so an interrupted download never looks like a
+//! finished one and two writers (threads, or two running apps) never write
+//! into the same file. A finished container is never changed in place:
+//! readers (playback, the app's list) always see a whole one.
 
 use bl_json::Value;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
 
 pub const MAGIC: &[u8; 8] = b"BLOFFLN\x01";
 /// File name extension of offline copies.
@@ -184,13 +190,27 @@ fn header_bytes(h: &Header, cap: Option<usize>) -> io::Result<(Vec<u8>, usize)> 
 /// audio bytes written so far and may return false to cancel.
 pub fn write(
     path: &Path,
-    mut header: Header,
+    header: Header,
     cover: Option<&[u8]>,
     analysis: Option<&[u8]>,
     audio: &mut dyn Read,
     progress: &mut dyn FnMut(u64) -> bool,
 ) -> io::Result<Header> {
-    let part = part_path(path);
+    write_with(path, header, cover, analysis, audio, progress, None)
+}
+
+/// [`write`] with the header room `cap` when the header fits into it (the
+/// sections then keep the offsets of a container written with that room).
+fn write_with(
+    path: &Path,
+    mut header: Header,
+    cover: Option<&[u8]>,
+    analysis: Option<&[u8]>,
+    audio: &mut dyn Read,
+    progress: &mut dyn FnMut(u64) -> bool,
+    cap: Option<usize>,
+) -> io::Result<Header> {
+    let part = temp_path(path, "part");
     let result = (|| {
         let mut f = BufWriter::with_capacity(256 * 1024, File::create(&part)?);
         // Placeholder header with room for the sections' entries; written
@@ -210,7 +230,9 @@ pub fn write(
             len: u64::MAX,
             crc32: u32::MAX,
         });
-        let (bytes, cap) = header_bytes(&header, None)?;
+        let (bytes, cap) = cap
+            .and_then(|c| header_bytes(&header, Some(c)).ok())
+            .map_or_else(|| header_bytes(&header, None), Ok)?;
         f.write_all(&bytes)?;
         let mut pos = bytes.len() as u64;
         let put = |f: &mut BufWriter<File>, pos: &mut u64, data: &[u8]| -> io::Result<Section> {
@@ -273,10 +295,42 @@ pub fn write(
     }
 }
 
-fn part_path(path: &Path) -> PathBuf {
-    let mut p = path.as_os_str().to_owned();
-    p.push(".part");
-    PathBuf::from(p)
+/// A temporary file next to `path` that no other writer uses:
+/// `.<name>.<process id>-<counter>.<kind>`.
+fn temp_path(path: &Path, kind: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(
+        ".{name}.{}-{}.{kind}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Whether `name` is a temporary file of this crate (or of older versions,
+/// which wrote `<name>.part` and `<name>.new`).
+pub fn is_temp_name(name: &str) -> bool {
+    name.ends_with(".part") || name.ends_with(".blo.new") || (name.starts_with('.') && name.ends_with(".new"))
+}
+
+/// Removes temporary files in `dir` left by an interrupted write (a crash,
+/// a killed app) that were last written more than `age` ago.
+pub fn remove_stale_temp(dir: &Path, age: Duration) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|d| d > age);
+        if is_temp_name(&name) && old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 fn bad(msg: &str) -> io::Error {
@@ -285,7 +339,11 @@ fn bad(msg: &str) -> io::Error {
 
 /// Reads the header of an offline copy.
 pub fn read_header(path: &Path) -> io::Result<Header> {
-    let mut f = File::open(path)?;
+    read_header_from(&mut File::open(path)?).map(|(h, _)| h)
+}
+
+/// The header and its room, from an open container.
+fn read_header_from(f: &mut File) -> io::Result<(Header, usize)> {
     let file_len = f.metadata()?.len();
     let mut prefix = [0u8; PREFIX_LEN as usize];
     f.read_exact(&mut prefix)?;
@@ -307,15 +365,39 @@ pub fn read_header(path: &Path) -> io::Result<Header> {
             return Err(bad("section outside the file"));
         }
     }
-    Ok(h)
+    Ok((h, cap as usize))
+}
+
+/// Opens an offline copy for playback: its header and its audio, both from
+/// the same open file, so they match even when the container is replaced
+/// meanwhile (e.g. by a song text change).
+pub fn open(path: &Path) -> io::Result<(Header, Window)> {
+    let mut f = File::open(path)?;
+    let (h, _) = read_header_from(&mut f)?;
+    let w = Window::new(f, h.audio.offset, h.audio.len)?;
+    Ok((h, w))
+}
+
+/// Reads the section `pick` chooses from the current container (header and
+/// section from the same open file), checking its CRC-32.
+pub fn read_current_section(
+    path: &Path,
+    pick: impl FnOnce(&Header) -> Option<Section>,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut f = File::open(path)?;
+    let (h, _) = read_header_from(&mut f)?;
+    pick(&h).map(|s| read_section_from(&mut f, s)).transpose()
 }
 
 /// Reads a whole (small) section, checking its CRC-32.
 pub fn read_section(path: &Path, s: Section) -> io::Result<Vec<u8>> {
+    read_section_from(&mut File::open(path)?, s)
+}
+
+fn read_section_from(f: &mut File, s: Section) -> io::Result<Vec<u8>> {
     if s.len > 64 << 20 {
         return Err(bad("section too large"));
     }
-    let mut f = File::open(path)?;
     f.seek(SeekFrom::Start(s.offset))?;
     let mut data = vec![0u8; s.len as usize];
     f.read_exact(&mut data)?;
@@ -348,39 +430,50 @@ pub fn verify(path: &Path) -> io::Result<bool> {
     Ok(c.finish() == h.audio.crc32)
 }
 
-/// Replaces the song text (in place when it fits into the header room,
-/// else by rewriting the file).
+/// Replaces the song text (see [`update_header`]).
 pub fn set_lyrics(path: &Path, lyrics: Option<(String, String)>) -> io::Result<()> {
-    let mut h = read_header(path)?;
-    h.lyrics = lyrics;
-    let mut f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)?;
-    let mut prefix = [0u8; PREFIX_LEN as usize];
-    f.read_exact(&mut prefix)?;
-    let cap = u32::from_le_bytes(prefix[8..12].try_into().expect("4 bytes")) as usize;
-    if let Ok((bytes, _)) = header_bytes(&h, Some(cap)) {
-        f.seek(SeekFrom::Start(0))?;
-        f.write_all(&bytes)?;
-        return f.sync_all();
-    }
-    drop(f);
-    // Rewrite with a larger header.
-    let cover = h.cover.map(|s| read_section(path, s)).transpose()?;
-    let analysis = h.analysis.map(|s| read_section(path, s)).transpose()?;
-    let mut src = audio(path, &h)?;
-    let tmp = path.with_extension("blo.new");
-    let written = write(
+    update_header(path, |h| h.lyrics = lyrics)
+}
+
+/// Changes the header. The container is written anew under a temporary
+/// name and renamed over the old one, never changed in place: playback
+/// may be reading the file, the app may read its header, and a crash in
+/// the middle must not leave a header that looks damaged (damaged copies
+/// are removed). Changes in this process run one after another.
+pub fn update_header(path: &Path, change: impl FnOnce(&mut Header)) -> io::Result<()> {
+    static UPDATES: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = UPDATES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut f = File::open(path)?;
+    let (mut h, cap) = read_header_from(&mut f)?;
+    change(&mut h);
+    let audio_crc = h.audio.crc32;
+    let cover = h.cover.map(|s| read_section_from(&mut f, s)).transpose()?;
+    let analysis = h.analysis.map(|s| read_section_from(&mut f, s)).transpose()?;
+    let mut src = Window::new(f, h.audio.offset, h.audio.len)?;
+    let tmp = temp_path(path, "new");
+    // The same room when the header still fits: every section stays where
+    // it was, so a header read before (kept by the app) still points right.
+    let result = write_with(
         &tmp,
         h,
         cover.as_deref(),
         analysis.as_deref(),
         &mut src,
         &mut |_| true,
-    )?;
-    let _ = written;
-    std::fs::rename(&tmp, path)
+        Some(cap),
+    )
+    .and_then(|written| {
+        // A copy whose audio was damaged stays as it is (and is found
+        // out by `verify`) instead of getting a fresh checksum.
+        if written.audio.crc32 != audio_crc {
+            return Err(bad("audio damaged"));
+        }
+        std::fs::rename(&tmp, path)
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// A window `[offset, offset + len)` of a file, read and seeked as if it
@@ -448,6 +541,103 @@ mod tests {
         d.join("song.blo")
     }
 
+    /// Files other than `path` in its folder.
+    fn temp_files(path: &Path) -> Vec<String> {
+        std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| Some(n.as_str()) != path.file_name().and_then(|f| f.to_str()))
+            .collect()
+    }
+
+    /// Lyrics change on several threads while others read the header and
+    /// the audio, as when a lyrics sync and playback meet: every read sees
+    /// a whole container, nothing is left behind.
+    #[test]
+    fn header_changes_while_reading() {
+        let path = tmp("race");
+        let data: Vec<u8> = (0..200_000u32).map(|i| (i * 7 % 251) as u8).collect();
+        let h = Header {
+            track: Value::object().with("id", "race1"),
+            ext: "flac".into(),
+            ..Default::default()
+        };
+        write(&path, h, Some(b"cover"), None, &mut &data[..], &mut |_| true).unwrap();
+        let texts: Vec<String> = (0..6).map(|i| format!("{i}").repeat(1 + i * 5000)).collect();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|s| {
+            let readers: Vec<_> = (0..2)
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut n = 0;
+                        while !stop.load(Ordering::Relaxed) {
+                            match open(&path) {
+                                Ok((h, mut w)) => {
+                                    let mut a = Vec::new();
+                                    w.read_to_end(&mut a).unwrap();
+                                    // Replaced meanwhile: the open file is still whole.
+                                    assert_eq!(a, data);
+                                    assert!(h.lyrics.is_none_or(|(t, _)| texts.contains(&t)));
+                                    let c = read_current_section(&path, |h| h.cover).unwrap();
+                                    assert_eq!(c.as_deref(), Some(&b"cover"[..]));
+                                    n += 1;
+                                }
+                                Err(_) if cfg!(windows) => {}
+                                Err(e) => panic!("a reader saw a broken container: {e}"),
+                            }
+                        }
+                        n
+                    })
+                })
+                .collect();
+            let writers: Vec<_> = texts
+                .iter()
+                .map(|t| {
+                    let path = &path;
+                    s.spawn(move || {
+                        for _ in 0..3 {
+                            set_lyrics(path, Some((t.clone(), "test".into()))).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for w in writers {
+                w.join().unwrap();
+            }
+            stop.store(true, Ordering::Relaxed);
+            for r in readers {
+                let n: i32 = r.join().unwrap();
+                assert!(n > 0 || cfg!(windows));
+            }
+        });
+        let h = read_header(&path).unwrap();
+        assert!(texts.contains(&h.lyrics.unwrap().0));
+        assert!(verify(&path).unwrap());
+        assert_eq!(read_section(&path, h.cover.unwrap()).unwrap(), b"cover");
+        assert_eq!(temp_files(&path), Vec::<String>::new());
+    }
+
+    #[test]
+    fn stale_temporary_files_are_removed() {
+        let path = tmp("stale");
+        let dir = path.parent().unwrap().to_path_buf();
+        for n in [".song.blo.1-2.part", "song.blo.part", "song.blo.new", ".x.blo.3-4.new"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        std::fs::write(dir.join("keep.blo"), b"x").unwrap();
+        remove_stale_temp(&dir, Duration::from_secs(3600));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 5, "fresh files stay");
+        std::thread::sleep(Duration::from_millis(20));
+        remove_stale_temp(&dir, Duration::from_millis(1));
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["keep.blo".to_string()]);
+    }
+
     #[test]
     fn crc32_matches_reference() {
         let mut c = Crc32::default();
@@ -481,7 +671,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(seen, data.len() as u64);
-        assert!(!part_path(&path).exists());
+        assert_eq!(temp_files(&path), Vec::<String>::new());
         let h = read_header(&path).unwrap();
         assert_eq!(h, written);
         assert_eq!(h.id(), "abc123");
@@ -508,9 +698,15 @@ mod tests {
         assert_eq!(b, data[1000..1005]);
         assert!(w.seek(SeekFrom::Current(-2000)).is_err());
 
-        // Song text: in place, then too large for the header room.
+        // Song text: within the header room (every section stays where it
+        // was), then too large for it.
         set_lyrics(&path, Some(("new text".into(), "imported".into()))).unwrap();
-        assert_eq!(read_header(&path).unwrap().lyrics.unwrap().0, "new text");
+        let after = read_header(&path).unwrap();
+        assert_eq!(after.lyrics.as_ref().unwrap().0, "new text");
+        assert_eq!(
+            (after.audio, after.cover, after.analysis),
+            (h.audio, h.cover, h.analysis)
+        );
         let big = "x".repeat(20_000);
         set_lyrics(&path, Some((big.clone(), "imported".into()))).unwrap();
         let h = read_header(&path).unwrap();
@@ -536,7 +732,8 @@ mod tests {
             &mut |n| n < 100_000,
         );
         assert!(err.is_err());
-        assert!(!path.exists() && !part_path(&path).exists());
+        assert!(!path.exists());
+        assert_eq!(temp_files(&path), Vec::<String>::new());
         write(&path, h, None, None, &mut &[1u8; 10_000][..], &mut |_| true).unwrap();
         // Flip a byte of the audio.
         let mut d = std::fs::read(&path).unwrap();

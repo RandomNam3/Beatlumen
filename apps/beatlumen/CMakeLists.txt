@@ -142,6 +142,10 @@ endif()
 
 # "Stay unlocked on this device": the platform's protected store.
 target_sources(beatlumen PRIVATE src/secrets.cpp src/secrets.h)
+# One app per data folder on desktops (single_instance.cpp).
+if(NOT ANDROID AND NOT EMSCRIPTEN)
+    target_sources(beatlumen PRIVATE src/single_instance.cpp src/single_instance.h)
+endif()
 # The desktop's media controls and media keys (media_desktop.cpp).
 if(WIN32)
     target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
@@ -201,10 +205,12 @@ elseif(ANDROID)
     target_sources(beatlumen PRIVATE src/audio_direct_android.cpp src/audio_direct.h)
     target_compile_definitions(beatlumen PRIVATE BEATLUMEN_DIRECT_AUDIO)
     # Deploy only the plugins the app uses: no Qt Multimedia (audio goes
-    # through AAudio), no QML debugging, TLS or network information.
+    # through AAudio), no QML debugging, TLS or network information. Of the
+    # image readers only SVG, for the app's own icons: every other picture
+    # is decoded by the core (image://server, image://thumb).
     qt_import_plugins(beatlumen
         INCLUDE_BY_TYPE
-            imageformats Qt6::QJpegPlugin Qt6::QWebpPlugin Qt6::QGifPlugin Qt6::QSvgPlugin
+            imageformats Qt6::QSvgPlugin
         EXCLUDE Qt6::QOffscreenIntegrationPlugin
         EXCLUDE_BY_TYPE qmltooling tls networkinformation multimedia)
     set(BL_ANDROID_VERSION_CODE 120 CACHE STRING "android:versionCode")

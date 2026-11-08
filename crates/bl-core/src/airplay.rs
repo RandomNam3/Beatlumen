@@ -293,7 +293,7 @@ impl Core {
         };
         // A new URL per picture, so image caches show the new one.
         self.airplay.cover_url =
-            format!("{}#{}", crate::core::file_url(&path), self.airplay.serial);
+            format!("{}#{}", self.picture_url(&path), self.airplay.serial);
         if let Some(t) = self
             .current
             .as_mut()

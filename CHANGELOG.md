@@ -11,6 +11,32 @@
   timeout. `GET /api/health` (no login) reports whether the server works and its data folder takes
   writes; `--health-check` and the image's health check use it. The Quadlet unit's health check
   works now (it ran through a shell the image does not have).
+- **Apps hardened against crafted files and network data:**
+  - Every picture from outside is decoded by Beatlumen's own image decoders, which have size
+    and memory limits: covers in music files and next to them, covers from the server, from
+    AirPlay and DLNA senders and from other apps' playback, artist pictures and backgrounds.
+    The apps no longer ship Qt's JPEG, GIF, WebP and other image readers (only SVG, for the
+    app's own icons). Android's media notification and the desktop's media controls get
+    pictures made from the decoded pixels instead of the original files. A damaged picture
+    shows the placeholder.
+  - A bug that makes the core panic no longer ends the app: calls from the interface, worker
+    jobs, the decoder, the library scan and the network listeners catch it. The work in
+    question ends with an error (a song is skipped, a cover stays empty), audio is silent for
+    a moment, and the app says once that an internal error happened.
+  - The live stream for DLNA speakers and Chromecast checks its secret address before
+    reading anything else and takes at most eight connections; requests must arrive within
+    10 seconds and stay short. The same for the sign-in page's return to the app, which also
+    stops listening after 15 minutes. The DLNA receiver takes at most 16 connections, each
+    request within 15 seconds, and reads bodies as they arrive. AirPlay connections must send
+    their first request within 10 seconds, and a crash in one no longer uses up a place.
+  - Settings, the library and covers are written to a temporary file of their own and then
+    renamed, so two writers never mix. Changing the song text of an offline copy writes a new
+    copy instead of overwriting its header while the song plays; a cut-off write could
+    formerly make the copy look damaged, and damaged copies are removed.
+  - On desktops only one Beatlumen runs per data folder: starting it again (for example by
+    opening a song from the file manager) hands the files to the running app and brings its
+    window to the front.
+  - Rust 1.82 or newer is needed to build.
 - **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
   PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
   are read, so they never exist at full size: a 16K image needs about 16 MB of working memory

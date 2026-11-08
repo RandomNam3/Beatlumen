@@ -14,7 +14,7 @@ use crate::xml;
 use bl_net::http::{read_headers, read_line};
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,10 @@ const SSDP_PORT: u16 = 1900;
 const MAX_AGE: u32 = 1800;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_SUBSCRIPTIONS: usize = 32;
+/// Control points connected at the same time; more are turned away.
+const MAX_CONNECTIONS: usize = 16;
+/// Time a control point has to send its whole request.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(15);
 
 const DEVICE_TYPE: &str = "urn:schemas-upnp-org:device:MediaRenderer:1";
 const AVT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
@@ -166,6 +170,10 @@ struct Shared {
     /// Events to send: service whose state changed.
     pending: Mutex<Vec<&'static str>>,
     stop: AtomicBool,
+    /// Open HTTP connections.
+    connections: AtomicUsize,
+    /// Time a control point has to send its request ([`REQUEST_DEADLINE`]).
+    deadline: Duration,
 }
 
 pub struct Renderer {
@@ -216,23 +224,13 @@ impl Renderer {
             subs: Mutex::new(Vec::new()),
             pending: Mutex::new(Vec::new()),
             stop: AtomicBool::new(false),
+            connections: AtomicUsize::new(0),
+            deadline: REQUEST_DEADLINE,
         });
         let mut threads = Vec::new();
         {
             let s = shared.clone();
-            threads.push(spawn("bl-upnp-http", move || {
-                while !s.stop.load(Ordering::Relaxed) {
-                    match listener.accept() {
-                        Ok((conn, peer)) => {
-                            let s = s.clone();
-                            let _ = spawn("bl-upnp-conn", move || {
-                                let _ = handle(&s, conn, peer);
-                            });
-                        }
-                        Err(_) => std::thread::sleep(Duration::from_millis(50)),
-                    }
-                }
-            })?);
+            threads.push(spawn("bl-upnp-http", move || http_loop(&s, listener))?);
         }
         {
             let s = shared.clone();
@@ -424,6 +422,70 @@ fn ssdp_loop(s: &Shared, sock: UdpSocket) {
 
 // ---- HTTP ------------------------------------------------------------------------
 
+/// Accepts control points (on a non-blocking listener) until stopped.
+fn http_loop(s: &Arc<Shared>, listener: TcpListener) {
+    while !s.stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((conn, peer)) => {
+                // Turned away when too many are open, so a flood of
+                // connections takes no more threads.
+                let Some(slot) = Slot::take(s) else {
+                    drop(conn);
+                    continue;
+                };
+                let s = s.clone();
+                let _ = spawn("bl-upnp-conn", move || {
+                    let _slot = slot;
+                    // A panic ends this request, not the app.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handle(&s, conn, peer)
+                    }));
+                });
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
+/// A place among the [`MAX_CONNECTIONS`] open connections, given back when
+/// dropped (also when the handler panics).
+struct Slot(Arc<Shared>);
+
+impl Slot {
+    fn take(s: &Arc<Shared>) -> Option<Slot> {
+        if s.connections.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+            s.connections.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(Slot(s.clone()))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.connections.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Reads from a connection until a deadline: each read waits at most for
+/// what is left, so a control point sending a byte now and then cannot
+/// keep a connection (and its thread) forever.
+struct DeadlineReader {
+    conn: TcpStream,
+    deadline: Instant,
+}
+
+impl Read for DeadlineReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.conn.set_read_timeout(Some(left))?;
+        self.conn.read(buf)
+    }
+}
+
 fn respond(
     conn: &mut TcpStream,
     status: &str,
@@ -440,15 +502,22 @@ fn respond(
 }
 
 fn handle(s: &Shared, conn: TcpStream, peer: SocketAddr) -> std::io::Result<()> {
-    conn.set_read_timeout(Some(Duration::from_secs(10)))?;
     conn.set_write_timeout(Some(Duration::from_secs(10)))?;
-    let mut reader = BufReader::new(conn.try_clone()?);
+    let _ = conn.set_nonblocking(false);
+    let mut reader = BufReader::new(DeadlineReader {
+        conn: conn.try_clone()?,
+        deadline: Instant::now() + s.deadline,
+    });
     let mut limit = 32 * 1024;
     let Some(line) = read_line(&mut reader, &mut limit)? else {
         return Ok(());
     };
     let headers = read_headers(&mut reader, &mut limit)?;
-    let len = headers.content_length().unwrap_or(0) as usize;
+    let len = match headers.content_length() {
+        Some(n) if n > MAX_BODY as u64 => usize::MAX,
+        Some(n) => n as usize,
+        None => 0,
+    };
     if len > MAX_BODY {
         return respond(
             &mut conn.try_clone()?,
@@ -458,8 +527,12 @@ fn handle(s: &Shared, conn: TcpStream, peer: SocketAddr) -> std::io::Result<()> 
             b"",
         );
     }
-    let mut body = vec![0u8; len];
-    reader.read_exact(&mut body)?;
+    // Grows with what arrives: a claimed length costs nothing up front.
+    let mut body = Vec::with_capacity(len.min(16 * 1024));
+    (&mut reader).take(len as u64).read_to_end(&mut body)?;
+    if body.len() < len {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
     let mut parts = line.split_whitespace();
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut conn = conn;
@@ -506,6 +579,8 @@ fn handle(s: &Shared, conn: TcpStream, peer: SocketAddr) -> std::io::Result<()> 
                         .next()
                         .map(str::to_string)
                 })
+                // It is echoed in the answer's tags: names only.
+                .filter(|a| a.len() <= 64 && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
                 .unwrap_or_default();
             let client = Client {
                 ip: peer.ip(),
@@ -1274,6 +1349,134 @@ mod tests {
         assert_eq!(m.art_url, "http://x/cover.jpg");
         assert_eq!(m.duration, Some(205.5));
         assert_eq!(m.mime, "audio/flac");
+    }
+
+    /// A renderer's HTTP side without SSDP (no multicast in tests).
+    fn http_only(deadline: Duration) -> (Arc<Shared>, SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shared = Arc::new(Shared {
+            config: Config {
+                name: "Test".into(),
+                udn: "uuid:test".into(),
+                sink_protocols: vec!["http-get:*:audio/mpeg:*".into()],
+            },
+            port: addr.port(),
+            media: Mutex::new(Media::default()),
+            status: Mutex::new(Status::default()),
+            commands: Mutex::new(Vec::new()),
+            subs: Mutex::new(Vec::new()),
+            pending: Mutex::new(Vec::new()),
+            stop: AtomicBool::new(false),
+            connections: AtomicUsize::new(0),
+            deadline,
+        });
+        let s = shared.clone();
+        let t = std::thread::spawn(move || http_loop(&s, listener));
+        (shared, addr, t)
+    }
+
+    fn get(addr: SocketAddr, request: &[u8]) -> String {
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(request).unwrap();
+        let mut out = Vec::new();
+        let _ = c.read_to_end(&mut out);
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Waits until `f` holds (at most a few seconds).
+    fn eventually(f: impl Fn() -> bool) -> bool {
+        let end = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < end {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn too_many_connections_are_turned_away() {
+        let (s, addr, t) = http_only(Duration::from_secs(30));
+        let idle: Vec<TcpStream> = (0..MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect(addr).unwrap())
+            .collect();
+        assert!(eventually(|| s.connections.load(Ordering::SeqCst) == MAX_CONNECTIONS));
+        // One more is closed at once, without an answer.
+        let mut extra = TcpStream::connect(addr).unwrap();
+        extra.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = [0u8; 16];
+        assert!(matches!(extra.read(&mut buf), Ok(0) | Err(_)));
+        assert_eq!(s.connections.load(Ordering::SeqCst), MAX_CONNECTIONS);
+        // When they go, the places are free again.
+        drop(idle);
+        assert!(eventually(|| s.connections.load(Ordering::SeqCst) == 0));
+        let answer = get(addr, b"GET /description.xml HTTP/1.1\r\nHost: x\r\n\r\n");
+        assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer}");
+        s.stop.store(true, Ordering::SeqCst);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn a_slow_request_is_cut_off_at_the_deadline() {
+        let (s, addr, t) = http_only(Duration::from_millis(400));
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        let start = Instant::now();
+        let mut buf = [0u8; 64];
+        // A byte every 100 ms: each read is quick, the whole is not.
+        let closed = loop {
+            if c.write_all(b"G").is_err() {
+                break true;
+            }
+            match c.read(&mut buf) {
+                Ok(0) => break true,
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(_) => break true,
+            }
+            if start.elapsed() > Duration::from_secs(5) {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(closed, "the connection stayed open");
+        assert!(start.elapsed() < Duration::from_secs(3));
+        assert!(eventually(|| s.connections.load(Ordering::SeqCst) == 0));
+        s.stop.store(true, Ordering::SeqCst);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn oversized_and_short_bodies() {
+        let (s, addr, t) = http_only(Duration::from_millis(500));
+        let answer = get(
+            addr,
+            b"POST /ctl/AVTransport HTTP/1.1\r\nContent-Length: 99999999999\r\n\r\n",
+        );
+        assert!(answer.starts_with("HTTP/1.1 413"), "{answer}");
+        // A claimed megabyte that never comes: closed at the deadline.
+        let answer = get(
+            addr,
+            b"POST /ctl/AVTransport HTTP/1.1\r\nContent-Length: 1048576\r\n\r\nabc",
+        );
+        assert_eq!(answer, "");
+        // Crafted SOAP: an unknown action with markup in its name.
+        let body = "<s:Envelope/>";
+        let req = format!(
+            "POST /ctl/AVTransport HTTP/1.1\r\nSOAPAction: \"urn:x#Play><x\"\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let answer = get(addr, req.as_bytes());
+        assert!(answer.starts_with("HTTP/1.1 500"), "{answer}");
+        assert!(!answer.contains("Play><x"), "{answer}");
+        assert!(eventually(|| s.connections.load(Ordering::SeqCst) == 0));
+        s.stop.store(true, Ordering::SeqCst);
+        t.join().unwrap();
     }
 
     #[test]

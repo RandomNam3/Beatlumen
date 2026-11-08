@@ -97,8 +97,14 @@ pub fn read_request(r: &mut impl BufRead) -> Result<Request, ReadError> {
         if len > MAX_BODY {
             return Err(ReadError::Invalid("body too large"));
         }
-        req.body = vec![0; len];
-        r.read_exact(&mut req.body).map_err(ReadError::Io)?;
+        // Grows with what arrives: a claimed length costs nothing up front.
+        req.body = Vec::with_capacity(len.min(64 * 1024));
+        r.take(len as u64)
+            .read_to_end(&mut req.body)
+            .map_err(ReadError::Io)?;
+        if req.body.len() < len {
+            return Err(ReadError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+        }
     }
     Ok(req)
 }
