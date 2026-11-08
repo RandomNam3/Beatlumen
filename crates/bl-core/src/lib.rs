@@ -9,6 +9,7 @@
 mod account_sync;
 mod airplay;
 mod artists;
+mod background;
 pub mod capture;
 mod commands;
 pub mod core;

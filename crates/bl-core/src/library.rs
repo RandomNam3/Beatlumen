@@ -481,7 +481,7 @@ fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64, u64)>, depth: usize) 
 pub fn is_image_extension(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
-        "jpg" | "jpeg" | "png" | "bmp" | "gif" | "webp"
+        "jpg" | "jpeg" | "png" | "apng" | "bmp" | "gif" | "webp" | "tif" | "tiff"
     )
 }
 

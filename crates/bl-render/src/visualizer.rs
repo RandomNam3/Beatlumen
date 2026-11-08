@@ -62,6 +62,8 @@ pub struct Visualizer {
     limit_valid: bool,
     limit_seed: f32,
     images: HashMap<u64, Texture>,
+    /// Reused for flipping animation frames while uploading them.
+    upload_scratch: Vec<u8>,
     prev_view_proj: HashMap<u64, Mat4>,
     width: u32,
     height: u32,
@@ -165,6 +167,7 @@ impl Visualizer {
             limit_valid: false,
             limit_seed: 0.0,
             images: HashMap::new(),
+            upload_scratch: Vec::new(),
             prev_view_proj: HashMap::new(),
             width: 16,
             height: 16,
@@ -235,6 +238,17 @@ impl Visualizer {
         }
         self.images
             .insert(id, Texture::from_rgba(gl, width, height, rgba, false));
+    }
+
+    /// Replaces the pixels of an image of the same size (animation frames);
+    /// a different size uploads a new texture.
+    pub fn update_image(&mut self, gl: &Gl, id: u64, width: u32, height: u32, rgba: &[u8]) {
+        match self.images.get(&id) {
+            Some(t) if t.width == width && t.height == height => {
+                t.update(gl, rgba, &mut self.upload_scratch)
+            }
+            _ => self.set_image(gl, id, width, height, rgba),
+        }
     }
 
     pub fn has_image(&self, id: u64) -> bool {
