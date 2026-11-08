@@ -32,6 +32,8 @@ class Bridge : public QObject
     Q_PROPERTY(int safeLeft READ safeLeft NOTIFY safeAreaChanged)
     Q_PROPERTY(int safeRight READ safeRight NOTIFY safeAreaChanged)
     Q_PROPERTY(int safeBottom READ safeBottom NOTIFY safeAreaChanged)
+    // The keyboard's height over the window (Android: it covers the window).
+    Q_PROPERTY(int keyboardHeight READ keyboardHeight NOTIFY safeAreaChanged)
     Q_PROPERTY(QString platform READ platform CONSTANT)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
@@ -49,6 +51,7 @@ public:
     int safeLeft() const { return m_safe.left(); }
     int safeRight() const { return m_safe.right(); }
     int safeBottom() const { return m_safe.bottom(); }
+    int keyboardHeight() const { return m_keyboard; }
     double position() const { return m_position; }
     bool systemDark() const;
     QColor systemAccent() const;
@@ -119,7 +122,8 @@ private:
     bool m_powerSaving = false;
     QTimer m_frameTimer;
     QMargins m_safe;
-    bool m_safeWide = false;
+    int m_keyboard = 0;
+    QTimer m_safeTimer;
     void updateSafeArea();
     QTimer m_timer;
     QQuickWindow *m_window = nullptr;

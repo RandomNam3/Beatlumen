@@ -9,6 +9,9 @@
 #include "web.h"
 
 #include <QAccessible>
+#include <QInputMethod>
+#include <QPointer>
+#include <cmath>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDateTime>
@@ -750,6 +753,11 @@ void Bridge::attachWindow(QQuickWindow *window)
     connect(window, &QWindow::safeAreaMarginsChanged, this, &Bridge::updateSafeArea);
     connect(window, &QWindow::widthChanged, this, &Bridge::updateSafeArea);
     connect(window, &QWindow::heightChanged, this, &Bridge::updateSafeArea);
+    connect(QGuiApplication::inputMethod(), &QInputMethod::visibleChanged, this, &Bridge::updateSafeArea);
+    connect(QGuiApplication::inputMethod(), &QInputMethod::keyboardRectangleChanged, this, &Bridge::updateSafeArea);
+    // Bars and keyboard move without telling Qt every time: a look now and then.
+    connect(&m_safeTimer, &QTimer::timeout, this, &Bridge::updateSafeArea);
+    m_safeTimer.start(1000);
     updateSafeArea();
     // This thread does everything, and Android's main thread waits for it when
     // it wants to know something (keyboard, accessibility). So it has to come
@@ -773,20 +781,35 @@ void Bridge::attachWindow(QQuickWindow *window)
 
 void Bridge::updateSafeArea()
 {
-    if (!m_window)
+#ifdef Q_OS_ANDROID
+    if (!m_window || !qGuiApp || qGuiApp->applicationState() != Qt::ApplicationActive)
         return;
-    const QMargins now = m_window->safeAreaMargins();
-    // Bars that hide leave their room empty rather than have everything move.
-    // Only turning the screen changes what they cover.
-    const bool wide = m_window->width() > m_window->height();
-    const QMargins next = wide != m_safeWide ? now
-        : QMargins(qMax(m_safe.left(), now.left()), qMax(m_safe.top(), now.top()),
-                   qMax(m_safe.right(), now.right()), qMax(m_safe.bottom(), now.bottom()));
-    m_safeWide = wide;
-    if (next != m_safe) {
-        m_safe = next;
-        emit safeAreaChanged();
-    }
+    // Bars that hide keep their room (WindowGaps.java): nothing moves when
+    // they come and go. Asked on Android's main thread, applied here.
+    QPointer<Bridge> self(this);
+    const qreal dpr = m_window->devicePixelRatio();
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([self, dpr]() {
+        QJniObject context = QNativeInterface::QAndroidApplication::context();
+        const QJniObject gaps = QJniObject::callStaticObjectMethod(
+            "io/github/randomnam3/beatlumen/WindowGaps", "of", "(Landroid/content/Context;)[I",
+            context.object<jobject>());
+        QJniEnvironment env;
+        jint v[5] = {};
+        if (!gaps.isValid() || env->GetArrayLength(gaps.object<jintArray>()) < 5)
+            return;
+        env->GetIntArrayRegion(gaps.object<jintArray>(), 0, 5, v);
+        const auto px = [dpr](jint n) { return int(std::ceil(n / dpr)); };
+        const QMargins next(px(v[0]), px(v[1]), px(v[2]), px(v[3]));
+        const int keyboard = px(v[4]);
+        QMetaObject::invokeMethod(qApp, [self, next, keyboard]() {
+            if (!self || (next == self->m_safe && keyboard == self->m_keyboard))
+                return;
+            self->m_safe = next;
+            self->m_keyboard = keyboard;
+            emit self->safeAreaChanged();
+        });
+    });
+#endif
 }
 
 void Bridge::renderUnderlay()

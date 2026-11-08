@@ -37,7 +37,10 @@ ApplicationWindow {
     readonly property int insetLeft: Core.safeLeft
     readonly property int insetRight: Core.safeRight
     readonly property int insetBottom: Core.safeBottom
-    readonly property real keyboard: Qt.inputMethod.visible ? Qt.inputMethod.keyboardRectangle.height : 0
+    // Android tells it itself (Qt's rectangle there is in pixels, not in the
+    // window's units).
+    readonly property real keyboard: Core.platform === "android" ? Core.keyboardHeight
+        : Qt.inputMethod.visible ? Qt.inputMethod.keyboardRectangle.height : 0
     readonly property real bottomGap: Math.max(insetBottom, keyboard)
     // Dialogs and sheets stay above the keyboard.
     Binding { target: Overlay.overlay; property: "height"; value: win.height - win.keyboard; when: win.keyboard > 0 }
