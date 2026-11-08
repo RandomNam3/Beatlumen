@@ -315,7 +315,7 @@ impl Rooms {
                 name: clip(v.str_or("name", ""), 64),
                 token: token.clone(),
                 guest: false,
-                device,
+                device: device.clone(),
                 scope: scope.to_string(),
                 ready_gen: 0,
                 drift_ms: None,
@@ -339,6 +339,17 @@ impl Rooms {
         let json = room_json(&id, &room);
         inner.rooms.insert(id.clone(), room);
         inner.tokens.insert(token.clone(), (id, member.clone()));
+        drop(inner);
+        // As on joining: the host's request already waiting on the event channel
+        // looks again, now with the room. (It used to come back only by chance,
+        // when the host's own device announcement made an event.)
+        if !scope.is_empty() {
+            state.devices.notify_device(
+                scope,
+                &device,
+                Value::object().with("type", "room.joined"),
+            );
+        }
         Response::json(
             201,
             &Value::object()

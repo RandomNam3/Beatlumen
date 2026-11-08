@@ -8,7 +8,8 @@
   while it plays every device keeps itself in step, in steps too small to be heard. People
   without a login can join as guests: they get this room's songs and nothing else, and only
   while it lasts. The host can turn guests off for a room, the admin for the server (Admin
-  area, `--no-room-guests`).
+  area, `--no-room-guests`). The host hears what happens in a new room at once, too: before, that
+  took the host's own next device report.
 - **Devices playing together** ask for the server's time more carefully (corrected by the
   round trip) and now stay in step while they play.
 - **Android, no more "not responding":** with any accessibility service on (a password manager
