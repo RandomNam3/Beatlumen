@@ -173,8 +173,9 @@ pub fn file(
         }
     }
     let mut meta = vec![0u8; 4];
+    // FullBox header, pre_defined, handler type, 3 reserved, empty name.
     let mut hdlr = vec![0u8; 8];
-    hdlr[4..8].copy_from_slice(b"pict");
+    hdlr.extend_from_slice(b"pict");
     hdlr.extend_from_slice(&[0u8; 13]);
     put_box(&mut meta, b"hdlr", &hdlr);
     let mut pitm = vec![0u8; 4];

@@ -538,6 +538,10 @@ fn avif_container_features() {
 fn fake_system_decoder(file: &[u8], need_w: u32, need_h: u32) -> Option<Image> {
     assert!(&file[4..12] == b"ftypheic", "a HEIC file");
     let find = |kind: &[u8]| file.windows(4).position(|w| w == kind);
+    // hdlr: FullBox header and pre_defined, then the handler type (system
+    // decoders reject the file otherwise).
+    let hdlr = find(b"hdlr")?;
+    assert_eq!(&file[hdlr + 12..hdlr + 16], b"pict");
     find(b"hvcC")?;
     let ispe = find(b"ispe")?;
     let rd = |o: usize| u32::from_be_bytes(file[o..o + 4].try_into().unwrap());
