@@ -727,6 +727,28 @@ void Bridge::handleEvents(const QByteArray &json)
     }
 }
 
+#ifdef Q_OS_ANDROID
+// The window reaches under the system's bars. Qt asks for that only up to
+// Android 15 and leaves it to the system from Android 16 on: there the content
+// stopped at the bars while Qt kept the window as high as the screen, and the
+// bottom of the app hung off the screen.
+static void layOutUnderBars(const QJniObject &window)
+{
+    if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30)
+        window.callMethod<void>("setDecorFitsSystemWindows", "(Z)V", jboolean(false));
+}
+
+static void layOutUnderBarsNow()
+{
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([]() {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+        if (window.isValid())
+            layOutUnderBars(window);
+    });
+}
+#endif
+
 void Bridge::attachWindow(QQuickWindow *window)
 {
     if (!window || m_window == window)
@@ -750,6 +772,7 @@ void Bridge::attachWindow(QQuickWindow *window)
     // window keeps its size when the bars come and go, so nothing has to be laid
     // out and allocated anew in the middle of fading the controls.
     window->setFlag(Qt::ExpandedClientAreaHint, true);
+    layOutUnderBarsNow();
     connect(window, &QWindow::safeAreaMarginsChanged, this, &Bridge::updateSafeArea);
     connect(window, &QWindow::widthChanged, this, &Bridge::updateSafeArea);
     connect(window, &QWindow::heightChanged, this, &Bridge::updateSafeArea);
@@ -908,6 +931,7 @@ void Bridge::setSystemBarsHidden(bool hidden)
         QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
         if (!window.isValid())
             return;
+        layOutUnderBars(window);
         if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
             QJniObject ctl = window.callObjectMethod("getInsetsController", "()Landroid/view/WindowInsetsController;");
             if (!ctl.isValid())
