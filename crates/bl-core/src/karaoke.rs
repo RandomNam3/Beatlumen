@@ -13,6 +13,9 @@
 //! Computed data names the song text it was made from and is dropped when
 //! the text changes; imported data stays.
 
+// The browser build computes nothing on the device (no speech models).
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_variables))]
+
 use crate::core::{Core, Req};
 use crate::host::Host;
 use crate::jobs::Mailbox;

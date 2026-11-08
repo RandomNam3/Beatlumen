@@ -5,6 +5,9 @@
 //! of it is kept beyond the last half minute, for scoring the text of the
 //! lines just sung (`karaoke_text`).
 
+// The browser build computes nothing on the device (no speech models).
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_variables))]
+
 use crate::core::Core;
 use crate::host::Host;
 use crate::mic;
@@ -226,6 +229,16 @@ pub(crate) struct SessionState {
 
 /// Points for the text in all.
 const TEXT_POINTS: f64 = 1000.0;
+/// Below this text score (`bl_align::Head::sung_score`) a line's words
+/// count as not sung, above `TEXT_FULL` as sung fully (measured: the song's
+/// own vocals score 0.27-0.34 in the median, another line's words 0.10).
+const TEXT_NONE: f32 = 0.08;
+const TEXT_FULL: f32 = 0.28;
+
+/// A line's share of its text points from its score (0..1).
+fn text_accuracy(score: f32) -> f64 {
+    ((score - TEXT_NONE) / (TEXT_FULL - TEXT_NONE)).clamp(0.0, 1.0) as f64
+}
 
 fn text_state_name(s: TextState) -> &'static str {
     match s {
@@ -299,7 +312,7 @@ impl Session {
         for (line, score) in &s.text_scores {
             let Some(score) = score else { continue };
             let letters = self.line_texts.get(*line).map_or(0, |l| l.1) as f64;
-            got += crate::karaoke_text::accuracy(*score) * letters;
+            got += text_accuracy(*score) * letters;
             all += letters;
         }
         Some(if all > 0.0 {
@@ -396,9 +409,7 @@ impl Session {
                                 .iter()
                                 .find(|(i, _)| *i == l.line)
                                 .and_then(|(_, sc)| *sc)
-                                .map(|sc| {
-                                    (crate::karaoke_text::accuracy(sc) * 1000.0).round() / 1000.0
-                                });
+                                .map(|sc| (text_accuracy(sc) * 1000.0).round() / 1000.0);
                             Value::object()
                                 .with("line", l.line as u64)
                                 .with(
@@ -606,5 +617,17 @@ impl Core {
         }
         self.karaoke_session.rev += 1;
         self.karaoke_results()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_scores_to_shares() {
+        assert_eq!(text_accuracy(0.05), 0.0);
+        assert_eq!(text_accuracy(0.5), 1.0);
+        assert!((text_accuracy(0.18) - 0.5).abs() < 1e-6);
     }
 }

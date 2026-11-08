@@ -11,3 +11,7 @@ bl-json = { path = "../bl-json" }
 bl-media = { path = "../bl-media" }
 bl-pitch = { path = "../bl-pitch" }
 bl-sep = { path = "../bl-sep" }
+
+[dev-dependencies]
+# The karaoke_time example sets the number of threads.
+bl-asr = { path = "../bl-asr" }

@@ -11,11 +11,6 @@ use crate::jobs::Mailbox;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-/// Below this score a line's words count as not sung, above `FULL` as
-/// sung fully (measured: the song's own vocals score 0.27-0.34 in the
-/// median, another line's words 0.10).
-pub(crate) const NONE: f32 = 0.08;
-pub(crate) const FULL: f32 = 0.28;
 /// Lines waiting at most; a slow device skips the oldest.
 const MAX_WAITING: usize = 3;
 
@@ -42,11 +37,6 @@ pub(crate) enum Answer {
 pub(crate) struct TextScorer {
     tx: mpsc::Sender<Job>,
     pub answers: Mailbox<Answer>,
-}
-
-/// A line's share of its text points from its score (0..1).
-pub(crate) fn accuracy(score: f32) -> f64 {
-    ((score - NONE) / (FULL - NONE)).clamp(0.0, 1.0) as f64
 }
 
 /// The speech model to score with: the picked one when it has a head,
@@ -129,13 +119,6 @@ impl TextScorer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn scores_to_shares() {
-        assert_eq!(accuracy(0.05), 0.0);
-        assert_eq!(accuracy(0.5), 1.0);
-        assert!((accuracy(0.18) - 0.5).abs() < 1e-6);
-    }
 
     #[test]
     fn models_with_heads() {
