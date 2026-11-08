@@ -334,6 +334,27 @@ def wide_window():
     print("ok: wide window, selection, recent searches")
 
 
+def phone_page_menu():
+    app = start((390, 844), True)
+    app.set("page", 0)
+    # A playlist's own ⋮ is about the playlist, even with a single song in it.
+    app.core("playlist.create", name="Solo", kind="track", items=[song_id("Alpha")])
+    app.click_text("Playlists")
+    app.click_text("Solo")
+    app.shows("1 song")
+    time.sleep(0.8)  # the page slides in
+    songs = len(app.labels("Alpha"))
+    more = sorted(app.wait("its menu", lambda: app.named("More")), key=lambda i: i["y"])
+    app.click(more[0])
+    app.shows("Rename")
+    assert len(app.labels("Alpha")) == songs, "the sheet is headed by the playlist, not its song"
+    assert not app.labels("Labels…"), "no labels of a song"
+    app.key("Escape")
+    app.gone("Rename")
+    app.quit()
+    print("ok: a page's own menu")
+
+
 def check_log():
     allowed = ("Accessible attached property",)
     with open(LOG, encoding="utf8") as f:
@@ -392,6 +413,7 @@ def main():
         desktop()
         wide_window()
         swiping_pages()
+        phone_page_menu()
         check_log()
     except (SystemExit, AssertionError, Exception):
         if os.path.exists(LOG):

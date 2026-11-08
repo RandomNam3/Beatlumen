@@ -15,6 +15,8 @@
   the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
 - **Back in a folder** goes one folder up instead of closing the page.
 - **Dialogs in German:** their buttons said "Cancel", "OK", "Close" and "Save" in English.
+- **A page's own menu on touch screens** (⋮ of a playlist, album or artist) is headed by its name.
+  With a single song in it, it looked like the menu of that song.
 - **Covers that did not show:** some taggers write a stray byte or the picture's description
   before the picture itself. Its start is found now, as other players do, and such covers kept
   from before are read again.

@@ -846,7 +846,7 @@ Item {
                             IconButton {
                                 id: moreButton
                                 iconName: "more_vert"; tip: Theme.tr("More")
-                                onClicked: songMenu.openFor(dp.ids, moreButton, dp.menuItems)
+                                onClicked: songMenu.openFor(dp.ids, moreButton, dp.menuItems, { title: dp.title, subtitle: dp.subtitle })
                             }
                         }
                     }
