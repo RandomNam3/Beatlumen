@@ -13,6 +13,7 @@ AppDialog {
     height: Math.min(implicitHeight, parent ? parent.height - 24 : 640)
     title: list.id ? Theme.tr("Edit smart playlist") : Theme.tr("New smart playlist")
     standardButtons: Dialog.Save | Dialog.Cancel
+    onAboutToShow: Theme.nameButtons(this)
     closePolicy: Popup.CloseOnEscape
 
     signal saved(string id)

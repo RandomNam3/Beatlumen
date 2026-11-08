@@ -338,7 +338,7 @@ impl LyricsSync {
                 let good = bl_asr::sync::made_with(&done).is_some_and(|(v, m)| {
                     v >= bl_asr::sync::VERSION
                         && current.as_deref().map_or(true, |c| {
-                            bl_asr::models::rank(&m) >= bl_asr::models::rank(c)
+                            state.models.rank_of(&m) >= state.models.rank_of(c)
                         })
                 });
                 if good {

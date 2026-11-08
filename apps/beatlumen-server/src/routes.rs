@@ -224,12 +224,27 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         // Public links to encrypted files: no account needed.
         ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),
+        // A room's code, or the token it gave.
+        ["rooms", "join"] => {
+            return if m == "POST" {
+                state.rooms.join(state, req, client_ip(req))
+            } else {
+                not_allowed("POST")
+            }
+        }
+        ["rooms", id, rest @ ..] => return state.rooms.member_request(state, req, id, rest),
         _ => {}
     }
     // Users with an account may use the library as well; their playlists
     // and presets are their own.
     let user = state.vault.session_user(req);
-    if !state.auth.authorized(req) && user.is_none() {
+    // A guest of a room: that room's songs and nothing else.
+    let guest = state.rooms.guest(req);
+    if let Some(g) = &guest {
+        if !state.rooms.guest_may(g, m, segs) {
+            return Response::error(403, "not for a guest of a room");
+        }
+    } else if !state.auth.authorized(req) && user.is_none() {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
@@ -250,10 +265,25 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     // Devices see the devices of the same login: an account, or everyone
     // with the server password.
     if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
+        let scope = match &guest {
+            Some(g) => format!("room:{}", g.room),
+            None => user
+                .as_deref()
+                .map_or_else(|| "shared".to_string(), |u| format!("user:{u}")),
+        };
+        let rooms = state
+            .rooms
+            .scopes_of(req.query("device").unwrap_or(""), &scope);
+        return state.devices.handle(req, segs, &scope, &rooms);
+    }
+    if segs == ["rooms"] {
+        if m != "POST" {
+            return not_allowed("POST");
+        }
         let scope = user
             .as_deref()
             .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
-        return state.devices.handle(req, segs, &scope);
+        return state.rooms.create(state, req, &scope);
     }
     match segs {
         ["logout"] => match m {
@@ -444,6 +474,11 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             json(200, &crate::recommend::stats(state, &login, range, offset))
         }
         ["stats"] => not_allowed("GET, HEAD"),
+        // Speech models for the apps (when the admin offers them).
+        ["models"] if get => json(200, &offered_models(state)),
+        ["models"] => not_allowed("GET, HEAD"),
+        ["models", id, file] if get => model_file(state, req, id, file),
+        ["models", _, _] => not_allowed("GET, HEAD"),
         ["radio"] if m == "POST" => match crate::recommend::radio(state, &login, &req.body) {
             Ok(v) => json(200, &v),
             Err(e) => fail(e),
@@ -671,6 +706,62 @@ pub fn restore_tracks(state: &State, account: &str, ids: &[&str], now: u64) {
             state.extensions.restored(&e.abs, account);
         }
     }
+}
+
+/// `GET /api/models`: the speech models in the models folder, with their
+/// files (name, size, SHA-256) for the apps to download through
+/// `/api/models/<id>/<file>`; none when the admin does not offer them.
+fn offered_models(state: &State) -> Value {
+    if !state.config().offer_models {
+        return Value::object().with("models", Value::Array(Vec::new()));
+    }
+    let models = &state.models;
+    let file = |name: &str, size: u64, sha256: &str| {
+        Value::object()
+            .with("name", name)
+            .with("size", size)
+            .with("sha256", sha256)
+    };
+    let mut list: Vec<Value> = crate::models::CATALOG
+        .iter()
+        .filter(|m| models.path(m).is_file())
+        .map(|m| {
+            Value::object()
+                .with("id", m.id)
+                .with("note", m.note)
+                .with("memoryMb", m.memory_mb)
+                .with("files", Value::Array(vec![file(m.file, m.size, m.sha256)]))
+        })
+        .collect();
+    list.extend(
+        models
+            .own_models(true)
+            .iter()
+            .map(|m| m.to_json().with("own", true)),
+    );
+    Value::object().with("models", Value::Array(list))
+}
+
+/// `GET /api/models/<id>/<file>`: one file of an offered model.
+fn model_file(state: &State, req: &Request, id: &str, file: &str) -> Response {
+    let models = &state.models;
+    let known = state.config().offer_models
+        && match crate::models::find(id) {
+            Some(m) => m.file == file,
+            None => models
+                .own_models(false)
+                .iter()
+                .any(|m| m.id == id && m.files.iter().any(|f| f.name == file)),
+        };
+    if !known {
+        return Response::error(404, "no such model file");
+    }
+    Response::file(
+        &models.dir.join(file),
+        "application/octet-stream",
+        req.header("range"),
+    )
+    .with_header("Cache-Control", "private, max-age=86400")
 }
 
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {

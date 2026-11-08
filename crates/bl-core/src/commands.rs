@@ -153,9 +153,27 @@ impl Core {
         let n = |k: &str| c.get(k).as_f64().unwrap_or(0.0);
         let b = |k: &str| c.get(k).as_bool().unwrap_or(false);
         let idx = |k: &str| c.get(k).as_u64().unwrap_or(0) as usize;
+        // Layout reports come with every frame and change nothing to be shown.
+        if !name.starts_with("ui.") {
+            self.state_wanted = true;
+        }
         // Other apps' playback is shown: the transport controls are theirs.
         if let Some(r) = self.capture_transport(host, &name, c) {
             return r;
+        }
+        // In a room the controls are the host's, and they go through the room.
+        if let Some(r) = self.room_transport(host, &name, c) {
+            return r;
+        }
+        if name.starts_with("room.") {
+            return self.room_command(host, &name, c);
+        }
+        // Chosen here: this device no longer keeps step with a group.
+        if matches!(
+            name.as_str(),
+            "pause" | "toggle" | "stop" | "seek" | "seekBy"
+        ) {
+            self.devices.group_anchor = None;
         }
         match name.as_str() {
             // ---- state ----------------------------------------------------
@@ -567,6 +585,7 @@ impl Core {
                 ok()
             }
             "mix.play" => self.mix_play(host, &s("id"), b("shuffle")),
+            "mix.tracks" => self.mix_tracks(&s("id")),
             "labels.list" => self.labels_list(),
             "labels.tracks" => self.labels_tracks(&s("name")),
             "labels.of" => self.labels_of(&s("id")),

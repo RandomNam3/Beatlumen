@@ -21,6 +21,12 @@ const HEARTBEAT: f64 = 25.0;
 const RETRY: f64 = 5.0;
 /// Head start for playing together (milliseconds).
 const GROUP_LEAD_MS: f64 = 2500.0;
+/// Samples of the server's clock wanted quickly when playing together.
+const CLOCK_FIRST_SAMPLES: usize = 5;
+/// Seconds between looks at the timing of a group.
+const GROUP_CHECK: f64 = 1.0;
+/// After a start or a seek the position needs a moment to mean anything.
+const GROUP_SETTLE: f64 = 2.0;
 /// Queue entries a device reports around the current one.
 const QUEUE_REPORT: usize = 50;
 
@@ -35,9 +41,17 @@ pub(crate) struct DevicesState {
     pub announced: String,
     pub announced_at: f64,
     pub announcing: bool,
+    pub look_at: f64,
     pub refreshing: bool,
-    /// Server clock minus this device's clock (milliseconds).
+    /// The server's clock, from requests made for it.
+    pub clock: crate::clock::ServerClock,
+    /// Until then: server clock minus this device's clock (milliseconds), as far
+    /// as other answers tell.
     pub clock_offset_ms: Option<f64>,
+    /// Playing with a group: since the common start, the song is meant to be
+    /// at this position at this server time (with the player's song serial).
+    pub group_anchor: Option<(f64, f64, u64)>,
+    pub group_check_at: f64,
     /// Start of a group playback: (server time ms, position s).
     pub play_at: Option<(f64, f64)>,
     /// The position announced last and the local time it was taken.
@@ -92,7 +106,7 @@ impl Core {
         self.device_request_as(host, &login, method, path, body, content_type)
     }
 
-    fn device_request_as(
+    pub(crate) fn device_request_as(
         &mut self,
         host: &mut dyn Host,
         login: &str,
@@ -117,7 +131,7 @@ impl Core {
     }
 
     /// This device's id (made on first use).
-    fn device_id(&mut self) -> String {
+    pub(crate) fn device_id(&mut self) -> String {
         if self.settings.device_id.len() != 32 {
             self.settings.device_id = (0..16)
                 .map(|_| format!("{:02x}", self.rng.next_u64() & 0xff))
@@ -152,8 +166,48 @@ impl Core {
     }
 
     /// The server's clock now (milliseconds), from this device's clock.
-    fn server_now_ms(&self, host: &dyn Host) -> f64 {
-        host.unix_time() * 1000.0 + self.devices.clock_offset_ms.unwrap_or(0.0)
+    pub(crate) fn server_now_ms(&self, host: &dyn Host) -> f64 {
+        let offset = self.devices.clock.offset().or(self.devices.clock_offset_ms);
+        host.unix_time() * 1000.0 + offset.unwrap_or(0.0)
+    }
+
+    /// Asks for the server's clock: often at first and while playing together.
+    fn clock_step(&mut self, host: &mut dyn Host) {
+        let now = host.now();
+        if self.devices.clock.asking || now < self.devices.clock.next_at {
+            return;
+        }
+        let wanted = self.clock_wanted();
+        self.devices.clock.next_at = now
+            + match (wanted, self.devices.clock.samples() < CLOCK_FIRST_SAMPLES) {
+                (true, true) => 0.2,
+                (true, false) => 10.0,
+                (false, _) => 60.0,
+            };
+        let rid = self.device_request(host, "GET", "/api/time", Vec::new(), None);
+        self.requests
+            .insert(rid, Req::ClockSample(host.unix_time() * 1000.0));
+        self.devices.clock.asking = true;
+    }
+
+    pub(crate) fn clock_answer(
+        &mut self,
+        host: &dyn Host,
+        sent: f64,
+        res: &Result<crate::host::HttpResponse, String>,
+    ) {
+        self.devices.clock.asking = false;
+        let server = match res {
+            Ok(r) if r.status == 200 => bl_json::parse_bytes(&r.body)
+                .ok()
+                .and_then(|v| v.get("now").as_f64()),
+            _ => None,
+        };
+        if let Some(server) = server {
+            self.devices
+                .clock
+                .add(sent, host.unix_time() * 1000.0, server);
+        }
     }
 
     /// What other devices see of this one's playback.
@@ -250,10 +304,25 @@ impl Core {
                 self.devices.play_at = None;
                 self.player.seek(host, pos + late / 1000.0);
                 self.player.play(host);
+                self.devices.group_anchor = Some((at, pos, self.player.serial()));
+                self.devices.group_check_at = now + GROUP_SETTLE;
             }
         }
+        // Staying in step with the group, until something else is chosen here.
+        if let Some((at, pos, serial)) = self.devices.group_anchor {
+            if serial != self.player.serial() {
+                self.devices.group_anchor = None;
+            } else if now >= self.devices.group_check_at {
+                self.devices.group_check_at = now + GROUP_CHECK;
+                let expected = pos + (self.server_now_ms(host) - at) / 1000.0;
+                self.keep_in_step(host, expected);
+            }
+        }
+        self.clock_step(host);
         let id = self.device_id();
-        if !self.devices.announcing {
+        // Once a second is soon enough for the other devices.
+        if !self.devices.announcing && now >= self.devices.look_at {
+            self.devices.look_at = now + 1.0;
             let (state, signature) = self.device_playback(host);
             let position = state.get("position").as_f64().unwrap_or(0.0);
             // A seek also counts as a change.
@@ -379,6 +448,7 @@ impl Core {
                         "settings" if e.str_or("from", "") != self.settings.device_id => {
                             self.account_sync.fetched = false;
                         }
+                        "room" | "room.ended" => self.room_event(host, e),
                         _ => {}
                     }
                 }
@@ -404,7 +474,8 @@ impl Core {
 
     /// Runs a command another device sent.
     fn run_remote_command(&mut self, host: &mut dyn Host, e: &Value) {
-        if !self.settings.remote_control {
+        // Following a room, this device has its orders.
+        if !self.settings.remote_control || (self.in_room() && !self.room_host()) {
             return;
         }
         let c = e.get("command");

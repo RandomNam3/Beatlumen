@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <functional>
 
 #include "core.h"
@@ -22,6 +23,9 @@ void httpRequest(void *user, uint64_t id, const char *method, const char *url, c
 void pickFiles(const QString &accept, bool multiple, std::function<void(const QString &, const QByteArray &)> done);
 // Opens a page in a new tab.
 void openUrl(const QString &url);
+// What the page's address says for the app: the room of a link, and where it
+// came from (command line arguments; none outside the browser).
+QStringList pageArguments();
 // Results of the sign-in page (passkeys) from another tab; `done` gets
 // "?state=…&result=…".
 void listenAuth(std::function<void(const QString &)> done);

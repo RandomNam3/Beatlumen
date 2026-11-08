@@ -468,6 +468,10 @@ impl Core {
                 album: s.album.clone(),
                 album_id: s.album_id.clone(),
                 genre: s.genre.clone(),
+                artist_genres: library::split_artists(&s.artist)
+                    .first()
+                    .map(|a| self.artist_genres(a).to_vec())
+                    .unwrap_or_default(),
             })
             .collect();
         let plays: Vec<StatPlay> = self

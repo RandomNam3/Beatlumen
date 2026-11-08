@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Controls.Material
 import Beatlumen.Core
 
@@ -167,6 +168,16 @@ QtObject {
                 return t
         }
         return s
+    }
+    // Qt names the standard buttons of a dialog itself and only in English:
+    // each dialog with them calls this when it opens.
+    function nameButtons(dialog) {
+        const names = [[Dialog.Ok, "OK"], [Dialog.Save, "Save"], [Dialog.Cancel, "Cancel"], [Dialog.Close, "Close"]]
+        for (const n of names) {
+            const button = dialog.standardButton(n[0])
+            if (button)
+                button.text = tr(n[1])
+        }
     }
 
     readonly property var de: ({
@@ -503,6 +514,8 @@ QtObject {
         "Song texts on this device": "Songtexte auf diesem Gerät",
         "With a speech model, this device times plain song texts word by word and writes down what is sung when a song has no text (\"Recognize song text\" in the song text view). A server with a model does this for its songs anyway.": "Mit einem Sprachmodell stimmt dieses Gerät einfache Songtexte Wort für Wort ab und schreibt auf, was gesungen wird, wenn ein Song keinen Text hat („Songtext erkennen“ in der Songtext-Ansicht). Ein Server mit Modell macht das für seine Songs ohnehin.",
         "%1 MB of memory": "%1 MB Arbeitsspeicher",
+        "own model": "eigenes Modell",
+        "from your server": "von deinem Server",
         "In use": "In Verwendung",
         "Use": "Verwenden",
         "Download": "Herunterladen",
@@ -637,6 +650,26 @@ QtObject {
         "Loading…": "Wird geladen …",
         "Could not load this": "Das konnte nicht geladen werden",
         "Add to library": "In die Bibliothek",
+        "Listen together": "Zusammen hören",
+        "Everyone hears the same song at the same moment. Only songs of the server can be played in a room.": "Alle hören denselben Song im selben Moment. In einem Raum können nur Songs vom Server laufen.",
+        "Create room": "Raum erstellen",
+        "Code or link": "Code oder Link",
+        "Join": "Beitreten",
+        "Copy code": "Code kopieren",
+        "Allow guests": "Gäste erlauben",
+        "Turned off for this server by its admin.": "Für diesen Server vom Admin ausgeschaltet.",
+        "People without a login can join with the code or link. They get this room's songs and nothing else, for as long as it lasts.": "Personen ohne Anmeldung können mit Code oder Link beitreten. Sie bekommen die Songs dieses Raums und sonst nichts, solange er besteht.",
+        "The host chooses what plays.": "Der Gastgeber bestimmt, was läuft.",
+        "End room": "Raum beenden",
+        "Leave room": "Raum verlassen",
+        "Host": "Gastgeber",
+        "Guest": "Gast",
+        "Has the song": "Bereit",
+        "In time": "Im Takt",
+        "Choose the resolution automatically": "Auflösung automatisch wählen",
+        "Smooth and easy on the battery: the visual is soft anyway. The full resolution of a tablet takes all of its graphics power.": "Flüssig und schont den Akku: Das Visual ist ohnehin weich. Die volle Auflösung eines Tablets braucht die ganze Grafikleistung.",
+        "Always support assistive services": "Bedienungshilfen immer unterstützen",
+        "Screen readers work without this. Turn it on if another assistant cannot read the app. Takes effect after a restart and can make the app slower.": "Screenreader funktionieren auch ohne das. Schalte es ein, wenn eine andere Hilfe die App nicht lesen kann. Wirkt nach einem Neustart und kann die App langsamer machen.",
         "Remove from library": "Aus der Bibliothek entfernen",
         "Trash": "Papierkorb",
         "Restore": "Wiederherstellen",

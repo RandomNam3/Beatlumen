@@ -108,7 +108,7 @@ Item {
             from: 0
             to: Math.max(1, bar.duration)
             enabled: bar.duration > 0
-            value: pressed ? value : Core.position
+            value: pressed ? value : Core.seekPosition
             onMoved: if (!pressed) Core.call("seek", { position: value })
             onPressedChanged: if (!pressed) Core.call("seek", { position: value })
             Accessible.name: Theme.tr("Position in the song")

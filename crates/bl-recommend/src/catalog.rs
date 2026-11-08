@@ -187,6 +187,11 @@ pub fn normalize_genre(genre: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
+    // "Genre: Rock" says the same as "Rock".
+    let g = g
+        .strip_prefix("genre:")
+        .map_or(g.as_str(), str::trim)
+        .to_string();
     if g.is_empty() || NOT_GENRES.contains(&g.as_str()) {
         return None;
     }
@@ -747,6 +752,8 @@ pub(crate) mod tests {
     #[test]
     fn genres_split_and_labels_counted() {
         assert_eq!(split_genres("Rock; Pop/Indie"), ["rock", "pop", "indie"]);
+        assert_eq!(split_genres("Genre: Rock"), ["rock"]);
+        assert!(split_genres("Genre:").is_empty());
         let mut a = song("a", "One", "Rock", 2000, 0.9, 150.0);
         a.labels = vec!["Party".to_string()];
         let c = Catalog::new(vec![a, song("b", "Two", "Pop", 1995, 0.1, 70.0)]);

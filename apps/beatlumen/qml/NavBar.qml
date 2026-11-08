@@ -11,6 +11,10 @@ Rectangle {
     property int current: -1
     property bool rail: false
     property bool dense: false
+    // What the system covers of it.
+    property int insetTop: 0
+    property int insetLeft: 0
+    property int insetBottom: 0
     signal selected(int index)
     signal showHelp()
     // The button of the i-th entry (the last: More), for the tour.
@@ -32,8 +36,8 @@ Rectangle {
     ].filter(i => i.page !== 4 || Core.state.server === "connected")
 
     color: Theme.surfaceStrong
-    implicitHeight: rail ? 0 : Theme.fingers ? 72 : 56
-    implicitWidth: rail ? (dense ? 56 : 72) : 0
+    implicitHeight: rail ? 0 : (Theme.fingers ? 72 : 56) + insetBottom
+    implicitWidth: rail ? (dense ? 56 : 72) + insetLeft : 0
 
     component NavButton: AbstractButton {
         id: btn
@@ -83,8 +87,9 @@ Rectangle {
 
     GridLayout {
         anchors.fill: parent
-        anchors.topMargin: nav.rail ? (nav.dense ? 4 : 12) : 6
-        anchors.bottomMargin: nav.rail ? (nav.dense ? 4 : 8) : 4
+        anchors.leftMargin: nav.insetLeft
+        anchors.topMargin: nav.insetTop + (nav.rail ? (nav.dense ? 4 : 12) : 6)
+        anchors.bottomMargin: nav.insetBottom + (nav.rail ? (nav.dense ? 4 : 8) : 4)
         flow: nav.rail ? GridLayout.TopToBottom : GridLayout.LeftToRight
         rows: nav.rail ? nav.items.length + 2 : 1
         columns: nav.rail ? 1 : nav.items.length + 1

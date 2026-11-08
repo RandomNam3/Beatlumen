@@ -64,6 +64,8 @@ pub struct Config {
     pub extension_cleanup_days: u32,
     /// Songs added on purpose, in a playlist or among favorites stay anyway.
     pub extension_cleanup_keep_listed: bool,
+    /// People without a login may join a room with its code or link.
+    pub room_guests: bool,
     /// Whisper model (ggml file) for timing song texts.
     pub speech_model: Option<PathBuf>,
     /// Time the song texts of the whole library in the background.
@@ -71,6 +73,9 @@ pub struct Config {
     /// Work out how the library's songs sound in the background (labels and
     /// recommendations).
     pub auto_labels: bool,
+    /// Offer the speech models in the models folder to the apps (signed-in
+    /// users download them from this server).
+    pub offer_models: bool,
     /// Look the library's artists up in public databases (their names go out).
     /// Off until the admin agrees.
     pub online_metadata: bool,
@@ -132,9 +137,11 @@ impl Default for Config {
             speech_model: None,
             auto_sync_lyrics: false,
             auto_labels: true,
+            offer_models: true,
             online_metadata: false,
             extension_cleanup_days: 90,
             extension_cleanup_keep_listed: true,
+            room_guests: true,
             admin_password_file: None,
             model_source: None,
             origins: Vec::new(),
@@ -229,7 +236,15 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "offerModels",
+        live: true,
+    },
+    AdminSetting {
         key: "onlineMetadata",
+        live: true,
+    },
+    AdminSetting {
+        key: "roomGuests",
         live: true,
     },
     AdminSetting {
@@ -282,9 +297,11 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
             .map_or(Value::Null, |p| Value::from(p.display().to_string())),
         "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
         "autoLabels" => Value::from(cfg.auto_labels),
+        "offerModels" => Value::from(cfg.offer_models),
         "onlineMetadata" => Value::from(cfg.online_metadata),
         "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
         "extensionCleanupKeepListed" => Value::from(cfg.extension_cleanup_keep_listed),
+        "roomGuests" => Value::from(cfg.room_guests),
         "verbose" => Value::from(cfg.verbose),
         _ => Value::Null,
     }
@@ -316,6 +333,8 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_SPEECH_MODEL", "speechModel"),
     ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
     ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
+    ("BEATLUMEN_ROOM_GUESTS", "roomGuests"),
+    ("BEATLUMEN_OFFER_MODELS", "offerModels"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
     ("BEATLUMEN_EXTENSION_CLEANUP_DAYS", "extensionCleanupDays"),
     (
@@ -353,6 +372,8 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--speech-model" => "speechModel",
         "--auto-sync-lyrics" => "autoSyncLyrics",
         "--no-auto-labels" => "autoLabels",
+        "--no-room-guests" => "roomGuests",
+        "--no-offer-models" => "offerModels",
         "--online-metadata" => "onlineMetadata",
         "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
@@ -499,6 +520,10 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "false: do not work out how the library's songs sound (labels, recommendations)",
     ),
     (
+        "BEATLUMEN_OFFER_MODELS",
+        "false: do not offer the speech models to the apps",
+    ),
+    (
         "BEATLUMEN_ADMIN_PASSWORD_FILE",
         "file containing the admin password (instead of the setup link)",
     ),
@@ -618,6 +643,12 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "BEATLUMEN_EXTENSION_CLEANUP_DAYS: expected a number of days".to_string()
         })?;
     }
+    if let Some(v) = get("BEATLUMEN_ROOM_GUESTS") {
+        cfg.room_guests = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED") {
         cfg.extension_cleanup_keep_listed = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -644,6 +675,12 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
     }
     if let Some(v) = get("BEATLUMEN_AUTO_LABELS") {
         cfg.auto_labels = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Some(v) = get("BEATLUMEN_OFFER_MODELS") {
+        cfg.offer_models = matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"
         );
@@ -720,7 +757,8 @@ OPTIONS:
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
                             androidCerts, extensions, extensionTokenFile,
                             extensionCleanupDays, extensionCleanupKeepListed, speechModel,
-                            autoSyncLyrics, autoLabels, onlineMetadata, verbose)
+                            autoSyncLyrics, autoLabels, offerModels, onlineMetadata,
+                            verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -742,6 +780,10 @@ OPTIONS:
                             ggml-base.bin) for timing song texts on request
     --auto-sync-lyrics      Also time the song texts of the whole library in the
                             background (needs --speech-model)
+    --no-room-guests        People without a login cannot join a room to listen
+                            together
+    --no-offer-models       Do not offer the speech models in the models folder to
+                            the apps (offered to signed-in users by default)
     --no-auto-labels        Do not work out how the library's songs sound (tempo,
                             key, energy) for labels and recommendations
     --online-metadata       Look the library's artists up in public databases, for
@@ -925,11 +967,17 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoLabels" => {
                 cfg.auto_labels = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "offerModels" => {
+                cfg.offer_models = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "extensionCleanupDays" => {
                 cfg.extension_cleanup_days = val
                     .as_u64()
                     .and_then(|d| u32::try_from(d).ok())
                     .ok_or_else(|| err("expected a number of days"))?
+            }
+            "roomGuests" => {
+                cfg.room_guests = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
             "extensionCleanupKeepListed" => {
                 cfg.extension_cleanup_keep_listed =
@@ -1062,6 +1110,8 @@ fn build(
             "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
             "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
             "--no-auto-labels" => cfg.auto_labels = false,
+            "--no-room-guests" => cfg.room_guests = false,
+            "--no-offer-models" => cfg.offer_models = false,
             "--online-metadata" => cfg.online_metadata = true,
             "--model-source" => cfg.model_source = Some(model_source(&v)?),
             "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
@@ -1150,6 +1200,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             | "--push-allow-private"
             | "--auto-sync-lyrics"
             | "--no-auto-labels"
+            | "--no-room-guests"
+            | "--no-offer-models"
             | "--online-metadata" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {

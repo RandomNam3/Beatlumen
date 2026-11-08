@@ -54,10 +54,11 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   without code changes.
   - The training tools (PyTorch) are not part of Beatlumen; they run on
     the user's own GPU and data.
-  - Beatlumen gets **own model sources**: a server lists the models in its
-    model folder (with size and SHA-256) and the apps download them
-    through the server connection, next to the public catalog. A model
-    trained on a private music collection stays on the user's own server.
+  - Done: **own model sources**. A server lists the models in its model
+    folder (with size and SHA-256, own ones with their timing head) and
+    the apps download them through the server connection, next to the
+    public catalog. A model trained on a private music collection stays
+    on the user's own server.
   - The public catalog only lists models whose weights and training data
     may be passed on (e.g. Creative Commons music), published with their
     training recipe, data list and licence.
@@ -142,8 +143,12 @@ server see each other.
   several devices together at a common server time. Commands go through
   the server's event channel (long polling); remote control can be turned
   off per device; remote commands only play server songs.
-- Next: keeping grouped devices in step while they play (drift
-  correction), editing another device's queue.
+  Grouped devices stay in step while they play (drift correction by the
+  server's clock, corrected by the round trip).
+- Listening together: rooms on the server, joined with a code or a link,
+  also by guests without a login. The server only relays and says when a song
+  should start, once everybody has it.
+- Next: editing another device's queue, a readiness check for groups.
 
 - Device list with name, type, online state and what is playing.
 - Each device plays on its own by default (own queue, own position).

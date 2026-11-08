@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+- **Listen together:** make a room on the Devices page and let others in with its code or
+  link. Everyone hears the same song of the server at the same moment; the host decides what
+  plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and
+  while it plays every device keeps itself in step, in steps too small to be heard. People
+  without a login can join as guests: they get this room's songs and nothing else, and only
+  while it lasts. The host can turn guests off for a room, the admin for the server (Admin
+  area, `--no-room-guests`). The host hears what happens in a new room at once, too: before, that
+  took the host's own next device report.
+- **Devices playing together** ask for the server's time more carefully (corrected by the
+  round trip) and now stay in step while they play.
+- **Android, no more "not responding":** with any accessibility service on (a password manager
+  like Bitwarden, KDE Connect's remote mouse), Android's main thread spent minutes waiting for
+  Qt's answers about the app's controls. The keyboard did not come up, Android offered to close
+  the app, and sometimes it crashed. The app now only talks to such services when a screen
+  reader or similar assistant runs (Settings has a switch for others).
+- **Less work per frame on Android:** at most 60 frames a second and 30 behind a page, and the
+  app's state is put together far less often. With a long queue that was a large part of the load.
+- **Swiping:** sideways through the pages and the tabs of Visuals, back out of a detail page.
+- **Tablets:** Visuals uses the width of the screen in two columns, the spectrum is wider and the
+  shade behind the title reaches the window's edges. The keyboard no longer opens by itself with
+  the search page on touch screens, and a genre tag like "Genre: Rock" is just "Rock".
+- **Back in a folder** goes one folder up instead of closing the page.
+- **Dialogs in German:** their buttons said "Cancel", "OK", "Close" and "Save" in English.
+- **A page's own menu on touch screens** (⋮ of a playlist, album or artist) is headed by its name.
+  With a single song in it, it looked like the menu of that song.
+- **Covers that did not show:** some taggers write a stray byte or the picture's description
+  before the picture itself. Its start is found now, as other players do, and such covers kept
+  from before are read again.
+- **Names like "FrÃ©dÃ©ric":** many taggers write UTF-8 but mark it as Latin-1. Such text is read
+  as UTF-8 now, and songs already in the library with such names are read again at the next scan.
+- **An MP3 with junk before its music** (about 19 KB in a real file) is recognised and plays; the
+  check looked only at the first 16 KB. Songs that could not be read before are read again at the
+  next scan.
+- **Titles that start with a number:** a tagged title with an artist stays as it is even when the
+  file is named the same. "12 Millionen" by DAME no longer turns into "Millionen".
+- **Statistics:** songs without an album tag no longer show up as blank rows among the top albums,
+  and the genres are written as on the start page: a tag "Genre:" with nothing after it is none.
+  A song without a genre tag counts for the first two genres of its artist, when they were looked
+  up on the internet.
+- **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
+  the title when the controls come and go (it jumped behind at 20 steps a second).
+- **To the edges on Android:** the app reaches under the status bar and the notch, and the window
+  keeps its size when the bars come and go. On Android 16 the bottom of the app no longer hangs
+  off the screen once the bars come back, and the keyboard lifts the app by its real height.
+  Dialogs move up above the keyboard instead of disappearing behind it. The room of the bars is
+  kept once: the top had it twice, and a strip under the player bar showed the visual through.
+- **Mixes:** tapping one shows its songs first; the button on the cover starts it right away, and
+  back leads to the start page.
+- **Start page:** its rows are only made anew when something in them changed (they kept jumping
+  back to their start), and the covers of the top cards sit straight in their cards.
+- **Far less power on Android:** the visual is drawn at about a million pixels and fewer behind a
+  page, instead of the whole screen. On a Galaxy Tab S8 Ultra that gives a steady 60 frames a second
+  instead of 46 with the graphics chip at its limit, and about half the current from the battery.
+  Settings, Appearance, can turn this off. Also: fewer frames when paused, behind a page or with the
+  system's battery saver, a look at the state 30 times a second instead of 60, and audio in the
+  system's power saving mode.
 - **Music is stored once:** the same music file in several accounts' encrypted files takes up
   the space of one, and it stays encrypted. The server can see that two accounts hold the
   same file (`docs/ENCRYPTION.md`); other files are never put together.
@@ -56,6 +112,15 @@
   timed the old way. Songs without a text are written down as before, and the layer times
   the words: of the lines whose first word was recognised, 94 % start within half a second
   instead of 84 %. The models offered for download have no such layer yet.
+- **Speech models from your own server:** the server offers the speech models in its models
+  folder to the apps signed in to it, also own ones: a `ggml-<name>.bin` with the timing layer
+  made for it (`ggml-<name>.head`) and, if wanted, a `ggml-<name>.json` with a note, a rank and
+  the memory it needs. The apps list them next to the public ones (Settings, Song texts),
+  download them through the server connection and check each file against the checksum the
+  server lists; a public model the server has comes from the server too, without the internet.
+  Own models count as better than the public ones, so songs timed with those are timed again.
+  The admin page uses and deletes own models as well; offering is on by default and turned off
+  there, with `--no-offer-models` or with `BEATLUMEN_OFFER_MODELS=false`.
 
 ## 0.12.0 (beta)
 

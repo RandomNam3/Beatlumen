@@ -16,6 +16,8 @@ pub struct StatSong {
     pub album: String,
     pub album_id: String,
     pub genre: String,
+    /// Genres of its artist from the internet, for a song without a genre tag.
+    pub artist_genres: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -160,16 +162,26 @@ pub fn stats(
         for a in s.artists.iter().filter(|a| !a.is_empty()) {
             add(by_artist.entry(a.as_str()).or_default());
         }
-        if !s.album_id.is_empty() {
+        // Songs without an album tag are no album of their own.
+        if !s.album_id.is_empty() && !s.album.trim().is_empty() {
             add(by_album.entry(s.album_id.as_str()).or_default());
         }
-        for g in s
-            .genre
-            .split([';', ',', '/', '|'])
-            .map(str::trim)
-            .filter(|g| !g.is_empty())
-        {
-            add(by_genre.entry(g.to_string()).or_default());
+        // In one spelling, as on the start page: "Genre: Rock" is rock, and a
+        // bare "Genre:" is no genre. Without a tag, the artist's first two.
+        let mut genres = crate::catalog::split_genres(&s.genre);
+        if genres.is_empty() {
+            for g in s
+                .artist_genres
+                .iter()
+                .filter_map(|g| crate::catalog::normalize_genre(g))
+            {
+                if genres.len() < 2 && !genres.contains(&g) {
+                    genres.push(g);
+                }
+            }
+        }
+        for g in genres {
+            add(by_genre.entry(g).or_default());
         }
     }
 
@@ -331,11 +343,14 @@ mod tests {
                 album: "Album".into(),
                 album_id: "al".into(),
                 genre: "Rock; Pop".into(),
+                artist_genres: Vec::new(),
             },
             StatSong {
                 id: "b".into(),
                 title: "Song B".into(),
                 artists: vec!["One".into(), "Two".into()],
+                album_id: "untagged".into(),
+                genre: "Genre:; Genre: Rock".into(),
                 ..StatSong::default()
             },
         ]
@@ -369,8 +384,34 @@ mod tests {
         assert_eq!(v.get("topArtists").at(0).get("plays").as_u64(), Some(3));
         assert_eq!(v.get("topArtists").at(1).get("plays").as_u64(), Some(1));
         assert_eq!(v.get("topAlbums").at(0).str_or("title", ""), "Album");
+        // Song B has no album tag: no blank album in the list.
+        assert_eq!(v.get("topAlbums").as_array().unwrap().len(), 1);
+        // "Genre: Rock" counts for rock, a bare "Genre:" for nothing.
         let genres = v.get("topGenres").as_array().unwrap();
         assert_eq!(genres.len(), 2);
+        assert_eq!(v.get("topGenres").at(0).str_or("name", ""), "rock");
+        assert_eq!(v.get("topGenres").at(0).get("plays").as_u64(), Some(3));
+    }
+
+    #[test]
+    fn without_a_genre_tag_the_artists_genres_count() {
+        let songs = [StatSong {
+            id: "c".into(),
+            title: "Song C".into(),
+            genre: "Genre:".into(),
+            artist_genres: vec!["Hip-Hop".into(), "rap".into(), "trap".into()],
+            ..StatSong::default()
+        }];
+        let v = stats(&songs, &[play(0, NOW - H, 200, false)], Range::All, NOW, 0);
+        let names: Vec<&str> = v
+            .get("topGenres")
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g.str_or("name", ""))
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(!names.contains(&"trap"));
     }
 
     #[test]
