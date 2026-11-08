@@ -11,6 +11,34 @@
   timeout. `GET /api/health` (no login) reports whether the server works and its data folder takes
   writes; `--health-check` and the image's health check use it. The Quadlet unit's health check
   works now (it ran through a shell the image does not have).
+- **Server: large bodies only with a login.** Without a login a request may send 64 KiB.
+  Larger bodies (4 MiB, image uploads 257 MiB) need the server password, an account or the
+  admin login, and that is checked from the request's head before any of the body is read:
+  before, anyone could make the server take in a 257 MiB upload before it answered 401. Clients
+  that send `Expect: 100-continue` get the answer before they send the body.
+- **Server behind a reverse proxy:** a new setting names the trusted proxies
+  (`--trusted-proxy`, `BEATLUMEN_TRUSTED_PROXIES`, Admin area → Network; default: the same
+  machine, `none` for no proxy). Only their `X-Forwarded-For` names the client, and each of
+  their requests counts against that client while it runs. The loopback interface is no longer
+  exempt from the 32 connections per client, which let everything behind a local proxy through
+  without a limit. The server's own health check still gets through when the limits are
+  reached, and it warns once when another address sends `X-Forwarded-For`. Wrong room codes
+  and admin logins count IPv6 clients per /64 now, as server logins did.
+- **Server keeps its places after internal errors:** a panic while reading a request or while
+  a body streamed (such as the Opus conversion for mobile data) ended the connection without
+  giving its place back, so enough of them made the server refuse everyone. Places are given
+  back now in every case, and a panicking handler answers 500. Background work (scanner,
+  sources, rooms, labels, artist pages, song text timing, the trash) logs a panic and starts
+  again after a pause instead of stopping for good; a failed extension import reports its error
+  instead of running forever.
+- **Device control and rooms with limits:** a command may be 16 KiB (it was up to 4 MiB, with
+  1000 of them buffered), a device has at most 64 commands (256 KiB) waiting that it has not
+  fetched, all events together at most 32 MiB, a login at most 50 devices (the one offline the
+  longest makes room) and 10 rooms. Room requests are at most 16 KiB and read before the rooms
+  are locked.
+- **Apps read at most 64 MiB of an answer** unless the request says otherwise (it was 1 GiB):
+  256 MiB for the server API, whose library of a large server comes in one piece, and 32 MiB
+  for the cover and song text of an offline copy. Songs and models stream into files as before.
 - **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
   PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
   are read, so they never exist at full size: a 16K image needs about 16 MB of working memory

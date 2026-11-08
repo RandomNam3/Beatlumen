@@ -1291,7 +1291,11 @@ impl Extensions {
         std::thread::Builder::new()
             .name("extension-import".into())
             .spawn(move || {
-                let result = run_import(&ext_id, &ext_url, &headers, &j, file, &part, &final_path);
+                // A panic fails the import instead of leaving it running.
+                let result = crate::util::catch("extension import", || {
+                    run_import(&ext_id, &ext_url, &headers, &j, file, &part, &final_path)
+                })
+                .and_then(|r| r);
                 let state = weak.and_then(|w| w.upgrade());
                 finish_import(state, &ext_id, &j, result, &final_path);
             })

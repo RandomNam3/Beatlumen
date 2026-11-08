@@ -187,7 +187,13 @@ impl NativeServices {
         self.next_id += 1;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let opts = bl_net::client::Options::default();
+            // The answers of the server API, the largest being the library
+            // of a big server (~1 KiB per song) in one piece. Songs, models
+            // and offline copies stream to files instead.
+            let opts = bl_net::client::Options {
+                max_body: 256 << 20,
+                ..Default::default()
+            };
             let res =
                 bl_net::client::request(&req.method, &req.url, &req.headers, &req.body, &opts).map(
                     |r| HttpResponse {

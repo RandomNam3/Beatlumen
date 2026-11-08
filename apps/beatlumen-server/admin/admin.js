@@ -103,6 +103,8 @@
     "0 = unlimited.": "0 = unbegrenzt.",
     "Extra host names": "Weitere Hostnamen",
     "Domains the server is reached by (e.g. of a reverse proxy). IP addresses and local names always work.": "Domains, über die der Server erreicht wird (z. B. eines Reverse-Proxys). IP-Adressen und lokale Namen gehen immer.",
+    "Trusted reverse proxies": "Vertrauenswürdige Reverse-Proxys",
+    "Addresses or ranges of reverse proxies in front of the server (e.g. 10.0.0.0/8). Only their X-Forwarded-For header names the client, for the limits per client and failed logins. Empty: none.": "Adressen oder Bereiche der Reverse-Proxys vor dem Server (z. B. 10.0.0.0/8). Nur ihr X-Forwarded-For-Header nennt den Client, für die Grenzen pro Client und Fehlversuche beim Anmelden. Leer: keiner.",
     "Public HTTPS address": "Öffentliche HTTPS-Adresse",
     "As users reach the server, e.g. https://music.example.org. Turns on passkeys.": "So wie Benutzer den Server erreichen, z. B. https://music.example.org. Schaltet Passkeys ein.",
     "Android app certificates": "Android-App-Zertifikate",
@@ -450,6 +452,7 @@
     registration: { label: "New accounts", type: "select", options: [["invite", "With an invitation"], ["off", "Off"]] },
     vaultQuotaMb: { label: "Storage per account", type: "number", unit: "MiB", hint: "0 = unlimited." },
     allowedHosts: { label: "Extra host names", type: "list", hint: "Domains the server is reached by (e.g. of a reverse proxy). IP addresses and local names always work.", placeholder: "music.example.org" },
+    trustedProxies: { label: "Trusted reverse proxies", type: "list", hint: "Addresses or ranges of reverse proxies in front of the server (e.g. 10.0.0.0/8). Only their X-Forwarded-For header names the client, for the limits per client and failed logins. Empty: none.", placeholder: "127.0.0.1" },
     publicUrl: { label: "Public HTTPS address", type: "text", hint: "As users reach the server, e.g. https://music.example.org. Turns on passkeys.", placeholder: "https://", nullable: true },
     androidCerts: { label: "Android app certificates", type: "list", hint: "SHA-256 fingerprints of other builds of the app that may use passkeys." },
     pushAllowPrivate: { label: "Push services in the local network", type: "switch", hint: "Allow UnifiedPush servers in private networks and over plain http." },
@@ -1036,7 +1039,7 @@
   }
 
   async function network() {
-    await withSettings(["name", "allowedHosts", "publicUrl", "androidCerts", "pushAllowPrivate", "sourceUrl", "verbose"]);
+    await withSettings(["name", "allowedHosts", "trustedProxies", "publicUrl", "androidCerts", "pushAllowPrivate", "sourceUrl", "verbose"]);
   }
 
   async function security() {

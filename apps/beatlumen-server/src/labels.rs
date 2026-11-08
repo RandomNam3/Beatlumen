@@ -165,27 +165,25 @@ impl SoundIndex {
     pub fn attach(self: &Arc<Self>, state: &Arc<State>) {
         let index = self.clone();
         let state = Arc::downgrade(state);
-        let _ = std::thread::Builder::new()
-            .name("labels".into())
-            .spawn(move || loop {
-                let Some(s) = state.upgrade() else {
-                    return;
-                };
-                let next = if index.enabled.load(Ordering::Relaxed) && !s.scanning() {
-                    index.next_song(&s)
-                } else {
-                    None
-                };
-                drop(s);
-                let Some(e) = next else {
-                    std::thread::sleep(Duration::from_secs(5));
-                    continue;
-                };
-                let t0 = Instant::now();
-                index.analyse(&e);
-                // Half of one core at most.
-                std::thread::sleep(t0.elapsed().max(Duration::from_millis(20)));
-            });
+        let _ = crate::util::supervise("labels", move || loop {
+            let Some(s) = state.upgrade() else {
+                return;
+            };
+            let next = if index.enabled.load(Ordering::Relaxed) && !s.scanning() {
+                index.next_song(&s)
+            } else {
+                None
+            };
+            drop(s);
+            let Some(e) = next else {
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            };
+            let t0 = Instant::now();
+            index.analyse(&e);
+            // Half of one core at most.
+            std::thread::sleep(t0.elapsed().max(Duration::from_millis(20)));
+        });
     }
 
     fn next_song(&self, state: &State) -> Option<Entry> {

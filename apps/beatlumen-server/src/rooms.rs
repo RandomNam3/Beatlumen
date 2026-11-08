@@ -38,7 +38,13 @@ const READY_WAIT: Duration = Duration::from_secs(8);
 const MEMBER_GONE: Duration = Duration::from_secs(45);
 const HOST_GONE: Duration = Duration::from_secs(120);
 const MAX_ROOMS: usize = 100;
+/// Rooms one login hosts (an account, or the server password).
+const MAX_ROOMS_PER_SCOPE: usize = 10;
 const MAX_MEMBERS: usize = 50;
+/// A request's body (state, settings, joining).
+const MAX_BODY: usize = 16 * 1024;
+/// Addresses with wrong codes remembered; more at once are turned away.
+const MAX_WRONG_ADDRESSES: usize = 10_000;
 const MAX_UPCOMING: usize = 20;
 /// Without the ones easy to confuse.
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -197,6 +203,9 @@ fn random_hex(n: usize) -> Result<String, Response> {
 }
 
 fn body(req: &Request) -> Result<Value, Response> {
+    if req.body.len() > MAX_BODY {
+        return Err(Response::error(413, "request too large"));
+    }
     bl_json::parse_bytes(&req.body).map_err(|e| Response::error(400, &format!("invalid JSON: {e}")))
 }
 
@@ -300,6 +309,14 @@ impl Rooms {
         if inner.rooms.len() >= MAX_ROOMS {
             return Response::error(507, "too many rooms");
         }
+        let hosted = inner
+            .rooms
+            .values()
+            .filter(|r| r.members.get(&r.host).is_some_and(|m| m.scope == scope))
+            .count();
+        if hosted >= MAX_ROOMS_PER_SCOPE {
+            return Response::error(507, "too many rooms for this login");
+        }
         let mut code = code_of(&random);
         while inner.rooms.values().any(|r| r.code == code) {
             if crate::random::fill(&mut random).is_err() {
@@ -389,6 +406,15 @@ impl Rooms {
             if n >= MAX_WRONG && now.duration_since(since) < WRONG_WINDOW {
                 return Response::error(429, "too many attempts");
             }
+            // Codes guessed from very many addresses at once: new ones wait.
+            if inner.wrong.len() >= MAX_WRONG_ADDRESSES && !inner.wrong.contains_key(&ip) {
+                inner
+                    .wrong
+                    .retain(|_, (_, s)| now.duration_since(*s) < WRONG_WINDOW);
+                if inner.wrong.len() >= MAX_WRONG_ADDRESSES {
+                    return Response::error(429, "too many attempts");
+                }
+            }
         }
         let found = inner
             .rooms
@@ -459,6 +485,15 @@ impl Rooms {
         let Some(token) = crate::auth::Auth::request_token(req) else {
             return Response::error(401, "authentication required");
         };
+        // Parsed before the rooms are locked.
+        let v = if req.method == "POST" {
+            match body(req) {
+                Ok(v) => v,
+                Err(r) => return r,
+            }
+        } else {
+            Value::Null
+        };
         let mut guard = self.lock();
         let inner = &mut *guard;
         let member = match inner.tokens.get(&token) {
@@ -476,10 +511,6 @@ impl Rooms {
         match (req.method.as_str(), rest) {
             ("GET", []) => Response::json(200, &room_json(id, room)),
             ("POST", ["heartbeat"]) => {
-                let v = match body(req) {
-                    Ok(v) => v,
-                    Err(r) => return r,
-                };
                 if let Some(m) = room.members.get_mut(&member) {
                     m.drift_ms = v.get("driftMs").as_f64();
                 }
@@ -491,10 +522,6 @@ impl Rooms {
                 )
             }
             ("POST", ["ready"]) => {
-                let v = match body(req) {
-                    Ok(v) => v,
-                    Err(r) => return r,
-                };
                 let gen = v.get("gen").as_u64().unwrap_or(0);
                 if gen != room.gen {
                     return Response::new(204);
@@ -511,10 +538,6 @@ impl Rooms {
                 if !is_host {
                     return Response::error(403, "only the host decides");
                 }
-                let v = match body(req) {
-                    Ok(v) => v,
-                    Err(r) => return r,
-                };
                 let idx = state.library();
                 let song = |id: &str| {
                     crate::util::is_id(id)
@@ -558,10 +581,6 @@ impl Rooms {
                 if !is_host {
                     return Response::error(403, "only the host decides");
                 }
-                let v = match body(req) {
-                    Ok(v) => v,
-                    Err(r) => return r,
-                };
                 let on = v.bool_or("guests", room.guests) && state.config().room_guests;
                 if !on {
                     drop_guests(room, id, &mut inner.tokens);

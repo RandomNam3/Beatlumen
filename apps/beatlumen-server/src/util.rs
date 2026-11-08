@@ -357,6 +357,48 @@ pub fn catch<T>(what: &str, f: impl FnOnce() -> T) -> Result<T, String> {
     })
 }
 
+/// Starts a background thread that runs `f` and, when it panics, logs that
+/// and runs it again after a pause (1 s, doubling up to a minute; back to 1 s
+/// after it ran for ten minutes). It ends when `f` returns.
+pub fn supervise(
+    name: &str,
+    f: impl Fn() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    supervise_with(
+        name,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(60),
+        f,
+    )
+}
+
+/// [`supervise`] with the first and the longest pause.
+pub fn supervise_with(
+    name: &str,
+    first: std::time::Duration,
+    longest: std::time::Duration,
+    f: impl Fn() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let what = name.to_string();
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            let mut pause = first;
+            loop {
+                let t0 = std::time::Instant::now();
+                if catch(&what, &f).is_ok() {
+                    return;
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(600) {
+                    pause = first;
+                }
+                crate::warn!("{what}: starting again in {} s", pause.as_secs_f32());
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(longest);
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
