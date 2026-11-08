@@ -4,12 +4,20 @@
 //! decoder allocates on top of the file is measured with a counting
 //! allocator (the image must never exist at full size).
 //!
+//! AVIF comes from ffmpeg's libaom (a single frame at every size; 10-bit
+//! 4:4:4 up to 8K, as libaom needs several GB at 16K) and as a 16K grid of
+//! 512x512 tiles built here.
+//!
 //! Fixtures are generated with ffmpeg (progressive JPEG with jpegtran or
 //! Pillow, interlaced / tiled / planar variants with ImageMagick up to 8K,
 //! as it keeps several full-size copies); missing tools skip the variants
 //! with a note. They are written
 //! to `BL_IMAGE_FIXTURES` (default: the temp directory) and removed after
 //! use; the 16K BMP alone is about 400 MB.
+//!
+//! `BL_IMAGE_MAX_RESOLUTION=8K` (any name of the list) stops after that
+//! size, for machines where the encoders may not use the several GB they
+//! need at 16K.
 //!
 //! This file holds a single test so that no other test allocates while the
 //! peak is measured.
@@ -303,6 +311,44 @@ const CASES: &[Case] = &[
         ],
         psnr: None,
     },
+    Case {
+        name: "avif",
+        ext: "avif",
+        frames: 1,
+        alpha: false,
+        args: &[
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+        ],
+        psnr: Some(30.0),
+    },
+    Case {
+        name: "avif-10bit-444",
+        ext: "avif",
+        frames: 1,
+        alpha: false,
+        args: &[
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv444p10le",
+        ],
+        psnr: Some(30.0),
+    },
 ];
 
 #[test]
@@ -313,13 +359,21 @@ fn every_resolution_and_format() {
     let dir = fixtures_dir();
     let fit = Fit::cover(SCREEN.0, SCREEN.1, 8192, 1 << 25);
     let mut report = Vec::new();
-    for &(res, w, h) in &RESOLUTIONS {
+    let max_res = std::env::var("BL_IMAGE_MAX_RESOLUTION").ok();
+    let last = RESOLUTIONS
+        .iter()
+        .position(|r| Some(r.0) == max_res.as_deref())
+        .unwrap_or(RESOLUTIONS.len() - 1);
+    for &(res, w, h) in &RESOLUTIONS[..=last] {
         let big = w * h > 20_000_000;
         let (tw, th) = fit.target(w, h);
         assert_eq!((tw, th), (1920, 1080).min((w, h)), "{res}");
         // (name, file, case, lossless copy of the "png" case).
         let mut cases: Vec<(String, PathBuf, &Case, bool)> = Vec::new();
         for c in CASES {
+            if c.name == "avif-10bit-444" && w as u64 * h as u64 > 64 << 20 {
+                continue;
+            }
             let frames = if big { c.frames.min(2) } else { c.frames };
             let p = dir.join(format!("{res}-{}.{}", c.name, c.ext));
             let t = Instant::now();
@@ -484,8 +538,110 @@ fn every_resolution_and_format() {
         }
         let _ = std::fs::remove_file(&base);
     }
+    grid_16k(&dir, &fit, &mut report);
     let _ = std::fs::remove_dir_all(&dir);
     eprintln!("\n{}", report.join("\n"));
     // Formats reported by `info` for the cases above.
     let _ = Format::Tiff;
+}
+
+/// A 16K AVIF grid of 30 x 17 tiles of 512x512 (all the same coded tile, in
+/// 4:4:4 so that no chroma is interpolated across tile edges): decoded to
+/// 1920x1080 every tile becomes the 8:1 reduction of the tile.
+fn grid_16k(dir: &Path, fit: &Fit, report: &mut Vec<String>) {
+    use common::heif as hf;
+    let p = dir.join("tile.obu");
+    let src = source(512, 512, false, 10);
+    let o = p.to_str().unwrap().to_string();
+    if !ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        &src,
+        "-frames:v",
+        "1",
+        "-c:v",
+        "libaom-av1",
+        "-still-picture",
+        "1",
+        "-cpu-used",
+        "8",
+        "-crf",
+        "30",
+        "-pix_fmt",
+        "yuv444p",
+        "-f",
+        "obu",
+        &o,
+    ]) {
+        assert!(
+            !cfg!(target_os = "linux"),
+            "ffmpeg could not encode an AV1 tile"
+        );
+        eprintln!("note: no libaom, no 16K AVIF grid");
+        return;
+    }
+    let obu = hf::strip_td(&std::fs::read(&p).unwrap());
+    let props = vec![hf::av1c(&obu), hf::ispe(512, 512)];
+    let (cols, rows) = (30usize, 17usize);
+    let mut items = Vec::new();
+    for k in 0..cols * rows {
+        items.push(hf::Item {
+            kind: *b"av01",
+            data: if k == 0 {
+                hf::Data::Own(obu.clone())
+            } else {
+                hf::Data::SameAs(0)
+            },
+            props: props.clone(),
+            hidden: true,
+        });
+    }
+    items.push(hf::Item::new(
+        b"grid",
+        hf::grid(rows as u8, cols as u8, 15360, 8640),
+        vec![hf::ispe(15360, 8640)],
+    ));
+    let grid = items.len() as u32;
+    let tiles: Vec<u32> = (1..grid).collect();
+    let file = hf::file(b"avif", &items, grid, &[(b"dimg", grid, tiles)]);
+    let i = info(&file).unwrap();
+    assert_eq!((i.format, i.width, i.height), (Format::Avif, 15360, 8640));
+    let t = Instant::now();
+    let owned = file.clone();
+    let (img, peak) = measured(move || decode_fit_owned(owned, fit));
+    let secs = t.elapsed().as_secs_f64();
+    let img = img.unwrap();
+    assert_eq!((img.width, img.height), (1920, 1080));
+    let budget = 5 * 1920 * 1080 * 4 + (64 << 20);
+    assert!(peak <= budget, "16K grid: {} MB peak", peak >> 20);
+    let tile = bl_image::decode_fit(
+        &hf::file(
+            b"avif",
+            &[hf::Item::new(b"av01", obu.clone(), props)],
+            1,
+            &[],
+        ),
+        &Fit::within(64),
+    )
+    .unwrap();
+    assert_eq!((tile.width, tile.height), (64, 64));
+    let mut max = 0u8;
+    for y in 0..1080usize {
+        for x in 0..1920usize {
+            let a = &img.pixels[(y * 1920 + x) * 4..(y * 1920 + x) * 4 + 4];
+            let b = &tile.pixels[((y % 64) * 64 + x % 64) * 4..((y % 64) * 64 + x % 64) * 4 + 4];
+            for c in 0..4 {
+                max = max.max(a[c].abs_diff(b[c]));
+            }
+        }
+    }
+    assert!(max <= 1, "16K grid differs from its tile by {max}");
+    let line = format!(
+        "  16K avif-grid-512        {secs:>6.2}s {:>4} MB file {:>4} MB peak, max diff {max}",
+        file.len() >> 20,
+        peak >> 20
+    );
+    eprintln!("{line}");
+    report.push(line);
 }
