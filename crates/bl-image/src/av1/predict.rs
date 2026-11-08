@@ -8,12 +8,10 @@ use super::tables::{
 
 pub(crate) const DC_PRED: u8 = 0;
 pub(crate) const V_PRED: u8 = 1;
-pub(crate) const H_PRED: u8 = 2;
 pub(crate) const D67_PRED: u8 = 8;
 pub(crate) const SMOOTH_PRED: u8 = 9;
 pub(crate) const SMOOTH_V_PRED: u8 = 10;
 pub(crate) const SMOOTH_H_PRED: u8 = 11;
-pub(crate) const PAETH_PRED: u8 = 12;
 pub(crate) const UV_CFL_PRED: u8 = 13;
 
 /// Offset of index 0 in the edge arrays (index -1 .. -16 are below it).

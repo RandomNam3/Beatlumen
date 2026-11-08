@@ -706,13 +706,10 @@ impl Decoder {
         b.bw4 = NUM_4X4_BLOCKS_WIDE[size] as usize;
         b.bh4 = NUM_4X4_BLOCKS_HIGH[size] as usize;
         let (bw4, bh4) = (b.bw4, b.bh4);
-        b.has_chroma = if bh4 == 1 && self.ssy == 1 && (r & 1) == 0 {
-            false
-        } else if bw4 == 1 && self.ssx == 1 && (c & 1) == 0 {
-            false
-        } else {
-            self.planes > 1
-        };
+        // Sub-8x8 blocks carry chroma at their odd position.
+        let no_chroma = (bh4 == 1 && self.ssy == 1 && (r & 1) == 0)
+            || (bw4 == 1 && self.ssx == 1 && (c & 1) == 0);
+        b.has_chroma = !no_chroma && self.planes > 1;
         let (ri, ci) = (r as isize, c as isize);
         b.avail_u = Self::is_inside(t, ri - 1, ci);
         b.avail_l = Self::is_inside(t, ri, ci - 1);
@@ -947,9 +944,7 @@ impl Decoder {
                 } else {
                     prev_l
                 }
-            } else if prev_l == -1 {
-                prev_u
-            } else if prev_ul == prev_u {
+            } else if prev_l == -1 || prev_ul == prev_u {
                 prev_u
             } else {
                 prev_l
@@ -1302,8 +1297,6 @@ impl Decoder {
             let above_w = if b.avail_u {
                 let m = self.mi_at(r - 1, c);
                 if m.is_inter {
-                    block_width(m.bsize as usize)
-                } else if m.skip && m.is_inter {
                     block_width(m.bsize as usize)
                 } else {
                     TX_WIDTH[m.tx_size as usize] as usize

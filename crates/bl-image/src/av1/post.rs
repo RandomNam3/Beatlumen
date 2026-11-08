@@ -1008,19 +1008,6 @@ impl Decoder {
     }
 }
 
-fn constrain(diff: i32, threshold: i32, damping: i32) -> i32 {
-    if threshold == 0 {
-        return 0;
-    }
-    let adj = (damping - (threshold as u32).ilog2() as i32).max(0);
-    let mag = (threshold - (diff.abs() >> adj)).clamp(0, diff.abs());
-    if diff < 0 {
-        -mag
-    } else {
-        mag
-    }
-}
-
 /// The deblocking filter for one line across an edge. `s` holds k samples
 /// on each side (s[k - 1] = p0, s[k] = q0). Returns whether samples were
 /// changed.

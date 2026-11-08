@@ -17,9 +17,6 @@ pub(crate) const KEY_FRAME: u32 = 0;
 pub(crate) const INTRA_ONLY_FRAME: u32 = 2;
 
 pub(crate) const RESTORE_NONE: u8 = 0;
-pub(crate) const RESTORE_WIENER: u8 = 1;
-pub(crate) const RESTORE_SGRPROJ: u8 = 2;
-pub(crate) const RESTORE_SWITCHABLE: u8 = 3;
 
 pub(crate) const SEG_LVL_ALT_Q: usize = 0;
 pub(crate) const SEG_LVL_ALT_LF_Y_V: usize = 1;

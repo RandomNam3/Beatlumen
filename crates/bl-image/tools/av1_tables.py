@@ -137,7 +137,7 @@ def write(fname, parts):
         fh.write(src)
 
 cdfs = sorted(n for n in TABLES if n.startswith('Default_') and n.endswith('_Cdf'))
-inter_only = ('New_Mv', 'Zero_Mv', 'Ref_Mv', 'Drl_', 'Is_Inter', 'Comp_', 'Skip_Mode',
+inter_only = ('Mv_Class0_Fr', 'Mv_Class0_Hp', 'Mv_Fr', 'Mv_Hp', 'New_Mv', 'Zero_Mv', 'Ref_Mv', 'Drl_', 'Is_Inter', 'Comp_', 'Skip_Mode',
               'Single_Ref', 'Compound_', 'Interp_', 'Motion_', 'Inter_Intra',
               'Wedge', 'Use_Obmc', 'Uni_Comp', 'Y_Mode_Cdf', 'Segment_Id_Predicted')
 cdfs = [n for n in cdfs if not any(n[len('Default_'):].startswith(p) for p in inter_only)]
@@ -186,17 +186,17 @@ emit(parts, ['Qm_32x32', 'Qm_32x16'], 'u8')
 write('qm_tables.rs', parts)
 
 misc = ['Mi_Width_Log2', 'Mi_Height_Log2', 'Num_4x4_Blocks_Wide', 'Num_4x4_Blocks_High',
-        'Size_Group', 'Max_Tx_Size_Rect', 'Partition_Subsize', 'Split_Tx_Size', 'Mode_To_Txfm',
+        'Max_Tx_Size_Rect', 'Partition_Subsize', 'Split_Tx_Size', 'Mode_To_Txfm',
         'Palette_Color_Context', 'Palette_Color_Hash_Multipliers', 'Sm_Weights_Tx_4x4',
         'Sm_Weights_Tx_8x8', 'Sm_Weights_Tx_16x16', 'Sm_Weights_Tx_32x32', 'Sm_Weights_Tx_64x64',
         'Mode_To_Angle', 'Dr_Intra_Derivative', 'Intra_Filter_Taps', 'Tx_Size_Sqr',
         'Tx_Size_Sqr_Up', 'Tx_Width', 'Tx_Height', 'Tx_Width_Log2', 'Tx_Height_Log2',
-        'Sig_Ref_Diff_Offset', 'Adjusted_Tx_Size', 'Gaussian_Sequence',
+        'Sig_Ref_Diff_Offset', 'Adjusted_Tx_Size',
         'Segmentation_Feature_Bits', 'Segmentation_Feature_Signed', 'Segmentation_Feature_Max',
-        'Remap_Lr_Type', 'Wiener_Taps_Mid', 'Sgrproj_Xqd_Mid', 'Max_Tx_Depth', 'Subsampled_Size',
+        'Remap_Lr_Type', 'Max_Tx_Depth', 'Subsampled_Size',
         'Tx_Type_In_Set_Intra', 'Tx_Type_Intra_Inv_Set1', 'Tx_Type_Intra_Inv_Set2',
         'Wiener_Taps_Min', 'Wiener_Taps_Max', 'Wiener_Taps_K', 'Sgrproj_Xqd_Min',
-        'Sgrproj_Xqd_Max', 'Intra_Edge_Kernel', 'Div_Lut', 'Dc_Qlookup', 'Ac_Qlookup',
+        'Sgrproj_Xqd_Max', 'Intra_Edge_Kernel', 'Dc_Qlookup', 'Ac_Qlookup',
         'Cos128_Lookup', 'Transform_Row_Shift', 'Cdef_Uv_Dir', 'Div_Table', 'Cdef_Pri_Taps',
         'Cdef_Sec_Taps', 'Cdef_Directions', 'Upscale_Filter', 'Sgr_Params', 'Intra_Mode_Context',
         'Coeff_Base_Ctx_Offset', 'Coeff_Base_Pos_Ctx_Offset', 'Mag_Ref_Offset_With_Tx_Class',

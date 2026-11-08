@@ -138,7 +138,6 @@ pub(crate) struct Props {
 pub(crate) struct Item {
     pub id: u32,
     pub kind: [u8; 4],
-    pub hidden: bool,
     /// (construction method, extents (offset, length)), base offset
     /// included.
     pub method: u8,
@@ -240,7 +239,6 @@ impl<'a> Heif<'a> {
                     continue;
                 }
                 let ver = *d.get(e.start).ok_or(BAD)?;
-                let flags = read_n(d, e.start + 1, 3)?;
                 if ver < 2 {
                     continue;
                 }
@@ -254,7 +252,6 @@ impl<'a> Heif<'a> {
                 self.items.push(Item {
                     id,
                     kind,
-                    hidden: flags & 1 != 0,
                     method: 0,
                     extents: Vec::new(),
                     props: Props::default(),

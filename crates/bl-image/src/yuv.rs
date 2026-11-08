@@ -190,7 +190,7 @@ impl Converter {
             // Non-linear R'G'B' in [0, 1], then the transfer function.
             let scale = 1.0 / (255.0 * 65536.0);
             for x in 0..w {
-                let yv = (((lrow[x] as i64) << 16) - self.yo) * self.ky >> 16;
+                let yv = ((((lrow[x] as i64) << 16) - self.yo) * self.ky) >> 16;
                 let cb = self.u[x] as i64 - self.co;
                 let cr = self.v[x] as i64 - self.co;
                 let r = (yv + self.r_cr * cr) as f32 * scale as f32;

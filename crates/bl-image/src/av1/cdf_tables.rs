@@ -4191,19 +4191,6 @@ pub(crate) static DEFAULT_MV_BIT_CDF: [[u16; 3]; 10] = [
 
 pub(crate) static DEFAULT_MV_CLASS0_BIT_CDF: [u16; 3] = [27648, 32768, 0];
 
-pub(crate) static DEFAULT_MV_CLASS0_FR_CDF: [[[u16; 5]; 2]; 2] = [
-    [
-        [16384, 24576, 26624, 32768, 0],
-        [12288, 21248, 24128, 32768, 0],
-    ],
-    [
-        [16384, 24576, 26624, 32768, 0],
-        [12288, 21248, 24128, 32768, 0],
-    ],
-];
-
-pub(crate) static DEFAULT_MV_CLASS0_HP_CDF: [u16; 3] = [20480, 32768, 0];
-
 pub(crate) static DEFAULT_MV_CLASS_CDF: [[u16; 12]; 2] = [
     [
         28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767, 32768, 0,
@@ -4212,13 +4199,6 @@ pub(crate) static DEFAULT_MV_CLASS_CDF: [[u16; 12]; 2] = [
         28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767, 32768, 0,
     ],
 ];
-
-pub(crate) static DEFAULT_MV_FR_CDF: [[u16; 5]; 2] = [
-    [8192, 17408, 21248, 32768, 0],
-    [8192, 17408, 21248, 32768, 0],
-];
-
-pub(crate) static DEFAULT_MV_HP_CDF: [u16; 3] = [16384, 32768, 0];
 
 pub(crate) static DEFAULT_MV_JOINT_CDF: [u16; 5] = [4096, 11264, 19328, 32768, 0];
 

@@ -17,10 +17,6 @@ impl<'a> BitReader<'a> {
         BitReader { data, pos: 0 }
     }
 
-    pub fn position(&self) -> usize {
-        self.pos
-    }
-
     pub fn bit(&mut self) -> Result<u32, Error> {
         let byte = *self.data.get(self.pos >> 3).ok_or(TRUNCATED)?;
         let b = (byte >> (7 - (self.pos & 7))) & 1;
@@ -61,27 +57,6 @@ impl<'a> BitReader<'a> {
         }
         let extra = self.bit()?;
         Ok((v << 1) - m + extra)
-    }
-
-    /// le(n): little-endian unsigned of n bytes (byte aligned).
-    pub fn le(&mut self, n: u32) -> Result<u32, Error> {
-        let mut t: u64 = 0;
-        for i in 0..n {
-            t += (self.f(8)? as u64) << (i * 8);
-        }
-        u32::try_from(t).map_err(|_| Error::InvalidData("av1: value too large"))
-    }
-
-    pub fn leb128(&mut self) -> Result<u64, Error> {
-        let mut value: u64 = 0;
-        for i in 0..8 {
-            let b = self.f(8)? as u64;
-            value |= (b & 0x7f) << (i * 7);
-            if b & 0x80 == 0 {
-                return Ok(value);
-            }
-        }
-        Err(Error::InvalidData("av1: bad leb128"))
     }
 
     pub fn uvlc(&mut self) -> Result<u32, Error> {
