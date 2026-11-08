@@ -76,6 +76,8 @@ pub(crate) enum Req {
     Info,
     Login,
     Library,
+    Hidden,
+    HiddenChanged,
     Playlists,
     PlaylistSaved,
     Images,
@@ -334,6 +336,9 @@ pub struct Core {
     pub(crate) speech: crate::speech::SpeechState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
+    /// What this account took out of the server's library, with how long each
+    /// can still come back.
+    pub(crate) hidden_items: Vec<Value>,
     pub(crate) discord: crate::discord::DiscordState,
     /// The part of the window the visual fills, in logical pixels from the
     /// upper left corner (x, y, width, height); the whole window without one.
@@ -545,6 +550,7 @@ impl Core {
             speech: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
+            hidden_items: Vec::new(),
             discord: Default::default(),
             view_part: None,
             webcheck: Default::default(),
@@ -742,6 +748,10 @@ impl Core {
             .with("scanProcessed", scan.2)
             .with("libraryRev", self.library.revision)
             .with("libraryTracks", self.library.tracks.len())
+            .with(
+                "trashCount",
+                self.hidden_items.len() + self.vault.trash.len(),
+            )
             .with("queueRev", self.revs.queue)
             .with("playlistsRev", self.revs.playlists)
             .with("presetsRev", self.revs.presets)
@@ -837,6 +847,8 @@ impl Core {
     }
 
     pub(crate) fn refresh_server_data(&mut self, host: &mut dyn Host) {
+        let id = self.device_request(host, "GET", "/api/library/hidden", Vec::new(), None);
+        self.requests.insert(id, Req::Hidden);
         let reqs = [
             (bl_net::api::paths::LIBRARY, Req::Library),
             (bl_net::api::paths::PLAYLISTS, Req::Playlists),
@@ -930,6 +942,29 @@ impl Core {
                     self.library.set_remote(Library::from_json(&v));
                     self.restore_current_track();
                 }
+            }
+            Req::Hidden => {
+                if let Some(v) = ok_json(&res) {
+                    self.hidden_items = v.get("items").as_array().cloned().unwrap_or_default();
+                    // Taken out by this account, or in other accounts' libraries.
+                    self.library.hidden = self
+                        .hidden_items
+                        .iter()
+                        .map(|i| i.str_or("id", "").to_string())
+                        .chain(
+                            v.get("foreign")
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|i| i.as_str().map(str::to_string)),
+                        )
+                        .collect();
+                    self.library.rebuild();
+                }
+            }
+            Req::HiddenChanged => {
+                let id = self.device_request(host, "GET", "/api/library/hidden", Vec::new(), None);
+                self.requests.insert(id, Req::Hidden);
             }
             Req::Playlists => {
                 if let Some(v) = ok_json(&res) {

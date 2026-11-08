@@ -265,7 +265,11 @@ impl Vault {
             )
         };
         let files = self.files.read().unwrap_or_else(|e| e.into_inner());
-        let Some(f) = files.get(&file_id).filter(|f| f.complete()) else {
+        // A file in its owner's trash does not answer, until it comes back.
+        let Some(f) = files
+            .get(&file_id)
+            .filter(|f| f.complete() && f.trashed_for(&f.owner).is_none())
+        else {
             return fail(404, "link not found");
         };
         match &segs[1..] {
@@ -326,7 +330,7 @@ impl Vault {
                         return fail(403, "password required");
                     }
                 }
-                let path = self.files_dir.join(format!("{}.blob", f.id));
+                let path = self.stored_path(f);
                 Ok(Response::file(
                     &path,
                     "application/octet-stream",

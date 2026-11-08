@@ -346,7 +346,13 @@ fn accounts_files_and_sharing() {
     assert!(list.get("used").as_u64().unwrap() > 300_000);
 
     // On disk there is no plaintext.
-    let blob = std::fs::read(s.data.join(format!("vault/files/{id}.blob"))).unwrap();
+    let meta_file = s.data.join(format!("vault/files/{id}.json"));
+    let digest = bl_json::parse_bytes(&std::fs::read(&meta_file).unwrap()).unwrap();
+    let stored = match digest.str_or("blob", "") {
+        "" => s.data.join(format!("vault/files/{id}.blob")),
+        b => s.data.join(format!("vault/blobs/{b}")),
+    };
+    let blob = std::fs::read(stored).unwrap();
     assert!(!blob.windows(64).any(|w| song.windows(64).next() == Some(w)));
     assert!(!String::from_utf8_lossy(
         &std::fs::read(s.data.join(format!("vault/files/{id}.json"))).unwrap()

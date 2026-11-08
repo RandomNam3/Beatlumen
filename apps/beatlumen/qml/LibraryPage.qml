@@ -19,7 +19,7 @@ Item {
     readonly property int libraryRev: Core.state.libraryRev || 0
     readonly property int playlistsRev: Core.state.playlistsRev || 0
     readonly property int trackCount: Core.state.libraryTracks || 0
-    readonly property bool hasContent: trackCount > 0 || ((Core.state.sources || {}).stations || []).length > 0
+    readonly property bool hasContent: trackCount > 0 || ((Core.state.sources || {}).stations || []).length > 0 || (Core.state.trashCount || 0) > 0
     property var tracks: []
     property var albums: []
     property var artists: []
@@ -163,6 +163,10 @@ Item {
             back: true
             onBackClicked: stack.pop()
             onUpload: page.uploadVault()
+            onOpenTrash: {
+                stack.pop(null)
+                stack.currentItem.showTrash()
+            }
         }
     }
 
@@ -228,6 +232,11 @@ Item {
                 { label: Theme.tr("Playlists"), icon: "queue_music" },
                 { label: Theme.tr("Labels"), icon: "label" }
             ].concat((Core.state.sources || {}).available === true ? [{ label: Theme.tr("Radio"), icon: "radio" }] : [])
+             .concat(Core.state.server === "connected" || (Core.state.trashCount || 0) > 0 ? [{ label: Theme.tr("Trash"), icon: "delete", page: 7 }] : [])
+            onSectionListChanged: if (section >= sectionList.length) section = 0
+            function showTrash() {
+                section = sectionList.findIndex(s => s.page === 7)
+            }
 
             PageHeader {
                 Layout.fillWidth: true
@@ -369,7 +378,7 @@ Item {
                     anchors.fill: parent
                     anchors.leftMargin: sidebar.visible ? sidebar.width + 8 : 0
                     visible: page.hasContent
-                    currentIndex: main.section
+                    currentIndex: (main.sectionList[main.section] || {}).page || main.section
 
                     // Songs: play/shuffle scroll away with the list.
                     TrackListView {
@@ -684,6 +693,9 @@ Item {
                             }
                         }
                     }
+
+                    // Trash
+                    TrashView {}
                 }
             }
         }

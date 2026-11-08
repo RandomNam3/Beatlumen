@@ -77,6 +77,8 @@ pub struct LibraryState {
     album_index: HashMap<String, usize>,
     pub scan: Arc<Mutex<ScanProgress>>,
     pub revision: u64,
+    /// Songs of the server this account took out of its library.
+    pub hidden: std::collections::HashSet<String>,
 }
 
 fn sort_key(t: &Track) -> (String, String, u32, u32, String) {
@@ -151,7 +153,13 @@ impl LibraryState {
             .local
             .iter()
             .cloned()
-            .chain(self.remote.tracks.iter().cloned())
+            .chain(
+                self.remote
+                    .tracks
+                    .iter()
+                    .filter(|t| !self.hidden.contains(&t.id))
+                    .cloned(),
+            )
             .chain(self.sources.iter().cloned())
             .collect();
         tracks.sort_by_cached_key(sort_key);

@@ -32,6 +32,14 @@ two hours.
 
 ### Songs nobody plays
 
+A kept import is in the library of the accounts that brought it in, by playing
+it or adding it, and the others do not see it there; the file exists once.
+`POST /api/library/remove` takes a song out of an account's library, into its
+trash for 29 days (`GET /api/library/hidden`, `POST /api/library/restore`). The
+file goes 30 days after the last account took it out, if nobody played it since.
+The admin's music folders are only hidden per account, never deleted. One limit:
+a song someone else already has arrives at once, so adding it can reveal that.
+
 Kept imports count as played when a client starts streaming them or
 downloads them. Once an hour the server deletes those not played for
 `extensionCleanupDays`. Only songs on its list of imports

@@ -3,6 +3,7 @@
 //! password signs in to the shared ones.
 
 use crate::favorites::Favorites;
+use crate::hidden::Hidden;
 use crate::history::History;
 use crate::labels::SongLabels;
 use crate::playlists::Playlists;
@@ -17,6 +18,7 @@ pub struct UserStore {
     pub favorites: Favorites,
     pub history: History,
     pub labels: SongLabels,
+    pub hidden: Hidden,
 }
 
 #[derive(Default)]
@@ -43,6 +45,7 @@ impl UserData {
             favorites: Favorites::load(dir.join("favorites.json")),
             history: History::load(dir.join("history.jsonl")),
             labels: SongLabels::load(dir.join("labels.json")),
+            hidden: Hidden::load(dir.join("hidden.json")),
         });
         stores.insert(dir, s.clone());
         s

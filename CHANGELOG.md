@@ -28,6 +28,15 @@
   Settings, Appearance, can turn this off. Also: fewer frames when paused, behind a page or with the
   system's battery saver, a look at the state 30 times a second instead of 60, and audio in the
   system's power saving mode.
+- **Music is stored once:** the same music file in several accounts' encrypted files takes up
+  the space of one, and it stays encrypted. The server can see that two accounts hold the
+  same file (`docs/ENCRYPTION.md`); other files are never put together.
+- **Trash:** what you delete stays in the trash for 29 days (Library, Trash) and can come back.
+  A file goes when nobody needs it any more, 30 days after the last account let go of it, so
+  you cannot tell whether someone else still has it.
+- **Remove from library:** a song disappears for your account only. A song of an extension is
+  only in the libraries of those who added it, and goes 30 days after it left the last one.
+  Songs from the server's own folders are never deleted and can always come back.
 - **More from server extensions (protocol 2, `docs/EXTENSIONS.md`):** what an extension
   offers is in its manifest. Rows of suggestions on the start page, collections that open
   like an album, a radio for a song, and search results next to the library's. Extensions

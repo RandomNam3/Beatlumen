@@ -63,6 +63,9 @@ BottomSheet {
             r.push({ icon: "person", text: Theme.tr("Go to artist"), run: () => win.showArtist(track.artist.split(", ")[0]) })
         if (canEditLabels && ids.length === 1)
             r.push({ icon: "label", text: Theme.tr("Labels…"), run: () => sheet.editLabels(ids[0]) })
+        const songs = Core.state.server === "connected" ? ids.filter(id => String(id).indexOf(":") < 0) : []
+        if (songs.length > 0)
+            r.push({ icon: "delete", text: Theme.tr("Remove from library"), run: () => Core.call("library.remove", { ids: songs }) })
         if (toSave.length > 0)
             r.push({ icon: "download", text: Theme.tr("Keep offline"), run: () => Core.call("offline.save", { ids: toSave }) })
         if (toRemove.length > 0)

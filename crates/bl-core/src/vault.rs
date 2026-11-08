@@ -74,6 +74,8 @@ pub(crate) enum VaultReq {
     },
     /// The links of a file (also after revoking one).
     Links(String),
+    /// What is in the trash.
+    Trash,
     /// Answer not needed.
     Quiet,
 }
@@ -103,6 +105,8 @@ enum Done {
         data: Vec<u8>,
         meta: Vec<u8>,
         key: Secret,
+        /// The bytes bring their own header (music, see `encrypt_job`).
+        whole: bool,
     },
     Failed {
         account: Option<Account>,
@@ -163,6 +167,20 @@ pub(crate) struct VaultFile {
     pub problem: Option<String>,
     pub key: Option<Secret>,
     pub header: Option<Header>,
+    /// Music: key and header of the contents, kept apart from the file's own.
+    pub content: Option<(Secret, Header)>,
+    /// When it went into the trash.
+    pub trashed: Option<u64>,
+}
+
+impl VaultFile {
+    /// What opens the stored bytes.
+    pub(crate) fn data_keys(&self) -> Option<(Secret, Header)> {
+        match &self.content {
+            Some(c) => Some(c.clone()),
+            None => Some((self.key.clone()?, self.header.clone()?)),
+        }
+    }
 }
 
 struct Upload {
@@ -187,6 +205,12 @@ pub(crate) struct Vault {
     account: Option<Account>,
     bundle: Option<KeyBundle>,
     pub files: Vec<VaultFile>,
+    /// What this account put in the trash.
+    pub trash: Vec<VaultFile>,
+    /// The server's secret for contents kept apart (see `encrypt_job`); without
+    /// it music is encrypted like everything else.
+    pub content_salt: Option<Vec<u8>>,
+    pub trash_days: u64,
     pub contacts: Vec<Contact>,
     used: u64,
     quota: u64,
@@ -806,6 +830,8 @@ impl Core {
         self.vault_remember(host);
         self.vault_refresh(host);
         self.push_start(host);
+        // From now on the library is this account's view of it.
+        self.refresh_server_data(host);
     }
 
     pub(crate) fn vault_refresh(&mut self, host: &mut dyn Host) {
@@ -914,6 +940,8 @@ impl Core {
             problem: None,
             key: None,
             header: None,
+            content: None,
+            trashed: e.get("trashed").as_u64(),
         };
         let header = unb64(e.get("header")).and_then(|h| Header::parse(&h).ok());
         let Some(header) = header.filter(|h| hex(&h.file_id) == f.id) else {
@@ -976,6 +1004,8 @@ impl Core {
                 .rsplit_once('.')
                 .map_or(f.name.clone(), |(s, _)| s.to_string());
         }
+        f.content =
+            file::content_from_fields(m.str_or("contentKey", ""), m.str_or("contentHeader", ""));
         f.key = Some(key);
         f.header = Some(header);
         Some(f)
@@ -1014,7 +1044,7 @@ impl Core {
     /// decrypted chunk by chunk (native), or from memory once downloaded.
     pub(crate) fn vault_opener(&self, host: &dyn Host, id: &str) -> Option<SourceOpener> {
         let f = self.vault.file(id)?;
-        let (key, header) = (f.key.clone()?, f.header.clone()?);
+        let (key, header) = f.data_keys()?;
         let ext = Self::vault_ext(f);
         if let Some(data) = self.vault.plain(&f.id) {
             return Some(Box::new(move || {
@@ -1062,8 +1092,9 @@ impl Core {
                 .unwrap_or_else(|| "file".into());
             if host.has_threads() {
                 let serial = self.vault_add_upload(&name);
+                let salt = self.vault.content_salt.clone();
                 self.vault_job(host, move || match std::fs::read(&p) {
-                    Ok(data) => encrypt_job(serial, &name, data),
+                    Ok(data) => encrypt_job(serial, &name, data, salt),
                     Err(e) => Done::UploadFailed {
                         serial,
                         msg: format!("{p}: {e}"),
@@ -1080,7 +1111,8 @@ impl Core {
 
     pub(crate) fn vault_upload_data(&mut self, host: &mut dyn Host, name: String, data: Vec<u8>) {
         let serial = self.vault_add_upload(&name);
-        self.vault_job(host, move || encrypt_job(serial, &name, data));
+        let salt = self.vault.content_salt.clone();
+        self.vault_job(host, move || encrypt_job(serial, &name, data, salt));
     }
 
     fn vault_add_upload(&mut self, name: &str) -> u64 {
@@ -1176,9 +1208,44 @@ impl Core {
         let what = if user.is_some() {
             "Access removed"
         } else {
-            "Deleted"
+            "Moved to the trash"
         };
         self.vault_request(host, "DELETE", &path, None, VaultReq::Changed(what));
+    }
+
+    /// A file comes back from the trash, or goes for good.
+    fn vault_from_trash(&mut self, host: &mut dyn Host, id: &str, back: bool) {
+        let id = id.trim_start_matches(ID_PREFIX);
+        if !self.vault.trash.iter().any(|f| f.id == id) {
+            return;
+        }
+        let (method, path, what) = if back {
+            ("POST", format!("/api/vault/files/{id}/restore"), "Restored")
+        } else {
+            (
+                "DELETE",
+                format!("/api/vault/files/{id}/forever"),
+                "Deleted",
+            )
+        };
+        self.vault_request(host, method, &path, None, VaultReq::Changed(what));
+    }
+
+    fn vault_trash_json(&self) -> Value {
+        Value::Array(
+            self.vault
+                .trash
+                .iter()
+                .map(|f| {
+                    Value::object()
+                        .with("id", f.id.as_str())
+                        .with("title", f.title.as_str())
+                        .with("artist", f.artist.as_str())
+                        .with("name", f.name.as_str())
+                        .with("trashed", f.trashed)
+                })
+                .collect(),
+        )
     }
 
     // ---- results ---------------------------------------------------------
@@ -1263,6 +1330,7 @@ impl Core {
                     data,
                     meta,
                     key,
+                    whole,
                 } => {
                     let Some(account) = self.vault.account.as_ref() else {
                         self.vault_upload_failed(serial, self.tr("The account is locked").into());
@@ -1279,10 +1347,12 @@ impl Core {
                         .with("header", b64(&header.to_bytes()))
                         .with("meta", b64(&meta))
                         .with("signature", b64(&sig))
-                        .with("key", b64(&mine));
+                        .with("key", b64(&mine))
+                        .with("whole", whole);
                     if let Some(u) = self.vault.uploads.iter_mut().find(|u| u.serial == serial) {
                         u.file_id = hex(&header.file_id);
-                        u.sent = file::HEADER_LEN;
+                        // Music brings its own header with its bytes.
+                        u.sent = if whole { 0 } else { file::HEADER_LEN };
                         u.data = data;
                     }
                     self.vault_request(
@@ -1589,10 +1659,31 @@ impl Core {
                 self.vault.files = files;
                 self.vault.used = json.get("used").as_u64().unwrap_or(0);
                 self.vault.quota = json.get("quota").as_u64().unwrap_or(0);
+                self.vault.content_salt = unb64(json.get("contentSalt"));
+                self.vault.trash_days = json.get("trashDays").as_u64().unwrap_or(0);
                 self.vault.rev += 1;
                 self.revs.queue += 1;
                 self.revs.images += 1;
                 self.vault_backgrounds_ready(host);
+                self.vault_request(
+                    host,
+                    "GET",
+                    "/api/vault/files?trash=1",
+                    None,
+                    VaultReq::Trash,
+                );
+            }
+            VaultReq::Trash => {
+                if status == 200 {
+                    self.vault.trash = json
+                        .get("files")
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| self.decode_file(e))
+                        .collect();
+                    self.vault.rev += 1;
+                }
             }
             VaultReq::Create(serial) => {
                 if status == 201 {
@@ -1654,7 +1745,7 @@ impl Core {
                     return;
                 }
                 let plain = self.vault.file(&id).and_then(|f| {
-                    let key = f.key.clone()?;
+                    let (key, _) = f.data_keys()?;
                     let body = res.as_ref().ok().filter(|r| r.status == 200)?;
                     file::decrypt(&key, &body.body).ok()
                 });
@@ -1719,6 +1810,7 @@ impl Core {
             )
             .with("recoveryCode", self.vault.recovery_code.clone())
             .with("rev", self.vault.rev)
+            .with("trashDays", self.vault.trash_days)
             .with("uploads", Value::Array(uploads))
             .with("used", self.vault.used)
             .with("quota", self.vault.quota)
@@ -1866,6 +1958,9 @@ impl Core {
                 self.vault_remove(host, &s("id"), Some(&me));
             }
             "vault.delete" => self.vault_remove(host, &s("id"), None),
+            "vault.trash" => return self.vault_trash_json(),
+            "vault.restore" => self.vault_from_trash(host, &s("id"), true),
+            "vault.deleteForever" => self.vault_from_trash(host, &s("id"), false),
             "vault.link.create" => self.vault_link_create(
                 host,
                 &s("id"),
@@ -1883,7 +1978,7 @@ impl Core {
 }
 
 /// Encrypts a file for upload (background thread).
-fn encrypt_job(serial: u64, name: &str, data: Vec<u8>) -> Done {
+fn encrypt_job(serial: u64, name: &str, data: Vec<u8>, salt: Option<Vec<u8>>) -> Done {
     let ext = extension(name);
     let mut meta = Value::object()
         .with("name", name)
@@ -1912,16 +2007,32 @@ fn encrypt_job(serial: u64, name: &str, data: Vec<u8>) -> Done {
             }
         }
     };
-    match file::encrypt(&key, &data).and_then(|(h, enc)| {
-        let m = file::seal_meta(&key, &h, meta.to_json().as_bytes())?;
-        Ok((h, enc, m))
-    }) {
-        Ok((header, data, meta)) => Done::Encrypted {
+    // Music is kept once however many accounts have it: its contents have a key
+    // of their own, which goes into the metadata. Everything else stays random.
+    let music = info
+        .as_ref()
+        .is_some_and(|i| i.duration_ms.is_some_and(|d| d > 0));
+    let sealed = match salt.filter(|_| music) {
+        Some(salt) => file::encrypt_content(&salt, &data).and_then(|(ckey, ch, enc)| {
+            let (k, h) = file::content_fields(&ckey, &ch);
+            let meta = meta.clone().with("contentKey", k).with("contentHeader", h);
+            let own = Header::new(data.len() as u64)?;
+            let m = file::seal_meta(&key, &own, meta.to_json().as_bytes())?;
+            Ok((own, enc, m, true))
+        }),
+        None => file::encrypt(&key, &data).and_then(|(h, enc)| {
+            let m = file::seal_meta(&key, &h, meta.to_json().as_bytes())?;
+            Ok((h, enc, m, false))
+        }),
+    };
+    match sealed {
+        Ok((header, data, meta, whole)) => Done::Encrypted {
             serial,
             header,
             data,
             meta,
             key,
+            whole,
         },
         Err(e) => Done::UploadFailed {
             serial,
