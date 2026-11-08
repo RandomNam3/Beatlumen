@@ -12,6 +12,7 @@ use super::color::{self, ColorSpace};
 use super::huffman::{BitReader, HuffTable, FAST_BITS};
 use super::idct::{self, Dequant, ReducedBasis};
 use super::ZIGZAG_EXT;
+use crate::scale::{Dest, RowSink, Scaler};
 use crate::{exif, Error, Image};
 
 #[derive(Default)]
@@ -31,8 +32,12 @@ pub(super) struct Component {
     /// need little or no upsampling.
     cs: usize,
     bs: usize,
-    /// Quantized coefficients (progressive mode only), natural order.
+    /// Quantized coefficients (progressive mode only): the top-left
+    /// `bs` x `bs` of each block (all that the scaled IDCT reads), row
+    /// major, and for scaled decoding a mask of the non-zero coefficients
+    /// (natural order) so that refinement scans stay in sync.
     coefs: Vec<i16>,
+    nz: Vec<u64>,
     /// Decoded samples, `stride` bytes per row.
     pub plane: Vec<u8>,
     pub stride: usize,
@@ -135,17 +140,8 @@ fn next_segment(data: &[u8], pos: &mut usize) -> Result<Option<(u8, usize, usize
     Ok(Some((marker, p + 2, p + len)))
 }
 
-/// Decodes a JPEG, scaling it down by `scale` (1, 2, 4 or 8) in the DCT
-/// domain. EXIF orientation is applied.
-pub fn decode(data: &[u8], scale: u32) -> Result<Image, Error> {
-    decode_scaled(data, scale).map(|r| r.0)
-}
-
-/// Like [`decode`], but also returns the exact extent of the original image
-/// in output pixels (width / scale, height / scale, after orientation); the
-/// last row / column of a scaled image may cover less than a full pixel.
-pub fn decode_scaled(data: &[u8], scale: u32) -> Result<(Image, f64, f64), Error> {
-    let mut d = Decoder {
+fn new_decoder(data: &[u8], scale: usize) -> Decoder<'_> {
+    Decoder {
         data,
         qt: [[16; 64]; 4],
         dc: [None, None, None, None],
@@ -154,26 +150,83 @@ pub fn decode_scaled(data: &[u8], scale: u32) -> Result<(Image, f64, f64), Error
         frame: None,
         adobe_transform: None,
         orientation: 1,
-        scale: match scale {
-            0 | 1 => 1,
-            2 | 3 => 2,
-            4..=7 => 4,
-            _ => 8,
-        },
+        scale,
         eobrun: 0,
         basis: ReducedBasis::new(),
         scans_decoded: 0,
-    };
-    d.run()?;
-    let img = d.output()?;
-    let (w, h) = d.frame.as_ref().map_or((1, 1), |f| (f.width, f.height));
-    let (ew, eh) = (w as f64 / d.scale as f64, h as f64 / d.scale as f64);
-    let (ew, eh) = if d.orientation >= 5 {
-        (eh, ew)
+    }
+}
+
+/// Decodes a JPEG at full size (EXIF orientation applied).
+pub fn decode(data: &[u8]) -> Result<Image, Error> {
+    let (w, h) = dimensions(data)?;
+    if w as u64 * h as u64 > crate::MAX_PIXELS {
+        return Err(Error::Unsupported("image too large"));
+    }
+    decode_fit(data, &crate::Fit::full())
+}
+
+/// Decodes a JPEG scaled to the size `fit` gives for its upright
+/// dimensions. Most of the reduction happens in the DCT domain (1/2, 1/4,
+/// 1/8): only the needed coefficients are kept and the planes are
+/// reconstructed at reduced size; area averaging gives the exact size.
+/// EXIF orientation is applied (to the scaled result).
+pub fn decode_fit(data: &[u8], fit: &crate::Fit) -> Result<Image, Error> {
+    let (w, h) = dimensions(data)?;
+    if w == 0 || h == 0 {
+        return Err(Error::InvalidData("jpeg: zero dimension"));
+    }
+    let orientation = orientation(data);
+    let swap = orientation >= 5;
+    let (tw, th) = if swap {
+        let (a, b) = fit.target(h, w);
+        (b, a)
     } else {
-        (ew, eh)
+        fit.target(w, h)
     };
-    Ok((exif::apply(img, d.orientation), ew, eh))
+    // Largest DCT scale that still yields at least the target size.
+    let mut scale = 1usize;
+    while scale < 8
+        && (w as usize).div_ceil(scale * 2) >= tw as usize
+        && (h as usize).div_ceil(scale * 2) >= th as usize
+    {
+        scale *= 2;
+    }
+    let mut d = new_decoder(data, scale);
+    d.run()?;
+    let (sw, sh) = ((w as usize).div_ceil(scale), (h as usize).div_ceil(scale));
+    let mut out = crate::alloc_image(tw, th)?;
+    {
+        // The exact extent of the image in scaled pixels (the last row /
+        // column may be partially covered).
+        let extent = (w as f64 / scale as f64, h as f64 / scale as f64);
+        let mut s = Scaler::frame(
+            Dest::Image(&mut out),
+            (sw, sh),
+            (0, 0, sw, sh),
+            Some(extent),
+        );
+        d.output(&mut s)?;
+        s.finish();
+    }
+    Ok(exif::apply(out, d.orientation))
+}
+
+/// The EXIF orientation (1 when absent).
+pub fn orientation(data: &[u8]) -> u16 {
+    let mut pos = 2;
+    while let Ok(Some((marker, start, end))) = next_segment(data, &mut pos) {
+        match marker {
+            0xe1 => {
+                if let Some(o) = exif::orientation(&data[start..end]) {
+                    return o;
+                }
+            }
+            0xda | 0xd9 => break,
+            _ => {}
+        }
+    }
+    1
 }
 
 impl<'a> Decoder<'a> {
@@ -266,7 +319,7 @@ impl<'a> Decoder<'a> {
         if s.len() < 6 + 3 * n {
             return Err(Error::InvalidData("jpeg: short frame header"));
         }
-        if width as u64 * height as u64 > crate::MAX_PIXELS {
+        if width as u64 * height as u64 > crate::MAX_SOURCE_PIXELS {
             return Err(Error::Unsupported("image too large"));
         }
         // Every block needs at least one bit of entropy-coded data; reject
@@ -313,7 +366,11 @@ impl<'a> Decoder<'a> {
             c.stride = c.bw_pad * bs;
             c.plane = vec![128; c.stride * c.bh_pad * bs];
             if progressive {
-                c.coefs = vec![0; c.bw_pad * c.bh_pad * 64];
+                let blocks = c.bw_pad * c.bh_pad;
+                c.coefs = vec![0; blocks * bs * bs];
+                if bs < 8 {
+                    c.nz = vec![0; blocks];
+                }
             }
         }
         self.frame = Some(Frame {
@@ -535,13 +592,14 @@ impl<'a> Decoder<'a> {
                                 );
                             }
                         } else {
-                            let bi = (y * c.bw_pad + x) * 64;
-                            let Some(coefs) = c.coefs.get_mut(bi..bi + 64) else {
+                            let b = y * c.bw_pad + x;
+                            let nk = c.bs * c.bs;
+                            if b * nk >= c.coefs.len() {
                                 continue;
-                            };
-                            let coefs: &mut [i16; 64] =
-                                coefs.try_into().map_err(|_| Error::InvalidData("jpeg"))?;
+                            }
                             if scan.ss == 0 {
+                                // DC (natural index 0, always stored).
+                                let dcv = &mut c.coefs[b * nk];
                                 if scan.ah == 0 {
                                     let dct = dc[c.td]
                                         .as_ref()
@@ -552,18 +610,57 @@ impl<'a> Decoder<'a> {
                                         return Err(Error::InvalidData("jpeg: bad DC size"));
                                     }
                                     c.dc_pred = c.dc_pred.wrapping_add(r.receive_extend(s));
-                                    coefs[0] = (c.dc_pred << scan.al) as i16;
+                                    *dcv = (c.dc_pred << scan.al) as i16;
                                 } else if r.bit() {
-                                    coefs[0] |= 1 << scan.al;
+                                    *dcv |= 1 << scan.al;
                                 }
                             } else {
                                 let act = ac[c.ta]
                                     .as_ref()
                                     .ok_or(Error::InvalidData("jpeg: missing table"))?;
-                                if scan.ah == 0 {
-                                    decode_ac_first(r, act, coefs, scan, eobrun)?;
+                                let bs = c.bs;
+                                let stored = &mut c.coefs[b * nk..(b + 1) * nk];
+                                if bs == 8 {
+                                    let coefs: &mut [i16; 64] = stored
+                                        .try_into()
+                                        .map_err(|_| Error::InvalidData("jpeg"))?;
+                                    if scan.ah == 0 {
+                                        decode_ac_first(r, act, coefs, scan, eobrun)?;
+                                    } else {
+                                        decode_ac_refine(r, act, coefs, scan, eobrun)?;
+                                    }
                                 } else {
-                                    decode_ac_refine(r, act, coefs, scan, eobrun)?;
+                                    // Expand: stored values, and +1 stand-ins
+                                    // for non-zero coefficients outside the
+                                    // stored corner (refinement only needs
+                                    // to know that they are non-zero).
+                                    let mask = &mut c.nz[b];
+                                    let mut full = [0i16; 64];
+                                    let mut m = *mask;
+                                    while m != 0 {
+                                        full[m.trailing_zeros() as usize] = 1;
+                                        m &= m - 1;
+                                    }
+                                    for row in 0..bs {
+                                        full[row * 8..row * 8 + bs]
+                                            .copy_from_slice(&stored[row * bs..row * bs + bs]);
+                                    }
+                                    if scan.ah == 0 {
+                                        decode_ac_first(r, act, &mut full, scan, eobrun)?;
+                                    } else {
+                                        decode_ac_refine(r, act, &mut full, scan, eobrun)?;
+                                    }
+                                    let mut m = 0u64;
+                                    for (n, &v) in full.iter().enumerate() {
+                                        if v != 0 {
+                                            m |= 1 << n;
+                                        }
+                                    }
+                                    *mask = m;
+                                    for row in 0..bs {
+                                        stored[row * bs..row * bs + bs]
+                                            .copy_from_slice(&full[row * 8..row * 8 + bs]);
+                                    }
                                 }
                             }
                         }
@@ -574,8 +671,9 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 
-    /// Runs the deferred IDCT (progressive mode) and converts to RGBA.
-    fn output(&mut self) -> Result<Image, Error> {
+    /// Runs the deferred IDCT (progressive mode) and converts the planes to
+    /// RGBA rows (`w` x `h` = the scaled size) for `sink`.
+    fn output(&mut self, sink: &mut dyn RowSink) -> Result<(), Error> {
         let scale = self.scale;
         let adobe = self.adobe_transform;
         let frame = self
@@ -585,20 +683,26 @@ impl<'a> Decoder<'a> {
         if frame.progressive {
             for c in frame.comps.iter_mut() {
                 let dq = Dequant::new(&self.qt[c.tq]);
+                let bs = c.bs;
+                let nk = bs * bs;
+                let mut blk = [0i16; 64];
                 for by in 0..c.bh {
                     for bx in 0..c.bw {
-                        let bi = (by * c.bw_pad + bx) * 64;
-                        let blk: &[i16; 64] = match c.coefs[bi..bi + 64].try_into() {
-                            Ok(b) => b,
-                            Err(_) => continue,
+                        let b = by * c.bw_pad + bx;
+                        let Some(stored) = c.coefs.get(b * nk..(b + 1) * nk) else {
+                            continue;
                         };
-                        let off = by * c.bs * c.stride + bx * c.bs;
-                        if c.bs == 8 {
-                            idct::idct8(blk, &dq, &mut c.plane, off, c.stride);
+                        for row in 0..bs {
+                            blk[row * 8..row * 8 + bs]
+                                .copy_from_slice(&stored[row * bs..row * bs + bs]);
+                        }
+                        let off = by * bs * c.stride + bx * bs;
+                        if bs == 8 {
+                            idct::idct8(&blk, &dq, &mut c.plane, off, c.stride);
                         } else {
                             idct::idct_reduced(
-                                c.bs,
-                                blk,
+                                bs,
+                                &blk,
                                 &dq,
                                 &self.basis,
                                 &mut c.plane,
@@ -609,6 +713,7 @@ impl<'a> Decoder<'a> {
                     }
                 }
                 c.coefs = Vec::new();
+                c.nz = Vec::new();
             }
         }
         let cs = match frame.comps.len() {
@@ -631,13 +736,13 @@ impl<'a> Decoder<'a> {
         };
         let out_w = frame.width.div_ceil(scale);
         let out_h = frame.height.div_ceil(scale);
-        let mut img = crate::alloc_image(out_w as u32, out_h as u32)?;
         let planes: Vec<color::Plane> = frame
             .comps
             .iter()
             .map(|c| color::Plane {
                 data: &c.plane,
                 stride: c.stride,
+                first_row: 0,
                 width: (frame.width * c.h)
                     .div_ceil(frame.hmax * c.cs)
                     .clamp(1, c.stride),
@@ -650,8 +755,10 @@ impl<'a> Decoder<'a> {
                 vd: frame.vmax * c.cs,
             })
             .collect();
-        color::convert(&planes, cs, &mut img);
-        Ok(img)
+        color::convert_rows(&planes, cs, out_w, out_h, 0..out_h, &mut |y, row| {
+            sink.row(y, row)
+        });
+        Ok(())
     }
 }
 

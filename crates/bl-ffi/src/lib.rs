@@ -357,7 +357,36 @@ pub unsafe extern "C" fn bl_http_fetch(url: *const c_char, out_len: *mut usize) 
     }
 }
 
-/// Frees a buffer returned by [`bl_http_fetch`].
+/// A thumbnail of the local image file `path` covering `w` x `h` (RGBA,
+/// straight alpha, top row first), from any thread; null when the file
+/// cannot be read. Free with [`bl_bytes_free`].
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn bl_image_thumbnail(
+    path: *const c_char,
+    w: u32,
+    h: u32,
+    out_w: *mut u32,
+    out_h: *mut u32,
+    out_len: *mut usize,
+) -> *mut u8 {
+    let Some(img) = bl_core::background::thumbnail(&cstr(path), w, h) else {
+        return std::ptr::null_mut();
+    };
+    let b = img.pixels.clone().into_boxed_slice();
+    if !out_w.is_null() {
+        *out_w = img.width;
+    }
+    if !out_h.is_null() {
+        *out_h = img.height;
+    }
+    if !out_len.is_null() {
+        *out_len = b.len();
+    }
+    Box::into_raw(b) as *mut u8
+}
+
+/// Frees a buffer returned by [`bl_http_fetch`] or [`bl_image_thumbnail`].
 #[no_mangle]
 pub unsafe extern "C" fn bl_bytes_free(p: *mut u8, len: usize) {
     if !p.is_null() {

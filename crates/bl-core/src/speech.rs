@@ -6,13 +6,18 @@
 //! kept as the song's text on this device (enhanced LRC, naming the model
 //! in its `[re:]` tag: a run over all songs skips what the same or a
 //! better model did).
+//!
+//! The connected server's models are offered too (its own ones with their
+//! timing heads): picked, they are downloaded from the server and checked
+//! against the checksums it lists.
 
-use crate::core::Core;
-use crate::host::Host;
+use crate::core::{Core, Req};
+use crate::host::{Host, HttpResponse};
 use crate::jobs::Mailbox;
 use crate::player::SourceOpener;
-use bl_asr::models::{self, Models};
+use bl_asr::models::{self, Models, OwnModel};
 use bl_json::Value;
+use bl_net::api::paths;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -45,8 +50,14 @@ pub(crate) struct SpeechState {
     batch_total: usize,
     loaded: Loaded,
     error: Option<String>,
+    /// The models the connected server offers, and when they were asked for.
+    offers: Vec<Value>,
+    offers_asked: Option<f64>,
     pub(crate) rev: u64,
 }
+
+/// How often the server's offers are asked for again (seconds).
+const OFFERS_EVERY: f64 = 60.0;
 
 /// Where the app keeps its models.
 fn models_dir(host: &dyn Host) -> Option<PathBuf> {
@@ -64,9 +75,105 @@ impl Core {
 
     /// The picked model's file, when it is there.
     fn speech_model_path(&self, host: &dyn Host) -> Option<PathBuf> {
-        let m = models::find(&self.settings.speech_model)?;
-        let path = models_dir(host)?.join(m.file);
+        let id = &self.settings.speech_model;
+        if models::find(id).is_none() && !models::valid_own_id(id) {
+            return None;
+        }
+        let path = models_dir(host)?.join(models::file_of(id));
         path.is_file().then_some(path)
+    }
+
+    /// Asks the connected server which models it offers (again after a while).
+    fn speech_offers_refresh(&mut self, host: &mut dyn Host) {
+        if !self.server.is_connected() {
+            self.speech.offers.clear();
+            self.speech.offers_asked = None;
+            return;
+        }
+        let now = host.now();
+        if self
+            .speech
+            .offers_asked
+            .is_some_and(|t| now - t < OFFERS_EVERY)
+        {
+            return;
+        }
+        self.speech.offers_asked = Some(now);
+        let rid = self.server.get(host, paths::MODELS);
+        self.requests.insert(rid, Req::ModelOffers);
+    }
+
+    pub(crate) fn speech_offers_fetched(&mut self, res: &Result<HttpResponse, String>) {
+        // An older server without offers answers 404: none.
+        self.speech.offers = res
+            .as_ref()
+            .ok()
+            .filter(|r| r.status == 200)
+            .and_then(|r| bl_json::parse_bytes(&r.body).ok())
+            .and_then(|v| v.get("models").as_array().cloned())
+            .unwrap_or_default();
+        self.speech.rev += 1;
+    }
+
+    /// The models on this device and in the list, then the server's own
+    /// models not here yet (`"server": true` for those it offers).
+    fn speech_list(&self, host: &dyn Host, models: &Models) -> Value {
+        let current = self.speech_model_path(host);
+        let mut list = models.list(current.as_deref());
+        if let Value::Array(items) = &mut list {
+            for o in &self.speech.offers {
+                let id = o.str_or("id", "");
+                if let Some(v) = items.iter_mut().find(|v| v.str_or("id", "") == id) {
+                    v.set("server", true);
+                    continue;
+                }
+                let Some(m) = OwnModel::from_json(o, |_| String::new()) else {
+                    continue;
+                };
+                let v = Value::object()
+                    .with("id", id)
+                    .with("size", m.files.iter().map(|f| f.size).sum::<u64>())
+                    .with("memoryMb", m.memory_mb)
+                    .with("note", m.note.as_str())
+                    .with("own", true)
+                    .with("server", true)
+                    .with("downloaded", false)
+                    .with("current", false);
+                items.push(match models.state(id) {
+                    Some(d) => models::with_state(v, &d),
+                    None => v,
+                });
+            }
+        }
+        list
+    }
+
+    /// Downloads the model `id` (from the server when it offers it) and
+    /// switches to it; at once when it is here.
+    fn speech_pick(&mut self, models: &Arc<Models>, id: String) -> Result<(), &'static str> {
+        let picked = self.speech.picked.clone();
+        let offer = self
+            .speech
+            .offers
+            .iter()
+            .find(|o| o.str_or("id", "") == id)
+            .cloned();
+        let server_url = |file: &str| self.server.media_url(&paths::model_file(&id, file));
+        if let Some(m) = models::find(&id) {
+            // From the server when it has the model: no internet needed.
+            match offer.filter(|_| !models.path(m).is_file() && !m.retired) {
+                Some(_) => models.download_from(m, server_url(m.file), move |_| picked.post(id)),
+                None => models.download(m, move |_| picked.post(id)),
+            }
+        } else if models.dir.join(models::file_of(&id)).is_file() && models::valid_own_id(&id) {
+            picked.post(id);
+        } else {
+            let m = offer
+                .and_then(|o| OwnModel::from_json(&o, server_url))
+                .ok_or("no such model")?;
+            models.download_own(m, move |_| picked.post(id));
+        }
+        Ok(())
     }
 
     pub(crate) fn speech_json(&self, host: &dyn Host) -> Value {
@@ -126,8 +233,8 @@ impl Core {
         };
         match name {
             "speech.list" => {
-                let current = self.speech_model_path(host);
-                models.list(current.as_deref())
+                self.speech_offers_refresh(host);
+                self.speech_list(host, &models)
             }
             "speech.pick" => {
                 let id = c.str_or("id", "").to_string();
@@ -136,23 +243,28 @@ impl Core {
                     *self.speech.loaded.lock().unwrap_or_else(|e| e.into_inner()) = None;
                     return Value::object().with("ok", true);
                 }
-                let Some(m) = models::find(&id) else {
-                    return err("no such model");
-                };
-                let picked = self.speech.picked.clone();
-                models.download(m, move |_| picked.post(id));
+                if let Err(e) = self.speech_pick(&models, id) {
+                    return err(e);
+                }
                 self.speech.rev += 1;
                 Value::object().with("ok", true)
             }
             "speech.delete" => {
-                let Some(m) = models::find(c.str_or("id", "")) else {
-                    return err("no such model");
+                let id = c.str_or("id", "").to_string();
+                let deleted = match models::find(&id) {
+                    Some(m) => {
+                        models.delete(m);
+                        true
+                    }
+                    None => models.delete_own(&id),
                 };
-                if self.settings.speech_model == m.id {
+                if !deleted && models::find(&id).is_none() {
+                    return err("no such model");
+                }
+                if self.settings.speech_model == id {
                     self.set_setting(host, "speechModel", Value::from(""));
                     *self.speech.loaded.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 }
-                models.delete(m);
                 self.speech.rev += 1;
                 Value::object().with("ok", true)
             }
@@ -227,8 +339,13 @@ impl Core {
             .map(|b| bl_media::lyrics::decode_text(&b))
             .and_then(|t| bl_asr::sync::made_with(&t))
             .is_some_and(|(v, m)| {
-                v >= bl_asr::sync::VERSION
-                    && models::rank(&m) >= models::rank(&self.settings.speech_model)
+                let rank = |id: &str| {
+                    self.speech
+                        .models
+                        .as_ref()
+                        .map_or_else(|| models::rank(id), |ms| ms.rank_of(id))
+                };
+                v >= bl_asr::sync::VERSION && rank(&m) >= rank(&self.settings.speech_model)
             })
     }
 

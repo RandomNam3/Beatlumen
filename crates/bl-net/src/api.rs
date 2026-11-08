@@ -438,6 +438,12 @@ pub mod paths {
     pub const RECOMMENDATIONS: &str = "/api/recommendations";
     pub const RADIO: &str = "/api/radio";
     pub const STATS: &str = "/api/stats";
+    /// The speech models the server offers (`{"models": [...]}`).
+    pub const MODELS: &str = "/api/models";
+
+    pub fn model_file(id: &str, file: &str) -> String {
+        format!("/api/models/{id}/{file}")
+    }
 
     pub fn track_labels(id: &str) -> String {
         format!("/api/tracks/{id}/labels")
@@ -475,6 +481,12 @@ pub mod paths {
     pub fn playlist(id: &str) -> String {
         format!("/api/playlists/{id}")
     }
+    /// A background image: still images scaled by the server (longest
+    /// side `max`), animations as they are (`anim=1`).
+    pub fn background(id: &str, max: u32) -> String {
+        format!("/api/images/{id}?size={max}&anim=1")
+    }
+
     pub fn image(id: &str, max: u32) -> String {
         if max == 0 {
             format!("/api/images/{id}")

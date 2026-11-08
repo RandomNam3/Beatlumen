@@ -3,7 +3,8 @@
 //! BI_ALPHABITFIELDS, RLE8 / RLE4, bottom-up and top-down rows, embedded
 //! JPEG / PNG.
 
-use crate::{alloc_image, Error, Image};
+use crate::scale::{self, Dest, Scaler};
+use crate::{alloc_image, Error, Fit, Image};
 
 fn u16_at(d: &[u8], p: usize) -> Result<u16, Error> {
     d.get(p..p + 2)
@@ -59,7 +60,35 @@ impl Channel {
     }
 }
 
-pub fn decode(data: &[u8]) -> Result<Image, Error> {
+/// Reads the image size (embedded JPEG / PNG: theirs).
+pub fn dimensions(data: &[u8]) -> Result<(u32, u32), Error> {
+    if data.len() < 26 || &data[..2] != b"BM" {
+        return Err(Error::InvalidData("bmp: bad signature"));
+    }
+    let hsize = u32_at(data, 14)? as usize;
+    if hsize == 12 {
+        return Ok((u16_at(data, 18)? as u32, u16_at(data, 20)? as u32));
+    }
+    if hsize >= 40 {
+        let compression = u32_at(data, 30)?;
+        if matches!(compression, 4 | 5) {
+            let off = u32_at(data, 10)? as usize;
+            let body = data
+                .get(off..)
+                .ok_or(Error::InvalidData("bmp: bad data offset"))?;
+            return crate::dimensions(body);
+        }
+        let w = u32_at(data, 18)? as i32;
+        let h = u32_at(data, 22)? as i32;
+        return Ok((w.unsigned_abs(), h.unsigned_abs()));
+    }
+    Err(Error::Unsupported("bmp: unknown header version"))
+}
+
+/// Decodes a BMP scaled to the size `fit` gives (rows are read top to
+/// bottom straight from the file, so the image is never held at full size;
+/// RLE images are decoded whole and limited to `MAX_PIXELS`).
+pub fn decode_fit(data: &[u8], fit: &Fit) -> Result<Image, Error> {
     if data.len() < 18 || &data[..2] != b"BM" {
         return Err(Error::InvalidData("bmp: bad signature"));
     }
@@ -87,7 +116,7 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
         let body = data
             .get(off_bits..)
             .ok_or(Error::InvalidData("bmp: bad data offset"))?;
-        return crate::decode(body);
+        return crate::decode_fit(body, fit);
     }
     if width <= 0
         || height == 0
@@ -164,19 +193,47 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
             "bmp: pixel data far too short for dimensions",
         ));
     }
-    let mut img = alloc_image(w as u32, h as u32)?;
+    if w as u64 * h as u64 > crate::MAX_SOURCE_PIXELS {
+        return Err(Error::Unsupported("image too large"));
+    }
+    let (tw, th) = fit.target(w as u32, h as u32);
     if compression == 1 || compression == 2 {
+        let mut img = alloc_image(w as u32, h as u32)?;
         decode_rle(pix, compression == 2, &palette, top_down, &mut img);
-        return Ok(img);
+        return Ok(scale::scale_image(&img, tw, th));
     }
     let stride = ((w as u64 * bpp as u64).div_ceil(32) * 4) as usize;
-    let mut any_alpha = false;
-    for row in 0..h {
-        let y = if top_down { row } else { h - 1 - row };
+    // An alpha mask with all-zero alpha almost always means "opaque":
+    // check before decoding.
+    let mut use_alpha = false;
+    if ca.bits > 0 && matches!(bpp, 16 | 32) {
+        let bytes = bpp as usize / 8;
+        'scan: for row in 0..h {
+            let Some(src) = pix.get(row * stride..row * stride + w * bytes) else {
+                break;
+            };
+            for s in src.chunks_exact(bytes) {
+                let px = if bytes == 2 {
+                    u16::from_le_bytes([s[0], s[1]]) as u32
+                } else {
+                    u32::from_le_bytes([s[0], s[1], s[2], s[3]])
+                };
+                if ca.get(px) != 0 {
+                    use_alpha = true;
+                    break 'scan;
+                }
+            }
+        }
+    }
+    let mut img = alloc_image(tw, th)?;
+    let mut sink = Scaler::new(Dest::Image(&mut img), w, h);
+    let mut line = vec![0u8; w * 4];
+    for y in 0..h {
+        let row = if top_down { y } else { h - 1 - y };
         let Some(src) = pix.get(row * stride..row * stride + stride) else {
-            break; // truncated: remaining rows stay transparent
+            continue; // truncated: missing rows stay transparent
         };
-        let out = &mut img.pixels[y * w * 4..(y + 1) * w * 4];
+        let out = &mut line[..];
         match bpp {
             1 | 4 | 8 => {
                 let mask = (1u32 << bpp) - 1;
@@ -199,20 +256,16 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
                     } else {
                         u32::from_le_bytes([s[0], s[1], s[2], s[3]])
                     };
-                    let al = if ca.bits > 0 { ca.get(px) } else { 255 };
-                    any_alpha |= al != 0;
+                    let al = if use_alpha { ca.get(px) } else { 255 };
                     o.copy_from_slice(&[cr.get(px), cg.get(px), cb.get(px), al]);
                 }
             }
             _ => {}
         }
+        scale::RowSink::row(&mut sink, y, &line);
     }
-    if ca.bits > 0 && !any_alpha {
-        // An alpha mask with all-zero alpha almost always means "opaque".
-        for p in img.pixels.chunks_exact_mut(4) {
-            p[3] = 255;
-        }
-    }
+    sink.finish();
+    drop(sink);
     Ok(img)
 }
 

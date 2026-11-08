@@ -522,6 +522,11 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             json(200, &crate::recommend::stats(state, &login, range, offset))
         }
         ["stats"] => not_allowed("GET, HEAD"),
+        // Speech models for the apps (when the admin offers them).
+        ["models"] if get => json(200, &offered_models(state)),
+        ["models"] => not_allowed("GET, HEAD"),
+        ["models", id, file] if get => model_file(state, req, id, file),
+        ["models", _, _] => not_allowed("GET, HEAD"),
         ["radio"] if m == "POST" => match crate::recommend::radio(state, &login, &req.body) {
             Ok(v) => json(200, &v),
             Err(e) => fail(e),
@@ -751,6 +756,62 @@ pub fn restore_tracks(state: &State, account: &str, ids: &[&str], now: u64) {
     }
 }
 
+/// `GET /api/models`: the speech models in the models folder, with their
+/// files (name, size, SHA-256) for the apps to download through
+/// `/api/models/<id>/<file>`; none when the admin does not offer them.
+fn offered_models(state: &State) -> Value {
+    if !state.config().offer_models {
+        return Value::object().with("models", Value::Array(Vec::new()));
+    }
+    let models = &state.models;
+    let file = |name: &str, size: u64, sha256: &str| {
+        Value::object()
+            .with("name", name)
+            .with("size", size)
+            .with("sha256", sha256)
+    };
+    let mut list: Vec<Value> = crate::models::CATALOG
+        .iter()
+        .filter(|m| models.path(m).is_file())
+        .map(|m| {
+            Value::object()
+                .with("id", m.id)
+                .with("note", m.note)
+                .with("memoryMb", m.memory_mb)
+                .with("files", Value::Array(vec![file(m.file, m.size, m.sha256)]))
+        })
+        .collect();
+    list.extend(
+        models
+            .own_models(true)
+            .iter()
+            .map(|m| m.to_json().with("own", true)),
+    );
+    Value::object().with("models", Value::Array(list))
+}
+
+/// `GET /api/models/<id>/<file>`: one file of an offered model.
+fn model_file(state: &State, req: &Request, id: &str, file: &str) -> Response {
+    let models = &state.models;
+    let known = state.config().offer_models
+        && match crate::models::find(id) {
+            Some(m) => m.file == file,
+            None => models
+                .own_models(false)
+                .iter()
+                .any(|m| m.id == id && m.files.iter().any(|f| f.name == file)),
+        };
+    if !known {
+        return Response::error(404, "no such model file");
+    }
+    Response::file(
+        &models.dir.join(file),
+        "application/octet-stream",
+        req.header("range"),
+    )
+    .with_header("Cache-Control", "private, max-age=86400")
+}
+
 fn stream(state: &State, req: &Request, e: &Entry) -> Response {
     // From the start: a song being played (not a client seeking around).
     if req
@@ -942,7 +1003,15 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     let wants_scaled = req
         .query("size")
         .is_some_and(|s| !s.trim().is_empty() && s.trim() != "0");
-    if !wants_scaled {
+    // Backgrounds ask with anim=1: animations are sent as they are (the
+    // client decodes their frames at screen size), still images scaled.
+    let keep_animation = req.query("anim").is_some_and(|v| v.trim() == "1")
+        && matches!(
+            util::ext_lower(&item.path).as_str(),
+            "gif" | "png" | "apng" | "webp"
+        )
+        && covers::read_background_file(&item.path).is_some_and(|d| bl_image::is_animated(&d));
+    if !wants_scaled || keep_animation {
         let resp = Response::file(
             &item.path,
             util::image_mime(&util::ext_lower(&item.path)),
@@ -954,7 +1023,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
         }
         return resp.with_header("Cache-Control", "private, max-age=3600");
     }
-    let size = size_param(req, 1920, 64, 4096);
+    let size = size_param(req, 1920, 64, 8192);
     let cache = state.images.scaled_path(&item, size);
     let etag = cache
         .file_stem()
@@ -974,7 +1043,7 @@ fn image(state: &State, req: &Request, id: &str) -> Response {
     if cache.is_file() {
         return finish(Response::file(&cache, "image/jpeg", None));
     }
-    let Some(src) = covers::read_image_file(&item.path) else {
+    let Some(src) = covers::read_background_file(&item.path) else {
         return Response::error(404, "image not found");
     };
     match covers::make_thumbnail(&src, size) {

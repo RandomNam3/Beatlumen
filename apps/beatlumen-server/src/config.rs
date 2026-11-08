@@ -77,6 +77,9 @@ pub struct Config {
     pub karaoke: bool,
     /// Compute the karaoke data of the whole library in the background.
     pub auto_karaoke: bool,
+    /// Offer the speech models in the models folder to the apps (signed-in
+    /// users download them from this server).
+    pub offer_models: bool,
     /// Look the library's artists up in public databases (their names go out).
     /// Off until the admin agrees.
     pub online_metadata: bool,
@@ -140,6 +143,7 @@ impl Default for Config {
             auto_labels: true,
             karaoke: false,
             auto_karaoke: false,
+            offer_models: true,
             online_metadata: false,
             extension_cleanup_days: 90,
             extension_cleanup_keep_listed: true,
@@ -246,6 +250,10 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "offerModels",
+        live: true,
+    },
+    AdminSetting {
         key: "onlineMetadata",
         live: true,
     },
@@ -305,6 +313,7 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
         "autoLabels" => Value::from(cfg.auto_labels),
         "karaoke" => Value::from(cfg.karaoke),
         "autoKaraoke" => Value::from(cfg.auto_karaoke),
+        "offerModels" => Value::from(cfg.offer_models),
         "onlineMetadata" => Value::from(cfg.online_metadata),
         "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
         "extensionCleanupKeepListed" => Value::from(cfg.extension_cleanup_keep_listed),
@@ -343,6 +352,7 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_KARAOKE", "karaoke"),
     ("BEATLUMEN_AUTO_KARAOKE", "autoKaraoke"),
     ("BEATLUMEN_ROOM_GUESTS", "roomGuests"),
+    ("BEATLUMEN_OFFER_MODELS", "offerModels"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
     ("BEATLUMEN_EXTENSION_CLEANUP_DAYS", "extensionCleanupDays"),
     (
@@ -383,6 +393,7 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--karaoke" => "karaoke",
         "--auto-karaoke" => "autoKaraoke",
         "--no-room-guests" => "roomGuests",
+        "--no-offer-models" => "offerModels",
         "--online-metadata" => "onlineMetadata",
         "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
@@ -535,6 +546,10 @@ pub const ENV_VARS: &[(&str, &str)] = &[
     (
         "BEATLUMEN_AUTO_KARAOKE",
         "true: compute the karaoke data of the whole library in the background",
+    ),
+    (
+        "BEATLUMEN_OFFER_MODELS",
+        "false: do not offer the speech models to the apps",
     ),
     (
         "BEATLUMEN_ADMIN_PASSWORD_FILE",
@@ -704,6 +719,12 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "1" | "true" | "yes" | "on"
         );
     }
+    if let Some(v) = get("BEATLUMEN_OFFER_MODELS") {
+        cfg.offer_models = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_ONLINE_METADATA") {
         cfg.online_metadata = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -777,7 +798,7 @@ OPTIONS:
                             androidCerts, extensions, extensionTokenFile,
                             extensionCleanupDays, extensionCleanupKeepListed, speechModel,
                             autoSyncLyrics, autoLabels, karaoke, autoKaraoke,
-                            onlineMetadata, verbose)
+                            offerModels, onlineMetadata, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -801,6 +822,8 @@ OPTIONS:
                             background (needs --speech-model)
     --no-room-guests        People without a login cannot join a room to listen
                             together
+    --no-offer-models       Do not offer the speech models in the models folder to
+                            the apps (offered to signed-in users by default)
     --no-auto-labels        Do not work out how the library's songs sound (tempo,
                             key, energy) for labels and recommendations
     --karaoke               Compute karaoke data (the melody of the singing as
@@ -995,6 +1018,9 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoKaraoke" => {
                 cfg.auto_karaoke = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "offerModels" => {
+                cfg.offer_models = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "extensionCleanupDays" => {
                 cfg.extension_cleanup_days = val
                     .as_u64()
@@ -1138,6 +1164,7 @@ fn build(
             "--karaoke" => cfg.karaoke = true,
             "--auto-karaoke" => cfg.auto_karaoke = true,
             "--no-room-guests" => cfg.room_guests = false,
+            "--no-offer-models" => cfg.offer_models = false,
             "--online-metadata" => cfg.online_metadata = true,
             "--model-source" => cfg.model_source = Some(model_source(&v)?),
             "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
@@ -1229,6 +1256,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             | "--karaoke"
             | "--auto-karaoke"
             | "--no-room-guests"
+            | "--no-offer-models"
             | "--online-metadata" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {

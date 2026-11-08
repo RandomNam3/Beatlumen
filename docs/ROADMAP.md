@@ -54,10 +54,11 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
   without code changes.
   - The training tools (PyTorch) are not part of Beatlumen; they run on
     the user's own GPU and data.
-  - Beatlumen gets **own model sources**: a server lists the models in its
-    model folder (with size and SHA-256) and the apps download them
-    through the server connection, next to the public catalog. A model
-    trained on a private music collection stays on the user's own server.
+  - Done: **own model sources**. A server lists the models in its model
+    folder (with size and SHA-256, own ones with their timing head) and
+    the apps download them through the server connection, next to the
+    public catalog. A model trained on a private music collection stays
+    on the user's own server.
   - The public catalog only lists models whose weights and training data
     may be passed on (e.g. Creative Commons music), published with their
     training recipe, data list and licence.

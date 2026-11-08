@@ -634,17 +634,20 @@ pub fn handle(state: &Arc<State>, req: &Request, segs: &[&str]) -> Response {
             Ok(v) => Response::json(202, &v),
             Err(e) => fail(e),
         },
-        ("DELETE", ["speech", "models", id]) => match crate::models::find(id) {
-            Some(mi) => {
-                let path = state.models.path(mi);
-                if state.lyrics_sync.model().as_deref() == Some(path.as_path()) {
-                    return Response::error(409, "this model is in use; pick another one first");
-                }
-                state.models.delete(mi);
-                Response::new(204)
+        ("DELETE", ["speech", "models", id]) => {
+            let path = state.models.dir.join(crate::models::file_of(id));
+            if state.lyrics_sync.model().as_deref() == Some(path.as_path()) {
+                return Response::error(409, "this model is in use; pick another one first");
             }
-            None => Response::error(404, "no such model"),
-        },
+            match crate::models::find(id) {
+                Some(mi) => {
+                    state.models.delete(mi);
+                    Response::new(204)
+                }
+                None if state.models.delete_own(id) => Response::new(204),
+                None => Response::error(404, "no such model"),
+            }
+        }
         ("GET", ["sources"]) => Response::json(200, &state.sources.admin_json()),
         ("GET", ["sources", "discover"]) => {
             Response::json(200, &crate::sources::Sources::discover())
@@ -935,6 +938,7 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "autoLabels" => cfg.auto_labels = d.auto_labels,
         "karaoke" => cfg.karaoke = d.karaoke,
         "autoKaraoke" => cfg.auto_karaoke = d.auto_karaoke,
+        "offerModels" => cfg.offer_models = d.offer_models,
         "onlineMetadata" => cfg.online_metadata = d.online_metadata,
         "extensionCleanupDays" => cfg.extension_cleanup_days = d.extension_cleanup_days,
         "extensionCleanupKeepListed" => {
@@ -990,11 +994,13 @@ fn speech(state: &State) -> Value {
         .with("modelLockedBy", lock("speechModel"))
         .with("autoLockedBy", lock("autoSyncLyrics"))
         .with("source", state.models.source())
+        .with("dir", state.models.dir.display().to_string())
         .with("gpu", bl_asr::net::gpu_device())
 }
 
 /// `POST /api/admin/speech/model` `{"id": "small-q5_1"}`: downloads the
-/// model if needed and switches to it; `{"id": null}` turns recognition off.
+/// model if needed and switches to it (an own model in the folder at once);
+/// `{"id": null}` turns recognition off.
 fn pick_model(state: &Arc<State>, v: &Value) -> Result<Value, (u16, String)> {
     if let Some((_, o)) = state
         .config()
@@ -1018,6 +1024,15 @@ fn pick_model(state: &Arc<State>, v: &Value) -> Result<Value, (u16, String)> {
         Value::Null => {
             set_path(state, None)?;
             Ok(Value::object().with("model", Value::Null))
+        }
+        Value::String(id) if crate::models::find(id).is_none() => {
+            let own = state.models.own_models(false);
+            let m = own
+                .iter()
+                .find(|m| &m.id == id)
+                .ok_or((404, "no such model".to_string()))?;
+            set_path(state, Some(state.models.dir.join(&m.files[0].name)))?;
+            Ok(Value::object().with("model", m.id.as_str()))
         }
         Value::String(id) => {
             let m = crate::models::find(id).ok_or((404, "no such model".to_string()))?;

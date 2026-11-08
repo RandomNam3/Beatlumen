@@ -14,7 +14,7 @@ pub mod encode;
 mod huffman;
 mod idct;
 
-pub use decode::{decode, decode_scaled, dimensions};
+pub use decode::{decode, decode_fit, dimensions, orientation as orientation_of};
 
 /// Zigzag index -> natural (row-major) index, padded with 63 so that corrupt
 /// run lengths cannot index out of bounds.
@@ -48,11 +48,11 @@ mod tests {
     #[test]
     fn restart_markers_decode_identically() {
         let img = test_image(77, 45);
-        let plain = super::decode(&super::encode::encode(&img, 85), 1).unwrap();
+        let plain = super::decode(&super::encode::encode(&img, 85)).unwrap();
         for interval in [1u16, 2, 3, 7] {
             let jpg = super::encode::encode_with_restart(&img, 85, interval);
             assert!(jpg.windows(2).any(|w| w == [0xff, 0xd0]));
-            let dec = super::decode(&jpg, 1).unwrap();
+            let dec = super::decode(&jpg).unwrap();
             assert_eq!(dec.pixels, plain.pixels, "interval {interval}");
         }
     }
@@ -68,7 +68,7 @@ mod tests {
         ] {
             let mut m = jpg.clone();
             m[sof + 1] = marker;
-            match super::decode(&m, 1) {
+            match super::decode(&m) {
                 Err(crate::Error::Unsupported(msg)) => assert!(msg.contains(what), "{msg}"),
                 other => panic!(
                     "expected Unsupported for {what}, got {:?}",
@@ -79,7 +79,7 @@ mod tests {
         let mut m = jpg.clone();
         m[sof + 4] = 12; // sample precision
         assert!(matches!(
-            super::decode(&m, 1),
+            super::decode(&m),
             Err(crate::Error::Unsupported(_))
         ));
     }
@@ -94,7 +94,7 @@ mod tests {
         for b in &mut jpg[rst - 20..rst - 2] {
             *b = 0x5a;
         }
-        let dec = super::decode(&jpg, 1).unwrap();
+        let dec = super::decode(&jpg).unwrap();
         assert_eq!((dec.width, dec.height), (64, 64));
     }
 

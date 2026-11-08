@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Largest accepted upload.
-pub const MAX_UPLOAD: usize = 50 * 1024 * 1024;
+/// Largest uploaded image (16K images can be several hundred MB; the body
+/// is held in memory while it is stored).
+pub const MAX_UPLOAD: usize = 256 * 1024 * 1024;
 const INDEX_TTL: Duration = Duration::from_secs(15);
 const MAX_DEPTH: usize = 16;
 const MAX_IMAGES: usize = 200_000;
@@ -235,7 +237,7 @@ impl Images {
         }
         let format = bl_image::probe_format(body).ok_or((
             415,
-            "not a supported image format (JPEG, PNG, BMP, GIF, WebP)".to_string(),
+            "not a supported image format (JPEG, PNG, BMP, GIF, WebP, TIFF)".to_string(),
         ))?;
         let raw = filename
             .map(|f| bl_net::http::percent_decode(f, false))

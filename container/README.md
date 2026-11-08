@@ -196,6 +196,7 @@ the push options need a restart, which the admin interface does itself.
 | `BEATLUMEN_KARAOKE` | `false` | `true`: compute karaoke data on request (downloads the vocal separation model) |
 | `BEATLUMEN_AUTO_KARAOKE` | `false` | `true`: compute the karaoke data of the whole library in the background |
 | `BEATLUMEN_ROOM_GUESTS` | `true` | `false`: people without a login cannot join a room to listen together |
+| `BEATLUMEN_OFFER_MODELS` | `true` | `false`: do not offer the speech models in `/data/models` to the apps |
 | `BEATLUMEN_ONLINE_METADATA` | `false` | `true`: look the library's artists up in public databases for artist pages and recommendations; their names go to MusicBrainz, Wikimedia and ListenBrainz |
 | `BEATLUMEN_PUSH_ALLOW_PRIVATE` | `false` | `true`: allow push services (UnifiedPush, e.g. ntfy) in private networks and over plain http |
 | `BEATLUMEN_CA_FILE` | – | Extra root certificates (PEM) for outgoing TLS, e.g. a private CA of a push service at home |
@@ -239,6 +240,7 @@ environment variables:
 | `--karaoke` | Compute karaoke data on request (downloads the vocal separation model, 36 MB, from zenodo.org) |
 | `--auto-karaoke` | Also compute the karaoke data of the whole library in the background |
 | `--no-room-guests` | People without a login cannot join a room to listen together |
+| `--no-offer-models` | Do not offer the speech models in `/data/models` to the apps |
 | `--online-metadata` | Look the library's artists up in public databases for artist pages and recommendations (off by default) |
 | `--verbose` | Log every request |
 | `--health-check` | Exit status 0 if the server answers (used by the health check) |
@@ -290,8 +292,24 @@ SHA-256 in its list and switches to it. *small (q5_1)* (190 MB, about
 450 MB of memory) is a good choice for songs; quantised models (q4, q5,
 q8) need far less memory than the full ones.
 
-Own model files in the ggml format of whisper.cpp (f32, f16 or quantised)
-work as well: mount a folder read-only and set the file:
+The apps signed in to the server can download the models in
+`/data/models` from it (Settings, Song texts in the app), checked against
+their SHA-256; `BEATLUMEN_OFFER_MODELS=false` turns that off. Own models
+go there too: `ggml-<name>.bin` (the ggml format of whisper.cpp), the
+timing layer made for it as `ggml-<name>.head` (a quantised
+`ggml-<name>-q5_1.bin` also takes `ggml-<name>.head`) and, if wanted, a
+description `ggml-<name>.json`:
+
+```json
+{"note": "trained on singing", "rank": 1, "memoryMb": 800}
+```
+
+Own models count as better than those of the list (among themselves by
+`rank`), so songs timed with those are timed again. The admin interface
+shows them under *Song texts*, where they are used or deleted.
+
+Own model files work without the models folder as well: mount a folder
+read-only and set the file:
 
 ```yaml
     environment:

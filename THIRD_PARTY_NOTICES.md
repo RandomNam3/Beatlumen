@@ -68,6 +68,12 @@ not affiliated with or certified by Apple.
 Beatlumen reads and writes Hyperchroma's `.hfx` preset format for
 compatibility. It contains no code or assets from Hyperchroma.
 
+The image decoders (`bl-image`: JPEG, PNG/APNG, GIF, WebP, BMP, TIFF) are
+own implementations written from the format specifications. Their tests
+create sample images at test time with ffmpeg, ImageMagick, jpegtran or
+Pillow when these programs are installed and compare against them; none of
+these programs or their code is part of Beatlumen.
+
 ## MIT License (midori, three.js, webgl-noise)
 
 ```

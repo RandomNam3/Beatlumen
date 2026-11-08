@@ -218,10 +218,42 @@ fn fuzz_fixtures() -> Vec<(String, Vec<u8>)> {
         ("f.gif", vec![]),
         ("l.webp", vec!["-c:v", "libwebp", "-lossless", "1"]),
         ("y.webp", vec!["-c:v", "libwebp", "-quality", "70"]),
+        ("t-lzw.tif", vec!["-compression_algo", "lzw"]),
+        (
+            "t-pack.tif",
+            vec!["-compression_algo", "packbits", "-pix_fmt", "gray"],
+        ),
+        (
+            "t-zip.tif",
+            vec!["-compression_algo", "deflate", "-pix_fmt", "rgba"],
+        ),
     ];
     for (name, extra) in gens {
         let p = dir.join(name);
         let mut args = vec!["-f", "lavfi", "-i", src, "-frames:v", "1"];
+        args.extend(extra.iter());
+        let t = p.to_str().unwrap().to_string();
+        args.push(&t);
+        if ffmpeg(&args) {
+            v.push((name.to_string(), std::fs::read(&p).unwrap()));
+        }
+    }
+    // Animations (several frames).
+    for (name, extra) in [
+        ("anim.gif", vec![]),
+        ("anim.png", vec!["-f", "apng", "-plays", "0"]),
+        ("anim.webp", vec!["-c:v", "libwebp_anim", "-quality", "60"]),
+        ("animl.webp", vec!["-c:v", "libwebp_anim", "-lossless", "1"]),
+    ] {
+        let p = dir.join(name);
+        let mut args = vec![
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=41x29:r=10,format=rgba",
+            "-frames:v",
+            "4",
+        ];
         args.extend(extra.iter());
         let t = p.to_str().unwrap().to_string();
         args.push(&t);
@@ -303,6 +335,19 @@ fn decoders_survive_corruption() {
             }
             if it % 8 == 0 {
                 let _ = decode_max(&m, 16);
+                let _ = bl_image::decode_fit(&m, &bl_image::Fit::cover(9, 7, 64, 1 << 12));
+            }
+            if it % 4 == 0 {
+                // Frames of damaged animations (any of them may end early).
+                if let Ok(Some(mut a)) =
+                    bl_image::Animation::new(m.clone(), &bl_image::Fit::within(24))
+                {
+                    for _ in 0..a.frame_count().min(6) + 1 {
+                        let f = a.next_frame();
+                        let (w, h) = a.size();
+                        assert_eq!(f.image.pixels.len(), w as usize * h as usize * 4);
+                    }
+                }
             }
         }
         println!("{name}: {ok}/{iters} corrupted variants still decoded");
@@ -314,6 +359,9 @@ fn decoders_survive_corruption() {
         b"BM",
         b"GIF89a",
         b"RIFF\0\0\0\0WEBP",
+        b"II\x2a\x00",
+        b"MM\x00\x2a",
+        b"II\x2b\x00\x08\x00\x00\x00",
     ] {
         for _ in 0..300 {
             let mut g = magic.to_vec();
@@ -351,6 +399,24 @@ fn huge_dimensions_are_rejected_cheaply() {
     let sof = jpg.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
     jpg[sof + 5..sof + 9].copy_from_slice(&[0xfd, 0xe8, 0xfd, 0xe8]);
     assert!(decode(&jpg).is_err());
+    // Scaled decoding of the same tiny files must stay fast and small (the
+    // claimed images are never allocated at full size).
+    let t = std::time::Instant::now();
+    let fit = bl_image::Fit::cover(64, 64, 64, 1 << 12);
+    let _ = bl_image::decode_fit(&png, &fit);
+    let _ = bl_image::decode_fit(&jpg, &fit);
+    // TIFF claiming 1M x 1M pixels.
+    let mut tif = b"II\x2a\x00\x08\x00\x00\x00\x03\x00".to_vec();
+    for (tag, val) in [(256u16, 1u32 << 20), (257, 1 << 20), (273, 0)] {
+        tif.extend_from_slice(&tag.to_le_bytes());
+        tif.extend_from_slice(&4u16.to_le_bytes());
+        tif.extend_from_slice(&1u32.to_le_bytes());
+        tif.extend_from_slice(&val.to_le_bytes());
+    }
+    tif.extend_from_slice(&[0; 4]);
+    assert!(decode(&tif).is_err());
+    let _ = bl_image::decode_fit(&tif, &fit);
+    assert!(t.elapsed().as_secs_f64() < 2.0, "{:?}", t.elapsed());
 }
 
 #[test]

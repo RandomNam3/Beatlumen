@@ -715,6 +715,15 @@ pub fn start(config: Config) -> Result<Server, String> {
             }
         })),
     );
+    if config.offer_models {
+        // The checksums of own models for the apps, before the first asks.
+        let models = models.clone();
+        let _ = std::thread::Builder::new()
+            .name("model checksums".into())
+            .spawn(move || {
+                models.own_models(true);
+            });
+    }
     let state = Arc::new(State {
         auth: auth::Auth::new(secret, data.tokens.clone()),
         started: Instant::now(),
