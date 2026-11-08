@@ -397,6 +397,7 @@ impl State {
             stats.skipped,
             if idx.revision != old_rev { format!(", revision {}", idx.revision) } else { String::new() }
         );
+        self.karaoke.library_changed();
         self.prune_caches(&idx);
     }
 

@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 
 /// Largest karaoke file accepted for import (bytes).
 pub const MAX_IMPORT: usize = 1 << 20;
-/// How long the automatic run rests after going through the library.
+/// After going through the library, how long until the automatic run looks
+/// at every song again (new songs it takes at once).
 const AUTO_REST: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,6 +154,14 @@ impl Karaoke {
             .spawn(move || me.run());
     }
 
+    /// A scan finished: the automatic run looks at new songs now, not on
+    /// its next wake-up.
+    pub fn library_changed(&self) {
+        if self.auto.load(Ordering::Relaxed) {
+            self.wake.notify_all();
+        }
+    }
+
     /// Queues a song (first in line).
     pub fn request(&self, id: &str) -> Value {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -277,16 +286,16 @@ impl Karaoke {
                             break (id, false);
                         }
                         if self.auto.load(Ordering::Relaxed) {
+                            // New songs on every wake-up; all of them again
+                            // after a rest (their texts may have changed).
                             if inner.rested.is_some_and(|t| t.elapsed() >= AUTO_REST) {
                                 inner.seen.clear();
                                 inner.rested = None;
                             }
-                            if inner.rested.is_none() {
-                                if let Some(id) = self.next_automatic(&mut inner) {
-                                    break (id, true);
-                                }
-                                inner.rested = Some(Instant::now());
+                            if let Some(id) = self.next_automatic(&mut inner) {
+                                break (id, true);
                             }
+                            inner.rested.get_or_insert_with(Instant::now);
                         }
                     } else if self.available() {
                         // The model first.

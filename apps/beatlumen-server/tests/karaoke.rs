@@ -173,6 +173,49 @@ fn computed_data_goes_stale_with_the_song_text() {
 }
 
 #[test]
+fn songs_added_later_are_taken_at_once() {
+    // The automatic run on and a model as if downloaded (not a real one:
+    // that it fails to load shows the song was taken up), no songs yet.
+    let s = start("later", &[], |c, root| {
+        c.auto_karaoke = true;
+        let models = root.join("data").join("models").join(bl_sep::MODEL_ID);
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join(bl_sep::MODEL_FILE), b"not a model").unwrap();
+    });
+    // The automatic run goes through the empty library first.
+    std::thread::sleep(Duration::from_millis(300));
+    let music = s.root.join("music");
+    std::fs::write(music.join("Song.wav"), common::wav(2)).unwrap();
+    let lrc = "[00:00.50]<00:00.50>Hel<00:00.70>lo <00:01.10>world<00:01.80>\n";
+    std::fs::write(music.join("Song.lrc"), lrc).unwrap();
+    assert_eq!(s.req("POST", "/api/rescan", &[]).status, 202);
+    let t0 = Instant::now();
+    let id = loop {
+        let lib = s.json("GET", "/api/library");
+        if let Some(t) = lib.get("tracks").as_array().and_then(|t| t.first()) {
+            break t.str_or("id", "").to_string();
+        }
+        assert!(t0.elapsed() < Duration::from_secs(30), "not scanned");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    // Taken up right after the scan, not after the automatic run's rest.
+    let path = format!("/api/tracks/{id}/karaoke/compute");
+    loop {
+        let st = s.json("GET", &path);
+        if st.str_or("state", "") == "failed" {
+            assert!(st.str_or("error", "").contains("separation model"));
+            break;
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "not taken up: {}",
+            st.to_json()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
 #[ignore]
 fn computes_from_a_real_song() {
     let (Ok(model), Ok(song), Ok(lrc)) = (

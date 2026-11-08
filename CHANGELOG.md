@@ -28,11 +28,12 @@
 - **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
   text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
   computes it on request or for the whole library in the background (`--karaoke`,
-  `--auto-karaoke`; turning it on downloads the vocal separation model, 36 MB) and keeps it like
-  song texts (`GET/PUT/DELETE /api/tracks/<id>/karaoke`). The app computes it itself where the
-  server does not, keeps it in a song's offline copy, and imports and exports UltraStar text files
-  (duets included). Computed notes are dropped when the song text changes; imported ones stay.
-  For a song text with line times only, each line's syllables are put on the time it is sung.
+  `--auto-karaoke`; turning it on downloads the vocal separation model, 36 MB; new songs right
+  after a scan; also in the hardened container) and keeps it like song texts (`GET/PUT/DELETE
+  /api/tracks/<id>/karaoke`). The app computes it itself where the server does not, keeps it in a
+  song's offline copy, and imports and exports UltraStar text files (duets included). Computed
+  notes are dropped when the song text changes; imported ones stay. For a song text with line
+  times only, each line's syllables are put on the time it is sung.
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable
