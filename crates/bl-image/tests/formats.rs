@@ -1009,3 +1009,392 @@ fn webp_imagemagick_variants() {
         assert_eq!(d.max, 0);
     }
 }
+
+/// Decodes with bl-image and compares against ImageMagick (libtiff etc.).
+fn check_against_convert(path: &Path, tolerance: u8) {
+    let data = load(path);
+    let img = decode(&data).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let (w, h, reference) = convert_rgba(path, &[]).expect("ImageMagick reference decode");
+    assert_eq!((img.width, img.height), (w, h), "{}", path.display());
+    let d = diff(&img.pixels, &reference);
+    println!(
+        "{}: mean {:.4} max {}",
+        path.file_name().unwrap().to_string_lossy(),
+        d.mean,
+        d.max
+    );
+    assert!(
+        d.max <= tolerance,
+        "{}: max error {}",
+        path.display(),
+        d.max
+    );
+}
+
+#[test]
+fn tiff_variants() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = fixture_dir("tiff");
+    // ffmpeg: compression methods and sample layouts.
+    for (name, extra) in [
+        (
+            "raw_rgb.tif",
+            vec!["-compression_algo", "raw", "-pix_fmt", "rgb24"],
+        ),
+        (
+            "lzw_rgba.tif",
+            vec!["-compression_algo", "lzw", "-pix_fmt", "rgba"],
+        ),
+        (
+            "zip_rgb48.tif",
+            vec!["-compression_algo", "deflate", "-pix_fmt", "rgb48le"],
+        ),
+        (
+            "pack_gray.tif",
+            vec!["-compression_algo", "packbits", "-pix_fmt", "gray"],
+        ),
+        (
+            "lzw_gray16.tif",
+            vec!["-compression_algo", "lzw", "-pix_fmt", "gray16le"],
+        ),
+        (
+            "raw_pal8.tif",
+            vec!["-compression_algo", "raw", "-pix_fmt", "pal8"],
+        ),
+        (
+            "raw_mono.tif",
+            vec!["-compression_algo", "raw", "-pix_fmt", "monob"],
+        ),
+    ] {
+        let p = dir.join(name);
+        let mut args = vec!["-f", "lavfi", "-i", SRC, "-frames:v", "1"];
+        args.extend(extra.iter());
+        let t = p.to_str().unwrap().to_string();
+        args.push(&t);
+        assert!(ffmpeg(&args), "{name}");
+        assert_eq!(probe_format(&load(&p)), Some(Format::Tiff));
+        check_exact(&p, 1);
+    }
+    // ImageMagick: tiles, planar samples, predictor, big-endian, CMYK,
+    // BigTIFF, associated alpha, orientation, 4-bit palette.
+    if !have_convert() {
+        eprintln!("note: ImageMagick missing, skipping TIFF layout variants");
+        return;
+    }
+    let src = dir.join("src.png");
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        SRC,
+        "-frames:v",
+        "1",
+        "-pix_fmt",
+        "rgba",
+        src.to_str().unwrap()
+    ]));
+    let s = src.to_str().unwrap();
+    for (name, opts, tol) in [
+        (
+            "tiles_zip.tif",
+            vec!["-compress", "Zip", "-define", "tiff:tile-geometry=64x64"],
+            0,
+        ),
+        (
+            "tiles_lzw_16.tif",
+            vec![
+                "-depth",
+                "16",
+                "-compress",
+                "LZW",
+                "-define",
+                "tiff:tile-geometry=32x48",
+            ],
+            1,
+        ),
+        (
+            "planar_lzw.tif",
+            vec!["-compress", "LZW", "-interlace", "Plane"],
+            0,
+        ),
+        (
+            "predictor.tif",
+            vec!["-compress", "LZW", "-define", "tiff:predictor=2"],
+            0,
+        ),
+        (
+            "msb.tif",
+            vec!["-endian", "MSB", "-compress", "Zip", "-depth", "16"],
+            1,
+        ),
+        ("cmyk.tif", vec!["-colorspace", "CMYK", "-alpha", "off"], 2),
+        (
+            "associated.tif",
+            vec!["-define", "tiff:alpha=associated"],
+            2,
+        ),
+        (
+            "pal4.tif",
+            vec![
+                "-alpha", "off", "-colors", "12", "-depth", "4", "-type", "Palette",
+            ],
+            0,
+        ),
+        (
+            "rows7.tif",
+            vec!["-compress", "RLE", "-define", "tiff:rows-per-strip=7"],
+            0,
+        ),
+    ] {
+        let o = dir.join(name);
+        let mut args = vec![s];
+        args.extend(opts.iter());
+        let os = o.to_str().unwrap().to_string();
+        args.push(&os);
+        if !convert(&args) {
+            eprintln!("note: ImageMagick could not write {name}");
+            continue;
+        }
+        check_against_convert(&o, tol);
+    }
+    // BigTIFF and orientation.
+    let big = dir.join("big.tif");
+    if convert(&[
+        s,
+        "-alpha",
+        "off",
+        "-compress",
+        "LZW",
+        &format!("TIFF64:{}", big.to_str().unwrap()),
+    ]) {
+        check_against_convert(&big, 0);
+    }
+    let rot = dir.join("orient.tif");
+    if convert(&[
+        s,
+        "-alpha",
+        "off",
+        "-orient",
+        "RightTop",
+        rot.to_str().unwrap(),
+    ]) {
+        let img = decode(&load(&rot)).unwrap();
+        // Upright: 211 x 317.
+        assert_eq!((img.width, img.height), (211, 317));
+        let (w, h, r) = convert_rgba(&rot, &["-auto-orient"]).unwrap();
+        assert_eq!((w, h), (211, 317));
+        assert!(diff(&img.pixels, &r).max <= 1);
+    }
+}
+
+/// All frames of an animation as composed by ffmpeg (GIF, APNG) or by
+/// libwebp through Pillow (WebP: ffmpeg cannot read animated WebP, and
+/// ImageMagick ignores the "do not blend" flag). None without Pillow.
+fn reference_frames(path: &Path, w: u32, h: u32, webp: bool) -> Option<Vec<Vec<u8>>> {
+    let size = (w * h * 4) as usize;
+    let raw = if webp {
+        let script = format!(
+            "import sys\nfrom PIL import Image, ImageSequence\nfor f in ImageSequence.Iterator(Image.open({:?})):\n    sys.stdout.buffer.write(f.convert('RGBA').tobytes())",
+            path.to_str().unwrap()
+        );
+        let o = std::process::Command::new("python3")
+            .args(["-c", &script])
+            .output()
+            .ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        o.stdout
+    } else {
+        std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-i", path.to_str().unwrap()])
+            .args([
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
+                "-vsync",
+                "passthrough",
+                "-",
+            ])
+            .output()
+            .expect("ffmpeg")
+            .stdout
+    };
+    Some(raw.chunks_exact(size).map(|c| c.to_vec()).collect())
+}
+
+fn premultiplied(v: &[u8]) -> Vec<u8> {
+    v.chunks_exact(4)
+        .flat_map(|p| {
+            let a = p[3] as u32;
+            [
+                (p[0] as u32 * a / 255) as u8,
+                (p[1] as u32 * a / 255) as u8,
+                (p[2] as u32 * a / 255) as u8,
+                p[3],
+            ]
+        })
+        .collect()
+}
+
+#[test]
+fn animations_frame_by_frame() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = fixture_dir("anim");
+    // Moving content with transparency, so that encoders use partial frames,
+    // blending and disposal.
+    let src = "testsrc2=s=96x64:r=10,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(mod(X+T*40,96),48),255,0)'";
+    let cases: Vec<(&str, Vec<&str>, bool, u8)> = vec![
+        ("a.gif", vec!["-loop", "0"], false, 0),
+        ("b.png", vec!["-f", "apng", "-plays", "0"], false, 0),
+        (
+            "c.webp",
+            vec!["-c:v", "libwebp_anim", "-lossless", "1", "-loop", "0"],
+            true,
+            0,
+        ),
+        (
+            "d.webp",
+            vec!["-c:v", "libwebp_anim", "-quality", "70", "-loop", "0"],
+            true,
+            2,
+        ),
+    ];
+    for (name, extra, webp, tol) in cases {
+        let p = dir.join(name);
+        let mut args = vec!["-f", "lavfi", "-i", src, "-frames:v", "12"];
+        args.extend(extra.iter());
+        let t = p.to_str().unwrap().to_string();
+        args.push(&t);
+        assert!(ffmpeg(&args), "{name}");
+        let data = load(&p);
+        assert!(bl_image::is_animated(&data), "{name}");
+        let mut a = bl_image::Animation::new(data.clone(), &bl_image::Fit::full())
+            .unwrap()
+            .expect("animation");
+        let (w, h) = a.size();
+        let Some(refs) = reference_frames(&p, w, h, webp) else {
+            eprintln!("note: Pillow missing, skipping {name}");
+            continue;
+        };
+        assert!(refs.len() >= 10, "{name}: {} reference frames", refs.len());
+        assert_eq!(a.frame_count(), refs.len(), "{name}");
+        for (i, r) in refs.iter().enumerate() {
+            let f = a.next_frame();
+            // Compare colours only where the reference is not transparent
+            // (fully transparent pixels may carry any colour).
+            let mut worst = 0u8;
+            for (x, y) in f.image.pixels.chunks_exact(4).zip(r.chunks_exact(4)) {
+                worst = worst.max(x[3].abs_diff(y[3]));
+                if y[3] > 0 && x[3] > 0 {
+                    for c in 0..3 {
+                        worst = worst.max(x[c].abs_diff(y[c]));
+                    }
+                }
+            }
+            assert!(worst <= tol, "{name} frame {i}: max error {worst}");
+        }
+        // Scaled to half size: matches the full-size frames scaled down.
+        let mut half = bl_image::Animation::new(data, &bl_image::Fit::within(48))
+            .unwrap()
+            .unwrap();
+        assert_eq!(half.size(), (48, 32));
+        for r in refs.iter().take(6) {
+            let f = half.next_frame();
+            let full = Image {
+                width: w,
+                height: h,
+                pixels: r.clone(),
+            };
+            let s = bl_image::resize(&full, 48, 32);
+            // Premultiplied: colours of nearly transparent pixels carry no
+            // weight.
+            let d = diff(&premultiplied(&f.image.pixels), &premultiplied(&s.pixels));
+            assert!(
+                d.mean < 0.5 && d.max <= 2,
+                "{name} scaled: mean {:.2} max {}",
+                d.mean,
+                d.max
+            );
+        }
+        println!("{name}: {} frames match", refs.len());
+    }
+}
+
+#[test]
+fn progressive_jpeg_scaled() {
+    // Progressive files with successive approximation (ImageMagick uses
+    // libjpeg's default script): the scaled decoders keep only part of the
+    // coefficients and must still follow the refinement scans.
+    if !have_ffmpeg() || !have_convert() {
+        return;
+    }
+    let dir = fixture_dir("prog_scaled");
+    let src = dir.join("src.png");
+    assert!(ffmpeg(&[
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=1203x799,format=rgb24,gblur=sigma=1",
+        "-frames:v",
+        "1",
+        src.to_str().unwrap()
+    ]));
+    for (name, sampling) in [
+        ("p420.jpg", "2x2"),
+        ("p444.jpg", "1x1"),
+        ("p422.jpg", "2x1"),
+    ] {
+        let p = dir.join(name);
+        assert!(convert(&[
+            src.to_str().unwrap(),
+            "-sampling-factor",
+            sampling,
+            "-interlace",
+            "JPEG",
+            "-quality",
+            "88",
+            p.to_str().unwrap()
+        ]));
+        let data = load(&p);
+        let full = decode(&data).unwrap();
+        for max_dim in [700, 400, 160, 90] {
+            let fast = decode_max(&data, max_dim).unwrap();
+            let slow = bl_image::resize(&full, fast.width, fast.height);
+            let d = diff(&fast.pixels, &slow.pixels);
+            assert!(d.psnr > 32.0, "{name} {max_dim}: psnr {:.1}", d.psnr);
+        }
+    }
+}
+
+#[test]
+fn fit_and_info() {
+    let mut img = Image::new(300, 200);
+    for (i, p) in img.pixels.chunks_exact_mut(4).enumerate() {
+        p.copy_from_slice(&[(i % 251) as u8, (i % 13) as u8 * 19, 7, 255]);
+    }
+    let png = encode_png(&img);
+    let i = bl_image::info(&png).unwrap();
+    assert_eq!(
+        (i.format, i.width, i.height, i.frames),
+        (Format::Png, 300, 200, 1)
+    );
+    assert!(!bl_image::is_animated(&png));
+    // Cover 120x40: limited by the width (aspect kept, never enlarged).
+    let out = bl_image::decode_fit(&png, &bl_image::Fit::cover(120, 40, 4096, 1 << 20)).unwrap();
+    assert_eq!((out.width, out.height), (120, 80));
+    let out =
+        bl_image::decode_fit_owned(png.clone(), &bl_image::Fit::cover(600, 600, 4096, 1 << 20))
+            .unwrap();
+    assert_eq!((out.width, out.height), (300, 200));
+    assert_eq!(out.pixels, img.pixels);
+    // Still images are not animations.
+    assert!(bl_image::Animation::new(png, &bl_image::Fit::full())
+        .unwrap()
+        .is_none());
+}

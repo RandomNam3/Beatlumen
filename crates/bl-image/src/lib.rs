@@ -1,24 +1,35 @@
-//! Image decoding (PNG, JPEG, BMP, GIF, WebP), resizing and simple encoding
-//! (PNG, baseline JPEG), std only.
+//! Image decoding (PNG/APNG, JPEG, BMP, GIF, WebP, TIFF), animation,
+//! resizing and simple encoding (PNG, baseline JPEG), std only.
 //!
 //! The crate is used for cover art and background images, so the decoders are
 //! tuned for photos and screenshots and are lenient with damaged files
 //! (truncated images decode partially where possible) but never panic on
 //! malformed input.
 //!
+//! Large images are scaled while they are decoded: every decoder hands its
+//! rows to a streaming area-averaging scaler ([`decode_fit`]), so an image
+//! up to [`MAX_SOURCE_PIXELS`] (e.g. 16K, 15360 × 8640) never exists at
+//! full size in memory. Animations ([`Animation`]) compose their frames at
+//! the target size.
+//!
 //! Module overview:
 //! * [`inflate`] / [`deflate`]: zlib (RFC 1950) and deflate (RFC 1951),
-//! * `png`: PNG decoder (all color types / bit depths, Adam7, APNG default
-//!   image) and encoder,
-//! * `jpeg`: baseline + progressive Huffman JPEG decoder (DCT scaling for
-//!   [`decode_max`], EXIF orientation) and baseline encoder,
-//! * `bmp`, `gif`, `webp` (VP8L lossless and VP8 lossy incl. alpha),
+//!   also incremental,
+//! * `scale`: streaming scaler, target sizes ([`Fit`]), frame compositing,
+//! * `png`: PNG decoder (all color types / bit depths, Adam7, APNG) and
+//!   encoder,
+//! * `jpeg`: baseline + progressive Huffman JPEG decoder (DCT scaling,
+//!   EXIF orientation) and baseline encoder,
+//! * `bmp`, `gif`, `webp` (VP8L lossless and VP8 lossy incl. alpha and
+//!   animation), `tiff`,
+//! * `anim`: frame sequencing and disposal for GIF, APNG and WebP,
 //! * `resize`: area averaging / bilinear resampling with premultiplied alpha.
 #![forbid(unsafe_code)]
 // `is_multiple_of` needs Rust 1.87; the workspace MSRV is 1.80. Index loops
 // mirror the specifications' pseudo code (VP8 prediction, transforms).
 #![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop)]
 
+mod anim;
 mod bmp;
 mod crc32;
 pub mod deflate;
@@ -29,7 +40,12 @@ pub mod inflate;
 mod jpeg;
 mod png;
 mod resize;
+mod scale;
+mod tiff;
 mod webp;
+
+pub use anim::{Animation, Frame};
+pub use scale::Fit;
 
 /// Error returned by the decoders.
 #[derive(Debug)]
@@ -56,6 +72,7 @@ pub enum Format {
     Bmp,
     Gif,
     WebP,
+    Tiff,
 }
 
 /// 8-bit RGBA image, rows top to bottom, no padding. Colours are straight
@@ -83,12 +100,16 @@ impl Image {
     }
 }
 
-/// Largest number of pixels a decoder will allocate (32 Mpixel = 128 MiB
-/// of RGBA, e.g. 8192 × 4096): enough for covers and backgrounds, while a
-/// tiny file claiming a huge size ("decompression bomb") cannot exhaust
-/// the memory of a phone or a small server. Larger images are rejected
-/// with [`Error::Unsupported`].
+/// Largest number of pixels a decoder output may have (32 Mpixel = 128 MiB
+/// of RGBA, e.g. 8192 × 4096). [`decode`] rejects larger images; scaled
+/// decoding ([`decode_fit`]) never produces more.
 pub const MAX_PIXELS: u64 = 1 << 25;
+
+/// Largest source image the scaling decoders accept (2^28 pixels, e.g.
+/// 16384 × 16384). Such images are never held at full size; together with
+/// the per-format plausibility checks (a tiny file cannot claim a huge
+/// image) this keeps "decompression bombs" from exhausting memory.
+pub const MAX_SOURCE_PIXELS: u64 = 1 << 28;
 
 /// Checks the dimensions against [`MAX_PIXELS`] and allocates an image.
 pub(crate) fn alloc_image(width: u32, height: u32) -> Result<Image, Error> {
@@ -112,67 +133,155 @@ pub fn probe_format(data: &[u8]) -> Option<Format> {
         Some(Format::Gif)
     } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
         Some(Format::WebP)
+    } else if data.starts_with(b"II\x2a\x00")
+        || data.starts_with(b"MM\x00\x2a")
+        || data.starts_with(b"II\x2b\x00")
+        || data.starts_with(b"MM\x00\x2b")
+    {
+        Some(Format::Tiff)
     } else {
         None
     }
 }
 
-/// Decodes an image in any supported format (EXIF orientation applied for JPEG).
+/// What an image file contains, read from its headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Info {
+    pub format: Format,
+    /// Upright size (JPEG / TIFF orientation applied).
+    pub width: u32,
+    pub height: u32,
+    /// Number of animation frames (1 for still images).
+    pub frames: usize,
+}
+
+impl Info {
+    pub fn is_animated(&self) -> bool {
+        self.frames > 1
+    }
+}
+
+/// Reads format, size and frame count without decoding the pixels.
+pub fn info(data: &[u8]) -> Result<Info, Error> {
+    let format = probe_format(data).ok_or(Error::Unsupported("unknown image format"))?;
+    let (w, h, frames) = match format {
+        Format::Png => {
+            let p = png::parse(data)?;
+            let (w, h) = p.size();
+            (w, h, p.frames.len().max(1))
+        }
+        Format::Jpeg => {
+            let (w, h) = jpeg::dimensions(data)?;
+            let img_o = jpeg_orientation(data);
+            if img_o >= 5 {
+                (h, w, 1)
+            } else {
+                (w, h, 1)
+            }
+        }
+        Format::Bmp => {
+            let (w, h) = bmp::dimensions(data)?;
+            (w, h, 1)
+        }
+        Format::Gif => {
+            let p = gif::parse(data)?;
+            (p.width as u32, p.height as u32, p.frames.len().max(1))
+        }
+        Format::WebP => {
+            let p = webp::parse(data)?;
+            (p.width as u32, p.height as u32, p.frames.len().max(1))
+        }
+        Format::Tiff => {
+            let p = tiff::parse(data)?;
+            let (w, h) = (p.width as u32, p.height as u32);
+            if p.orientation >= 5 {
+                (h, w, 1)
+            } else {
+                (w, h, 1)
+            }
+        }
+    };
+    Ok(Info {
+        format,
+        width: w,
+        height: h,
+        frames,
+    })
+}
+
+fn jpeg_orientation(data: &[u8]) -> u16 {
+    // Decoding a 1x1 thumbnail would do the same; read the header instead.
+    jpeg::orientation_of(data)
+}
+
+/// Upright image size, read from the headers.
+pub fn dimensions(data: &[u8]) -> Result<(u32, u32), Error> {
+    info(data).map(|i| (i.width, i.height))
+}
+
+/// True for animations with more than one frame (GIF, APNG, WebP).
+pub fn is_animated(data: &[u8]) -> bool {
+    info(data).is_ok_and(|i| i.is_animated())
+}
+
+/// Decodes an image in any supported format at full size (orientation
+/// applied; first frame of animations). Images larger than [`MAX_PIXELS`]
+/// are rejected; use [`decode_fit`] for those.
 pub fn decode(data: &[u8]) -> Result<Image, Error> {
     match probe_format(data) {
         Some(Format::Png) => png::decode(data),
-        Some(Format::Jpeg) => jpeg::decode(data, 1),
-        Some(Format::Bmp) => bmp::decode(data),
+        Some(Format::Jpeg) => jpeg::decode(data),
+        Some(Format::Bmp) => {
+            let (w, h) = bmp::dimensions(data)?;
+            if w as u64 * h as u64 > MAX_PIXELS {
+                return Err(Error::Unsupported("image too large"));
+            }
+            bmp::decode_fit(data, &Fit::full())
+        }
         Some(Format::Gif) => gif::decode(data),
         Some(Format::WebP) => webp::decode(data),
+        Some(Format::Tiff) => tiff::decode(data),
         None => Err(Error::Unsupported("unknown image format")),
     }
 }
 
 /// Decodes and downscales so that neither side exceeds `max_dim` (keeping
-/// the aspect ratio). Implementations may use cheaper decoding paths (e.g.
-/// JPEG DCT scaling) as long as the result quality is comparable.
+/// the aspect ratio).
 pub fn decode_max(data: &[u8], max_dim: u32) -> Result<Image, Error> {
-    let max_dim = max_dim.max(1);
-    let img = match probe_format(data) {
-        Some(Format::Jpeg) => {
-            // Pick the largest DCT scale (1/2, 1/4, 1/8) that still yields an
-            // image at least `max_dim` on its longer side; the final area
-            // averaging resize then produces the exact size.
-            let (w, h) = jpeg::dimensions(data)?;
-            let long = w.max(h);
-            let mut scale = 1;
-            while scale < 8 && long.div_ceil(scale * 2) >= max_dim {
-                scale *= 2;
-            }
-            let (img, ew, eh) = jpeg::decode_scaled(data, scale)?;
-            if scale == 1 {
-                img
-            } else {
-                // Target size from the exact (unscaled) dimensions; the
-                // resize maps the exact extent so that partially covered
-                // edge pixels do not shift the image.
-                let (ow, oh) = (ew * scale as f64, eh * scale as f64);
-                let s = max_dim as f64 / ow.max(oh);
-                let tw = ((ow * s).round() as u32).clamp(1, max_dim);
-                let th = ((oh * s).round() as u32).clamp(1, max_dim);
-                return Ok(resize::resize_extent(&img, ew, eh, tw, th));
-            }
-        }
-        _ => decode(data)?,
-    };
-    Ok(fit_within(img, max_dim))
+    decode_fit(data, &Fit::within(max_dim.max(1)))
 }
 
-/// Downscales `img` (if needed) so that neither side exceeds `max_dim`.
-fn fit_within(img: Image, max_dim: u32) -> Image {
-    if img.width <= max_dim && img.height <= max_dim {
-        return img;
+/// Like [`decode_fit`], for a file the caller hands over: PNG data is
+/// rearranged in place instead of being copied (saves the size of the file
+/// for large PNGs).
+pub fn decode_fit_owned(data: Vec<u8>, fit: &Fit) -> Result<Image, Error> {
+    if probe_format(&data) == Some(Format::Png) {
+        let p = png::parse(&data)?;
+        let (w, h) = p.size();
+        let (tw, th) = fit.target(w, h);
+        return p.decode_fit_owned(data, tw, th);
     }
-    let s = max_dim as f64 / img.width.max(img.height) as f64;
-    let w = ((img.width as f64 * s).round() as u32).clamp(1, max_dim);
-    let h = ((img.height as f64 * s).round() as u32).clamp(1, max_dim);
-    resize(&img, w, h)
+    decode_fit(&data, fit)
+}
+
+/// Decodes an image scaled to the size `fit` gives for it (first frame of
+/// animations). The image is scaled while it is decoded (JPEG mostly in
+/// the DCT domain), so memory stays near the size of the result.
+pub fn decode_fit(data: &[u8], fit: &Fit) -> Result<Image, Error> {
+    match probe_format(data) {
+        Some(Format::Png) => {
+            let p = png::parse(data)?;
+            let (w, h) = p.size();
+            let (tw, th) = fit.target(w, h);
+            p.decode_fit(data, tw, th)
+        }
+        Some(Format::Jpeg) => jpeg::decode_fit(data, fit),
+        Some(Format::Bmp) => bmp::decode_fit(data, fit),
+        Some(Format::Gif) => gif::parse(data)?.decode_fit(data, fit),
+        Some(Format::WebP) => webp::parse(data)?.decode_fit(data, fit),
+        Some(Format::Tiff) => tiff::parse(data)?.decode_fit(data, fit),
+        None => Err(Error::Unsupported("unknown image format")),
+    }
 }
 
 /// High quality resize (area averaging when shrinking, bilinear when enlarging).

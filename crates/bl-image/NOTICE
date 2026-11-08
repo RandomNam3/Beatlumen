@@ -1,7 +1,10 @@
 bl-image is part of Beatlumen and licensed under the GNU Affero General Public License v3.0 or later.
 
 All code in this crate was written from the format specifications; no code
-was copied or ported from other implementations. Constant tables taken from
+was copied or ported from other implementations. Besides the standards below,
+the TIFF 6.0 specification (Adobe) with the BigTIFF extension, the PNG and APNG
+specifications, the GIF89a specification and the WebP container specification
+were used; they contributed no code or tables. Constant tables taken from
 specifications:
 
 * RFC 1950 / RFC 1951 (zlib / deflate): length and distance code tables.

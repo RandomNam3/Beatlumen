@@ -1,5 +1,5 @@
 //! PNG decoder (all color types and bit depths, palette + tRNS, Adam7
-//! interlacing, APNG default image) and encoder (RGB8/RGBA8, adaptive
+//! interlacing, APNG frames), streamed row by row into the scaler, and an encoder (RGB8/RGBA8, adaptive
 //! filtering).
 //!
 //! The decoder is lenient: CRCs and the zlib checksum are not verified,
@@ -7,7 +7,9 @@
 //! (missing rows are transparent black). Gamma / color profile chunks are
 //! ignored.
 
-use crate::{alloc_image, crc32, deflate, inflate, Error, Image};
+use crate::inflate::InflateStream;
+use crate::scale::{self, Dest, RowSink, Scaler};
+use crate::{crc32, deflate, Error, Image};
 
 const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -62,7 +64,33 @@ struct Converter {
     key: Option<[u16; 3]>,
 }
 
-pub fn decode(data: &[u8]) -> Result<Image, Error> {
+/// Parsed chunk structure of a PNG file (image data stays in place).
+pub(crate) struct Parsed {
+    hdr: Header,
+    conv: Converter,
+    /// Byte ranges of the IDAT payloads.
+    idat: Vec<(usize, usize)>,
+    /// APNG frames (empty for still images).
+    pub frames: Vec<ApngFrame>,
+}
+
+/// One APNG frame: fcTL fields and the byte ranges of its zlib stream.
+pub(crate) struct ApngFrame {
+    pub rect: (usize, usize, usize, usize),
+    pub delay_ms: u32,
+    /// 0 none, 1 background, 2 previous.
+    pub dispose: u8,
+    /// 0 source (replace), 1 over.
+    pub blend: u8,
+    data: Vec<(usize, usize)>,
+}
+
+fn be32(b: &[u8]) -> u32 {
+    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// Parses the chunks of a PNG file.
+pub(crate) fn parse(data: &[u8]) -> Result<Parsed, Error> {
     if data.len() < 8 || &data[..8] != SIGNATURE {
         return Err(Error::InvalidData("png: bad signature"));
     }
@@ -71,9 +99,12 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
     let mut plte: &[u8] = &[];
     let mut trns: &[u8] = &[];
     let mut idat = Vec::new();
+    let mut actl = false;
+    let mut frames: Vec<ApngFrame> = Vec::new();
+    // The current fcTL collects the following IDAT / fdAT chunks.
+    let mut open: Option<ApngFrame> = None;
     while pos + 8 <= data.len() {
-        let len =
-            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let len = be32(&data[pos..]) as usize;
         let ty = &data[pos + 4..pos + 8];
         let start = pos + 8;
         let end = start.saturating_add(len).min(data.len());
@@ -83,8 +114,8 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
                 if body.len() < 13 {
                     return Err(Error::InvalidData("png: short IHDR"));
                 }
-                let w = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
-                let h = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
+                let w = be32(body);
+                let h = be32(&body[4..]);
                 let (bd, ct) = (body[8], body[9]);
                 let ok = match ct {
                     0 => matches!(bd, 1 | 2 | 4 | 8 | 16),
@@ -116,20 +147,55 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
             }
             b"PLTE" => plte = body,
             b"tRNS" => trns = body,
-            b"IDAT" => idat.extend_from_slice(body),
+            b"acTL" => actl = true,
+            b"fcTL" if body.len() >= 26 => {
+                if let Some(f) = open.take() {
+                    frames.push(f);
+                }
+                let (num, den) = (
+                    u16::from_be_bytes([body[20], body[21]]) as u32,
+                    u16::from_be_bytes([body[22], body[23]]) as u32,
+                );
+                let den = if den == 0 { 100 } else { den };
+                open = Some(ApngFrame {
+                    rect: (
+                        be32(&body[12..]) as usize,
+                        be32(&body[16..]) as usize,
+                        be32(&body[4..]) as usize,
+                        be32(&body[8..]) as usize,
+                    ),
+                    delay_ms: (num as u64 * 1000 / den as u64) as u32,
+                    dispose: body[24].min(2),
+                    blend: body[25].min(1),
+                    data: Vec::new(),
+                });
+            }
+            b"IDAT" => {
+                idat.push((start, end));
+                if let Some(f) = open.as_mut() {
+                    f.data.push((start, end));
+                }
+            }
+            b"fdAT" if body.len() > 4 => {
+                if let Some(f) = open.as_mut() {
+                    f.data.push((start + 4, end));
+                }
+            }
             b"IEND" => break,
             _ => {}
         }
         pos = start.saturating_add(len).saturating_add(4);
     }
+    if let Some(f) = open.take() {
+        frames.push(f);
+    }
     let hdr = hdr.ok_or(Error::InvalidData("png: missing IHDR"))?;
     if idat.is_empty() {
         return Err(Error::InvalidData("png: missing image data"));
     }
-    if hdr.width as u64 * hdr.height as u64 > crate::MAX_PIXELS {
+    if hdr.width as u64 * hdr.height as u64 > crate::MAX_SOURCE_PIXELS {
         return Err(Error::Unsupported("image too large"));
     }
-
     let mut conv = Converter {
         hdr,
         palette: [[0, 0, 0, 255]; 256],
@@ -152,78 +218,220 @@ pub fn decode(data: &[u8]) -> Result<Image, Error> {
             u16::from_be_bytes([trns[4], trns[5]]),
         ]);
     }
-
-    // Raw (filtered) size of all passes.
-    let passes: Vec<(usize, usize, usize, usize, usize, usize)> = if hdr.interlaced {
-        ADAM7
-            .iter()
-            .filter_map(|&(x0, y0, dx, dy)| {
-                let pw = if hdr.width > x0 {
-                    (hdr.width - x0).div_ceil(dx)
-                } else {
-                    0
-                };
-                let ph = if hdr.height > y0 {
-                    (hdr.height - y0).div_ceil(dy)
-                } else {
-                    0
-                };
-                (pw > 0 && ph > 0).then_some((x0, y0, dx, dy, pw, ph))
-            })
-            .collect()
-    } else {
-        vec![(0, 0, 1, 1, hdr.width, hdr.height)]
-    };
-    let expected: usize = passes.iter().map(|p| p.5 * (1 + hdr.row_bytes(p.4))).sum();
-    // Deflate expands at most ~1032:1; reject files that cannot hold even a
-    // small fraction of the image (avoids huge allocations for tiny files).
-    if (idat.len() as u64) * 1032 * 64 < expected as u64 {
-        return Err(Error::InvalidData(
-            "png: image data far too short for dimensions",
-        ));
+    // Keep only usable frames: inside the canvas, with data.
+    if !actl {
+        frames.clear();
     }
-    // Deflate cannot expand by more than ~1032:1, so cap the initial
-    // allocation for files whose header promises far more than they hold.
-    let hint = expected.min(idat.len().saturating_mul(1040).saturating_add(4096));
-    let mut img = alloc_image(hdr.width as u32, hdr.height as u32)?;
-    let (mut raw, err) = inflate::zlib_decompress_partial(&idat, hint, expected);
-    if raw.is_empty() {
-        return Err(err.unwrap_or(Error::InvalidData("png: empty image data")));
-    }
-    raw.resize(expected, 0);
+    frames.retain(|f| {
+        let (x, y, w, h) = f.rect;
+        w > 0
+            && h > 0
+            && !f.data.is_empty()
+            && x.saturating_add(w) <= hdr.width
+            && y.saturating_add(h) <= hdr.height
+    });
+    Ok(Parsed {
+        hdr,
+        conv,
+        idat,
+        frames,
+    })
+}
 
-    let bpp = hdr.filter_bpp();
-    let mut offset = 0;
-    let mut tmp = vec![0u8; hdr.width * 4];
-    for &(x0, y0, dx, dy, pw, ph) in &passes {
-        let rb = hdr.row_bytes(pw);
-        let stride = rb + 1;
-        let pass = &mut raw[offset..offset + ph * stride];
-        offset += ph * stride;
-        for y in 0..ph {
-            let (before, rest) = pass.split_at_mut(y * stride);
-            let prev = if y > 0 {
-                Some(&before[(y - 1) * stride + 1..])
-            } else {
-                None
-            };
-            let (ft, cur) = rest[..stride].split_at_mut(1);
-            unfilter(ft[0], cur, prev, bpp)?;
-            if !hdr.interlaced {
-                let out = &mut img.pixels[y * hdr.width * 4..(y + 1) * hdr.width * 4];
-                conv.convert_row(cur, pw, out);
-            } else {
-                conv.convert_row(cur, pw, &mut tmp[..pw * 4]);
-                let oy = y0 + y * dy;
-                let row = &mut img.pixels[oy * hdr.width * 4..(oy + 1) * hdr.width * 4];
+/// Concatenates the payloads of several chunks (borrowed when there is
+/// only one).
+fn joined<'a>(data: &'a [u8], parts: &[(usize, usize)]) -> std::borrow::Cow<'a, [u8]> {
+    if let [(s, e)] = parts {
+        return std::borrow::Cow::Borrowed(&data[*s..*e]);
+    }
+    let mut v = Vec::with_capacity(parts.iter().map(|(s, e)| e - s).sum());
+    for &(s, e) in parts {
+        v.extend_from_slice(&data[s..e]);
+    }
+    std::borrow::Cow::Owned(v)
+}
+
+impl Parsed {
+    pub fn size(&self) -> (u32, u32) {
+        (self.hdr.width as u32, self.hdr.height as u32)
+    }
+
+    /// Decodes the default image, scaled to `tw` x `th`.
+    pub fn decode_fit(&self, data: &[u8], tw: u32, th: u32) -> Result<Image, Error> {
+        let z = joined(data, &self.idat);
+        self.decode_stream(&z, tw, th)
+    }
+
+    /// Like [`Parsed::decode_fit`], but joins the IDAT payloads inside the
+    /// file's own buffer instead of copying them.
+    pub fn decode_fit_owned(&self, mut data: Vec<u8>, tw: u32, th: u32) -> Result<Image, Error> {
+        let start = self.idat[0].0;
+        let mut end = start;
+        for &(s, e) in &self.idat {
+            data.copy_within(s..e, end);
+            end += e - s;
+        }
+        self.decode_stream(&data[start..end], tw, th)
+    }
+
+    fn decode_stream(&self, z: &[u8], tw: u32, th: u32) -> Result<Image, Error> {
+        let (w, h) = (self.hdr.width, self.hdr.height);
+        // Deflate expands at most ~1032:1; reject files that cannot hold
+        // even a small fraction of the image.
+        let expected = h as u64 * (1 + self.hdr.row_bytes(w) as u64);
+        if (z.len() as u64) * 1032 * 64 < expected {
+            return Err(Error::InvalidData(
+                "png: image data far too short for dimensions",
+            ));
+        }
+        let mut out = crate::alloc_image(tw, th)?;
+        if !self.hdr.interlaced {
+            let mut s = Scaler::new(Dest::Image(&mut out), w, h);
+            let r = self.rows(z, w, h, &mut s);
+            s.finish();
+            return r.map(|_| out);
+        }
+        // Interlaced: the passes cover the image in a coarse-to-fine grid
+        // (every 8th, 4th, 2nd pixel, then all). The image is assembled
+        // from the finest grid that has at most four times the pixels of
+        // the result (at least 8 MP), then scaled.
+        let limit = (4 * tw as u64 * th as u64).clamp(8 << 20, crate::MAX_PIXELS);
+        let grid = [1usize, 2, 4, 8]
+            .into_iter()
+            .find(|&g| (w.div_ceil(g) * h.div_ceil(g)) as u64 <= limit)
+            .unwrap_or(8);
+        let img = self.interlaced(z, w, h, grid)?;
+        let extent = (w as f64 / grid as f64, h as f64 / grid as f64);
+        let (rw, rh) = (img.width as usize, img.height as usize);
+        let mut s = Scaler::frame(
+            Dest::Image(&mut out),
+            (rw, rh),
+            (0, 0, rw, rh),
+            Some(extent),
+        );
+        scale::push_image(&img, &mut s);
+        s.finish();
+        Ok(out)
+    }
+
+    /// Moves the data of every APNG frame together inside the file's own
+    /// buffer (frames then decode without copying their chunks). The
+    /// default image's IDAT ranges are no longer valid afterwards.
+    pub fn compact_frames(&mut self, data: &mut [u8]) {
+        let mut end = self
+            .frames
+            .first()
+            .and_then(|f| f.data.first())
+            .map_or(0, |r| r.0);
+        for f in self.frames.iter_mut() {
+            let start = end;
+            for &(s, e) in &f.data {
+                data.copy_within(s..e, end);
+                end += e - s;
+            }
+            f.data = vec![(start, end)];
+        }
+        self.idat.clear();
+    }
+
+    /// Decodes APNG frame `i` (rows of its rectangle) into `sink`.
+    pub fn frame_rows(&self, data: &[u8], i: usize, sink: &mut dyn RowSink) -> Result<(), Error> {
+        let f = &self.frames[i];
+        let (_, _, w, h) = f.rect;
+        let z = joined(data, &f.data);
+        if self.hdr.interlaced {
+            if w as u64 * h as u64 > crate::MAX_PIXELS {
+                return Err(Error::Unsupported("image too large"));
+            }
+            let img = self.interlaced(&z, w, h, 1)?;
+            scale::push_image(&img, sink);
+            return Ok(());
+        }
+        self.rows(&z, w, h, sink)
+    }
+
+    /// Streams the rows of a non-interlaced `w` x `h` image. Truncated or
+    /// damaged data ends the image early (the rest stays transparent).
+    fn rows(&self, z: &[u8], w: usize, h: usize, sink: &mut dyn RowSink) -> Result<(), Error> {
+        let hdr = &self.hdr;
+        let mut zs = InflateStream::zlib(z)?;
+        let rb = hdr.row_bytes(w);
+        let bpp = hdr.filter_bpp();
+        let mut prev = vec![0u8; rb];
+        let mut cur = vec![0u8; rb + 1];
+        let mut rgba = vec![0u8; w * 4];
+        for y in 0..h {
+            if zs.read(&mut cur) < cur.len() {
+                break;
+            }
+            let (ft, row) = cur.split_at_mut(1);
+            if unfilter(ft[0], row, (y > 0).then_some(&prev[..]), bpp).is_err() {
+                if y == 0 {
+                    return Err(Error::InvalidData("png: invalid filter type"));
+                }
+                break;
+            }
+            self.conv.convert_row(row, w, &mut rgba);
+            sink.row(y, &rgba);
+            prev.copy_from_slice(row);
+        }
+        Ok(())
+    }
+
+    /// Decodes the Adam7 passes that fall on every `grid`-th pixel (1, 2,
+    /// 4 or 8) into an image of ceil(w / grid) x ceil(h / grid).
+    fn interlaced(&self, z: &[u8], w: usize, h: usize, grid: usize) -> Result<Image, Error> {
+        let hdr = &self.hdr;
+        let npasses = match grid {
+            1 => 7,
+            2 => 5,
+            4 => 3,
+            _ => 1,
+        };
+        let (gw, gh) = (w.div_ceil(grid), h.div_ceil(grid));
+        let mut img = crate::alloc_image(gw as u32, gh as u32)?;
+        let mut zs = InflateStream::zlib(z)?;
+        let bpp = hdr.filter_bpp();
+        let mut tmp = vec![0u8; w * 4];
+        'passes: for &(x0, y0, dx, dy) in ADAM7.iter().take(npasses) {
+            let pw = if w > x0 { (w - x0).div_ceil(dx) } else { 0 };
+            let ph = if h > y0 { (h - y0).div_ceil(dy) } else { 0 };
+            if pw == 0 || ph == 0 {
+                continue;
+            }
+            let rb = hdr.row_bytes(pw);
+            let mut prev = vec![0u8; rb];
+            let mut cur = vec![0u8; rb + 1];
+            for y in 0..ph {
+                if zs.read(&mut cur) < cur.len() {
+                    break 'passes;
+                }
+                let (ft, row) = cur.split_at_mut(1);
+                if unfilter(ft[0], row, (y > 0).then_some(&prev[..]), bpp).is_err() {
+                    break 'passes;
+                }
+                self.conv.convert_row(row, pw, &mut tmp[..pw * 4]);
+                prev.copy_from_slice(row);
+                let oy = (y0 + y * dy) / grid;
+                let orow = &mut img.pixels[oy * gw * 4..(oy + 1) * gw * 4];
                 for (i, px) in tmp[..pw * 4].chunks_exact(4).enumerate() {
-                    let ox = (x0 + i * dx) * 4;
-                    row[ox..ox + 4].copy_from_slice(px);
+                    let ox = (x0 + i * dx) / grid * 4;
+                    orow[ox..ox + 4].copy_from_slice(px);
                 }
             }
         }
+        Ok(img)
     }
-    Ok(img)
+}
+
+/// Decodes the default image at full size.
+pub fn decode(data: &[u8]) -> Result<Image, Error> {
+    let p = parse(data)?;
+    let (w, h) = p.size();
+    if w as u64 * h as u64 > crate::MAX_PIXELS {
+        return Err(Error::Unsupported("image too large"));
+    }
+    p.decode_fit(data, w, h)
 }
 
 #[inline(always)]

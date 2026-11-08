@@ -136,9 +136,20 @@ const DIST_MAP: [(i8, i8); 120] = [
     (8, 7),
 ];
 
-/// Decodes a complete VP8L bitstream (starting with the 0x2f signature).
-/// Returns (width, height, ARGB pixels).
-pub fn decode(data: &[u8]) -> Result<(u32, u32, Vec<u32>), Error> {
+/// Reads the size from a VP8L bitstream header.
+pub fn dimensions(data: &[u8]) -> Result<(u32, u32), Error> {
+    if data.len() < 5 || data[0] != 0x2f {
+        return Err(Error::InvalidData("webp: bad VP8L signature"));
+    }
+    let mut br = BitReader::new(&data[1..]);
+    let w = br.bits(14) + 1;
+    let h = br.bits(14) + 1;
+    Ok((w, h))
+}
+
+/// Decodes a complete VP8L bitstream (starting with the 0x2f signature)
+/// row by row.
+pub fn rows(data: &[u8]) -> Result<Rows<'_>, Error> {
     if data.len() < 5 || data[0] != 0x2f {
         return Err(Error::InvalidData("webp: bad VP8L signature"));
     }
@@ -149,7 +160,7 @@ pub fn decode(data: &[u8]) -> Result<(u32, u32, Vec<u32>), Error> {
     if br.bits(3) != 0 {
         return Err(Error::Unsupported("webp: unknown VP8L version"));
     }
-    if w as u64 * h as u64 > crate::MAX_PIXELS {
+    if w as u64 * h as u64 > crate::MAX_SOURCE_PIXELS {
         return Err(Error::Unsupported("image too large"));
     }
     if (data.len() as u64) << 21 < w as u64 * h as u64 {
@@ -157,14 +168,13 @@ pub fn decode(data: &[u8]) -> Result<(u32, u32, Vec<u32>), Error> {
             "webp: stream far too short for dimensions",
         ));
     }
-    let px = decode_image_stream(&mut br, w, h, true)?;
-    Ok((w as u32, h as u32, px))
+    Rows::new(br, w, h, true)
 }
 
-/// Decodes a headerless image stream of known size (ALPH chunk payload).
-pub fn decode_headerless(data: &[u8], w: usize, h: usize) -> Result<Vec<u32>, Error> {
-    let mut br = BitReader::new(data);
-    decode_image_stream(&mut br, w, h, true)
+/// Decodes a headerless image stream of known size (ALPH chunk payload)
+/// row by row.
+pub fn rows_headerless(data: &[u8], w: usize, h: usize) -> Result<Rows<'_>, Error> {
+    Rows::new(BitReader::new(data), w, h, true)
 }
 
 enum Transform {
@@ -172,6 +182,8 @@ enum Transform {
         bits: u32,
         xsize: usize,
         data: Vec<u32>,
+        /// Output of this stage for the previous row.
+        prev: Vec<u32>,
     },
     Color {
         bits: u32,
@@ -183,6 +195,343 @@ enum Transform {
         xsize: usize,
         palette: Vec<u32>,
     },
+}
+
+/// Largest LZ77 distance (distance prefix 39 minus the 120 plane codes,
+/// or 7 rows plus 8 pixels of the widest image).
+const MAX_DISTANCE: usize = (1 << 20) + (1 << 17);
+
+/// Incremental decoder of an image stream: entropy-coded pixels go into a
+/// ring buffer that covers the longest backward reference, and each
+/// completed row runs through the inverse transforms. Memory stays a few
+/// MiB however large the image.
+pub struct Rows<'a> {
+    br: BitReader<'a>,
+    /// Width of the coded (possibly palette-packed) pixels.
+    width: usize,
+    xsize: usize,
+    ysize: usize,
+    transforms: Vec<Transform>,
+    groups: Vec<Group>,
+    meta: Option<(u32, usize, Vec<u32>)>,
+    cache: Vec<u32>,
+    cache_shift: u32,
+    ring: Vec<u32>,
+    mask: usize,
+    /// Coded pixels decoded so far, entered into the cache, delivered.
+    pos: usize,
+    /// Column and row of `pos`.
+    cx: usize,
+    cy: usize,
+    last_cached: usize,
+    y: usize,
+    gi: usize,
+    error: Option<Error>,
+    row: Vec<u32>,
+    tmp: Vec<u32>,
+}
+
+impl<'a> Rows<'a> {
+    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize, level0: bool) -> Result<Self, Error> {
+        let mut transforms: Vec<Transform> = Vec::new();
+        let mut width = xsize;
+        if level0 {
+            let mut seen = [false; 4];
+            while br.bits(1) == 1 {
+                let ty = br.bits(2) as usize;
+                if seen[ty] {
+                    return Err(Error::InvalidData("webp: repeated transform"));
+                }
+                seen[ty] = true;
+                match ty {
+                    0 | 1 => {
+                        let bits = br.bits(3) + 2;
+                        let data = sub_image(
+                            &mut br,
+                            div_round_up(width, bits),
+                            div_round_up(ysize, bits),
+                        )?;
+                        transforms.push(if ty == 0 {
+                            Transform::Predictor {
+                                bits,
+                                xsize: width,
+                                data,
+                                prev: Vec::new(),
+                            }
+                        } else {
+                            Transform::Color {
+                                bits,
+                                xsize: width,
+                                data,
+                            }
+                        });
+                    }
+                    2 => transforms.push(Transform::SubtractGreen),
+                    _ => {
+                        let n = br.bits(8) as usize + 1;
+                        let mut palette = sub_image(&mut br, n, 1)?;
+                        for i in 1..palette.len() {
+                            palette[i] = add_pixels(palette[i], palette[i - 1]);
+                        }
+                        let wb = palette_bits(n);
+                        transforms.push(Transform::ColorIndexing {
+                            xsize: width,
+                            palette,
+                        });
+                        width = div_round_up(width, wb);
+                    }
+                }
+            }
+        }
+        // Color cache.
+        let cache_bits = if br.bits(1) == 1 {
+            let b = br.bits(4);
+            if !(1..=11).contains(&b) {
+                return Err(Error::InvalidData("webp: bad color cache size"));
+            }
+            b
+        } else {
+            0
+        };
+        let cache_size = if cache_bits > 0 {
+            1usize << cache_bits
+        } else {
+            0
+        };
+        // Meta prefix codes.
+        let mut meta: Option<(u32, usize, Vec<u32>)> = None;
+        let mut num_groups = 1;
+        if level0 && br.bits(1) == 1 {
+            let bits = br.bits(3) + 2;
+            let pw = div_round_up(width, bits);
+            let mut img = sub_image(&mut br, pw, div_round_up(ysize, bits))?;
+            let mut maxg = 0;
+            for p in img.iter_mut() {
+                *p = (*p >> 8) & 0xffff;
+                maxg = maxg.max(*p as usize);
+            }
+            num_groups = maxg + 1;
+            meta = Some((bits, pw, img));
+        }
+        let mut groups = Vec::with_capacity(num_groups.min(4096));
+        for _ in 0..num_groups {
+            groups.push(read_group(&mut br, cache_size)?);
+            if br.overrun() {
+                return Err(Error::InvalidData("webp: truncated stream"));
+            }
+        }
+        let total = width
+            .checked_mul(ysize)
+            .ok_or(Error::InvalidData("webp: size overflow"))?;
+        let ring_len = total
+            .min(MAX_DISTANCE + width + 4096)
+            .max(1)
+            .next_power_of_two();
+        Ok(Rows {
+            br,
+            width,
+            xsize,
+            ysize,
+            transforms,
+            groups,
+            meta,
+            cache: vec![0u32; cache_size],
+            cache_shift: 32 - cache_bits,
+            ring: vec![0u32; ring_len],
+            mask: ring_len - 1,
+            pos: 0,
+            cx: 0,
+            cy: 0,
+            last_cached: 0,
+            y: 0,
+            gi: 0,
+            error: None,
+            row: vec![0u32; xsize.max(width)],
+            tmp: vec![0u32; xsize.max(width)],
+        })
+    }
+
+    pub fn width(&self) -> usize {
+        self.xsize
+    }
+
+    /// The error that ended decoding early, if any.
+    pub fn result(&mut self) -> Result<(), Error> {
+        match self.error.take() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Writes the next row (`width()` ARGB pixels) into `out`. Returns
+    /// false at the end of the image or at damaged data.
+    pub fn next_row(&mut self, out: &mut [u32]) -> bool {
+        if self.y >= self.ysize || self.error.is_some() {
+            return false;
+        }
+        let end = (self.y + 1) * self.width;
+        while self.pos < end {
+            if let Err(e) = self.decode_symbol() {
+                self.error = Some(e);
+                return false;
+            }
+        }
+        let start = self.y * self.width;
+        for (i, d) in self.row[..self.width].iter_mut().enumerate() {
+            *d = self.ring[(start + i) & self.mask];
+        }
+        // Inverse transforms, last read first.
+        let y = self.y;
+        let mut w = self.width;
+        for t in self.transforms.iter_mut().rev() {
+            match t {
+                Transform::Predictor {
+                    bits,
+                    xsize,
+                    data,
+                    prev,
+                } => {
+                    inverse_predictor_row(&mut self.row[..*xsize], prev, y, *bits, data);
+                    prev.clear();
+                    prev.extend_from_slice(&self.row[..*xsize]);
+                }
+                Transform::Color { bits, xsize, data } => {
+                    inverse_color_row(&mut self.row[..*xsize], y, *bits, data)
+                }
+                Transform::SubtractGreen => {
+                    for p in self.row[..w].iter_mut() {
+                        let g = (*p >> 8) & 0xff;
+                        let rb = (*p & 0x00ff_00ff).wrapping_add((g << 16) | g) & 0x00ff_00ff;
+                        *p = (*p & 0xff00_ff00) | rb;
+                    }
+                }
+                Transform::ColorIndexing { xsize, palette } => {
+                    inverse_color_indexing_row(&self.row[..w], &mut self.tmp[..*xsize], palette);
+                    std::mem::swap(&mut self.row, &mut self.tmp);
+                    w = *xsize;
+                }
+            }
+        }
+        let n = self.xsize.min(out.len());
+        out[..n].copy_from_slice(&self.row[..n]);
+        self.y += 1;
+        true
+    }
+
+    #[inline]
+    fn group_index(&self, x: usize, y: usize) -> usize {
+        match &self.meta {
+            Some((bits, pw, img)) => img
+                .get((y >> bits) * pw + (x >> bits))
+                .copied()
+                .unwrap_or(0) as usize,
+            None => 0,
+        }
+    }
+
+    /// Decodes one literal, backward reference or cache entry.
+    fn decode_symbol(&mut self) -> Result<(), Error> {
+        let total = self.width * self.ysize;
+        if let Some((bits, _, _)) = &self.meta {
+            if self.cx & ((1usize << bits) - 1) == 0 || self.pos == 0 {
+                self.gi = self.group_index(self.cx, self.cy);
+            }
+        }
+        let g = self
+            .groups
+            .get(self.gi)
+            .ok_or(Error::InvalidData("webp: bad prefix group"))?;
+        let br = &mut self.br;
+        let s = read_symbol(br, &g.codes[0])?;
+        if s < 256 {
+            let r = read_symbol(br, &g.codes[1])?;
+            let b = read_symbol(br, &g.codes[2])?;
+            let a = read_symbol(br, &g.codes[3])?;
+            self.ring[self.pos & self.mask] = (a << 24) | (r << 16) | (s << 8) | b;
+            self.advance(1);
+        } else if s < 256 + NUM_LENGTH_CODES as u32 {
+            let len = prefix_value(br, s - 256);
+            let dsym = read_symbol(br, &g.codes[4])?;
+            let dcode = prefix_value(br, dsym);
+            let dist = if dcode > 120 {
+                dcode - 120
+            } else {
+                let (xi, yi) = DIST_MAP[dcode - 1];
+                let d = xi as isize + yi as isize * self.width as isize;
+                d.max(1) as usize
+            };
+            if dist > self.pos || len > total - self.pos || dist > self.mask {
+                return Err(Error::InvalidData("webp: invalid backward reference"));
+            }
+            for i in self.pos..self.pos + len {
+                self.ring[i & self.mask] = self.ring[(i - dist) & self.mask];
+            }
+            self.advance(len);
+            if self.pos < total && self.meta.is_some() {
+                self.gi = self.group_index(self.cx, self.cy);
+            }
+        } else {
+            let idx = (s - 256 - NUM_LENGTH_CODES as u32) as usize;
+            if idx >= self.cache.len() {
+                return Err(Error::InvalidData("webp: bad color cache index"));
+            }
+            self.update_cache();
+            self.ring[self.pos & self.mask] = self.cache[idx];
+            self.advance(1);
+        }
+        self.update_cache();
+        if self.br.overrun() {
+            return Err(Error::InvalidData("webp: truncated stream"));
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn advance(&mut self, n: usize) {
+        self.pos += n;
+        self.cx += n;
+        while self.cx >= self.width {
+            self.cx -= self.width;
+            self.cy += 1;
+        }
+    }
+
+    #[inline]
+    fn update_cache(&mut self) {
+        if self.cache.is_empty() {
+            self.last_cached = self.pos;
+            return;
+        }
+        while self.last_cached < self.pos {
+            let c = self.ring[self.last_cached & self.mask];
+            self.cache[(0x1e35_a7bd_u32.wrapping_mul(c) >> self.cache_shift) as usize] = c;
+            self.last_cached += 1;
+        }
+    }
+}
+
+/// Decodes a sub-image (transform data, palette, meta codes): no
+/// transforms, no meta codes.
+fn sub_image(br: &mut BitReader, xsize: usize, ysize: usize) -> Result<Vec<u32>, Error> {
+    let mut r = Rows::new(*br, xsize, ysize, false)?;
+    let mut out = vec![0u32; xsize * ysize];
+    for y in 0..ysize {
+        if !r.next_row(&mut out[y * xsize..(y + 1) * xsize]) {
+            break;
+        }
+    }
+    r.result()?;
+    *br = r.br;
+    Ok(out)
+}
+
+fn palette_bits(n: usize) -> u32 {
+    match n {
+        1..=2 => 3,
+        3..=4 => 2,
+        5..=16 => 1,
+        _ => 0,
+    }
 }
 
 /// One prefix code group: green/length/cache, red, blue, alpha, distance.
@@ -304,228 +653,6 @@ fn div_round_up(n: usize, bits: u32) -> usize {
     n.div_ceil(1 << bits)
 }
 
-fn decode_image_stream(
-    br: &mut BitReader,
-    xsize: usize,
-    ysize: usize,
-    level0: bool,
-) -> Result<Vec<u32>, Error> {
-    let mut transforms: Vec<Transform> = Vec::new();
-    let mut width = xsize;
-    if level0 {
-        let mut seen = [false; 4];
-        while br.bits(1) == 1 {
-            let ty = br.bits(2) as usize;
-            if seen[ty] {
-                return Err(Error::InvalidData("webp: repeated transform"));
-            }
-            seen[ty] = true;
-            match ty {
-                0 | 1 => {
-                    let bits = br.bits(3) + 2;
-                    let data = decode_image_stream(
-                        br,
-                        div_round_up(width, bits),
-                        div_round_up(ysize, bits),
-                        false,
-                    )?;
-                    transforms.push(if ty == 0 {
-                        Transform::Predictor {
-                            bits,
-                            xsize: width,
-                            data,
-                        }
-                    } else {
-                        Transform::Color {
-                            bits,
-                            xsize: width,
-                            data,
-                        }
-                    });
-                }
-                2 => transforms.push(Transform::SubtractGreen),
-                _ => {
-                    let n = br.bits(8) as usize + 1;
-                    let mut palette = decode_image_stream(br, n, 1, false)?;
-                    for i in 1..palette.len() {
-                        palette[i] = add_pixels(palette[i], palette[i - 1]);
-                    }
-                    let wb = match n {
-                        1..=2 => 3,
-                        3..=4 => 2,
-                        5..=16 => 1,
-                        _ => 0,
-                    };
-                    transforms.push(Transform::ColorIndexing {
-                        xsize: width,
-                        palette,
-                    });
-                    width = div_round_up(width, wb);
-                }
-            }
-        }
-    }
-    // Color cache.
-    let cache_bits = if br.bits(1) == 1 {
-        let b = br.bits(4);
-        if !(1..=11).contains(&b) {
-            return Err(Error::InvalidData("webp: bad color cache size"));
-        }
-        b
-    } else {
-        0
-    };
-    let cache_size = if cache_bits > 0 {
-        1usize << cache_bits
-    } else {
-        0
-    };
-    // Meta prefix codes.
-    let mut meta: Option<(u32, usize, Vec<u32>)> = None;
-    let mut num_groups = 1;
-    if level0 && br.bits(1) == 1 {
-        let bits = br.bits(3) + 2;
-        let pw = div_round_up(width, bits);
-        let mut img = decode_image_stream(br, pw, div_round_up(ysize, bits), false)?;
-        let mut maxg = 0;
-        for p in img.iter_mut() {
-            *p = (*p >> 8) & 0xffff;
-            maxg = maxg.max(*p as usize);
-        }
-        num_groups = maxg + 1;
-        meta = Some((bits, pw, img));
-    }
-    let mut groups = Vec::with_capacity(num_groups.min(4096));
-    for _ in 0..num_groups {
-        groups.push(read_group(br, cache_size)?);
-        if br.overrun() {
-            return Err(Error::InvalidData("webp: truncated stream"));
-        }
-    }
-
-    let total = width
-        .checked_mul(ysize)
-        .ok_or(Error::InvalidData("webp: size overflow"))?;
-    let mut data = vec![0u32; total];
-    let mut cache = vec![0u32; cache_size];
-    let cache_shift = 32 - cache_bits;
-    let mut pos = 0;
-    let (mut x, mut y) = (0usize, 0usize);
-    let mut gi = 0usize;
-    let group_index = |x: usize, y: usize| -> usize {
-        match &meta {
-            Some((bits, pw, img)) => img[(y >> bits) * pw + (x >> bits)] as usize,
-            None => 0,
-        }
-    };
-    // Recompute the prefix group whenever x enters a new entropy block.
-    let gmask = match &meta {
-        Some((bits, _, _)) => (1usize << bits) - 1,
-        None => usize::MAX,
-    };
-    let mut last_cached = 0;
-    while pos < total {
-        if x & gmask == 0 {
-            gi = group_index(x, y);
-        }
-        let g = &groups[gi];
-        let s = read_symbol(br, &g.codes[0])?;
-        if s < 256 {
-            let r = read_symbol(br, &g.codes[1])?;
-            let b = read_symbol(br, &g.codes[2])?;
-            let a = read_symbol(br, &g.codes[3])?;
-            data[pos] = (a << 24) | (r << 16) | (s << 8) | b;
-            pos += 1;
-            x += 1;
-            if x == width {
-                x = 0;
-                y += 1;
-            }
-        } else if s < 256 + NUM_LENGTH_CODES as u32 {
-            let len = prefix_value(br, s - 256);
-            let dsym = read_symbol(br, &g.codes[4])?;
-            let dcode = prefix_value(br, dsym);
-            let dist = if dcode > 120 {
-                dcode - 120
-            } else {
-                let (xi, yi) = DIST_MAP[dcode - 1];
-                let d = xi as isize + yi as isize * width as isize;
-                d.max(1) as usize
-            };
-            if dist > pos || len > total - pos {
-                return Err(Error::InvalidData("webp: invalid backward reference"));
-            }
-            for i in pos..pos + len {
-                data[i] = data[i - dist];
-            }
-            pos += len;
-            x += len;
-            while x >= width {
-                x -= width;
-                y += 1;
-            }
-            if pos < total && meta.is_some() {
-                gi = group_index(x, y);
-            }
-        } else {
-            let idx = (s - 256 - NUM_LENGTH_CODES as u32) as usize;
-            if idx >= cache_size {
-                return Err(Error::InvalidData("webp: bad color cache index"));
-            }
-            // Bring the cache up to date before reading from it.
-            while last_cached < pos {
-                let c = data[last_cached];
-                cache[(0x1e35_a7bd_u32.wrapping_mul(c) >> cache_shift) as usize] = c;
-                last_cached += 1;
-            }
-            data[pos] = cache[idx];
-            pos += 1;
-            x += 1;
-            if x == width {
-                x = 0;
-                y += 1;
-            }
-        }
-        if cache_size > 0 {
-            while last_cached < pos {
-                let c = data[last_cached];
-                cache[(0x1e35_a7bd_u32.wrapping_mul(c) >> cache_shift) as usize] = c;
-                last_cached += 1;
-            }
-        }
-    }
-    if br.overrun() {
-        return Err(Error::InvalidData("webp: truncated stream"));
-    }
-
-    // Inverse transforms, last read first.
-    for t in transforms.iter().rev() {
-        match t {
-            Transform::Predictor {
-                bits,
-                xsize,
-                data: sub,
-            } => inverse_predictor(&mut data, *xsize, ysize, *bits, sub),
-            Transform::Color {
-                bits,
-                xsize,
-                data: sub,
-            } => inverse_color(&mut data, *xsize, *bits, sub),
-            Transform::SubtractGreen => {
-                for p in data.iter_mut() {
-                    let g = (*p >> 8) & 0xff;
-                    let rb = (*p & 0x00ff_00ff).wrapping_add((g << 16) | g) & 0x00ff_00ff;
-                    *p = (*p & 0xff00_ff00) | rb;
-                }
-            }
-            Transform::ColorIndexing { xsize, palette } => {
-                data = inverse_color_indexing(&data, *xsize, ysize, palette);
-            }
-        }
-    }
-    Ok(data)
-}
-
 /// Per-channel addition modulo 256.
 #[inline(always)]
 fn add_pixels(a: u32, b: u32) -> u32 {
@@ -578,47 +705,48 @@ fn clamp_add_subtract_half(a: u32, b: u32) -> u32 {
     out
 }
 
-fn inverse_predictor(data: &mut [u32], w: usize, h: usize, bits: u32, sub: &[u32]) {
-    if w == 0 || h == 0 {
+/// Inverse predictor transform of row `y` (`prev` = previous output row).
+fn inverse_predictor_row(row: &mut [u32], prev: &[u32], y: usize, bits: u32, sub: &[u32]) {
+    let w = row.len();
+    if w == 0 {
+        return;
+    }
+    if y == 0 || prev.len() < w {
+        row[0] = add_pixels(row[0], 0xff00_0000);
+        for x in 1..w {
+            row[x] = add_pixels(row[x], row[x - 1]);
+        }
         return;
     }
     let bw = div_round_up(w, bits);
-    data[0] = add_pixels(data[0], 0xff00_0000);
+    let t = prev;
+    row[0] = add_pixels(row[0], t[0]);
+    let srow = (y >> bits) * bw;
     for x in 1..w {
-        data[x] = add_pixels(data[x], data[x - 1]);
-    }
-    for y in 1..h {
-        let row = y * w;
-        data[row] = add_pixels(data[row], data[row - w]);
-        for x in 1..w {
-            let i = row + x;
-            let mode = (sub
-                .get((y >> bits) * bw + (x >> bits))
-                .copied()
-                .unwrap_or(0)
-                >> 8)
-                & 15;
-            let l = data[i - 1];
-            let t = data[i - w];
-            let pred = match mode {
-                0 => 0xff00_0000,
-                1 => l,
-                2 => t,
-                3 => data[i - w + 1],
-                4 => data[i - w - 1],
-                5 => average2(average2(l, data[i - w + 1]), t),
-                6 => average2(l, data[i - w - 1]),
-                7 => average2(l, t),
-                8 => average2(data[i - w - 1], t),
-                9 => average2(t, data[i - w + 1]),
-                10 => average2(average2(l, data[i - w - 1]), average2(t, data[i - w + 1])),
-                11 => select(l, t, data[i - w - 1]),
-                12 => clamp_add_subtract_full(l, t, data[i - w - 1]),
-                13 => clamp_add_subtract_half(average2(l, t), data[i - w - 1]),
-                _ => 0xff00_0000,
-            };
-            data[i] = add_pixels(data[i], pred);
-        }
+        let mode = (sub.get(srow + (x >> bits)).copied().unwrap_or(0) >> 8) & 15;
+        let l = row[x - 1];
+        let tt = t[x];
+        // The top-right pixel of the last column is the row's first pixel.
+        let tr = if x + 1 < w { t[x + 1] } else { row[0] };
+        let tl = t[x - 1];
+        let pred = match mode {
+            0 => 0xff00_0000,
+            1 => l,
+            2 => tt,
+            3 => tr,
+            4 => tl,
+            5 => average2(average2(l, tr), tt),
+            6 => average2(l, tl),
+            7 => average2(l, tt),
+            8 => average2(tl, tt),
+            9 => average2(tt, tr),
+            10 => average2(average2(l, tl), average2(tt, tr)),
+            11 => select(l, tt, tl),
+            12 => clamp_add_subtract_full(l, tt, tl),
+            13 => clamp_add_subtract_half(average2(l, tt), tl),
+            _ => 0xff00_0000,
+        };
+        row[x] = add_pixels(row[x], pred);
     }
 }
 
@@ -627,17 +755,12 @@ fn color_delta(t: u32, c: u32) -> i32 {
     ((t as u8 as i8 as i32) * (c as u8 as i8 as i32)) >> 5
 }
 
-fn inverse_color(data: &mut [u32], w: usize, bits: u32, sub: &[u32]) {
-    if w == 0 {
-        return;
-    }
+fn inverse_color_row(row: &mut [u32], y: usize, bits: u32, sub: &[u32]) {
+    let w = row.len();
     let bw = div_round_up(w, bits);
-    for (i, p) in data.iter_mut().enumerate() {
-        let (x, y) = (i % w, i / w);
-        let e = sub
-            .get((y >> bits) * bw + (x >> bits))
-            .copied()
-            .unwrap_or(0);
+    let srow = (y >> bits) * bw;
+    for (x, p) in row.iter_mut().enumerate() {
+        let e = sub.get(srow + (x >> bits)).copied().unwrap_or(0);
         let (g2r, g2b, r2b) = (e & 0xff, (e >> 8) & 0xff, (e >> 16) & 0xff);
         let g = (*p >> 8) & 0xff;
         let r = (((*p >> 16) & 0xff) as i32 + color_delta(g2r, g)) as u32 & 0xff;
@@ -646,29 +769,18 @@ fn inverse_color(data: &mut [u32], w: usize, bits: u32, sub: &[u32]) {
     }
 }
 
-fn inverse_color_indexing(data: &[u32], w: usize, h: usize, palette: &[u32]) -> Vec<u32> {
-    let n = palette.len();
-    let wb: u32 = match n {
-        1..=2 => 3,
-        3..=4 => 2,
-        5..=16 => 1,
-        _ => 0,
-    };
-    let packed_w = div_round_up(w, wb);
+fn inverse_color_indexing_row(packed: &[u32], out: &mut [u32], palette: &[u32]) {
+    let wb = palette_bits(palette.len());
     let bits_per = 8 >> wb;
     let mask = (1u32 << bits_per) - 1;
-    let mut out = vec![0u32; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            let p = data.get(y * packed_w + (x >> wb)).copied().unwrap_or(0);
-            let g = (p >> 8) & 0xff;
-            let idx = if wb == 0 {
-                g
-            } else {
-                (g >> ((x & ((1 << wb) - 1)) as u32 * bits_per)) & mask
-            };
-            out[y * w + x] = palette.get(idx as usize).copied().unwrap_or(0);
-        }
+    for (x, o) in out.iter_mut().enumerate() {
+        let p = packed.get(x >> wb).copied().unwrap_or(0);
+        let g = (p >> 8) & 0xff;
+        let idx = if wb == 0 {
+            g
+        } else {
+            (g >> ((x & ((1 << wb) - 1)) as u32 * bits_per)) & mask
+        };
+        *o = palette.get(idx as usize).copied().unwrap_or(0);
     }
-    out
 }

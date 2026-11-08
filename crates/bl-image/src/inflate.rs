@@ -44,24 +44,6 @@ pub fn inflate_with_limit(data: &[u8], max_output: usize) -> Result<Vec<u8>, Err
     Ok(d.finish())
 }
 
-/// Lenient zlib decompression for image decoders: the checksum is ignored,
-/// decoding stops silently once `limit` bytes were produced, and on errors the
-/// data decoded so far is returned together with the error.
-pub(crate) fn zlib_decompress_partial(
-    data: &[u8],
-    size_hint: usize,
-    limit: usize,
-) -> (Vec<u8>, Option<Error>) {
-    let body = match zlib_header(data) {
-        Ok(b) => b,
-        Err(e) => return (Vec::new(), Some(e)),
-    };
-    let mut d = Inflater::new(body, size_hint, limit);
-    d.stop_at_limit = true;
-    let r = d.run();
-    (d.finish(), r.err())
-}
-
 fn zlib_header(data: &[u8]) -> Result<&[u8], Error> {
     if data.len() < 2 {
         return Err(Error::InvalidData("zlib: truncated header"));
@@ -253,6 +235,9 @@ struct Inflater<'a> {
     opos: usize,
     limit: usize,
     stop_at_limit: bool,
+    /// Streaming: Huffman decoding pauses at a symbol boundary once `opos`
+    /// reaches this (room for a maximal match is left behind it).
+    yield_at: usize,
     litlen: HuffTable,
     dist: HuffTable,
 }
@@ -271,6 +256,7 @@ impl<'a> Inflater<'a> {
             opos: 0,
             limit,
             stop_at_limit: false,
+            yield_at: usize::MAX,
             litlen: HuffTable::default(),
             dist: HuffTable::default(),
         }
@@ -482,6 +468,9 @@ impl<'a> Inflater<'a> {
             };
         }
         let result = loop {
+            if opos >= self.yield_at {
+                break Ok(false);
+            }
             // Refill to at least 56 bits.
             if let Some(b) = data.get(pos..pos + 8) {
                 let w = u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
@@ -577,6 +566,163 @@ impl<'a> Inflater<'a> {
     }
 }
 
+/// History kept for back references.
+const WINDOW: usize = 32768;
+/// Output produced per step.
+const CHUNK: usize = 1 << 16;
+/// Room for three literals or one maximal match after a yield check.
+const SLACK: usize = 262;
+
+#[derive(Clone, Copy)]
+enum StreamState {
+    Header,
+    Huffman { last: bool },
+    Stored { pos: usize, left: usize, last: bool },
+    Done,
+}
+
+/// Incremental deflate decoding with a fixed buffer (32 KiB history plus a
+/// 64 KiB chunk): image decoders read their rows from it without holding
+/// the whole decompressed image. Like `zlib_decompress_partial` it is
+/// lenient: the checksum is ignored and damaged data ends the stream.
+pub(crate) struct InflateStream<'a> {
+    inf: Inflater<'a>,
+    rpos: usize,
+    state: StreamState,
+    pub error: Option<Error>,
+}
+
+impl<'a> InflateStream<'a> {
+    /// A raw deflate stream.
+    pub fn new(data: &'a [u8]) -> Self {
+        let mut inf = Inflater::new(data, WINDOW + CHUNK + SLACK, usize::MAX);
+        inf.yield_at = WINDOW + CHUNK;
+        InflateStream {
+            inf,
+            rpos: 0,
+            state: StreamState::Header,
+            error: None,
+        }
+    }
+
+    /// A zlib stream (RFC 1950 header skipped, checksum ignored).
+    pub fn zlib(data: &'a [u8]) -> Result<Self, Error> {
+        Ok(Self::new(zlib_header(data)?))
+    }
+
+    /// Fills `dst`; returns fewer bytes only at the end of the stream (or
+    /// at damaged data, see `error`).
+    pub fn read(&mut self, dst: &mut [u8]) -> usize {
+        let mut done = 0;
+        while done < dst.len() {
+            let avail = self.inf.opos - self.rpos;
+            if avail > 0 {
+                let n = avail.min(dst.len() - done);
+                dst[done..done + n].copy_from_slice(&self.inf.out[self.rpos..self.rpos + n]);
+                self.rpos += n;
+                done += n;
+                continue;
+            }
+            if matches!(self.state, StreamState::Done) {
+                break;
+            }
+            // Everything was read: keep only the history window.
+            let keep_from = self.inf.opos.saturating_sub(WINDOW);
+            if keep_from > 0 {
+                self.inf.out.copy_within(keep_from..self.inf.opos, 0);
+                self.inf.opos -= keep_from;
+                self.rpos -= keep_from;
+            }
+            if let Err(e) = self.step() {
+                self.error = Some(e);
+                self.state = StreamState::Done;
+            }
+        }
+        done
+    }
+
+    /// Decodes until the buffer is full, a block ends or the stream ends.
+    fn step(&mut self) -> Result<(), Error> {
+        match self.state {
+            StreamState::Done => {}
+            StreamState::Header => {
+                let br = &mut self.inf.br;
+                br.refill();
+                let header = br.take(3);
+                let last = header & 1 != 0;
+                match header >> 1 {
+                    0 => {
+                        let p = br.align_to_byte();
+                        let data = br.data();
+                        let hdr = data
+                            .get(p..p + 4)
+                            .ok_or(Error::InvalidData("inflate: truncated stored block"))?;
+                        let len = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
+                        let nlen = u16::from_le_bytes([hdr[2], hdr[3]]) as usize;
+                        if len != !nlen & 0xffff {
+                            return Err(Error::InvalidData(
+                                "inflate: stored block length mismatch",
+                            ));
+                        }
+                        self.state = StreamState::Stored {
+                            pos: p + 4,
+                            left: len,
+                            last,
+                        };
+                    }
+                    1 => {
+                        self.inf.build_fixed()?;
+                        self.state = StreamState::Huffman { last };
+                    }
+                    2 => {
+                        self.inf.read_dynamic_tables()?;
+                        self.state = StreamState::Huffman { last };
+                    }
+                    _ => return Err(Error::InvalidData("inflate: invalid block type")),
+                }
+                if self.inf.br.overrun() {
+                    return Err(Error::InvalidData("inflate: truncated stream"));
+                }
+            }
+            StreamState::Huffman { last } => {
+                if self.inf.huffman_block()? {
+                    self.state = if last {
+                        StreamState::Done
+                    } else {
+                        StreamState::Header
+                    };
+                }
+            }
+            StreamState::Stored { pos, left, last } => {
+                let data = self.inf.br.data();
+                let room = self.inf.yield_at - self.inf.opos;
+                let avail = data.len().saturating_sub(pos).min(left);
+                let n = avail.min(room);
+                let o = self.inf.opos;
+                self.inf.out[o..o + n].copy_from_slice(&data[pos..pos + n]);
+                self.inf.opos += n;
+                if n == left {
+                    self.inf.br.set_pos(pos + n);
+                    self.state = if last {
+                        StreamState::Done
+                    } else {
+                        StreamState::Header
+                    };
+                } else if n == avail && avail < room {
+                    return Err(Error::InvalidData("inflate: truncated stored block"));
+                } else {
+                    self.state = StreamState::Stored {
+                        pos: pos + n,
+                        left: left - n,
+                        last,
+                    };
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Copies `len` bytes from `pos - dist` to `pos` (regions may overlap).
 #[inline(always)]
 fn copy_match(out: &mut [u8], pos: usize, dist: usize, len: usize) {
@@ -620,6 +766,44 @@ mod tests {
         let mut v = vec![7u8, 9, 0, 0, 0, 0, 0];
         copy_match(&mut v, 2, 2, 5);
         assert_eq!(v, [7, 9, 7, 9, 7, 9, 7]);
+    }
+
+    #[test]
+    fn stream_matches_one_shot() {
+        let mut plain = Vec::new();
+        let mut x = 12345u32;
+        for i in 0..400_000u32 {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            // Mix of repetitive and noisy stretches.
+            plain.push(if (i / 5000) % 3 == 0 {
+                (x >> 24) as u8
+            } else {
+                (i % 97) as u8
+            });
+        }
+        for level in [0u8, 1, 6, 9] {
+            let z = crate::deflate::deflate(&plain, level);
+            let mut s = InflateStream::new(&z);
+            let mut out = Vec::new();
+            let mut buf = vec![0u8; 777];
+            loop {
+                let n = s.read(&mut buf);
+                out.extend_from_slice(&buf[..n]);
+                if n < buf.len() {
+                    break;
+                }
+            }
+            assert!(s.error.is_none(), "level {level}");
+            assert_eq!(out.len(), plain.len(), "level {level}");
+            assert!(out == plain, "level {level}");
+        }
+        // Truncated input ends the stream early without panicking.
+        let z = crate::deflate::deflate(&plain, 6);
+        let mut s = InflateStream::new(&z[..z.len() / 2]);
+        let mut buf = vec![0u8; plain.len()];
+        let n = s.read(&mut buf);
+        assert!(n < plain.len());
+        assert!(buf[..plain.len() / 4] == plain[..plain.len() / 4]);
     }
 
     #[test]
