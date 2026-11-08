@@ -38,25 +38,23 @@ impl BgTarget {
         )
     }
 
-    /// Animations: cover the screen, at most about 1080p on phones and
-    /// tablets and 1440p elsewhere, so that every frame stays cheap to
-    /// decode and upload.
+    /// Animations: cover the screen, at most 1600 x 900 pixels on phones
+    /// and tablets and 1440p elsewhere, so that every frame stays cheap to
+    /// decode and upload and typical animations fit the frame budget.
     pub fn animated(&self) -> Fit {
         let (w, h) = self.screen;
-        let max_pixels: u64 = if self.mobile {
-            1920 * 1080
-        } else {
-            2560 * 1440
-        };
+        let max_pixels: u64 = if self.mobile { 1600 * 900 } else { 2560 * 1440 };
         Fit::cover(w, h, self.max_texture.clamp(1024, 4096), max_pixels)
     }
 
-    /// Memory for keeping all frames of an animation.
+    /// Memory for keeping all frames of an animation, so that later loops
+    /// cost no decoding (measured on a tablet: a 720p WebP of 40 frames
+    /// took 30 % of a core more while it was decoded in every loop).
     pub fn frame_budget(&self) -> usize {
         if self.mobile {
-            128 << 20
+            256 << 20
         } else {
-            384 << 20
+            512 << 20
         }
     }
 
@@ -426,9 +424,9 @@ mod tests {
         assert_eq!(t.still().target(15360, 8640), (4107, 2310));
         // Small images are never enlarged.
         assert_eq!(t.still().target(800, 600), (800, 600));
-        // Animations: at most about 1080p on mobile.
+        // Animations: at most 1600 x 900 pixels on mobile.
         let (w, h) = t.animated().target(3840, 2160);
-        assert!(w as u64 * h as u64 <= 1920 * 1080 && w > 1800, "{w}x{h}");
+        assert!(w as u64 * h as u64 <= 1600 * 900 && w > 1550, "{w}x{h}");
         // A GPU with 4096 texels.
         let t = BgTarget {
             screen: (7680, 4320),

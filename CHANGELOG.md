@@ -9,9 +9,9 @@
   for the camera's zoom) and the graphics card's limit, and once more in finer detail when the
   window becomes much larger. Formerly pictures were cut to 2560 pixels and 8K files failed.
 - **Animated backgrounds:** GIF, animated WebP and animated PNG play behind the visual at
-  screen size (up to about 1080p on phones and tablets, 1440p elsewhere). Frames are decoded
-  ahead on their own thread and kept when the animation is short enough, so later loops cost
-  no decoding; nothing runs while the app is hidden.
+  screen size (up to 1600 × 900 pixels on phones and tablets, 1440p elsewhere). Frames are
+  decoded ahead on their own thread and kept when they fit 256 MB (512 MB on computers), so
+  later loops cost no decoding; nothing runs while the app is hidden.
 - **Backgrounds from the server:** animations come as they are, still images scaled to the
   screen (up to 8192 pixels instead of 4096). The image folders list TIFF and APNG files,
   files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
