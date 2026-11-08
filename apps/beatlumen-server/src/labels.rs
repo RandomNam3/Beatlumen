@@ -2,13 +2,16 @@
 //!
 //! * How a song sounds (tempo, key, energy, ...) is worked out in the
 //!   background, one song at a time and resting as long as it worked, and
-//!   kept in `data/labels.jsonl`. Automatic labels follow from that and from
-//!   the tags (`bl_recommend::auto_labels`). Songs of remote sources only get
-//!   those from their tags: the server would have to download all of them.
-//! * Labels people give are stored per login (`labels.json`), like playlists.
+//!   kept in `data/sound.jsonl` (a cache, worked out again when missing).
+//!   Automatic labels follow from that and from the tags
+//!   (`bl_recommend::auto_labels`). Songs of remote sources only get those
+//!   from their tags: the server would have to download all of them.
+//! * Labels people give are stored per login in the database
+//!   (`<scope>labels/<song id>`: the names), like playlists.
 
 use crate::library::Entry;
 use crate::sources::Sources;
+use crate::store::Part;
 use crate::util;
 use crate::State;
 use bl_json::Value;
@@ -281,7 +284,7 @@ impl SoundIndex {
 
 /// Labels given by people to the songs of a login: label names per song.
 pub struct SongLabels {
-    path: PathBuf,
+    part: Part,
     map: RwLock<HashMap<String, BTreeSet<String>>>,
     revision: AtomicU64,
 }
@@ -296,33 +299,24 @@ fn clean_name(s: &str) -> Option<String> {
 }
 
 impl SongLabels {
-    pub fn load(path: PathBuf) -> SongLabels {
+    pub fn load(part: Part) -> SongLabels {
         let mut map: HashMap<String, BTreeSet<String>> = HashMap::new();
-        if let Ok(data) = std::fs::read(&path) {
-            match bl_json::parse_bytes(&data) {
-                Ok(v) => {
-                    if let Some(o) = v.get("songs").as_object() {
-                        for (id, names) in o.iter() {
-                            if !util::is_id(id) {
-                                continue;
-                            }
-                            let set: BTreeSet<String> = names
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|n| n.as_str().and_then(clean_name))
-                                .collect();
-                            if !set.is_empty() {
-                                map.insert(id.to_string(), set);
-                            }
-                        }
-                    }
-                }
-                Err(e) => crate::warn!("cannot parse {}: {e}", path.display()),
+        for (id, names) in part.list_json() {
+            if !util::is_id(&id) {
+                continue;
+            }
+            let set: BTreeSet<String> = names
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str().and_then(clean_name))
+                .collect();
+            if !set.is_empty() {
+                map.insert(id, set);
             }
         }
         SongLabels {
-            path,
+            part,
             map: RwLock::new(map),
             revision: AtomicU64::new(0),
         }
@@ -372,7 +366,7 @@ impl SongLabels {
         let add = names("add")?;
         let remove = names("remove")?;
         let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
-        let set = map.entry(id.to_string()).or_default();
+        let mut set = map.get(id).cloned().unwrap_or_default();
         for n in remove {
             set.remove(&n);
         }
@@ -383,21 +377,20 @@ impl SongLabels {
             set.insert(n);
         }
         let result: Vec<String> = set.iter().cloned().collect();
-        if set.is_empty() {
-            map.remove(id);
-        }
-        let mut songs = Value::object();
-        for (k, names) in map.iter() {
-            songs = songs.with(k.as_str(), names.iter().cloned().collect::<Vec<String>>());
-        }
-        util::write_atomic(
-            &self.path,
-            Value::object().with("songs", songs).to_json().as_bytes(),
-        )
-        .map_err(|e| {
-            crate::error!("cannot write {}: {e}", self.path.display());
+        let saved = if set.is_empty() {
+            self.part.delete(id).map(|_| ())
+        } else {
+            self.part.put_json(id, &Value::from(result.clone()))
+        };
+        saved.map_err(|e| {
+            crate::error!("cannot save labels: {e}");
             (500, "cannot save labels".to_string())
         })?;
+        if set.is_empty() {
+            map.remove(id);
+        } else {
+            map.insert(id.to_string(), set);
+        }
         self.revision.fetch_add(1, Ordering::Relaxed);
         Ok(result)
     }
@@ -448,11 +441,11 @@ mod tests {
 
     const A: &str = "00000000000000aa";
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bl-labels-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("labels.json")
+    fn temp(name: &str) -> Part {
+        Part::new(
+            &crate::store::temp_store(&format!("labels-{name}")),
+            "shared/labels/",
+        )
     }
 
     #[test]

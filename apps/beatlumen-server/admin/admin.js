@@ -72,6 +72,7 @@
     "vault": "Verschlüsselte Dateien",
     "models": "Sprachmodelle",
     "imports": "Importe",
+    "database": "Datenbank",
     "The server has no password: everyone in the network can use the library.": "Der Server hat kein Passwort: Jeder im Netzwerk kann die Bibliothek nutzen.",
     "The server password is short.": "Das Server-Passwort ist kurz.",
     "No music folders are set up.": "Es sind keine Musikordner eingerichtet.",

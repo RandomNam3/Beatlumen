@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 
 /// Imports running at the same time.
 const MAX_JOBS: usize = 3;
+/// The kept imports in the database: `ext/imported/<ext>/<item>`.
+const IMPORTED: &str = "ext/imported/";
 /// Temporary imports (for encrypted files) are kept this long.
 const TEMP_KEEP: Duration = Duration::from_secs(2 * 3600);
 /// Finished jobs are forgotten after this long.
@@ -191,9 +193,12 @@ pub struct Extensions {
     pub imports: PathBuf,
     temp: PathBuf,
     images: PathBuf,
-    imported_file: PathBuf,
-    /// "ext/item" -> the kept import.
+    store: Arc<crate::store::Store>,
+    /// "ext/item" -> the kept import (in the database:
+    /// `ext/imported/<ext>/<item>`).
     imported: Mutex<HashMap<String, Imported>>,
+    /// What the database holds of them, to write only what changed.
+    saved: Mutex<HashMap<String, Vec<u8>>>,
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     /// What extensions answered lately, by extension and request.
     answers: Mutex<HashMap<String, (Instant, Value)>>,
@@ -358,7 +363,11 @@ impl Imported {
 }
 
 impl Extensions {
-    pub fn new(config: &crate::Config, data_root: &Path) -> Result<Extensions, String> {
+    pub fn new(
+        config: &crate::Config,
+        data_root: &Path,
+        store: &Arc<crate::store::Store>,
+    ) -> Result<Extensions, String> {
         let token = match &config.extension_token_file {
             Some(p) => {
                 let t = std::fs::read_to_string(p)
@@ -388,8 +397,9 @@ impl Extensions {
             imports: ext_root.join("library"),
             temp: ext_root.join("temporary"),
             images: data_root.join("cache").join("extension-images"),
-            imported_file: ext_root.join("imported.json"),
+            store: store.clone(),
             imported: Mutex::new(HashMap::new()),
+            saved: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
             answers: Mutex::new(HashMap::new()),
             state: OnceLock::new(),
@@ -414,64 +424,45 @@ impl Extensions {
     }
 
     fn load_imported(&self) {
-        let Ok(data) = std::fs::read(&self.imported_file) else {
-            return;
-        };
-        let Ok(v) = bl_json::parse_bytes(&data) else {
-            return;
-        };
         let now = util::now_secs();
-        let mut older = false;
-        {
-            let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(o) = v.as_object() {
-                for (k, entry) in o.iter() {
-                    // Before times were kept: the file only; it gets the full
-                    // time from now on.
-                    let names = |key: &str| -> Vec<String> {
-                        entry
-                            .get(key)
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|n| n.as_str().map(str::to_string))
-                            .collect()
-                    };
-                    let (rel, added, played) = match entry.as_str() {
-                        Some(rel) => {
-                            older = true;
-                            (rel, now, now)
-                        }
-                        None => (
-                            entry.str_or("path", ""),
-                            entry.get("added").as_u64().unwrap_or(now),
-                            entry.get("played").as_u64().unwrap_or(now),
-                        ),
-                    };
-                    if let Some(path) = util::join_rel(&self.imports, rel) {
-                        m.insert(
-                            k.to_string(),
-                            Imported {
-                                path,
-                                added,
-                                played,
-                                holders: names("holders"),
-                                pinned: names("pinned"),
-                                released: entry.get("released").as_u64().unwrap_or(0),
-                            },
-                        );
-                    }
-                }
+        let stored = self.store.list(IMPORTED);
+        let mut m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
+        let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        for (k, data) in stored {
+            let Ok(entry) = bl_json::parse_bytes(&data) else {
+                continue;
+            };
+            let names = |key: &str| -> Vec<String> {
+                entry
+                    .get(key)
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|n| n.as_str().map(str::to_string))
+                    .collect()
+            };
+            if let Some(path) = util::join_rel(&self.imports, entry.str_or("path", "")) {
+                m.insert(
+                    k.clone(),
+                    Imported {
+                        path,
+                        added: entry.get("added").as_u64().unwrap_or(now),
+                        played: entry.get("played").as_u64().unwrap_or(now),
+                        holders: names("holders"),
+                        pinned: names("pinned"),
+                        released: entry.get("released").as_u64().unwrap_or(0),
+                    },
+                );
             }
-        }
-        if older {
-            self.save_imported();
+            saved.insert(k, data);
         }
     }
 
+    /// Stores what changed in the kept imports since the last time (one
+    /// transaction).
     fn save_imported(&self) {
         let m = self.imported.lock().unwrap_or_else(|e| e.into_inner());
-        let mut o = Value::object();
+        let mut now: HashMap<String, Vec<u8>> = HashMap::new();
         for (k, imp) in m.iter() {
             if let Some(rel) = imp
                 .path
@@ -479,20 +470,38 @@ impl Extensions {
                 .ok()
                 .and_then(util::rel_string)
             {
-                o = o.with(
-                    k,
-                    Value::object()
-                        .with("path", rel)
-                        .with("added", imp.added)
-                        .with("played", imp.played)
-                        .with("holders", imp.holders.clone())
-                        .with("pinned", imp.pinned.clone())
-                        .with("released", imp.released),
-                );
+                let v = Value::object()
+                    .with("path", rel)
+                    .with("added", imp.added)
+                    .with("played", imp.played)
+                    .with("holders", imp.holders.clone())
+                    .with("pinned", imp.pinned.clone())
+                    .with("released", imp.released);
+                now.insert(k.clone(), v.to_json().into_bytes());
             }
         }
-        if let Err(e) = util::write_atomic(&self.imported_file, o.to_json().as_bytes()) {
-            crate::warn!("cannot write {}: {e}", self.imported_file.display());
+        drop(m);
+        let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
+        let put: Vec<(&String, &Vec<u8>)> = now
+            .iter()
+            .filter(|(k, v)| saved.get(*k) != Some(*v))
+            .collect();
+        let gone: Vec<&String> = saved.keys().filter(|k| !now.contains_key(*k)).collect();
+        if put.is_empty() && gone.is_empty() {
+            return;
+        }
+        let written = self.store.write(|tx| {
+            for (k, v) in &put {
+                tx.put(&format!("{IMPORTED}{k}"), v)?;
+            }
+            for k in &gone {
+                tx.delete(&format!("{IMPORTED}{k}"))?;
+            }
+            Ok(())
+        });
+        match written {
+            Ok(()) => *saved = now,
+            Err(e) => crate::warn!("cannot save the kept imports: {e}"),
         }
     }
 

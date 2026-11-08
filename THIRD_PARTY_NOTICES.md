@@ -53,8 +53,10 @@ copyright notice and full license text.
 The server uses [rustls](https://github.com/rustls/rustls) with
 [ring](https://github.com/briansmith/ring) for TLS of its outgoing
 connections (push services) and Mozilla's root certificates from
-`webpki-roots` (CDLA-Permissive-2.0); `apps/beatlumen-server/NOTICE` has
-the full texts. In the container image these notices are in
+`webpki-roots` (CDLA-Permissive-2.0), and keeps its own data in a
+[redb](https://github.com/cberner/redb) database (Copyright (c) 2021
+Christopher Berner; MIT OR Apache-2.0, used under MIT);
+`apps/beatlumen-server/NOTICE` has the full texts. In the container image these notices are in
 `/usr/share/doc/beatlumen/`.
 
 The AirPlay receiver (`bl-airplay`) is an independent implementation of the

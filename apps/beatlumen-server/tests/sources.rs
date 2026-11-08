@@ -206,14 +206,14 @@ fn subsonic_songs_join_the_library() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(data.join("sources.json"))
+        let mode = std::fs::metadata(data.join(beatlumen_server::store::FILE_NAME))
             .unwrap()
             .permissions()
             .mode();
-        assert_eq!(mode & 0o077, 0, "sources.json must be private");
+        assert_eq!(mode & 0o077, 0, "the database must be private");
     }
     // The password is stored encrypted.
-    let stored = std::fs::read_to_string(data.join("sources.json")).unwrap();
+    let stored = server.state.store.get_json("sources").unwrap().to_json();
     assert!(
         stored.contains("\"sealed\"") && !stored.contains("geheim"),
         "{stored}"

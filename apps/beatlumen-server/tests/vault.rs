@@ -346,18 +346,21 @@ fn accounts_files_and_sharing() {
     assert!(list.get("used").as_u64().unwrap() > 300_000);
 
     // On disk there is no plaintext.
-    let meta_file = s.data.join(format!("vault/files/{id}.json"));
-    let digest = bl_json::parse_bytes(&std::fs::read(&meta_file).unwrap()).unwrap();
-    let stored = match digest.str_or("blob", "") {
+    let record = s
+        ._server
+        .state
+        .store
+        .get_json(&format!("vault/file/{id}"))
+        .unwrap();
+    let stored = match record.str_or("blob", "") {
         "" => s.data.join(format!("vault/files/{id}.blob")),
         b => s.data.join(format!("vault/blobs/{b}")),
     };
     let blob = std::fs::read(stored).unwrap();
     assert!(!blob.windows(64).any(|w| song.windows(64).next() == Some(w)));
-    assert!(!String::from_utf8_lossy(
-        &std::fs::read(s.data.join(format!("vault/files/{id}.json"))).unwrap()
-    )
-    .contains("song"));
+    assert!(!record.to_json().contains("song"));
+    let db = std::fs::read(s.data.join(beatlumen_server::store::FILE_NAME)).unwrap();
+    assert!(!db.windows(9).any(|w| w == b"song.flac"));
 
     // Byte ranges for streaming.
     let r = s.req(
@@ -892,15 +895,80 @@ fn accounts_have_their_own_playlists_and_presets() {
     );
 
     // Stored per user, not readable as another user's id.
-    assert!(
-        s.data
-            .join("vault")
-            .join("userdata")
-            .read_dir()
-            .unwrap()
-            .count()
-            == 2
+    let store = &s._server.state.store;
+    assert_eq!(store.list("acct/alice/playlist/").len(), 1);
+    assert_eq!(store.list("acct/bob/playlist/").len(), 1);
+    assert!(store.contains("acct/alice/preset/Mine"));
+    assert!(!store.contains("acct/bob/preset/Mine"));
+}
+
+#[test]
+fn deleting_an_account_leaves_nothing_of_it() {
+    let s = start("delete", |_| {});
+    let (ta, alice, _) = register(&s, "alice", "alice password");
+    let (tb, bob, _) = register(&s, "bob", "bob password");
+    // Alice's own things, a file she shares and one shared with her.
+    let playlist = Value::object().with("name", "Mine").with("kind", "track");
+    assert_eq!(
+        s.call("POST", "/api/playlists", Some(&ta), &playlist).0,
+        201
     );
+    assert_eq!(
+        s.req("PUT", "/api/favorites/00000000000000aa", Some(&ta), b"")
+            .status,
+        204
+    );
+    assert_eq!(
+        s.req("PUT", "/api/vault/settings", Some(&ta), b"ciphertext")
+            .status,
+        204
+    );
+    let song: Vec<u8> = (0..70_000u32).map(|i| (i * 13) as u8).collect();
+    let (mine, key) = upload(&s, &ta, &alice, &song, "a.flac");
+    assert_eq!(share(&s, &ta, &mine, &key, "bob"), 204);
+    let (theirs, key2) = upload(&s, &tb, &bob, &song[..40_000], "b.flac");
+    assert_eq!(share(&s, &tb, &theirs, &key2, "alice"), 204);
+    let store = &s._server.state.store;
+    assert!(!store.list("acct/alice/").is_empty());
+
+    let proof = Value::object().with(
+        "proof",
+        Value::object().with("auth", b64(alice_auth(&s, "alice password").as_bytes())),
+    );
+    assert_eq!(
+        s.call("DELETE", "/api/vault/account", Some(&ta), &proof).0,
+        204
+    );
+    // Nothing of it in the database (one transaction took it all).
+    assert!(store.list("acct/alice/").is_empty());
+    assert!(!store.contains("vault/user/alice"));
+    assert!(!store.contains("push/sub/alice"));
+    assert!(store.get_json(&format!("vault/file/{mine}")).is_none());
+    let kept = store.get_json(&format!("vault/file/{theirs}")).unwrap();
+    assert!(kept.get("keys").get("alice").is_null());
+    assert!(!kept.get("keys").get("bob").is_null());
+    assert!(store
+        .list("vault/session/")
+        .iter()
+        .all(|(_, v)| !String::from_utf8_lossy(v).ends_with(":alice")));
+    assert_eq!(
+        s.call("GET", "/api/vault/account", Some(&ta), &Value::Null)
+            .0,
+        401
+    );
+    // Bob still has his file.
+    assert!(download(&s, &tb, &bob, &theirs).is_ok());
+    // The name can be taken again, and starts empty.
+    let (ta2, _, _) = register(&s, "alice", "another password");
+    let (st, lists) = s.call("GET", "/api/playlists", Some(&ta2), &Value::Null);
+    assert_eq!(st, 200);
+    assert_eq!(lists.as_array().unwrap().len(), 0);
+    assert_eq!(
+        s.req("GET", "/api/vault/settings", Some(&ta2), b"").status,
+        404
+    );
+    let (_, files) = s.call("GET", "/api/vault/files", Some(&ta2), &Value::Null);
+    assert_eq!(files.get("files").as_array().unwrap().len(), 0);
 }
 
 #[test]

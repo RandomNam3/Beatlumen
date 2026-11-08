@@ -84,6 +84,7 @@ dependencies = [
  "bl-upnp",
  "bl-vault",
  "p256",
+ "redb",
  "ring",
  "rustls",
  "webpki-roots",
@@ -791,6 +792,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "redb"
+version = "4.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b317ef681e18f6091efbfab532eaf924a135c492d9d0299d0fbfae07e92a39b"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

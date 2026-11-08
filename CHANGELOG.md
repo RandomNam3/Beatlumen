@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **Server data in a database; after an update from 0.12.0 it is set up again:** the
+  server keeps its own data in one database file in the data folder, `beatlumen.redb`
+  (redb, pure Rust and built into the server; no database server). Every change is one
+  transaction: it is stored whole or not at all, also when the server or the computer stops
+  in the middle, and deleting an account takes everything of it in one step. A play, a
+  favorite or a login writes only its own entry, not a whole file. The 0.12.0 files
+  (`tokens.json`, `admin.json`, `settings.json`, `playlists.json`, `favorites.json`,
+  `history.jsonl`, `labels.json`, `hidden.json`, `sources.json`, `presets/`,
+  `vault/users/`, `vault/files/*.json`, `vault/userdata/`, ...) are **not** taken over, and
+  the server says so in its log while they are there. After the update set up again:
+  the **admin password** (the server logs a new setup link) and the **settings** made in the
+  admin interface; **accounts** and **their encrypted files** (shared ones and public links
+  included), the **logins** of the apps with the server password, **playlists**,
+  **favorites**, the **listening history**, given **labels**, **presets** and **music
+  sources**. Settings from the environment or the command line apply as before. What stays:
+  the music, the images, song texts (imported and timed ones), the library index, the sound
+  analysis, artist information, covers and other caches, speech models and the pepper. The
+  stored bytes of 0.12.0's encrypted files (`vault/blobs/`) belong to nobody any more and are
+  deleted 30 days after the first start of the new server; to keep them, back up the data
+  folder before the update. The old files themselves are left alone and can be deleted.
+- **Backups of a running server:** within an hour of a change the server writes a consistent
+  copy of its database to `backup/beatlumen.redb` in the data folder, so a backup of the
+  data folder taken while it runs holds a complete database (at most an hour old). For a
+  copy of the very last state stop the server first. See the container README.
+- **Health check:** `/api/health` and `--health-check` also report a database that does not
+  take a write transaction.
 - **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
   PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
   are read, so they never exist at full size: a 16K image needs about 16 MB of working memory

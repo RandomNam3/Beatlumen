@@ -5,8 +5,10 @@
 //!   first start (valid for a day) or created with `beatlumen-server
 //!   admin-link` (valid for an hour; also resets a forgotten password).
 //!   `BEATLUMEN_ADMIN_PASSWORD_FILE` sets it without a browser.
-//! * Only an Argon2id verifier of the password is kept (`admin.json`), and
-//!   only digests of setup tokens (`admin-setup.json`) and sessions.
+//! * Only an Argon2id verifier of the password is kept (in the database,
+//!   `admin`), and only digests of setup tokens and sessions. The setup
+//!   tokens are a file (`admin-setup.json`): `admin-link` writes it while
+//!   the server runs and holds the database.
 //! * Sessions are cookies (`HttpOnly`, `SameSite=Strict`, `Secure` behind
 //!   HTTPS) that end after 12 idle hours or 7 days; every request must
 //!   carry the `X-Beatlumen-Admin` header, which other sites cannot send
@@ -52,8 +54,11 @@ struct Inner {
     sessions: HashMap<[u8; 32], Session>,
 }
 
+/// The admin's state in the database (verifiers and sessions).
+const STATE_KEY: &str = "admin";
+
 pub struct Admin {
-    path: PathBuf,
+    store: Arc<crate::store::Store>,
     setup_path: PathBuf,
     inner: Mutex<Inner>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
@@ -121,12 +126,12 @@ pub fn create_setup_token(data: &Path, secs: u64) -> Result<String, String> {
 }
 
 impl Admin {
-    pub fn open(data: &Path, password_file: Option<&Path>) -> Result<Admin, String> {
-        let path = data.join("admin.json");
-        let stored = std::fs::read(&path)
-            .ok()
-            .and_then(|d| bl_json::parse_bytes(&d).ok())
-            .unwrap_or_default();
+    pub fn open(
+        store: &Arc<crate::store::Store>,
+        data: &Path,
+        password_file: Option<&Path>,
+    ) -> Result<Admin, String> {
+        let stored = store.get_json(STATE_KEY).unwrap_or_default();
         let now = util::now_secs();
         let mut inner = Inner {
             verifier: verifier_from(stored.get("verifier")),
@@ -147,7 +152,7 @@ impl Admin {
             }
         }
         let admin = Admin {
-            path,
+            store: store.clone(),
             setup_path: setup_path(data),
             inner: Mutex::new(Inner::default()),
             failures: Mutex::new(HashMap::new()),
@@ -202,9 +207,8 @@ impl Admin {
                     .collect(),
             ),
         );
-        match util::write_atomic(&self.path, v.to_json_pretty().as_bytes()) {
-            Ok(()) => util::make_private(&self.path),
-            Err(e) => crate::warn!("cannot write {}: {e}", self.path.display()),
+        if let Err(e) = self.store.put_json(STATE_KEY, &v) {
+            crate::warn!("cannot save the admin's state: {e}");
         }
     }
 
@@ -756,6 +760,12 @@ fn overview(state: &State) -> Value {
     ] {
         disk = disk.with(k, folder_size(&p, &mut budget));
     }
+    // The database and its copy for backups.
+    let db_size = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.len());
+    disk = disk.with(
+        "database",
+        db_size(state.store.path()) + db_size(&data.root.join(crate::store::BACKUP_FILE)),
+    );
     let mut warnings: Vec<Value> = Vec::new();
     if !state.auth.required() {
         warnings.push("noPassword".into());
@@ -859,9 +869,9 @@ fn settings(state: &State) -> Value {
 }
 
 /// `PUT /api/admin/settings` `{"values": {key: value | null}}`: checks,
-/// stores in `settings.json`, applies what can be applied live.
+/// stores in the database, applies what can be applied live.
 fn save_settings(state: &State, v: &Value) -> Result<Value, (u16, String)> {
-    // One change at a time (read, merge and write settings.json).
+    // One change at a time (read, merge and write the stored settings).
     static SAVING: Mutex<()> = Mutex::new(());
     let _one = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let values = v
@@ -869,10 +879,9 @@ fn save_settings(state: &State, v: &Value) -> Result<Value, (u16, String)> {
         .as_object()
         .ok_or((400, "expected {\"values\": {...}}".to_string()))?;
     let cur = state.config();
-    let path = config::settings_path(&state.data.root);
-    let mut stored = std::fs::read(&path)
-        .ok()
-        .and_then(|d| bl_json::parse_bytes(&d).ok())
+    let mut stored = state
+        .store
+        .get_json(config::SETTINGS_KEY)
         .filter(|v| v.as_object().is_some())
         .unwrap_or_else(Value::object);
     let mut next: Config = (*cur).clone();
@@ -904,9 +913,10 @@ fn save_settings(state: &State, v: &Value) -> Result<Value, (u16, String)> {
             return Err((400, "the public address must start with https://".into()));
         }
     }
-    util::write_atomic(&path, stored.to_json_pretty().as_bytes())
-        .map_err(|e| (500, format!("cannot write {}: {e}", path.display())))?;
-    util::make_private(&path);
+    state
+        .store
+        .put_json(config::SETTINGS_KEY, &stored)
+        .map_err(|e| (500, format!("cannot save the settings: {e}")))?;
     state.apply_config(next, restart);
     crate::info!(
         "admin changed settings: {}",

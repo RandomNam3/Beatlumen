@@ -6,15 +6,15 @@
 //! file only after the right proof.
 
 use super::{
-    b64, body, bytes, fail, params_from, params_json, read_json, save_json, Failure, FileRec, Vault,
+    b64, body, bytes, fail, params_from, params_json, saved, Failure, FileRec, Vault, LINKS,
 };
+use crate::store::Store;
 use crate::util::{self, ct_eq};
 use bl_json::Value;
 use bl_net::server::{Request, Response};
 use bl_vault::keys::{KdfParams, SALT_LEN};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Longest a link may live (0 = no expiry).
@@ -111,27 +111,65 @@ fn valid_link_id(id: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// Loads the stored links (expired ones are removed).
-pub(super) fn load(dir: &Path) -> HashMap<String, Link> {
+fn link_key(id: &str) -> String {
+    format!("{LINKS}{id}")
+}
+
+/// Loads the stored links (expired ones and those of unknown accounts are
+/// removed).
+pub(super) fn load<U>(store: &Store, users: &HashMap<String, U>) -> HashMap<String, Link> {
     let mut out = HashMap::new();
+    let mut gone = Vec::new();
     let now = util::now_secs();
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        match read_json(&p).as_ref().and_then(Link::from_json) {
-            Some(l) if valid_link_id(&l.id) && !l.expired(now) => {
+    for (id, v) in store.list_json(LINKS) {
+        match Link::from_json(&v) {
+            Some(l)
+                if l.id == id
+                    && valid_link_id(&l.id)
+                    && !l.expired(now)
+                    && users.contains_key(&l.owner) =>
+            {
                 out.insert(l.id.clone(), l);
             }
-            _ => {
-                let _ = std::fs::remove_file(&p);
+            _ => gone.push(id),
+        }
+    }
+    if !gone.is_empty() {
+        let removed = store.write(|tx| {
+            for id in &gone {
+                tx.delete(&link_key(id))?;
             }
+            Ok(())
+        });
+        if let Err(e) = removed {
+            crate::warn!("cannot remove expired links: {e}");
         }
     }
     out
 }
 
 impl Vault {
-    pub(super) fn link_path(&self, id: &str) -> std::path::PathBuf {
-        self.links_dir.join(format!("{id}.json"))
+    /// Removes a link from the database (the caller holds `links`).
+    pub(super) fn forget_link(&self, id: &str) {
+        if let Err(e) = self.store.delete(&link_key(id)) {
+            crate::warn!("cannot remove the link {id}: {e}");
+        }
+    }
+
+    /// The ids of the links of `owner`.
+    pub(super) fn links_of(&self, owner: &str) -> Vec<String> {
+        self.links
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter(|l| l.owner == owner)
+            .map(|l| l.id.clone())
+            .collect()
+    }
+
+    /// The database key of a link (for a transaction of the caller).
+    pub(super) fn link_key(id: &str) -> String {
+        link_key(id)
     }
 
     /// `POST /api/vault/files/<id>/links` (owner only).
@@ -173,8 +211,9 @@ impl Vault {
         if links.values().filter(|l| l.owner == me).count() >= MAX_LINKS_PER_USER {
             return fail(507, "too many links");
         }
-        std::fs::create_dir_all(&self.links_dir).map_err(|_| (500, "cannot save".to_string()))?;
-        save_json(&self.link_path(&id), &link.to_json())?;
+        self.store
+            .put_json(&link_key(&id), &link.to_json())
+            .map_err(saved)?;
         let entry = link.entry();
         links.insert(id, link);
         Ok(Response::json(201, &entry))
@@ -201,7 +240,7 @@ impl Vault {
         let mut links = self.links.write().unwrap_or_else(|e| e.into_inner());
         match links.get(id) {
             Some(l) if l.owner == me => {
-                let _ = std::fs::remove_file(self.link_path(id));
+                self.store.delete(&link_key(id)).map_err(saved)?;
                 links.remove(id);
                 Ok(Response::new(204))
             }
@@ -209,16 +248,29 @@ impl Vault {
         }
     }
 
-    /// Removes the links of a file (deleted) or of a user (account deleted).
+    /// Removes the links of a file (deleted).
     pub(super) fn drop_links(&self, pred: impl Fn(&str, &str) -> bool) {
         let mut links = self.links.write().unwrap_or_else(|e| e.into_inner());
-        links.retain(|id, l| {
-            let drop = pred(&l.file, &l.owner);
-            if drop {
-                let _ = std::fs::remove_file(self.links_dir.join(format!("{id}.json")));
+        let gone: Vec<String> = links
+            .values()
+            .filter(|l| pred(&l.file, &l.owner))
+            .map(|l| l.id.clone())
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        let removed = self.store.write(|tx| {
+            for id in &gone {
+                tx.delete(&link_key(id))?;
             }
-            !drop
+            Ok(())
         });
+        if let Err(e) = removed {
+            crate::warn!("cannot remove links: {e}");
+        }
+        for id in gone {
+            links.remove(&id);
+        }
     }
 
     /// `/api/share/<id>[/unlock|/data]`, without an account.
@@ -247,7 +299,7 @@ impl Vault {
                 return fail(404, "link not found");
             };
             if l.expired(now) {
-                let _ = std::fs::remove_file(self.link_path(id));
+                self.forget_link(id);
                 links.remove(*id);
                 return fail(404, "link not found");
             }
