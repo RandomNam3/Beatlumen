@@ -350,8 +350,9 @@ but stored separately from it.
 ## Health check
 
 `GET /api/health` answers `{"status": "ok"}` (200) while the server serves
-requests and its data folder takes writes, else 503 with `problems` (e.g.
-a full disk or a read-only `/data`). It needs no login and tells nothing
+requests, its data folder takes writes and its database a write
+transaction, else 503 with `problems` (e.g. a full disk or a read-only
+`/data`). It needs no login and tells nothing
 about the setup, so monitoring can use it too.
 
 The image declares a health check (`/beatlumen-server --health-check`,
@@ -396,6 +397,9 @@ favorites, history, recommendations and its health check, plus the
 command line tools (`--health-check`, `admin-link`, `invite`, `users`).
 Calls needed on rare paths (removing folders, outgoing connections and
 DNS, UDP discovery, signals) and their `*at` forms for arm64 were added;
+`flock` is the database's whole-file lock (`beatlumen.redb`): next to its
+byte-range locks (`fcntl`) for older redb versions, and in their place on
+file systems without byte-range locks (some network and FUSE ones);
 `fstatfs`, `openat2` and `close_range` are for the container runtime
 between applying the profile and starting the server.
 

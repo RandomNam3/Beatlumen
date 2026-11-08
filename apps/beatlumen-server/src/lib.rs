@@ -285,13 +285,17 @@ impl State {
     }
 
     /// What keeps the server from working, empty when it is healthy: its
-    /// data folder must take writes (not full, not mounted read-only).
+    /// data folder must take writes (not full, not mounted read-only), and
+    /// its database a write transaction.
     pub fn health_problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
         let probe = self.data.root.join(".health");
         let written = std::fs::write(&probe, b"ok").and_then(|_| std::fs::remove_file(&probe));
         if let Err(e) = written {
             problems.push(format!("the data folder takes no writes: {e}"));
+        }
+        if let Err(e) = self.store.check() {
+            problems.push(format!("the database takes no write transaction: {e}"));
         }
         problems
     }

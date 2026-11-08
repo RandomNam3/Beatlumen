@@ -144,6 +144,9 @@ fn stop_on_signals() {
                 let mut sig = 0;
                 if libc::sigwait(&set, &mut sig) == 0 {
                     beatlumen_server::info!("stopping (signal {sig})");
+                    // After the transactions running now, so that the next
+                    // start need not repair the database.
+                    beatlumen_server::store::close_all();
                     std::process::exit(0);
                 }
             });

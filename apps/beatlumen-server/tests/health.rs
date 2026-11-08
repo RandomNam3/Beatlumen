@@ -1,5 +1,6 @@
 //! The health check: `/api/health` without a login, and `--health-check`
-//! (containers) fails when the data folder takes no writes.
+//! (containers) fails when the data folder takes no writes (and the
+//! database no write transaction, which runs with every check).
 
 use beatlumen_server::Config;
 
