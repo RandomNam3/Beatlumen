@@ -321,11 +321,13 @@ mod tests {
 
     const ID: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 
-    fn index(enabled: bool) -> ArtistIndex {
-        ArtistIndex::new(
-            std::env::temp_dir().join(format!("bl-artists-{}.json", std::process::id())),
-            enabled,
-        )
+    /// Each test has a file of its own: a lookup writes the book, and a test
+    /// running alongside would otherwise start with that artist already known.
+    fn index(name: &str, enabled: bool) -> ArtistIndex {
+        let path =
+            std::env::temp_dir().join(format!("bl-artists-{}-{name}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        ArtistIndex::new(path, enabled)
     }
 
     fn details() -> Vec<u8> {
@@ -335,7 +337,7 @@ mod tests {
 
     #[test]
     fn with_the_switch_off_it_answers_nothing_and_asks_nobody() {
-        let i = index(false);
+        let i = index("off", false);
         let info = i.info("The Band", None, "de");
         assert!(!info.bool_or("enabled", true));
         assert!(i.pages.lock().unwrap().is_empty(), "nothing was queued");
@@ -365,7 +367,7 @@ mod tests {
 
     #[test]
     fn it_asks_keeps_the_pace_and_remembers() {
-        let i = index(true);
+        let i = index("asks", true);
         let wanted = Wanted {
             name: "The Band".into(),
             mbid: Some(ID.to_string()),
@@ -400,7 +402,7 @@ mod tests {
 
     #[test]
     fn a_service_that_is_down_leaves_nothing_behind() {
-        let i = index(true);
+        let i = index("down", true);
         let wanted = Wanted {
             name: "Nobody Yet".into(),
             mbid: None,
@@ -421,7 +423,7 @@ mod tests {
 
     #[test]
     fn a_complete_entry_is_served_and_turning_it_off_hides_it() {
-        let i = index(true);
+        let i = index("complete", true);
         i.book.write().unwrap().put(
             "The Band",
             Entry {
