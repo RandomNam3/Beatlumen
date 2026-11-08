@@ -53,6 +53,8 @@ pub struct ServerInfo {
     pub passkeys: bool,
     /// Song texts can be timed by speech recognition.
     pub speech: bool,
+    /// People without a login may join a room to listen together.
+    pub room_guests: bool,
 }
 
 impl ServerInfo {
@@ -69,6 +71,7 @@ impl ServerInfo {
             .with("webIntegrity", self.web_integrity.as_str())
             .with("passkeys", self.passkeys)
             .with("speech", self.speech)
+            .with("roomGuests", self.room_guests)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -83,6 +86,7 @@ impl ServerInfo {
             web_integrity: s(v, "webIntegrity"),
             passkeys: v.bool_or("passkeys", false),
             speech: v.bool_or("speech", false),
+            room_guests: v.bool_or("roomGuests", false),
         }
     }
 }

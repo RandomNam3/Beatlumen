@@ -39,6 +39,9 @@ ApplicationWindow {
     // -1: visualizer only, 0 library, 2 visuals, 3 settings, 4 devices,
     // 5 start page, 6 statistics, 7 search
     property int page: -1
+    // Into a room by a link: that is what this start is about.
+    readonly property bool inRoom: (Core.state.room || {}).active === true
+    onInRoomChanged: if (inRoom && (Core.state.room || {}).host !== true) page = 4
     // The window reaches under the system's bars and a notch; what must be seen
     // stays clear of them. The keyboard covers the window instead of shrinking it.
     readonly property int insetTop: Core.safeTop

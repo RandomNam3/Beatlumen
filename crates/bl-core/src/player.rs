@@ -17,7 +17,7 @@
 use crate::host::{AudioSource, DirectOpened, DirectSink, Host};
 use bl_media::{Decoder, EqSettings, Equalizer, Resampler};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Opens the byte source of a track (called on the decoder thread).
@@ -299,6 +299,8 @@ pub struct Output {
     /// Output frame index (since track start, including the seek base) of
     /// the last frame handed to the device.
     played: AtomicU64,
+    /// Frames to go forwards (or back, if negative) with the next frames.
+    nudge: AtomicI32,
     latency: AtomicU32,
     underruns: AtomicU64,
     /// True while a track is streaming (an empty ring is an underrun, not
@@ -347,6 +349,7 @@ impl Output {
             played: AtomicU64::new(0),
             latency: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
+            nudge: AtomicI32::new(0),
             streaming: AtomicBool::new(false),
             crossfade_ms: AtomicU32::new(0),
             skip_silence: AtomicBool::new(false),
@@ -535,7 +538,27 @@ impl Output {
         let frames = out.len() / 2;
         let mut taken = 0usize;
         let mut first_frame = 0;
+        let nudge = self.nudge.swap(0, Ordering::Relaxed);
         if let Ok(mut r) = self.ring.lock() {
+            if nudge > 0 {
+                let skip = (nudge as usize).min(r.samples.len() / 2);
+                r.samples.drain(..skip * 2);
+                r.next_frame += skip as u64;
+                self.played.fetch_add(skip as u64, Ordering::SeqCst);
+            } else if nudge < 0 {
+                let hold = nudge.unsigned_abs() as u64;
+                let played = self.played.load(Ordering::SeqCst);
+                let hold = hold.min(played).min(r.next_frame);
+                for _ in 0..hold * 2 {
+                    r.samples.push_front(0.0);
+                }
+                r.next_frame -= hold;
+                self.played.fetch_sub(hold, Ordering::SeqCst);
+            }
+            // No click: after the step the sound fades in within 20 ms.
+            if nudge != 0 {
+                gain = 0.0;
+            }
             first_frame = r.next_frame;
             let avail = r.samples.len() / 2;
             taken = avail.min(frames);
@@ -1022,6 +1045,22 @@ impl Player {
 
     /// Delay between audio leaving the decoder and being heard (output
     /// latency reported by the device).
+    /// Can this output take small steps in time (see `nudge`)?
+    pub fn can_nudge(&self) -> bool {
+        self.native.is_some()
+            && !self.output.direct_on.load(Ordering::Relaxed)
+            && !self.output.external.load(Ordering::Relaxed)
+    }
+
+    /// A step in time too small to be heard, without a seek (seconds: forwards
+    /// if positive). Keeps playback in step with other devices.
+    pub fn nudge(&mut self, seconds: f64) {
+        if self.can_nudge() {
+            let frames = seconds * self.device_rate.max(1) as f64;
+            self.output.nudge.store(frames as i32, Ordering::Relaxed);
+        }
+    }
+
     pub fn output_latency(&self) -> f64 {
         self.output.latency.load(Ordering::Relaxed) as f64 / self.device_rate.max(1) as f64
     }
@@ -1614,6 +1653,72 @@ fn decoder_thread(
             };
         }
         output.push(&buf);
+    }
+}
+
+#[cfg(test)]
+mod nudge_tests {
+    use super::*;
+
+    fn output() -> Output {
+        let o = Output::new();
+        o.paused.store(false, Ordering::Relaxed);
+        o.volume.store(1f32.to_bits(), Ordering::Relaxed);
+        if let Ok(mut n) = o.norm.lock() {
+            n.known = true;
+        }
+        // Each frame says which one it is.
+        let frames: Vec<f32> = (0..2000).flat_map(|i| [i as f32, i as f32]).collect();
+        o.push(&frames);
+        o
+    }
+
+    fn render(o: &Output, frames: usize) -> Vec<f32> {
+        let mut out = vec![0f32; frames * 2];
+        o.render_frames(&mut out, 0);
+        out
+    }
+
+    #[test]
+    fn a_step_forwards_leaves_frames_out() {
+        let o = output();
+        render(&o, 100);
+        assert_eq!(o.played.load(Ordering::SeqCst), 100);
+        o.nudge.store(50, Ordering::Relaxed);
+        let out = render(&o, 100);
+        // The position counts them, and the sound goes on behind them.
+        assert_eq!(o.played.load(Ordering::SeqCst), 250);
+        assert_eq!(o.ring.lock().unwrap().next_frame, 250);
+        assert!(out[out.len() - 1] > 0.0);
+        // Only once.
+        render(&o, 100);
+        assert_eq!(o.played.load(Ordering::SeqCst), 350);
+    }
+
+    #[test]
+    fn a_step_back_holds_the_song_for_a_moment() {
+        let o = output();
+        render(&o, 100);
+        o.nudge.store(-50, Ordering::Relaxed);
+        let out = render(&o, 100);
+        // 50 frames of silence, then on from where it was: 50 further, not 100.
+        assert_eq!(o.played.load(Ordering::SeqCst), 150);
+        assert_eq!(o.ring.lock().unwrap().next_frame, 150);
+        assert!(out[..100].iter().all(|s| *s == 0.0));
+        assert!(out[out.len() - 1] > 0.0);
+    }
+
+    #[test]
+    fn a_step_stays_inside_what_there_is() {
+        let o = output();
+        // Nothing played yet: nothing to hold back from.
+        o.nudge.store(-50, Ordering::Relaxed);
+        render(&o, 10);
+        assert_eq!(o.played.load(Ordering::SeqCst), 10);
+        // More than is queued.
+        o.nudge.store(1_000_000, Ordering::Relaxed);
+        render(&o, 10);
+        assert_eq!(o.played.load(Ordering::SeqCst), 2000);
     }
 }
 

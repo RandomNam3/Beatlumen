@@ -224,12 +224,27 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         ["vault", rest @ ..] => return state.vault.handle(req, rest, client_ip(req)),
         // Public links to encrypted files: no account needed.
         ["share", rest @ ..] => return state.vault.public_link(req, rest, client_ip(req)),
+        // A room's code, or the token it gave.
+        ["rooms", "join"] => {
+            return if m == "POST" {
+                state.rooms.join(state, req, client_ip(req))
+            } else {
+                not_allowed("POST")
+            }
+        }
+        ["rooms", id, rest @ ..] => return state.rooms.member_request(state, req, id, rest),
         _ => {}
     }
     // Users with an account may use the library as well; their playlists
     // and presets are their own.
     let user = state.vault.session_user(req);
-    if !state.auth.authorized(req) && user.is_none() {
+    // A guest of a room: that room's songs and nothing else.
+    let guest = state.rooms.guest(req);
+    if let Some(g) = &guest {
+        if !state.rooms.guest_may(g, m, segs) {
+            return Response::error(403, "not for a guest of a room");
+        }
+    } else if !state.auth.authorized(req) && user.is_none() {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
@@ -250,10 +265,25 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
     // Devices see the devices of the same login: an account, or everyone
     // with the server password.
     if matches!(segs, ["devices", ..] | ["events"] | ["time"]) {
+        let scope = match &guest {
+            Some(g) => format!("room:{}", g.room),
+            None => user
+                .as_deref()
+                .map_or_else(|| "shared".to_string(), |u| format!("user:{u}")),
+        };
+        let rooms = state
+            .rooms
+            .scopes_of(req.query("device").unwrap_or(""), &scope);
+        return state.devices.handle(req, segs, &scope, &rooms);
+    }
+    if segs == ["rooms"] {
+        if m != "POST" {
+            return not_allowed("POST");
+        }
         let scope = user
             .as_deref()
             .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
-        return state.devices.handle(req, segs, &scope);
+        return state.rooms.create(state, req, &scope);
     }
     match segs {
         ["logout"] => match m {
