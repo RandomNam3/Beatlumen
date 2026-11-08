@@ -112,6 +112,14 @@ uint8_t *bl_http_fetch(const char *url, size_t *out_len);
 uint8_t *bl_image_thumbnail(const char *path, uint32_t w, uint32_t h, uint32_t *out_w, uint32_t *out_h, size_t *out_len);
 void bl_bytes_free(uint8_t *p, size_t len);
 
+// HEIC decoding by the operating system (HEVC is patent-encumbered and not
+// part of the core): the decoder calls alloc(ctx, width, height) once and
+// fills the returned buffer with straight RGBA rows; need_w x need_h is the
+// smallest size wanted. Returns 1 on success. Called from any thread.
+typedef uint8_t *(*bl_image_alloc_fn)(void *ctx, uint32_t width, uint32_t height);
+typedef int (*bl_heic_decode_fn)(const uint8_t *data, size_t len, uint32_t need_w, uint32_t need_h, void *ctx, bl_image_alloc_fn alloc);
+void bl_set_heic_decoder(bl_heic_decode_fn decode);
+
 #ifdef __cplusplus
 }
 #endif
