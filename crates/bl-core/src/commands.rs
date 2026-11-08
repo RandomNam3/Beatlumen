@@ -220,7 +220,15 @@ impl Core {
                 ok()
             }
             "seek" => {
-                self.player.seek(host, n("position").max(0.0));
+                let position = n("position").max(0.0);
+                // Not loaded yet (a queue restored at start): playing starts
+                // there instead of where the app left off.
+                if self.player.state() == crate::player::PlayState::Stopped
+                    && self.queue.current().is_some()
+                {
+                    self.resume_at = Some(position);
+                }
+                self.player.seek(host, position);
                 ok()
             }
             "seekBy" => {

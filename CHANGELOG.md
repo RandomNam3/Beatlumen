@@ -23,7 +23,8 @@
 - **Points for the pitch:** each singer's live pitch against the notes of their voice, the octave
   does not count. The tolerance depends on the difficulty (2, 1 or half a semitone), golden notes
   count double, rap notes count when the singer is heard, and a long note held on pitch earns a
-  bonus. Each line gets a rating as it ends.
+  bonus. Consonants and breaths within a note are no misses (up to 40 % of it). Each line gets a
+  rating as it ends.
 - **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
   text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
   computes it on request or for the whole library in the background (`--karaoke`,
@@ -31,6 +32,7 @@
   song texts (`GET/PUT/DELETE /api/tracks/<id>/karaoke`). The app computes it itself where the
   server does not, keeps it in a song's offline copy, and imports and exports UltraStar text files
   (duets included). Computed notes are dropped when the song text changes; imported ones stay.
+  For a song text with line times only, each line's syllables are put on the time it is sung.
 - **Listen together:** make a room on the Devices page and let others in with its code or
   link. Everyone hears the same song of the server at the same moment; the host decides what
   plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and

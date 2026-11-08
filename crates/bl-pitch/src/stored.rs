@@ -6,7 +6,8 @@ use crate::track::KaraokeTrack;
 use bl_json::Value;
 
 /// Version of the computation (`bl-karaoke`); stored with its results.
-pub const VERSION: u32 = 1;
+/// 2: song texts with line times only follow the singing.
+pub const VERSION: u32 = 2;
 
 /// Where a stored karaoke track came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

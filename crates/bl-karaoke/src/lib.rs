@@ -222,7 +222,7 @@ pub fn compute(
 /// The track from a melody already tracked and the parsed song text.
 pub fn from_frames(frames: &[pyin::Frame], song: &lrc::Song) -> (KaraokeTrack, notes::Report) {
     let lang = guess_language(&song.text());
-    let lines: Vec<notes::LineIn> = song
+    let mut lines: Vec<notes::LineIn> = song
         .lines
         .iter()
         .map(|l| notes::LineIn {
@@ -230,6 +230,10 @@ pub fn from_frames(frames: &[pyin::Frame], song: &lrc::Song) -> (KaraokeTrack, n
             syllables: syllables::syllabify(&l.syllables, lang),
         })
         .collect();
+    // Line times only: the syllables go where the line is sung.
+    if !song.word_timed {
+        spread_over_singing(frames, &mut lines);
+    }
     let (mut track, report) = notes::build_track(frames, &lines, &notes::NoteOptions::default());
     track.title = song.title.clone();
     track.artist = song.artist.clone();
@@ -240,10 +244,104 @@ pub fn from_frames(frames: &[pyin::Frame], song: &lrc::Song) -> (KaraokeTrack, n
     (track, report)
 }
 
+/// Longest stretch of a line given its syllables when only line times are
+/// known (seconds).
+const MAX_LINE_SECS: f64 = 12.0;
+
+/// For a song text with line times only, its words are spread from each
+/// line's start, a guess. This moves the syllables of each line onto the
+/// time it is sung (voiced frames between its start and the next line's),
+/// each syllable getting a share of that time by its letters.
+fn spread_over_singing(frames: &[pyin::Frame], lines: &mut [notes::LineIn]) {
+    let hop = match frames {
+        [a, b, ..] => b.time - a.time,
+        _ => return,
+    };
+    let starts: Vec<f64> = lines
+        .iter()
+        .map(|l| l.syllables.first().map_or(f64::NAN, |s| s.start))
+        .collect();
+    for (i, line) in lines.iter_mut().enumerate() {
+        let Some(start) = line.syllables.first().map(|s| s.start) else {
+            continue;
+        };
+        let next = starts[i + 1..]
+            .iter()
+            .copied()
+            .find(|t| t.is_finite() && *t > start)
+            .unwrap_or(start + MAX_LINE_SECS);
+        let end = next.min(start + MAX_LINE_SECS);
+        // The voiced frames of the line's stretch.
+        let a = frames.partition_point(|f| f.time < start);
+        let b = frames.partition_point(|f| f.time < end);
+        let voiced: Vec<f64> = frames[a..b]
+            .iter()
+            .filter(|f| f.f0.is_some())
+            .map(|f| f.time)
+            .collect();
+        let sung = voiced.len() as f64 * hop;
+        if sung < 0.3 || voiced.len() < line.syllables.len() {
+            continue;
+        }
+        // Cumulative voiced time → the time it is reached.
+        let at = |share: f64| -> f64 {
+            let k = ((share * voiced.len() as f64) as usize).min(voiced.len() - 1);
+            voiced[k]
+        };
+        let weights: Vec<f64> = line
+            .syllables
+            .iter()
+            .map(|s| {
+                s.text
+                    .trim()
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .count()
+                    .max(1) as f64
+            })
+            .collect();
+        let total: f64 = weights.iter().sum();
+        let mut done = 0.0;
+        for (s, w) in line.syllables.iter_mut().zip(&weights) {
+            let from = done / total;
+            done += w;
+            let to = done / total;
+            s.start = at(from) - hop / 2.0;
+            s.end = (at(to) + hop / 2.0).max(s.start + hop);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bl_pitch::Frame;
+
+    #[test]
+    fn line_times_only_follow_the_singing() {
+        // A line at 10 s; nobody sings until 11 s, then "la" (11-12 s) and
+        // "lalala" (12-15 s); the next line at 20 s.
+        let frames: Vec<Frame> = (0..2500)
+            .map(|i| {
+                let t = i as f64 * 0.01;
+                let sung = (11.0..15.0).contains(&t);
+                Frame {
+                    time: t,
+                    f0: sung.then_some(440.0),
+                    voiced_prob: if sung { 0.9 } else { 0.1 },
+                }
+            })
+            .collect();
+        let song = lrc::parse("[00:10.00]la lalala\n[00:20.00]next\n");
+        assert!(!song.word_timed);
+        let (t, _) = from_frames(&frames, &song);
+        let notes: Vec<&bl_pitch::Note> = t.lines[0].notes.iter().collect();
+        assert!(notes.iter().all(|n| n.kind.has_pitch()), "{notes:?}");
+        let first = notes[0];
+        assert!((first.start_ms - 11_000).abs() < 100, "{first:?}");
+        // "la" takes a quarter of the four sung seconds.
+        assert!((first.end_ms() - 12_000).abs() < 150, "{first:?}");
+    }
 
     #[test]
     fn languages() {

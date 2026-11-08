@@ -22,6 +22,9 @@ pub const HELD_POINTS: f64 = 1000.0;
 pub const LONG_NOTE_MS: i64 = 800;
 /// Share of a long note that must be held on pitch without a break.
 pub const HELD_SHARE: f64 = 0.75;
+/// Share of a note that may go without a pitch (consonants, breath)
+/// before the frames without one count as missed.
+pub const UNVOICED_SHARE: f64 = 0.4;
 
 /// How close the pitch must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -85,6 +88,8 @@ struct Target {
     /// Share of the held-note bonus (long notes only).
     held_weight: f64,
     frames: u32,
+    /// Frames with a pitch.
+    voiced: u32,
     hits: u32,
     run_ms: i64,
     best_run_ms: i64,
@@ -163,6 +168,7 @@ impl Scorer {
                     weight: 0.0,
                     held_weight: 0.0,
                     frames: 0,
+                    voiced: 0,
                     hits: 0,
                     run_ms: 0,
                     best_run_ms: 0,
@@ -241,6 +247,9 @@ impl Scorer {
             _ => midi.is_some_and(|m| pitch_class_distance(m, t.pitch as f32).abs() <= tol),
         };
         t.frames += 1;
+        if midi.is_some() || hit {
+            t.voiced += 1;
+        }
         if hit {
             t.hits += 1;
             // A held run goes on over gaps of a few frames (YIN drops some).
@@ -267,8 +276,10 @@ impl Scorer {
         }
     }
 
-    /// Hit share of one target's frames: hits out of the frames it lasts
-    /// (missing frames count as missed), for the part sung so far.
+    /// Hit share of one target's frames for the part sung so far: hits out
+    /// of the frames with a pitch, but at least out of the share of the
+    /// frames it lasts that must have one (`UNVOICED_SHARE` may go without:
+    /// consonants and breath are no misses, silence is).
     fn share(&self, t: &Target, now_ms: i64) -> f64 {
         let end = t.end_ms.min(now_ms);
         if end <= t.start_ms {
@@ -277,7 +288,10 @@ impl Scorer {
         let expected = ((end - t.start_ms) as f64 / self.hop_ms)
             .max(t.frames as f64)
             .max(1.0);
-        (t.hits as f64 / expected).min(1.0)
+        let counted = (t.voiced as f64)
+            .max(expected * (1.0 - UNVOICED_SHARE))
+            .max(1.0);
+        (t.hits as f64 / counted).min(1.0)
     }
 
     /// The score up to song time `now_ms`.
@@ -464,6 +478,32 @@ mod tests {
             _ => None,
         });
         assert_eq!(s.score(1600).held_notes, 1);
+    }
+
+    #[test]
+    fn short_gaps_without_pitch_are_no_misses() {
+        let t = track();
+        // On pitch for two thirds of each note, nothing heard in between.
+        let mut s = Scorer::new(&t, 1, Difficulty::Medium, 0.01);
+        sing(&mut s, 1500, |t| match t {
+            0..=499 if t % 300 < 200 => Some(60.0),
+            500..=1499 if t % 300 < 200 => Some(64.0),
+            _ => None,
+        });
+        let sc = s.score(1600);
+        assert!(sc.accuracy > 0.95, "{sc:?}");
+        // A pitch heard but wrong half of that time still counts as missed.
+        let mut s = Scorer::new(&t, 1, Difficulty::Medium, 0.01);
+        sing(&mut s, 1500, |t| {
+            let note = if t < 500 { 60.0 } else { 64.0 };
+            match t % 300 {
+                0..=99 => Some(note),
+                100..=199 => Some(note + 5.0),
+                _ => None,
+            }
+        });
+        let sc = s.score(1600);
+        assert!(sc.accuracy > 0.4 && sc.accuracy < 0.6, "{sc:?}");
     }
 
     #[test]

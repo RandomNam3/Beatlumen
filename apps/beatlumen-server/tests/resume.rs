@@ -80,6 +80,19 @@ fn continues_where_it_stopped() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
+    // Asked to start somewhere else before playing (the karaoke page starts
+    // a round at 0): there, not where the app left off.
+    app.core.save_settings(&mut app.host);
+    app.core = Core::new(&mut app.host, LaunchArgs::default(), "en");
+    app.state();
+    app.cmd(Value::object().with("cmd", "seek").with("position", 0.0));
+    app.cmd(Value::object().with("cmd", "play"));
+    app.wait("playing from the start", |s| {
+        s.str_or("play", "") == "playing"
+    });
+    let p = position(&mut app);
+    assert!(p < 5.0, "position {p}");
+
     // Another track chosen by the user starts at the beginning.
     app.core.save_settings(&mut app.host);
     app.core = Core::new(&mut app.host, LaunchArgs::default(), "en");

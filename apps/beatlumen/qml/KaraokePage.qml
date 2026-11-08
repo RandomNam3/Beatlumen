@@ -430,6 +430,8 @@ Item {
                     track: modelData
                     showMenu: false
                     onPlay: {
+                        Qt.inputMethod.hide()
+                        searchField.focus = false
                         Core.call("play", { ids: [modelData.id], start: 0 })
                         Core.call("pause")
                         page.stage = "setup"
@@ -914,11 +916,13 @@ Item {
                                 continue
                             const golden = n.k === "*" || n.k === "G"
                             const free = n.k === "F"
-                            ctx.fillStyle = free ? Qt.alpha(Theme.text, 0.12)
+                            ctx.fillStyle = free ? Qt.alpha(Theme.text, b < now ? 0.18 : 0.32)
                                 : golden ? Qt.alpha("#ffd54f", b < now ? 0.45 : 0.85)
                                 : Qt.alpha(voiceColor, b < now ? 0.3 : 0.6)
                             const bx = x(a), bw = Math.max(2, x(b) - bx - 1)
-                            ctx.fillRect(bx, y(n.p) - barH / 2, bw, barH)
+                            // Free notes (no pitch to hit) as a thinner bar.
+                            const bh = free ? barH * 0.45 : barH
+                            ctx.fillRect(bx, y(n.p) - bh / 2, bw, bh)
                         }
                     }
                     // Now.
