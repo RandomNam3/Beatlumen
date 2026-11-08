@@ -85,7 +85,7 @@ struct AudioOutput::Impl
         AAudioStreamBuilder_setSampleRate(b, int32_t(rate));
         AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
         // Power saving over low latency: the visuals compensate the latency.
-        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
+        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_POWER_SAVING);
         static const auto setUsage = reinterpret_cast<SetI32>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setUsage"));
         static const auto setContentType = reinterpret_cast<SetI32>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setContentType"));
         if (setUsage)

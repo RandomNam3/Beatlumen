@@ -25,6 +25,7 @@ bl-meta = { path = "../../crates/bl-meta" }
 bl-fx = { path = "../../crates/bl-fx" }
 bl-vault = { path = "../../crates/bl-vault" }
 # (With the audio encoder on the GPU when there is one.)
+bl-align = { path = "../../crates/bl-align" }
 bl-asr = { path = "../../crates/bl-asr", features = ["gpu"] }
 bl-sources = { path = "../../crates/bl-sources" }
 bl-opus-enc = { path = "../../crates/bl-opus-enc" }

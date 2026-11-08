@@ -275,7 +275,13 @@ def desktop():
     app.click(row[0])
     item = app.shows("Play next")
     assert item[0]["h"] < 60 and item[0]["w"] <= 300, f"a menu: {item[0]}"
-    app.key("Escape")
+    # Qt names a dialog's own buttons in English: in German they say so, too.
+    app.core("settings.set", key="language", value="de")
+    app.click_text("Zur Playlist hinzufügen…")
+    app.shows("Abbrechen")
+    app.click_text("Abbrechen")
+    app.gone("Abbrechen")
+    app.core("settings.set", key="language", value="en")
     app.quit()
     print("ok: side panel and menu on a computer")
 
@@ -328,6 +334,39 @@ def wide_window():
     print("ok: wide window, selection, recent searches")
 
 
+def phone_page_menu():
+    app = start((390, 844), True)
+    app.set("page", 0)
+    # A playlist's own ⋮ is about the playlist, even with a single song in it.
+    app.core("playlist.create", name="Solo", kind="track", items=[song_id("Alpha")])
+    app.click_text("Playlists")
+    app.click_text("Solo")
+    app.shows("1 song")
+    time.sleep(0.8)  # the page slides in
+    songs = len(app.labels("Alpha"))
+    more = sorted(app.wait("its menu", lambda: app.named("More")), key=lambda i: i["y"])
+    app.click(more[0])
+    app.shows("Rename")
+    assert len(app.labels("Alpha")) == songs, "the sheet is headed by the playlist, not its song"
+    assert not app.labels("Labels…"), "no labels of a song"
+    app.key("Escape")
+    app.gone("Rename")
+    # A dialog moves up above the keyboard.
+    app.click_named("Back")
+    app.shows("New smart playlist")
+    time.sleep(0.8)  # the page slides out
+    app.click_text("New playlist")
+    create = app.shows("Create")
+    app.send("keyboard 400")
+    time.sleep(0.5)
+    create = app.wait("the dialog above the keyboard", lambda: [i for i in app.labels("Create") if i["y"] + i["h"] <= 844 - 400])
+    app.send("keyboard 0")
+    app.key("Escape")
+    app.gone("Create")
+    app.quit()
+    print("ok: a page's own menu, a dialog above the keyboard")
+
+
 def check_log():
     allowed = ("Accessible attached property",)
     with open(LOG, encoding="utf8") as f:
@@ -356,6 +395,43 @@ def listen_together():
     app.quit()
 
 
+def swiping_pages():
+    app = start((900, 700), True)
+    app.set("page", 2)
+    app.shows("Epilepsy mode")
+    # A slider keeps the finger.
+    slider = app.wait("a slider", lambda: [i for i in app.items() if "Slider" in i["type"] and i["w"] > 100])[0]
+    y = slider["y"] + slider["h"] / 2
+    app.send(f"drag {slider['x'] + 30} {y} {slider['x'] + slider['w'] - 30} {y}")
+    time.sleep(0.4)
+    app.shows("Epilepsy mode")
+    # Tabs first, then the pages.
+    app.send("drag 800 450 300 450")
+    app.gone("Epilepsy mode")
+    app.send("drag 300 450 800 450")
+    app.shows("Epilepsy mode")
+    # Too short: nothing.
+    app.send("drag 300 450 360 450")
+    time.sleep(0.4)
+    app.shows("Epilepsy mode")
+    app.send("drag 300 450 800 450")
+    app.gone("Epilepsy mode")
+    app.send("drag 800 450 300 450")
+    app.shows("Epilepsy mode")
+    app.quit()
+
+    # A row that scrolls sideways keeps the finger: the page stays. (That the row
+    # moves takes a real finger: a mouse does not move it here.)
+    app = start((500, 844), True)
+    app.set("page", 5)
+    card = app.wait("a row of cards", lambda: [i for i in app.items() if "ShelfCard" in i["type"] or "SongCard" in i["type"]])[0]
+    y = card["y"] + card["h"] / 2
+    app.send(f"drag 460 {y} 100 {y}")
+    time.sleep(0.8)
+    assert not app.labels("Recent searches") and not app.named("Search music"), "the page changed"
+    app.quit()
+
+
 def main():
     make_music()
     try:
@@ -364,6 +440,8 @@ def main():
         desktop()
         wide_window()
         listen_together()
+        swiping_pages()
+        phone_page_menu()
         check_log()
     except (SystemExit, AssertionError, Exception):
         if os.path.exists(LOG):

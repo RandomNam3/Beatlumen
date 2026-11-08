@@ -316,6 +316,7 @@ Item {
                     TopList {
                         title: Theme.tr("Top genres")
                         items: page.stats.topGenres || []
+                        name: (i) => Theme.capitalized(i.name)
                     }
                 }
             }

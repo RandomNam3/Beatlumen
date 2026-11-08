@@ -14,6 +14,14 @@ ApplicationWindow {
     visible: true
     title: Core.state.current ? Core.state.current.title + " – Beatlumen" : "Beatlumen"
     color: "black"
+    // On Android the app keeps the room of the system's bars itself (insetTop
+    // and so on), shown or not. Qt's own padding follows only the bars shown:
+    // it came on top, left a strip at the bottom and moved everything when the
+    // bars came and went.
+    leftPadding: Core.platform === "android" ? 0 : SafeArea.margins.left
+    topPadding: Core.platform === "android" ? 0 : SafeArea.margins.top
+    rightPadding: Core.platform === "android" ? 0 : SafeArea.margins.right
+    bottomPadding: Core.platform === "android" ? 0 : SafeArea.margins.bottom
     background: null
 
     Material.theme: Theme.dark ? Material.Dark : Material.Light
@@ -34,6 +42,26 @@ ApplicationWindow {
     // Into a room by a link: that is what this start is about.
     readonly property bool inRoom: (Core.state.room || {}).active === true
     onInRoomChanged: if (inRoom && (Core.state.room || {}).host !== true) page = 4
+    // The window reaches under the system's bars and a notch; what must be seen
+    // stays clear of them. The keyboard covers the window instead of shrinking it.
+    readonly property int insetTop: Core.safeTop
+    readonly property int insetLeft: Core.safeLeft
+    readonly property int insetRight: Core.safeRight
+    readonly property int insetBottom: Core.safeBottom
+    // Android tells it itself (Qt's rectangle there is in pixels, not in the
+    // window's units).
+    readonly property real keyboard: Core.platform === "android" || Core.keyboardHeight > 0 ? Core.keyboardHeight
+        : Qt.inputMethod.visible ? Qt.inputMethod.keyboardRectangle.height : 0
+    readonly property real bottomGap: Math.max(insetBottom, keyboard)
+    // Dialogs and sheets stay above the keyboard: the overlay they lie on ends
+    // where it begins. (A Binding on the overlay never took hold, and Qt sets
+    // its size anew when the window changes size.)
+    function fitOverlay() {
+        if (Overlay.overlay)
+            Overlay.overlay.height = win.height - win.keyboard
+    }
+    onKeyboardChanged: fitOverlay()
+    onHeightChanged: Qt.callLater(fitOverlay)
     // The queue leaves the visual in sight: a panel at the side, on a narrow
     // window a sheet that covers only the lower part.
     property bool queueOpen: false
@@ -87,6 +115,10 @@ ApplicationWindow {
     // Android's status and navigation bars go with the controls (a swipe
     // from the edge shows them briefly).
     onChromeVisibleChanged: if (Core.platform === "android") Core.setSystemBarsHidden(!chromeVisible)
+    // A light page reaches under the status bar: dark icons there. Over the visual
+    // they stay light.
+    readonly property bool lightBars: !Theme.dark && page >= 0
+    onLightBarsChanged: Core.setSystemBarsLight(lightBars)
     // The keyboard brings the controls back like the mouse does.
     onActiveFocusItemChanged: {
         poke()
@@ -102,7 +134,10 @@ ApplicationWindow {
     }
     // Behind a page the visual is only a blur; beside one it stays sharp.
     readonly property bool visualBlurred: page >= 0 && !docked
-    onVisualBlurredChanged: Core.call("ui.blur", { value: visualBlurred ? 2.0 : 0.0 })
+    onVisualBlurredChanged: {
+        Core.call("ui.blur", { value: visualBlurred ? 2.0 : 0.0 })
+        Core.setVisualCovered(visualBlurred)
+    }
     // Where the visual goes: what the panels leave of the window, so that it is
     // not half hidden behind them.
     readonly property var visualPart: docked ? [width - dockWidth, 0, dockWidth, height]
@@ -213,6 +248,8 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: playerBar.top
         width: implicitWidth
+        insetTop: win.insetTop
+        insetLeft: win.insetLeft
         current: win.page
         // The page floats over the visual: its entry closes it again.
         onSelected: (i) => win.page = i >= 0 && i === win.page ? -1 : i
@@ -220,6 +257,33 @@ ApplicationWindow {
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
     }
+
+    // Wiping sideways goes through the pages as the bar lists them, and the
+    // visual comes after the last one.
+    function swipePage(dir) {
+        const shown = win.page === 0 ? library.item : win.page === 2 ? visuals.item : null
+        if (shown && shown.swipe && shown.swipe(dir))
+            return
+        const order = rail.items.map(i => i.page).concat([-1])
+        const at = order.indexOf(win.page)
+        if (at >= 0 && at + dir >= 0 && at + dir < order.length)
+            win.page = order[at + dir]
+    }
+    // What moves sideways by itself keeps the finger: sliders, rows to scroll.
+    function holdsSwipe(x, y) {
+        let item = pageSwipe
+        for (;;) {
+            const p = win.contentItem.mapToItem(item, x, y)
+            item = item.childAt(p.x, p.y)
+            if (!item)
+                return false
+            if (item instanceof Slider || item instanceof RangeSlider
+                    || (item instanceof Flickable && item.contentWidth > item.width + 1))
+                return true
+        }
+    }
+    property bool swipeHeld: false
+    property int backToPage: -1
 
     // Tapping the visual toggles the controls (and closes pages on phones).
     TapHandler {
@@ -238,6 +302,8 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
         anchors.margins: 8
+        anchors.topMargin: 8 + win.insetTop
+        anchors.rightMargin: 8 + (queueSide.visible ? 0 : win.insetRight)
         visible: win.page < 0 || win.docked
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
@@ -273,15 +339,17 @@ ApplicationWindow {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         // Slides down when the controls fade out.
-        anchors.bottomMargin: !win.chromeVisible ? 8
+        anchors.bottomMargin: !win.chromeVisible ? 8 + win.insetBottom
                               : win.bigPlayer ? expanded.height + nav.height
                               : win.compact ? playerBar.height + nav.height
-                              : playerBar.height
+                              : playerBar.height + win.bottomGap
         Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.ms(450); easing.type: Easing.OutCubic } }
         visible: win.page < 0 || win.docked
         showSpectrum: true
         showLyrics: win.showLyrics
         controlsVisible: win.chromeVisible
+        shadeToEdges: !win.chromeVisible && !win.docked
+        insetTop: win.insetTop
         onAddLyrics: dialogs.openLyrics()
     }
 
@@ -320,81 +388,134 @@ ApplicationWindow {
         anchors.bottom: playerBar.top
         anchors.right: queueSide.visible ? queueSide.left : parent.right
 
-        StackLayout {
+        // Follows a finger sideways and springs back: see swipePage().
+        Flickable {
+            id: pageSwipe
             anchors.fill: parent
-            anchors.margins: win.compact ? 4 : 8
-            anchors.topMargin: 8
-            currentIndex: Math.max(0, win.page)
-            Loader {
-                id: library
-                active: win.page === 0 || item !== null
-                sourceComponent: LibraryPage {
-                    onAddFolder: win.addFolder()
-                    onOpenFiles: dialogs.openAudio()
-                    onExportPlaylist: (id) => dialogs.exportPlaylist(id)
-                    onConnectServer: win.page = 3
-                    onUploadVault: dialogs.openUpload()
-                }
+            anchors.topMargin: win.insetTop
+            anchors.leftMargin: win.compact ? win.insetLeft : 0
+            anchors.rightMargin: queueSide.visible ? 0 : win.insetRight
+            contentWidth: width
+            contentHeight: height
+            flickableDirection: Flickable.HorizontalFlick
+            boundsBehavior: Flickable.DragOverBounds
+            interactive: Core.mobile && !win.swipeHeld && !win.queueOpen && !Theme.lyricsEditing
+            clip: true
+            onDraggingChanged: {
+                if (dragging || Math.abs(contentX) < Math.min(60, width * 0.08))
+                    return
+                const dir = contentX > 0 ? 1 : -1
+                // What comes next stands straight at once.
+                cancelFlick()
+                contentX = 0
+                win.swipePage(dir)
             }
-            // Page 1 is free: the queue has its own place below.
-            Item { }
-            Loader {
-                id: visuals
-                active: win.page === 2 || item !== null
-                sourceComponent: VisualsPage {
-                    onAddImages: dialogs.openImages()
-                    onAddImageFolder: win.addImageFolder()
-                }
-            }
-            Loader {
-                id: settingsLoader
-                active: win.page === 3 || item !== null
-                sourceComponent: SettingsPage {
-                    onAddFolder: win.addFolder()
-                    onLogin: loginPrompt.open()
-                    onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
-                }
-            }
-            Loader {
-                active: win.page === 4 || item !== null
-                sourceComponent: DevicesPage {
-                    onOpenSettings: win.page = 3
-                }
-            }
-            Loader {
-                active: win.page === 5 || item !== null
-                sourceComponent: HomePage {
-                    onStartTour: win.startTour()
-                    onAddFolder: win.addFolder()
-                    onOpenFiles: dialogs.openAudio()
-                    onConnectServer: win.page = 3
-                    onOpenAlbum: (album) => win.showAlbum(album)
-                    onOpenFavorites: {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openFavorites())
+
+            StackLayout {
+                anchors.fill: parent
+                anchors.margins: win.compact ? 4 : 8
+                anchors.topMargin: 8
+                currentIndex: Math.max(0, win.page)
+                Loader {
+                    id: library
+                    active: win.page === 0 || item !== null
+                    sourceComponent: LibraryPage {
+                        onAddFolder: win.addFolder()
+                        onOpenFiles: dialogs.openAudio()
+                        onExportPlaylist: (id) => dialogs.exportPlaylist(id)
+                        onConnectServer: win.page = 3
+                        onUploadVault: dialogs.openUpload()
+                        // Opened from another page: back there.
+                        onDetailClosed: {
+                            if (win.backToPage >= 0)
+                                win.page = win.backToPage
+                            win.backToPage = -1
+                        }
                     }
-                    onOpenLabel: (name) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openLabel(name))
+                }
+                // Page 1 is free: the queue has its own place below.
+                Item { }
+                Loader {
+                    id: visuals
+                    active: win.page === 2 || item !== null
+                    sourceComponent: VisualsPage {
+                        onAddImages: dialogs.openImages()
+                        onAddImageFolder: win.addImageFolder()
                     }
-                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                }
+                Loader {
+                    id: settingsLoader
+                    active: win.page === 3 || item !== null
+                    sourceComponent: SettingsPage {
+                        onAddFolder: win.addFolder()
+                        onLogin: loginPrompt.open()
+                        onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
+                    }
+                }
+                Loader {
+                    active: win.page === 4 || item !== null
+                    sourceComponent: DevicesPage {
+                        onOpenSettings: win.page = 3
+                    }
+                }
+                Loader {
+                    active: win.page === 5 || item !== null
+                    sourceComponent: HomePage {
+                        onStartTour: win.startTour()
+                        onAddFolder: win.addFolder()
+                        onOpenFiles: dialogs.openAudio()
+                        onConnectServer: win.page = 3
+                        onOpenAlbum: (album) => win.showAlbum(album)
+                        onOpenMix: (id, name, cover) => {
+                            win.page = 0
+                            Qt.callLater(() => {
+                                if (library.item)
+                                    library.item.openMix(id, name, cover)
+                                win.backToPage = 5
+                            })
+                        }
+                        onOpenFavorites: {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openFavorites())
+                        }
+                        onOpenLabel: (name) => {
+                            win.page = 0
+                            Qt.callLater(() => {
+                                if (library.item)
+                                    library.item.openLabel(name)
+                                win.backToPage = 5
+                            })
+                        }
+                        onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                    }
+                }
+                Loader {
+                    active: win.page === 6 || item !== null
+                    sourceComponent: StatsPage { }
+                }
+                Loader {
+                    id: searchLoader
+                    active: win.page === 7 || item !== null
+                    sourceComponent: SearchPage {
+                        onOpenAlbum: (album) => win.showAlbum(album)
+                        onOpenArtist: (name) => win.showArtist(name)
+                        onOpenLabel: (name) => {
+                            win.page = 0
+                            Qt.callLater(() => library.item && library.item.openLabel(name))
+                        }
+                        onOpenCollection: (ext, id) => win.showCollection(ext, id)
+                    }
                 }
             }
-            Loader {
-                active: win.page === 6 || item !== null
-                sourceComponent: StatsPage { }
-            }
-            Loader {
-                id: searchLoader
-                active: win.page === 7 || item !== null
-                sourceComponent: SearchPage {
-                    onOpenAlbum: (album) => win.showAlbum(album)
-                    onOpenArtist: (name) => win.showArtist(name)
-                    onOpenLabel: (name) => {
-                        win.page = 0
-                        Qt.callLater(() => library.item && library.item.openLabel(name))
-                    }
-                    onOpenCollection: (ext, id) => win.showCollection(ext, id)
+        }
+        // On top, to see a press before the items below take it, without taking it.
+        Item {
+            anchors.fill: parent
+            PointHandler {
+                acceptedButtons: Qt.LeftButton
+                onActiveChanged: {
+                    const p = panel.mapToItem(win.contentItem, point.pressPosition.x, point.pressPosition.y)
+                    win.swipeHeld = active && win.holdsSwipe(p.x, p.y)
                 }
             }
         }
@@ -421,6 +542,8 @@ ApplicationWindow {
         Loader {
             anchors.fill: parent
             anchors.margins: 8
+            anchors.topMargin: 8 + win.insetTop
+            anchors.rightMargin: 8 + win.insetRight
             active: queueSide.visible
             sourceComponent: QueuePage { onCloseRequested: win.queueOpen = false }
         }
@@ -449,6 +572,7 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: win.compact ? nav.top : parent.bottom
+        anchors.bottomMargin: win.compact ? 0 : win.bottomGap
         height: visible ? implicitHeight : 0
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
@@ -462,12 +586,26 @@ ApplicationWindow {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.bottomMargin: win.keyboard
+        insetBottom: win.keyboard > 0 ? 0 : win.insetBottom
+        insetLeft: win.insetLeft
         height: visible ? implicitHeight : 0
         current: win.page
         onSelected: (i) => win.page = i
         onShowHelp: help.open()
         opacity: win.chromeVisible ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.ms(400) } }
+    }
+
+    // Under the system's navigation, the bar goes on to the window's edge.
+    Rectangle {
+        visible: !win.compact && !win.bigPlayer && win.keyboard === 0
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: win.insetBottom
+        color: Theme.surfaceStrong
+        opacity: playerBar.opacity
     }
 
     // ---- toasts -------------------------------------------------------------

@@ -115,6 +115,8 @@ pub struct Settings {
     /// Extra UI zoom on top of the platform DPI scale (0.5..2).
     /// Internal resolution of the visualizer relative to the window.
     pub render_scale: f32,
+    /// Android: the resolution follows the device instead of `render_scale`.
+    pub render_auto: bool,
     pub server_url: String,
     pub server_token: String,
     /// SHA-256 fingerprint (hex) of the server's TLS certificate the user
@@ -248,6 +250,7 @@ impl Default for Settings {
             volume: 0.6,
             muted: false,
             render_scale: 1.0,
+            render_auto: true,
             server_url: String::new(),
             server_token: String::new(),
             server_cert_pin: String::new(),
@@ -360,6 +363,7 @@ impl Settings {
             language: v.str_or("language", "").to_string(),
             volume: v.f32_or("volume", d.volume).clamp(0.0, 1.0),
             muted: v.bool_or("muted", false),
+            render_auto: v.bool_or("renderAuto", true),
             render_scale: v.f32_or("renderScale", 1.0).clamp(0.25, 1.0),
             server_url: v.str_or("serverUrl", "").to_string(),
             server_token: v.str_or("serverToken", "").to_string(),
@@ -477,6 +481,14 @@ impl Settings {
     }
 
     pub fn to_json(&self) -> Value {
+        self.without_lists()
+            .with("audioQueue", self.audio_queue.clone())
+            .with("backgrounds", self.backgrounds.clone())
+    }
+
+    /// All but the lists that can get long: the state of the app holds this,
+    /// and that is made many times a second.
+    pub fn without_lists(&self) -> Value {
         Value::object()
             .with("version", "1.0.0")
             .with("language", self.language.as_str())
@@ -488,18 +500,17 @@ impl Settings {
             .with("endless", self.endless)
             .with("historySync", self.history_sync)
             .with("renderScale", self.render_scale)
+            .with("renderAuto", self.render_auto)
             .with("serverUrl", self.server_url.as_str())
             .with("serverToken", self.server_token.as_str())
             .with("serverCertPin", self.server_cert_pin.as_str())
             .with("useServer", self.use_server)
             .with("libraryFolders", self.library_folders.clone())
             .with("preset", self.preset.as_str())
-            .with("audioQueue", self.audio_queue.clone())
             .with("audioIndex", self.audio_index)
             .with("audioPosition", self.audio_position)
             .with("shuffle", self.shuffle)
             .with("repeat", self.repeat.name())
-            .with("backgrounds", self.backgrounds.clone())
             .with("backgroundIndex", self.background_index)
             .with("backgroundShuffle", self.background_shuffle)
             .with("backgroundRepeat", self.background_repeat.name())

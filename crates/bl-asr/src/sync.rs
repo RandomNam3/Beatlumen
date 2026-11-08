@@ -13,13 +13,24 @@
 
 use crate::align::{anchor_lines, pause_lines, segments_to_lrc_words, words_line, Anchor};
 use crate::model::Model;
-use crate::transcribe::{Line, Options, Transcriber};
+use crate::timing::Word;
+use crate::transcribe::{Line, Options, Segment, Transcriber};
 
 /// Share of a plain text's words that must be recognised.
 pub const MIN_MATCH: f32 = 0.25;
 /// Mean token log probability below which written-down words are not
 /// trusted.
 const MIN_CONFIDENCE: f32 = -1.2;
+/// Up to this share of the letters heard outside a text timed as a whole
+/// the text fits the song; above it parts of what is sung are not in the text,
+/// and the song is recognised to find out where its lines are. On songs with
+/// complete texts this was at most 0.08 with a small model trained on singing
+/// and 0.15 with a base one, with a tenth of the lines missing mostly above 0.1.
+const FITS_OUTSIDE: f32 = 0.1;
+/// Up to this share the whole text's times are kept when the recognition does
+/// not find the text: hard songs the recognition cannot follow. Most other
+/// songs' texts lie above it.
+const SONG_OUTSIDE: f32 = 0.2;
 /// A line runs at most this long (seconds) when nothing follows it.
 const LAST_LINE: f64 = 12.0;
 /// Version of the timing (raised when it gets better, so older results
@@ -100,6 +111,22 @@ pub fn time_song(
             written_down: false,
         });
     }
+    let lines = text.map(sung_lines).unwrap_or_default();
+    let whole = aligner
+        .filter(|_| text.is_some())
+        .and_then(|a| a.whole_song(samples, &lines, progress));
+    let timed_whole = |limit: f32| {
+        whole
+            .as_ref()
+            .filter(|w| w.outside <= limit)
+            .map(|w| Timed {
+                lrc: whole_song_lrc(text.unwrap_or_default(), &w.lines, model_id, song_end),
+                written_down: false,
+            })
+    };
+    if let Some(t) = timed_whole(FITS_OUTSIDE) {
+        return Ok(t);
+    }
     let share = 0.6;
     let mut first = |p: f32| progress(p * share);
     let segments = t
@@ -115,13 +142,13 @@ pub fn time_song(
         )
         .map_err(|e| e.to_string())?;
     if segments.is_empty() {
-        return Err("no singing recognised".into());
+        return timed_whole(SONG_OUTSIDE).ok_or("no singing recognised".into());
     }
     match text {
         Some(text) => {
             let (anchors, matched) = anchor_lines(text, &segments);
             if matched < MIN_MATCH {
-                return Err(format!(
+                return timed_whole(SONG_OUTSIDE).ok_or(format!(
                     "the song text was not recognised ({:.0} % of the words)",
                     matched * 100.0
                 ));
@@ -162,6 +189,83 @@ pub fn time_song(
             })
         }
     }
+}
+
+/// The lines of a plain song text that are sung (not "[Chorus]" and the like).
+fn sung_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !is_section(l))
+        .collect()
+}
+
+/// A section name of a song text ("[Chorus]"), not sung.
+fn is_section(line: &str) -> bool {
+    line.starts_with('[') && line.ends_with(']')
+}
+
+/// How long before the line it leads into a section name is shown (seconds).
+const SECTION_LEAD: f64 = 0.5;
+
+/// The LRC of a text timed as a whole (`words` for its sung lines), with
+/// pauses where nothing is sung.
+fn whole_song_lrc(text: &str, words: &[Vec<Word>], model_id: &str, song_end: f64) -> String {
+    let lines = sung_lines(text);
+    // Section names come shortly before the line they lead into, and first,
+    // so that they stay before a line of the same time.
+    let mut out: Vec<(f64, String)> = Vec::new();
+    let mut sung = 0;
+    for l in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if !is_section(l) {
+            sung += 1;
+            continue;
+        }
+        let (before, after) = words.split_at(sung.min(words.len()));
+        let next = after
+            .iter()
+            .find_map(|w| w.first())
+            .map_or(song_end, |w| w.start);
+        let prev = before
+            .iter()
+            .rev()
+            .find_map(|w| w.last())
+            .map_or(0.0, |w| w.end);
+        out.push(((next - SECTION_LEAD).max(prev).min(next), l.to_string()));
+    }
+    let timed: Vec<(usize, f64)> = words
+        .iter()
+        .enumerate()
+        .filter_map(|(i, w)| Some((i, w.first()?.start)))
+        .collect();
+    let segments: Vec<Segment> = timed
+        .iter()
+        .map(|&(i, start)| Segment {
+            start,
+            end: words[i].last().map_or(start, |w| w.end),
+            text: lines[i].to_string(),
+            avg_logprob: 0.0,
+            words: Vec::new(),
+        })
+        .collect();
+    let times: Vec<f64> = timed.iter().map(|&(_, t)| t).collect();
+    out.extend(timed.iter().enumerate().map(|(k, &(i, start))| {
+        let next = times.get(k + 1).copied().unwrap_or(song_end);
+        let end = next.min(start + LAST_LINE).max(start + 0.2);
+        (start, words_line(&words[i], end))
+    }));
+    out.extend(
+        pause_lines(&segments, &times)
+            .into_iter()
+            .map(|p| (p, String::new())),
+    );
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut lrc = creator_tag(model_id);
+    for (t, l) in out {
+        lrc.push_str(&lrc_time(t));
+        lrc.push_str(&l);
+        lrc.push('\n');
+    }
+    lrc
 }
 
 /// Times the words of a song text's lines found in the recognition
@@ -480,5 +584,27 @@ mod tests {
         );
         assert!(has_word_times("[00:01.00]<00:01.00>a <00:01.50>b"));
         assert!(!has_word_times("[00:01.00]a <b>"));
+    }
+
+    #[test]
+    fn section_names_stay_before_their_lines() {
+        let word = |text: &str, start, end| Word {
+            text: text.to_string(),
+            start,
+            end,
+            pieces: Vec::new(),
+        };
+        let words = vec![
+            vec![word("Hello", 1.0, 1.4), word("there", 1.5, 2.0)],
+            vec![word("Sing", 2.2, 2.6), word("it", 2.7, 3.0)],
+        ];
+        let text = "[Verse]\nHello there\n\n[Chorus]\nSing it\n";
+        let lrc = whole_song_lrc(text, &words, "test", 10.0);
+        let lines: Vec<&str> = lrc.lines().skip(1).collect();
+        assert_eq!(lines[0], "[00:00.50][Verse]");
+        assert!(lines[1].starts_with("[00:01.00]<00:01.00>Hello"));
+        assert_eq!(lines[2], "[00:02.00][Chorus]", "not before the last word");
+        assert!(lines[3].starts_with("[00:02.20]<00:02.20>Sing"));
+        assert_eq!(lines.len(), 4);
     }
 }

@@ -645,13 +645,16 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
     };
     let mut embedded = None;
     let mut failed = false;
+    let mut titled = false;
     match util::catch("tag reader", || {
         bl_media::read_info(&mut file, Some(&ext), want_pictures)
     }) {
         Ok(Ok(info)) => {
             let t = info.tags;
             track.meta = bl_net::api::TrackMeta::from_tags(&t);
-            track.title = clean(t.title).unwrap_or_else(|| stem.clone());
+            let title = clean(t.title);
+            titled = title.is_some();
+            track.title = title.unwrap_or_else(|| stem.clone());
             track.artists = t.artist.as_deref().map(split_artists).unwrap_or_default();
             track.album = clean(t.album).unwrap_or_default();
             track.album_artist = clean(t.album_artist)
@@ -676,9 +679,11 @@ fn read_entry(rec: &FileRec, want_pictures: bool) -> ReadResult {
         }
         Err(_) => failed = true,
     }
-    if track.artists.is_empty() || track.title == stem {
+    let guess_title =
+        bl_net::api::title_from_file_name(&track.title, &stem, titled, !track.artists.is_empty());
+    if track.artists.is_empty() || guess_title {
         let (artist, title) = bl_net::api::guess_from_file_name(&stem);
-        if track.title == stem {
+        if guess_title {
             track.title = title;
         }
         if track.artists.is_empty() {

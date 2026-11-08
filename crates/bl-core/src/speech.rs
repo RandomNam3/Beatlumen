@@ -406,13 +406,17 @@ fn recognize(
         progress.store((p.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
         !cancel.load(Ordering::Relaxed)
     };
+    let head = bl_align::Head::for_model(model_path);
+    let aligner = head.as_ref().map(|h| bl_align::HeadAligner::new(&model, h));
     bl_asr::sync::time_song(
         &model,
         model_id,
         &samples,
         text.as_deref(),
         Some(title),
-        None,
+        aligner
+            .as_ref()
+            .map(|a| a as &dyn bl_asr::transcribe::WordAligner),
         &mut cb,
     )
     .map(|t| t.lrc)

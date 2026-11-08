@@ -76,6 +76,11 @@ impl SafeTensors {
         self.entries.get(name).map(|e| e.shape.as_slice())
     }
 
+    /// The names of the tensors.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+
     /// Reads the tensors named in `wanted`, kept as asked (shapes as in
     /// `bl_mt::torch::Checkpoint::load`). Fails if one is missing.
     pub fn load(&self, wanted: &[(&str, Keep)]) -> Result<HashMap<String, Tensor>, String> {

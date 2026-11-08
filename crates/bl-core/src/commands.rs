@@ -153,6 +153,10 @@ impl Core {
         let n = |k: &str| c.get(k).as_f64().unwrap_or(0.0);
         let b = |k: &str| c.get(k).as_bool().unwrap_or(false);
         let idx = |k: &str| c.get(k).as_u64().unwrap_or(0) as usize;
+        // Layout reports come with every frame and change nothing to be shown.
+        if !name.starts_with("ui.") {
+            self.state_wanted = true;
+        }
         // Other apps' playback is shown: the transport controls are theirs.
         if let Some(r) = self.capture_transport(host, &name, c) {
             return r;
@@ -581,6 +585,7 @@ impl Core {
                 ok()
             }
             "mix.play" => self.mix_play(host, &s("id"), b("shuffle")),
+            "mix.tracks" => self.mix_tracks(&s("id")),
             "labels.list" => self.labels_list(),
             "labels.tracks" => self.labels_tracks(&s("name")),
             "labels.of" => self.labels_of(&s("id")),

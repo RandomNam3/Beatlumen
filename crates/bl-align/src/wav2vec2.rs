@@ -115,7 +115,13 @@ impl Loaded {
 /// `w` (`out` rows of `inputs * kernel` values, input channel major as
 /// torch stores convolutions) with each row reordered to kernel position
 /// major, kept as `keep`.
-fn conv_matrix(w: &[f32], out: usize, inputs: usize, kernel: usize, keep: Keep) -> Tensor {
+pub(crate) fn conv_matrix(
+    w: &[f32],
+    out: usize,
+    inputs: usize,
+    kernel: usize,
+    keep: Keep,
+) -> Tensor {
     let mut m = vec![0f32; out * inputs * kernel];
     for o in 0..out {
         let src = &w[o * inputs * kernel..(o + 1) * inputs * kernel];

@@ -14,6 +14,7 @@ AppDialog {
     width: Math.min(520, (parent ? parent.width : 520) - 32)
     height: Math.min(implicitHeight, (parent ? parent.height : 600) - 48)
     standardButtons: Dialog.Close
+    onAboutToShow: Theme.nameButtons(this)
 
     readonly property var shortcuts: [
         ["Space", Theme.tr("Play or pause")],

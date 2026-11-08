@@ -608,24 +608,9 @@ impl Core {
         let (conns, mailbox) = (self.sources.conns.clone(), self.cover_box.clone());
         host.spawn(Box::new(move || {
             for (id, src, key, cfg, base) in jobs {
-                let cached = ["jpg", "png", "img"]
-                    .iter()
-                    .map(|e| format!("{base}.{e}"))
-                    .find(|p| std::path::Path::new(p).exists());
-                let out = cached.or_else(|| {
+                let out = crate::core::cached_cover(&base).or_else(|| {
                     let bytes = connection(&conns, &src, &cfg).ok()?.cover(&key, 512)?;
-                    let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-                        "png"
-                    } else if bytes.starts_with(&[0xff, 0xd8]) {
-                        "jpg"
-                    } else {
-                        "img"
-                    };
-                    let file = format!("{base}.{ext}");
-                    if let Some(parent) = std::path::Path::new(&file).parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    std::fs::write(&file, bytes).ok().map(|_| file)
+                    crate::core::store_cover(&base, &bytes)
                 });
                 mailbox.post((id, out));
             }

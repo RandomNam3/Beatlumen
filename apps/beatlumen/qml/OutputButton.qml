@@ -93,6 +93,7 @@ IconButton {
         width: Math.min(440, parent ? parent.width - 32 : 440)
         title: Theme.tr("Signal path")
         standardButtons: Dialog.Close
+        onAboutToShow: Theme.nameButtons(this)
         SignalPath { width: parent.width }
     }
 
