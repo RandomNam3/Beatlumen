@@ -39,7 +39,8 @@ Item {
     Timer {
         interval: 500
         repeat: true
-        running: page.visible && (page.info.status === "loading" || !!page.info.computing)
+        running: page.visible && (page.info.status === "loading" || !!page.info.computing
+                 || (page.info.vocals && ["running", "downloading"].indexOf(page.info.vocals.state) >= 0))
         onTriggered: page.reload()
     }
 
@@ -48,6 +49,57 @@ Item {
     property var devices: []
     property var singers: [{ name: "", device: "", voice: 0 }]
     property string difficulty: "medium"
+    // How loud the song's own singing plays during a round (1: as recorded).
+    property real vocals: 1
+    readonly property var vocalLevels: [1, 0.25, 0]
+    function setVocals(level) {
+        vocals = level
+        if (songId)
+            Core.call("karaoke.vocals", { level: level })
+        reload()
+    }
+
+    // ---- latency calibration of a singer's microphone ----
+    property int calibrating: -1
+    property var calStream: 0
+    property string calSong: ""
+    property var calResult: ({})
+    function calibrate(i) {
+        const s = singers[i]
+        if (!s || !s.device)
+            return
+        closeMics()
+        const r = Core.call("mic.open", { device: s.device }) || {}
+        if (!r.stream) {
+            Core.call("toast", { text: (r.error || Theme.tr("The microphone could not be opened")), error: true })
+            return
+        }
+        opened = [r.stream]
+        calSong = songId
+        calStream = r.stream
+        calibrating = i
+        calResult = {}
+        Core.call("karaoke.calibrate", { stream: r.stream })
+    }
+    Timer {
+        interval: 200
+        repeat: true
+        running: page.calibrating >= 0
+        onTriggered: {
+            const c = Core.call("karaoke.calibration") || {}
+            if (c.state === "running")
+                return
+            const i = page.calibrating
+            page.calibrating = -1
+            page.calResult = Object.assign({ index: i, state: c.state }, c.result || {})
+            page.closeMics()
+            // Back to the song.
+            if (page.calSong) {
+                Core.call("play", { ids: [page.calSong], start: 0 })
+                Core.call("pause")
+            }
+        }
+    }
     // Streams this page opened.
     property var opened: []
     function listMics() {
@@ -127,6 +179,7 @@ Item {
         }
         live.reset()
         Core.call("seek", { position: 0 })
+        Core.call("karaoke.vocals", { level: vocals })
         Core.call("play")
         stage = "sing"
     }
@@ -134,6 +187,7 @@ Item {
         Core.call("pause")
         results = Core.call("karaoke.stop") || {}
         closeMics()
+        Core.call("karaoke.vocals", { level: 1 })
         stage = "results"
     }
     property var results: ({})
@@ -177,6 +231,7 @@ Item {
                 finished = true
                 page.results = Core.call("karaoke.results") || {}
                 page.closeMics()
+                Core.call("karaoke.vocals", { level: 1 })
                 page.stage = "results"
             }
         }
@@ -509,12 +564,33 @@ Item {
                             onActivated: (i) => page.setSinger(singerRow.index, "voice", i + 1)
                         }
                         IconButton {
+                            iconName: "tune"
+                            tip: Theme.tr("Measure the microphone's delay")
+                            enabled: page.calibrating < 0 && !!singerRow.modelData.device
+                            onClicked: page.calibrate(singerRow.index)
+                        }
+                        IconButton {
                             visible: page.singers.length > 1
                             iconName: "close"
                             tip: Theme.tr("Remove")
                             onClicked: page.removeSinger(singerRow.index)
                         }
                     }
+                }
+                Label {
+                    visible: !!page.track && (page.calibrating >= 0 || page.calResult.index !== undefined)
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 13
+                    color: page.calResult.state === "failed" ? Theme.danger : Theme.textDim
+                    text: page.calibrating >= 0
+                        ? Theme.tr("Clicks are playing: hold the microphone near the speaker, or clap or sing \"ta\" on each click.")
+                        : page.calResult.state === "done"
+                            ? Theme.tr("Delay of the microphone: %1 ms (%2 clicks heard)").replace("%1", Math.round(page.calResult.offsetMs)).replace("%2", page.calResult.heard)
+                            : Theme.tr("Not enough clicks heard. Turn the sound up or hold the microphone closer to the speaker.")
                 }
                 RowLayout {
                     visible: !!page.track
@@ -529,12 +605,30 @@ Item {
                         onClicked: page.addSinger()
                     }
                     Item { Layout.fillWidth: true }
+                    Label { textFormat: Text.PlainText; text: Theme.tr("Singing in the song"); color: Theme.textDim }
+                    Dropdown {
+                        model: [Theme.tr("As recorded"), Theme.tr("Quieter"), Theme.tr("Off")]
+                        currentIndex: Math.max(0, page.vocalLevels.indexOf(page.vocals))
+                        onActivated: (i) => page.setVocals(page.vocalLevels[i])
+                    }
                     Label { textFormat: Text.PlainText; text: Theme.tr("Difficulty"); color: Theme.textDim }
                     Dropdown {
                         model: [Theme.tr("Easy"), Theme.tr("Medium"), Theme.tr("Hard")]
                         currentIndex: ["easy", "medium", "hard"].indexOf(page.difficulty)
                         onActivated: (i) => page.difficulty = ["easy", "medium", "hard"][i]
                     }
+                }
+                Label {
+                    readonly property var v: page.info.vocals || ({})
+                    visible: !!page.track && (v.state === "running" || v.state === "downloading")
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: (v.state === "downloading" ? Theme.tr("Downloading the separation model…") : Theme.tr("Separating the singing from the music…"))
+                          + (v.progress > 0 ? " " + Math.round(v.progress * 100) + " %" : "")
                 }
                 Label {
                     visible: !!page.track

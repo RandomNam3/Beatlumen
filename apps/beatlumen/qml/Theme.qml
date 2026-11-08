@@ -181,6 +181,14 @@ QtObject {
     }
 
     readonly property var de: ({
+        "Measure the microphone's delay": "Verzögerung des Mikrofons messen",
+        "Clicks are playing: hold the microphone near the speaker, or clap or sing \"ta\" on each click.": "Klicks werden abgespielt: Halte das Mikrofon in die Nähe des Lautsprechers oder klatsche oder singe „ta“ bei jedem Klick.",
+        "Delay of the microphone: %1 ms (%2 clicks heard)": "Verzögerung des Mikrofons: %1 ms (%2 Klicks gehört)",
+        "Not enough clicks heard. Turn the sound up or hold the microphone closer to the speaker.": "Zu wenige Klicks gehört. Mach den Ton lauter oder halte das Mikrofon näher an den Lautsprecher.",
+        "Singing in the song": "Gesang im Song",
+        "As recorded": "Wie im Song",
+        "Quieter": "Leiser",
+        "Separating the singing from the music…": "Gesang wird von der Musik getrennt …",
         "Text": "Text",
         "Without points for the text: they need a speech model with a CTC head on this device.": "Ohne Punkte für den Text: Dafür braucht es auf diesem Gerät ein Sprachmodell mit CTC-Kopf.",
         "Add singer": "Sänger:in hinzufügen",

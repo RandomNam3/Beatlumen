@@ -83,6 +83,26 @@ pub(crate) struct KaraokeState {
     #[cfg(not(target_arch = "wasm32"))]
     model_ready: Mailbox<()>,
     pub rev: u64,
+    /// How loud the singing plays (1: as recorded), the separation of the
+    /// current track for that, and its result (track id, load, output rate,
+    /// stereo samples).
+    pub vocals_level: Option<f32>,
+    vocals_job: Option<VocalsJob>,
+    vocals_ready: Mailbox<(String, u64, Result<(u32, Vec<i16>), String>)>,
+    /// The last track's separated singing (id, rate), kept for when it is
+    /// loaded again (after the calibration's clicks, say).
+    vocals_kept: Option<(String, u32, Arc<Vec<i16>>)>,
+}
+
+/// Separating the singing of the track that plays, to turn it down.
+#[derive(Debug, Clone)]
+struct VocalsJob {
+    id: String,
+    serial: u64,
+    /// "downloading" (the model) or "running".
+    state: String,
+    progress: Arc<AtomicU32>,
+    cancel: Arc<AtomicBool>,
 }
 
 /// Storage key of the karaoke data of a song on this device.
@@ -137,6 +157,8 @@ impl Core {
             "karaoke.live" => return self.karaoke_live(host, c),
             "karaoke.results" => return self.karaoke_results(),
             "karaoke.stop" => return self.karaoke_stop(),
+            "karaoke.calibrate" => return self.karaoke_calibrate(host, c),
+            "karaoke.calibration" => return self.karaoke_calibration_json(),
             _ => {}
         }
         let id = match c.get("id").as_str() {
@@ -183,6 +205,7 @@ impl Core {
                 _ => Value::object().with("error", self.tr("This song has no karaoke data")),
             },
             "karaoke.remove" => self.karaoke_remove(host, &id),
+            "karaoke.vocals" => self.karaoke_vocals(host, c.f64_or("level", 1.0) as f32),
             _ => Value::object().with("error", "unknown command"),
         }
     }
@@ -226,7 +249,30 @@ impl Core {
                     j.progress.load(Ordering::Relaxed) as f64 / 1000.0,
                 )
         });
+        let vocals = {
+            let level = self.karaoke_vocals_level();
+            let on = self
+                .player
+                .vocal_cut()
+                .is_some_and(|c| c.serial == self.player.serial());
+            let job = self.karaoke.vocals_job.as_ref();
+            Value::object()
+                .with("level", level as f64)
+                .with(
+                    "state",
+                    match job {
+                        Some(j) => j.state.as_str(),
+                        None if on => "on",
+                        None => "original",
+                    },
+                )
+                .with(
+                    "progress",
+                    job.map_or(0.0, |j| j.progress.load(Ordering::Relaxed) as f64 / 1000.0),
+                )
+        };
         v.with("canCompute", can_compute)
+            .with("vocals", vocals)
             .with("lyricsReady", lyrics_ready)
             .with("canRemove", k.found.is_some() && !k.loading)
             .with("computing", computing)
@@ -607,6 +653,7 @@ impl Core {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_karaoke_model(host);
+        self.poll_karaoke_vocals();
         let Some(j) = &mut self.karaoke.compute else {
             return;
         };
@@ -629,6 +676,122 @@ impl Core {
 
     pub(crate) fn karaoke_rev(&self) -> u64 {
         self.karaoke.rev
+    }
+
+    fn karaoke_vocals_level(&self) -> f32 {
+        self.karaoke.vocals_level.unwrap_or(1.0)
+    }
+
+    /// `karaoke.vocals {level}`: how loud the singing of the track that
+    /// plays is (1: as recorded, 0: out). Below 1 its singing is separated
+    /// first (once per track).
+    fn karaoke_vocals(&mut self, host: &mut dyn Host, level: f32) -> Value {
+        let level = level.clamp(0.0, 1.0);
+        self.karaoke.vocals_level = Some(level);
+        self.karaoke.rev += 1;
+        let serial = self.player.serial();
+        if let Some(c) = self.player.vocal_cut().filter(|c| c.serial == serial) {
+            c.amount.store((1.0 - level).to_bits(), Ordering::Relaxed);
+            return Value::object().with("ok", true).with("state", "on");
+        }
+        if level >= 0.999 {
+            return Value::object().with("ok", true).with("state", "original");
+        }
+        let Some(id) = self.queue.current().cloned() else {
+            return Value::object().with("error", "nothing playing");
+        };
+        let rate = self.player.device_rate();
+        if let Some((_, r, samples)) = self
+            .karaoke
+            .vocals_kept
+            .as_ref()
+            .filter(|(k, r, _)| *k == id && *r == rate)
+        {
+            self.player
+                .set_vocal_cut(Some(Arc::new(crate::player::VocalCut {
+                    serial,
+                    rate: *r,
+                    samples: samples.clone(),
+                    amount: AtomicU32::new((1.0 - level).to_bits()),
+                })));
+            return Value::object().with("ok", true).with("state", "on");
+        }
+        if self
+            .karaoke
+            .vocals_job
+            .as_ref()
+            .is_some_and(|j| j.id == id && j.serial == serial)
+        {
+            return Value::object().with("ok", true).with("state", "preparing");
+        }
+        if let Some(j) = self.karaoke.vocals_job.take() {
+            j.cancel.store(true, Ordering::Relaxed);
+        }
+        if !self.karaoke_device_can(host) {
+            return Value::object().with("error", self.tr("Karaoke data cannot be computed here"));
+        }
+        self.karaoke.vocals_job = Some(VocalsJob {
+            id,
+            serial,
+            state: "running".into(),
+            progress: Arc::default(),
+            cancel: Arc::default(),
+        });
+        if let Err(e) = self.karaoke_vocals_start(host) {
+            self.karaoke.vocals_job = None;
+            return Value::object().with("error", e);
+        }
+        Value::object().with("ok", true).with("state", "preparing")
+    }
+
+    /// Puts separated singing in place when it is for what plays now, and
+    /// drops that of a track no longer playing (from `tick`).
+    fn poll_karaoke_vocals(&mut self) {
+        let serial = self.player.serial();
+        if self.player.vocal_cut().is_some_and(|c| c.serial != serial) {
+            self.player.set_vocal_cut(None);
+            self.karaoke.rev += 1;
+        }
+        for (id, s, res) in self.karaoke.vocals_ready.take() {
+            if self
+                .karaoke
+                .vocals_job
+                .as_ref()
+                .is_some_and(|j| j.id == id && j.serial == s)
+            {
+                self.karaoke.vocals_job = None;
+            }
+            self.karaoke.rev += 1;
+            match res {
+                Ok((rate, samples)) => {
+                    let samples = Arc::new(samples);
+                    self.karaoke.vocals_kept = Some((id.clone(), rate, samples.clone()));
+                    if s == serial {
+                        let amount = 1.0 - self.karaoke_vocals_level();
+                        self.player
+                            .set_vocal_cut(Some(Arc::new(crate::player::VocalCut {
+                                serial: s,
+                                rate,
+                                samples,
+                                amount: AtomicU32::new(amount.to_bits()),
+                            })));
+                    }
+                }
+                Err(e) if e == "cancelled" => {}
+                Err(e) => self.toast(
+                    format!("{}: {e}", self.tr("The singing could not be separated")),
+                    true,
+                ),
+            }
+        }
+        // A job for a track no longer playing stops.
+        if let Some(j) = &self.karaoke.vocals_job {
+            if j.serial != serial {
+                j.cancel.store(true, Ordering::Relaxed);
+                self.karaoke.vocals_job = None;
+                self.karaoke.rev += 1;
+            }
+        }
     }
 }
 
@@ -749,9 +912,86 @@ impl Core {
         Ok(())
     }
 
+    /// Separates the singing of the track that plays, for turning it down
+    /// (after the separation model's download, when it is not there yet).
+    fn karaoke_vocals_start(&mut self, host: &mut dyn Host) -> Result<(), String> {
+        let Some(job) = self.karaoke.vocals_job.clone() else {
+            return Ok(());
+        };
+        let Some(opener) = self.karaoke_opener(host, &job.id) else {
+            return Err(self
+                .tr("This song cannot be read on this device")
+                .to_string());
+        };
+        let Some(model) = self.karaoke_model_path(host) else {
+            let Some(models) = self.karaoke_models(host) else {
+                return Err(self.tr("Karaoke data cannot be computed here").to_string());
+            };
+            let ready = self.karaoke.model_ready.clone();
+            models.download_files(bl_sep::MODEL_ID, bl_sep::model_files(), move |_| {
+                ready.post(())
+            });
+            if let Some(j) = &mut self.karaoke.vocals_job {
+                j.state = "downloading".into();
+            }
+            return Ok(());
+        };
+        if let Some(j) = &mut self.karaoke.vocals_job {
+            j.state = "running".into();
+        }
+        let rate = self.player.device_rate();
+        let out = self.karaoke.vocals_ready.clone();
+        host.spawn(Box::new(move || {
+            let res = (|| {
+                let (src, ext) = opener()?;
+                let cancel = job.cancel.clone();
+                let audio = bl_karaoke::decode(src, ext.as_deref(), &mut || {
+                    !cancel.load(Ordering::Relaxed)
+                })?;
+                let sep = bl_sep::Separator::load(&model)?;
+                let mut progress = |p: f32| {
+                    job.progress
+                        .store((p * 1000.0).round() as u32, Ordering::Relaxed);
+                    !job.cancel.load(Ordering::Relaxed)
+                };
+                let refs: Vec<&[f32]> = audio.channels.iter().map(Vec::as_slice).collect();
+                let v = sep.separate(
+                    &refs,
+                    audio.rate,
+                    bl_sep::Options {
+                        wiener: false,
+                        progress: &mut progress,
+                    },
+                )?;
+                drop(audio);
+                let l = bl_sep::resample(&v.left, bl_sep::SAMPLE_RATE, rate);
+                let r = bl_sep::resample(&v.right, bl_sep::SAMPLE_RATE, rate);
+                drop(v);
+                let q = |x: f32| (x.clamp(-1.0, 1.0) * 32767.0) as i16;
+                let samples: Vec<i16> =
+                    l.iter().zip(&r).flat_map(|(a, b)| [q(*a), q(*b)]).collect();
+                Ok((rate, samples))
+            })();
+            out.post((job.id.clone(), job.serial, res));
+        }));
+        Ok(())
+    }
+
     /// Follows the separation model's download for a waiting computation.
     fn poll_karaoke_model(&mut self, host: &mut dyn Host) {
         let ready = !self.karaoke.model_ready.take().is_empty();
+        if ready
+            && self
+                .karaoke
+                .vocals_job
+                .as_ref()
+                .is_some_and(|j| j.state == "downloading")
+        {
+            if let Err(e) = self.karaoke_vocals_start(host) {
+                self.karaoke.vocals_job = None;
+                self.toast(e, true);
+            }
+        }
         let waiting = self
             .karaoke
             .compute
@@ -798,6 +1038,10 @@ impl Core {
 #[cfg(target_arch = "wasm32")]
 impl Core {
     fn karaoke_device_start(&mut self, _host: &mut dyn Host) -> Result<(), String> {
+        Err(self.tr("Karaoke data cannot be computed here").to_string())
+    }
+
+    fn karaoke_vocals_start(&mut self, _host: &mut dyn Host) -> Result<(), String> {
         Err(self.tr("Karaoke data cannot be computed here").to_string())
     }
 }

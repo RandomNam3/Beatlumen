@@ -383,7 +383,7 @@ pub(crate) struct MicState {
 }
 
 impl Core {
-    fn mic_offset(&self, device: &str) -> f32 {
+    pub(crate) fn mic_offset(&self, device: &str) -> f32 {
         self.settings
             .mic_offsets
             .iter()
@@ -579,7 +579,7 @@ impl Core {
         }
     }
 
-    fn mic_streams_json(&self) -> Value {
+    pub(crate) fn mic_streams_json(&self) -> Value {
         Value::Array(
             self.mic
                 .open

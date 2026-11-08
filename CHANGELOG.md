@@ -5,6 +5,12 @@
 - **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
   microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
   drawn as the song plays, the points at the end. Microphones are only open during a round.
+- **Microphone delay measured:** the karaoke page plays a few clicks; the microphone hears them
+  through the speakers (or the singer claps or sings "ta" on each), and the delay found is kept as
+  the input's latency offset.
+- **Singing in the song quieter or off** during karaoke: the singing is separated from the music
+  once per song (`bl-sep`) and taken out on the way to the speakers, sample by sample at the song's
+  position, also after seeking (formats that do not seek to the exact sample are matched up again).
 - **Points for the text:** each sung line is scored against the known line by the small CTC head
   on the speech model's encoder, on its own thread one line after the other (about 0.1 s a line
   with the base model on four cores). It uses the picked speech model when it has a head, else the

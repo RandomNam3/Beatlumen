@@ -649,3 +649,171 @@ fn text_is_scored_with_the_head() {
         "{in_time} vs {late}"
     );
 }
+
+/// Latency calibration: the microphone hears the click track 120 ms after
+/// it is played (as through speakers with a slow input); the calibration
+/// finds that and stores it as the input's offset.
+#[test]
+fn calibration_finds_the_microphone_latency() {
+    use bl_core::mic;
+    let mut app = App::new("karaoke-calibrate");
+    app.host.mic = Some(Default::default());
+    app.cmd(Value::object().with("cmd", "mic.devices").with(
+        "devices",
+        Value::Array(vec![Value::object()
+            .with("id", "usb")
+            .with("name", "USB")
+            .with("rate", 48000)]),
+    ));
+    let stream = app
+        .cmd(
+            Value::object()
+                .with("cmd", "mic.open")
+                .with("device", "usb"),
+        )
+        .get("stream")
+        .as_u64()
+        .unwrap();
+    let r = app.cmd(
+        Value::object()
+            .with("cmd", "karaoke.calibrate")
+            .with("stream", stream),
+    );
+    assert!(r.bool_or("ok", false), "{}", r.to_json());
+    let delay_us = 120_000i64;
+    let t0 = Instant::now();
+    let mut rendered = 0f64;
+    // Rendered audio waiting to reach the microphone: (capture time, mono).
+    let mut air: std::collections::VecDeque<(i64, Vec<i16>)> = Default::default();
+    let result = loop {
+        app.state();
+        if let Some(src) = app.host.audio.lock().unwrap().clone() {
+            while rendered < t0.elapsed().as_secs_f64() * 48000.0 {
+                let mut buf = vec![0f32; 960];
+                src.render(&mut buf, 0);
+                rendered += 480.0;
+                let mono: Vec<i16> = buf
+                    .chunks_exact(2)
+                    .map(|f| ((f[0] + f[1]) * 0.5 * 20000.0) as i16)
+                    .collect();
+                air.push_back((mic::clock_us() + delay_us, mono));
+            }
+        }
+        while air.front().is_some_and(|(t, _)| *t <= mic::clock_us()) {
+            let (t, pcm) = air.pop_front().unwrap();
+            mic::push_pcm(stream as u32, &pcm, 1, 48000, t);
+        }
+        let c = app.cmd(Value::object().with("cmd", "karaoke.calibration"));
+        if c.str_or("state", "") != "running" {
+            break c;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(20), "{}", c.to_json());
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(result.str_or("state", ""), "done", "{}", result.to_json());
+    let ms = result.get("result").f64_or("offsetMs", 0.0);
+    assert!((ms - 120.0).abs() <= 25.0, "{}", result.to_json());
+    // Stored for the input.
+    let l = app.cmd(Value::object().with("cmd", "mic.list"));
+    let stored = l.get("devices").at(0).f64_or("offsetMs", 0.0);
+    assert_eq!(stored, ms, "{}", l.to_json());
+}
+
+/// "Vocals quieter" on a real song (ignored; needs the separation model):
+/// `BL_SEP_MODEL=... BL_KARAOKE_SONG=song.flac cargo test --release --test
+/// app_karaoke vocals -- --ignored --nocapture`. The same two seconds of
+/// singing are quieter with the vocals taken out, and not silent.
+#[test]
+#[ignore]
+fn vocals_are_turned_down() {
+    let (Ok(model), Ok(song)) = (
+        std::env::var("BL_SEP_MODEL"),
+        std::env::var("BL_KARAOKE_SONG"),
+    ) else {
+        eprintln!("BL_SEP_MODEL / BL_KARAOKE_SONG not set");
+        return;
+    };
+    let mut app = App::new("karaoke-vocals");
+    let dir = app.dir.join("music");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ext = std::path::Path::new(&song)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("flac")
+        .to_string();
+    let path = dir.join(format!("Song.{ext}"));
+    std::fs::copy(&song, &path).unwrap();
+    let models = app.dir.join("models").join(bl_sep::MODEL_ID);
+    std::fs::create_dir_all(&models).unwrap();
+    std::fs::copy(&model, models.join(bl_sep::MODEL_FILE)).unwrap();
+    app.cmd(
+        Value::object()
+            .with("cmd", "open")
+            .with("paths", vec![path.to_string_lossy().to_string()])
+            .with("play", true),
+    );
+    app.wait("playing", |s| s.str_or("play", "") == "playing");
+    app.cmd(Value::object().with("cmd", "volume").with("value", 1.0));
+    // Two seconds from 40 s on: their loudness.
+    let listen = |app: &mut App| -> f64 {
+        app.cmd(Value::object().with("cmd", "seek").with("position", 40.0));
+        let src = app.host.audio.lock().unwrap().clone().unwrap();
+        let (mut sum, mut n) = (0f64, 0usize);
+        let t0 = Instant::now();
+        let mut rendered = 0usize;
+        // The device in real time for 2.5 s; the last two count.
+        while rendered < 48000 * 5 / 2 {
+            app.state();
+            while (rendered as f64) < t0.elapsed().as_secs_f64() * 48000.0 {
+                let mut buf = vec![0f32; 960];
+                src.render(&mut buf, 0);
+                rendered += 480;
+                if rendered > 24000 {
+                    sum += buf.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+                    n += buf.len();
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (sum / n.max(1) as f64).sqrt()
+    };
+    let before = listen(&mut app);
+    let r = app.cmd(
+        Value::object()
+            .with("cmd", "karaoke.vocals")
+            .with("level", 0.0),
+    );
+    assert!(r.get("error").is_null(), "{}", r.to_json());
+    let t0 = Instant::now();
+    loop {
+        app.state();
+        let k = app.cmd(Value::object().with("cmd", "karaoke.get"));
+        if k.get("vocals").str_or("state", "") == "on" {
+            break;
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(300),
+            "{}",
+            k.get("vocals").to_json()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    eprintln!("separated in {:.1} s", t0.elapsed().as_secs_f64());
+    let after = listen(&mut app);
+    eprintln!("loudness with the singing {before:.4}, without {after:.4}");
+    assert!(
+        after < before * 0.9 && after > before * 0.1,
+        "{before} -> {after}"
+    );
+    // Back up: as before.
+    app.cmd(
+        Value::object()
+            .with("cmd", "karaoke.vocals")
+            .with("level", 1.0),
+    );
+    let again = listen(&mut app);
+    assert!(
+        (again - before).abs() < before * 0.05,
+        "{before} vs {again}"
+    );
+}

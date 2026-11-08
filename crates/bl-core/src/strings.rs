@@ -22,6 +22,8 @@ fn de(s: &str) -> Option<&'static str> {
         "Already working on a song" => "Es wird schon ein Song bearbeitet",
         "Karaoke data computed" => "Karaoke-Daten berechnet",
         "Singer" => "Sänger:in",
+        "The singing could not be separated" => "Der Gesang konnte nicht getrennt werden",
+        "The microphone is not open" => "Das Mikrofon ist nicht geöffnet",
         "Choose a microphone for each singer" => "Wähle für jede:n Sänger:in ein Mikrofon",
         "Computing the karaoke data failed" => "Die Karaoke-Daten konnten nicht berechnet werden",
         "Saving the karaoke data failed" => "Die Karaoke-Daten konnten nicht gespeichert werden",

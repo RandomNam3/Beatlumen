@@ -98,7 +98,8 @@ pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
     affect the points. No device opens a port for this.
   - Microphones are only open while the karaoke mode uses them; the
     recordings are not stored or sent anywhere else.
-  - Latency calibration per microphone (clap or sing a test note).
+  - Done: latency calibration per microphone (a click track heard through
+    the speakers, or clapped or sung along).
 - **Points:**
   - Done: pitch: the live pitch of each microphone against the song's
     notes, octave ignored, tolerance by difficulty (2, 1 or half a
@@ -107,7 +108,8 @@ pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
     CTC head on the speech model's encoder (`Head::sung_score`; the song's
     own vocals score 0.27-0.34 in the median, another line's words 0.10;
     0.12 s a line with the base head on four cores).
-- **Playback:** the singing can be turned down with the separation.
+- Done: **playback:** the singing can be turned down or off with the
+  separation (taken out in the player at the track's position).
 - Done: **screen:** its own page (`KaraokePage.qml`): pick a song, assign
   microphones to singers or voices, the text with note bars and each
   singer's live pitch, results.

@@ -80,7 +80,7 @@ the results come into Beatlumen.
 
 ## Phase 4: microphones
 
-- [ ] Microphone input in the apps: several sources on Linux
+- [x] Microphone input in the apps: several sources on Linux
   (PulseAudio/PipeWire, loaded at run time like the system audio capture)
   and Windows (WASAPI), the microphone on Android (permission asked when
   a microphone is first opened). Samples pushed with a timestamp per
@@ -88,16 +88,16 @@ the results come into Beatlumen.
 - [ ] Phones as wireless microphones: Opus (`bl-opus-enc`) with
   timestamps on the common server time, through the server to the playing
   device.
-- [ ] Latency calibration per microphone.
-- [ ] `SECURITY.md`: microphone access, only while the karaoke mode uses
+- [x] Latency calibration per microphone.
+- [x] `SECURITY.md`: microphone access, only while the karaoke mode uses
   it, recordings neither stored nor sent anywhere else.
 
 ## Phase 5: karaoke mode
 
 - [x] Points for pitch (per note, octave ignored, tolerance by difficulty)
   and text (CTC head score of the sung line against the known line).
-- [~] Page in the app: song, microphones per singer or voice, text with
-  note bars and live pitch, results (done); the singing turned down with
+- [x] Page in the app: song, microphones per singer or voice, text with
+  note bars and live pitch, results; the singing turned down with
   `bl-sep` on request.
 
 ## Phase 6: voices
