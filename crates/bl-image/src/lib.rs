@@ -30,6 +30,8 @@
 #![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop)]
 
 mod anim;
+#[doc(hidden)]
+pub mod av1;
 mod bmp;
 mod crc32;
 pub mod deflate;
