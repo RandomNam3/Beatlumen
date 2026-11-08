@@ -37,15 +37,29 @@ fn main() {
             }));
             a
         });
+        // HEAD in the environment: word times from this CTC head on the
+        // model's encoder, without recognising the song (HEAD_WINDOWS: still
+        // recognising it, the head only times the lines).
+        let head = std::env::var("HEAD")
+            .ok()
+            .map(|p| bl_align::Head::load(p).unwrap());
+        let head_aligner = head.as_ref().map(|h| {
+            let mut a = bl_align::HeadAligner::new(&m, h);
+            a.set_whole_song(std::env::var("HEAD_WINDOWS").is_err());
+            a
+        });
         match bl_asr::sync::time_song(
             &m,
             "test",
             &samples,
             text.as_deref(),
             title.as_deref(),
-            aligner
+            head_aligner
                 .as_ref()
-                .map(|a| a as &dyn bl_asr::transcribe::WordAligner),
+                .map(|a| a as &dyn bl_asr::transcribe::WordAligner)
+                .or(aligner
+                    .as_ref()
+                    .map(|a| a as &dyn bl_asr::transcribe::WordAligner)),
             &mut |_| true,
         ) {
             Ok(t) => print!("{}", t.lrc),

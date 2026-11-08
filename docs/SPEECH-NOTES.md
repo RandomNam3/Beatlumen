@@ -170,8 +170,8 @@ LRCGen's steps were built natively and measured on the test songs:
   with base-q5_1, 37 % instead of 22 % with small); its line timing was
   about the same. The separation leaves artefacts that Whisper, trained on
   recordings with music and noise, handles worse than the music itself. Not
-  used for recognition. A stronger separation model (Demucs-class) might
-  change this; its weights' licence is unclear.
+  used for recognition. A stronger separation model (HT-Demucs) did not
+  change this either (see the CTC head below).
 - **CTC word alignment (wav2vec2, `bl-align`):** frame-exact output and
   character times, matching transformers and torchaudio. On the songs:
   - word starts came 0.2–0.35 s later than both reference LRCs;
@@ -180,13 +180,94 @@ LRCGen's steps were built natively and measured on the test songs:
   - its line timing stayed worse than Whisper's attention with the energy
     refinement (FRIENDS with base-q5_1: 83 % of lines within 1 s instead of
     96 %; on the separated singing 83 %).
-  It is wired in (`WordAligner`) but not used by default. Worth trying again
-  with an onset correction and with a model trained on singing.
+  It is wired in (`WordAligner`) but not used by default. Trained on
+  singing it got much better, and a small head on the speech model's own
+  encoder better still (below).
 - **Syllables (`bl-hyph`):** used. Long words are filled syllable by
   syllable ("re-ally", "with-out", "po-lite"), timed by where their letters
   fall in the model's pieces.
 - **Tap sync and line editor:** in the app. Tapping lags the singing by
   about 0.1 s, which is taken off each tapped time.
+
+## Timing a known text with a CTC head
+
+Measured in November 2026 with own models trained on singing (Whisper small
+and base, kept private), each with a head made for it.
+
+- **Reference LRCs start early.** Line times from lyrics sites come about
+  0.13–0.2 s before the singing, on some songs more, and the times of
+  Whisper's attention share that lead. Compared with such references, exact
+  timing looks worse. On separated vocals (HT-Demucs, 30 test songs) the
+  level rises by 0.8 dB at reference line starts, 0.6 dB at attention starts
+  and 6.7 dB at the head's starts.
+- **So the main measure is now JamendoLyrics MultiLang:** 79 songs in
+  English, German, French and Spanish with word times annotated by hand,
+  used for measuring only. LRC references are still checked (30 test songs,
+  100 more songs), read with their lead in mind.
+- **The head** (`bl-align`, `head.rs`): a layer norm, two convolutions
+  (kernel 5, 256 channels) and one output per language (en, de, es, fr, pl,
+  pt, it, nl, fi, and one for all others) to the letters a–z and the
+  apostrophe, trained with CTC on the frozen encoder of the speech model.
+  About 2.8 MB in f16. It listens with the encoder that runs anyway, so a
+  known text needs no recognition: the encoder over the whole song in
+  30-second windows (the middle 25 s of each kept), then the best path of
+  the whole text through the frames.
+- **Lines within 0.5 s on JamendoLyrics (mean per song):**
+
+  | Way | All | de | en | es | fr |
+  |---|---|---|---|---|---|
+  | Recognition, then Whisper's attention (small trained on singing) | 0.829 | 0.802 | 0.827 | 0.853 | 0.832 |
+  | wav2vec2 trained on singing, after recognition | | 0.917 | 0.904 | | |
+  | Head on small, whole song, no recognition | **0.933** | 0.976 | 0.895 | 0.960 | 0.899 |
+  | Head on base-q5_1 | 0.928 | 0.955 | 0.896 | 0.963 | 0.896 |
+
+  60 of the 79 songs reach 90 % with the head on small, 23 with the
+  attention (which could not time 3 songs at all, the head on base 1).
+  Word starts: median error 0.034 s, against 0.098 s for the attention. On
+  56 songs with LRC references the head on small has 0.892 instead of 0.879
+  (German 0.922 instead of 0.880, English 0.865 instead of 0.878).
+- **Speed** (median seconds per song, five songs of 2.5 to 5 minutes):
+
+  | Way | 4 cores | 6 cores | GPU |
+  |---|---|---|---|
+  | small, recognition and attention | 43.2 | 34.4 | 23.5 |
+  | small, head | 17.6 | 13.3 | 7.7 |
+  | base-q5_1, recognition and attention | 19.2 | 17.3 | |
+  | base-q5_1, head | 5.6 | 4.5 | 2.8 |
+
+  GPU and CPU give the same files with the head. Songs that fall back to
+  recognition can differ slightly, as before.
+- **Texts that do not fit:** the share of the frames heard as letters that
+  the path spends outside the text's letters. Fitting texts reached at
+  most 0.08 (small) and 0.15 (base), texts with missing lines were mostly above
+  0.1, another song's text 0.14 and more (median 0.35). Above 0.1 the song is
+  recognised and timed as before; if the recognition does not find the
+  text either, the head's result is taken up to 0.2. Without repeats or with
+  15 % of the lines left out, the head alone fell from 0.923 to about 0.83.
+- **Stray first letters:** where the head hears little, the path can put a
+  line's first letter or two at any cheap frame long before the line is
+  sung. A start of at most three letters before a gap of more than 2 s now
+  moves to the rest: 0.933 instead of 0.923. Splitting lines only between
+  words helped less (0.926), because the stray letter is usually the start
+  of the first word.
+- **Tried and dropped:**
+  - A head with 512 channels: worse in every language (0.904).
+  - A state for singing outside the text between lines: no change.
+  - Vocalisations ("oh ah ah", "aw ah") are the weakest lines (31 % within
+    0.5 s): the head does not hear them as letters, so the path squeezes
+    them next to a neighbour, up to 30 s off. Leaving them out of the path
+    and spreading them over their gap helped the hand-timed songs a little
+    (0.937) and the LRC references not (0.861 instead of 0.866). They are
+    1–2 % of the lines.
+- **Separation and beats, measured again:** recognition on HT-Demucs vocals
+  timed 0.881–0.888 of the lines within 0.5 s against 0.895 on the mix (LRC
+  references); Open-Unmix 0.865–0.880. The head on separated vocals: 0.878
+  instead of 0.923 on JamendoLyrics. Snapping line starts to the beat grid
+  was worse as well. Neither is used.
+- **Still open:** English is the weakest language, although it has the most
+  training data; the base model's head is clearly weaker on English songs
+  with LRC references (0.817). The letters are a–z only, so texts in other
+  scripts stay with the attention.
 
 ## Ideas from other projects
 

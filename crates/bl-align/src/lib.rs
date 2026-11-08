@@ -25,6 +25,7 @@
 
 pub mod config;
 pub mod ctc;
+pub mod head;
 pub mod models;
 pub mod set;
 pub mod text;
@@ -34,6 +35,7 @@ pub mod weights;
 pub use bl_mt::torch::Keep;
 pub use config::{Config, SAMPLE_RATE};
 pub use ctc::LogProbs;
+pub use head::{Head, HeadAligner};
 pub use set::Aligners;
 use std::path::Path;
 use text::Vocab;
@@ -184,10 +186,24 @@ pub fn word_times(
 ) -> Result<Vec<WordTime>, String> {
     let words = vocab.words(text);
     let target = vocab.target(&words);
+    let spans = if target.tokens.is_empty() {
+        Vec::new()
+    } else {
+        ctc::token_spans(lp, &target.tokens, blank)?
+    };
+    Ok(times_of_spans(&words, &target, &spans, lp))
+}
+
+/// The times of `words` from the frames of their tokens.
+pub(crate) fn times_of_spans(
+    words: &[text::Word],
+    target: &text::Target,
+    spans: &[ctc::Span],
+    lp: &LogProbs,
+) -> Vec<WordTime> {
     let duration = lp.frames as f64 * lp.frame_seconds;
     let mut out: Vec<Option<WordTime>> = words.iter().map(|_| None).collect();
     if !target.tokens.is_empty() {
-        let spans = ctc::token_spans(lp, &target.tokens, blank)?;
         let secs = |f: usize| f as f64 * lp.frame_seconds;
         // Per word: per character (first frame, end frame), and the
         // probability sum and frame count.
@@ -223,7 +239,7 @@ pub fn word_times(
             }
         }
     }
-    Ok(fill_gaps(&words, out, duration))
+    fill_gaps(words, out, duration)
 }
 
 /// Gives the words without aligned characters times: runs of them share

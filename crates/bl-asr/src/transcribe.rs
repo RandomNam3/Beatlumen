@@ -152,6 +152,27 @@ pub trait WordAligner: Sync {
     /// `at`: where `audio` starts in the song (seconds), for an aligner
     /// that listens to its own track of the song (the singing alone).
     fn align(&self, lang: &str, audio: &[f32], at: f64, text: &str) -> Option<Vec<Word>>;
+
+    /// A song's whole known text timed without recognising the song;
+    /// `None` when it cannot (the song is then recognised).
+    /// `progress` gets 0..1 and cancels with false.
+    fn whole_song(
+        &self,
+        _samples: &[f32],
+        _lines: &[&str],
+        _progress: &mut dyn FnMut(f32) -> bool,
+    ) -> Option<WholeSong> {
+        None
+    }
+}
+
+/// A song's whole known text timed by a [`WordAligner`].
+pub struct WholeSong {
+    /// The words of each line.
+    pub lines: Vec<Vec<Word>>,
+    /// The share of what was heard as letters that lies outside the text's
+    /// letters: how much of the song the text leaves out (0 to 1).
+    pub outside: f32,
 }
 
 fn log_softmax(x: &[f32]) -> Vec<f32> {
@@ -221,6 +242,24 @@ impl<'a> Transcriber<'a> {
             }
         }
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// The language sung in up to 30 s of `samples` (16 kHz): the model's
+    /// prediction right after <sot>.
+    pub fn language_of(&self, samples: &[f32]) -> io::Result<&'static str> {
+        if !self.m.multilingual() {
+            return Ok("en");
+        }
+        let p = self.m.params;
+        let mel = log_mel(samples, &self.m.mel_filters, p.n_mels, self.m.mel_bins).window(0);
+        let mut d = Decoder::new(self.m, &encode(self.m, &mel)?)?;
+        d.reset();
+        let logits = d.step(&[self.sp.sot])?;
+        let l = self.best_language(&logits);
+        Ok(LANGUAGES
+            .get((l - self.sp.lang0) as usize)
+            .copied()
+            .unwrap_or("en"))
     }
 
     /// Transcribes mono audio (`samples` at 16 kHz).

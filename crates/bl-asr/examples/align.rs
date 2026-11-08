@@ -53,8 +53,17 @@ fn main() {
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
             .collect();
         let song_end = samples.len() as f64 / bl_asr::mel::SAMPLE_RATE as f64;
+        // HEAD in the environment: word times from this CTC head.
+        let head = std::env::var("HEAD")
+            .ok()
+            .map(|p| bl_align::Head::load(p).unwrap());
+        let aligner = head.as_ref().map(|h| bl_align::HeadAligner::new(&m, h));
         let lrc = bl_asr::sync::time_anchors(
-            &Transcriber::new(&m),
+            &Transcriber::new(&m).with_aligner(
+                aligner
+                    .as_ref()
+                    .map(|a| a as &dyn bl_asr::transcribe::WordAligner),
+            ),
             &samples,
             &segments,
             &anchors,
