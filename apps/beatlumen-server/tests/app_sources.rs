@@ -120,7 +120,8 @@ fn subsonic_in_the_app() {
             .map(|t| t.str_or("cover", "").to_string())
             .filter(|c| !c.is_empty())
     });
-    assert!(c.starts_with("file:"), "{c}");
+    // Kept as a file and shown through the core's image decoders.
+    assert!(c.starts_with("image://thumb/"), "{c}");
 
     // After a restart: there right away (cached listing), login restored.
     let dir = app.close();
