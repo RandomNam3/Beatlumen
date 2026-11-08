@@ -164,13 +164,10 @@ pub fn stats(
         if !s.album_id.is_empty() && !s.album.trim().is_empty() {
             add(by_album.entry(s.album_id.as_str()).or_default());
         }
-        for g in s
-            .genre
-            .split([';', ',', '/', '|'])
-            .map(str::trim)
-            .filter(|g| !g.is_empty())
-        {
-            add(by_genre.entry(g.to_string()).or_default());
+        // In one spelling, as on the start page: "Genre: Rock" is rock, and a
+        // bare "Genre:" is no genre.
+        for g in crate::catalog::split_genres(&s.genre) {
+            add(by_genre.entry(g).or_default());
         }
     }
 
@@ -338,6 +335,7 @@ mod tests {
                 title: "Song B".into(),
                 artists: vec!["One".into(), "Two".into()],
                 album_id: "untagged".into(),
+                genre: "Genre:; Genre: Rock".into(),
                 ..StatSong::default()
             },
         ]
@@ -373,8 +371,11 @@ mod tests {
         assert_eq!(v.get("topAlbums").at(0).str_or("title", ""), "Album");
         // Song B has no album tag: no blank album in the list.
         assert_eq!(v.get("topAlbums").as_array().unwrap().len(), 1);
+        // "Genre: Rock" counts for rock, a bare "Genre:" for nothing.
         let genres = v.get("topGenres").as_array().unwrap();
         assert_eq!(genres.len(), 2);
+        assert_eq!(v.get("topGenres").at(0).str_or("name", ""), "rock");
+        assert_eq!(v.get("topGenres").at(0).get("plays").as_u64(), Some(3));
     }
 
     #[test]
