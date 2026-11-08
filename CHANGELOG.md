@@ -47,6 +47,13 @@
 - **Current line in the player:** with a timed song text, the line being sung appears
   under the title instead of the artist (Settings, Playback; on by default).
 - **Swiping on the mini player** goes to the next or the previous song.
+- **Song texts timed faster and closer with a timing layer:** a speech model can come with
+  a small timing layer made for it (a `.head` file of a few megabytes next to the model).
+  With it, a plain song text is timed from what the model hears in the whole song, without
+  writing the singing down first: on 79 songs timed by hand 93 % of the lines within half a
+  second instead of 83 %, word starts 0.03 s off instead of 0.1 s, and a 3-minute song in
+  about 18 s instead of 43 s on 4 processor cores. A text that does not fit the song is
+  timed the old way. The models offered for download have no such layer yet.
 
 ## 0.12.0 (beta)
 
