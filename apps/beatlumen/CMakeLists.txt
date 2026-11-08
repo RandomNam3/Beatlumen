@@ -142,6 +142,13 @@ endif()
 
 # "Stay unlocked on this device": the platform's protected store.
 target_sources(beatlumen PRIVATE src/secrets.cpp src/secrets.h)
+# HEIC pictures: the platform's decoder (HEVC is not part of the core). The
+# system's libheif on Linux is loaded at run time; Windows uses WIC, Android
+# ImageDecoder (android/src/.../HeicDecoder.java).
+target_sources(beatlumen PRIVATE src/heic_decode.cpp src/heic_decode.h)
+if(WIN32)
+    target_link_libraries(beatlumen PRIVATE windowscodecs ole32)
+endif()
 # The desktop's media controls and media keys (media_desktop.cpp).
 if(WIN32)
     target_sources(beatlumen PRIVATE src/media_desktop.cpp src/media_desktop.h)
