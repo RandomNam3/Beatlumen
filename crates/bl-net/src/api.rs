@@ -421,6 +421,8 @@ impl ImageEntry {
 /// Endpoint paths (relative to the server base URL).
 pub mod paths {
     pub const INFO: &str = "/api/info";
+    /// `{"status": "ok"}` (200), or 503 with `problems` (no login needed).
+    pub const HEALTH: &str = "/api/health";
     pub const LOGIN: &str = "/api/login";
     pub const LIBRARY: &str = "/api/library";
     pub const RESCAN: &str = "/api/rescan";
