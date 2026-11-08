@@ -17,9 +17,9 @@
   position, also after seeking (formats that do not seek to the exact sample are matched up again).
 - **Points for the text:** each sung line is scored against the known line by the small CTC head
   on the speech model's encoder, on its own thread one line after the other (about 0.1 s a line
-  with the base model on four cores). It uses the picked speech model when it has a head, else the
-  smallest one in the models folder that has one; without any there are no text points and the
-  other points count for all 10 000.
+  with the base model on four cores). It uses the picked speech model when it has a head (also
+  one of the server's own models), else the smallest one in the models folder that has one;
+  without any there are no text points and the other points count for all 10 000.
 - **Points for the pitch:** each singer's live pitch against the notes of their voice, the octave
   does not count. The tolerance depends on the difficulty (2, 1 or half a semitone), golden notes
   count double, rap notes count when the singer is heard, and a long note held on pitch earns a

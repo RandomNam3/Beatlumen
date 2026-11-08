@@ -51,8 +51,9 @@ pub(crate) fn model_with_head(dir: &Path, picked: &str) -> Option<PathBuf> {
             .iter()
             .any(|s| p.with_file_name(format!("{s}.head")).is_file())
     };
-    if let Some(m) = bl_asr::models::find(picked) {
-        let p = dir.join(m.file);
+    // A catalog model or an own one (from the server, `ggml-<id>.bin`).
+    if bl_asr::models::find(picked).is_some() || bl_asr::models::valid_own_id(picked) {
+        let p = dir.join(bl_asr::models::file_of(picked));
         if p.is_file() && has_head(&p) {
             return Some(p);
         }
@@ -140,6 +141,23 @@ mod tests {
         std::fs::write(dir.join("ggml-base.head"), b"h").unwrap();
         assert_eq!(
             model_with_head(&dir, "base").unwrap().file_name().unwrap(),
+            "ggml-base.bin"
+        );
+        // An own model from the server, picked, with its head.
+        std::fs::write(dir.join("ggml-sung-q5_1.bin"), vec![0u8; 400]).unwrap();
+        std::fs::write(dir.join("ggml-sung.head"), b"h").unwrap();
+        assert_eq!(
+            model_with_head(&dir, "sung-q5_1")
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "ggml-sung-q5_1.bin"
+        );
+        assert_eq!(
+            model_with_head(&dir, "../sung-q5_1")
+                .unwrap()
+                .file_name()
+                .unwrap(),
             "ggml-base.bin"
         );
         let _ = std::fs::remove_dir_all(&dir);
