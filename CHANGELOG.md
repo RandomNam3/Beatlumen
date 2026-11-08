@@ -5,6 +5,10 @@
 - **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
   microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
   drawn as the song plays, the points at the end. Microphones are only open during a round.
+- **Phones as wireless microphones:** on the karaoke page a phone (or any other device logged in
+  to the same server) sings into the device that plays. Its singing goes as Opus packets through the
+  Beatlumen server, each stamped with the server's clock when it was recorded, so points go by when
+  it was sung, not by when it arrived. No device opens a port, and the server keeps nothing.
 - **Microphone delay measured:** the karaoke page plays a few clicks; the microphone hears them
   through the speakers (or the singer claps or sings "ta" on each), and the delay found is kept as
   the input's latency offset.

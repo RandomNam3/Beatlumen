@@ -181,6 +181,13 @@ QtObject {
     }
 
     readonly property var de: ({
+        "Sing into another device": "In ein anderes Gerät singen",
+        "This device's microphone becomes a microphone of the device that plays, through the server. Nothing is recorded.": "Das Mikrofon dieses Geräts wird über den Server zu einem Mikrofon des Geräts, das spielt. Nichts wird aufgenommen.",
+        "Device": "Gerät",
+        "Sing into it": "Hineinsingen",
+        "No other device is online. Open Beatlumen on the device that plays.": "Kein anderes Gerät ist online. Öffne Beatlumen auf dem Gerät, das spielt.",
+        "Matching the clock with the server…": "Uhr wird mit dem Server abgeglichen …",
+        "Sending; round trip %1 ms": "Sendet; Umlaufzeit %1 ms",
         "Measure the microphone's delay": "Verzögerung des Mikrofons messen",
         "Clicks are playing: hold the microphone near the speaker, or clap or sing \"ta\" on each click.": "Klicks werden abgespielt: Halte das Mikrofon in die Nähe des Lautsprechers oder klatsche oder singe „ta“ bei jedem Klick.",
         "Delay of the microphone: %1 ms (%2 clicks heard)": "Verzögerung des Mikrofons: %1 ms (%2 Klicks gehört)",

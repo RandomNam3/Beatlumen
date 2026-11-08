@@ -255,6 +255,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
         return state.devices.handle(req, segs, &scope);
     }
+    // Phones as microphones: only to the devices of the same login.
+    if matches!(segs, ["mic", _]) {
+        let scope = user
+            .as_deref()
+            .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
+        return state
+            .mic_relay
+            .handle(req, segs, &scope, &|id| state.devices.scope_of(id));
+    }
     match segs {
         ["logout"] => match m {
             "POST" => {

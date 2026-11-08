@@ -28,6 +28,7 @@ pub mod icon;
 pub mod jobs;
 mod karaoke;
 mod karaoke_calibrate;
+mod karaoke_phone;
 mod karaoke_session;
 #[cfg(not(target_arch = "wasm32"))]
 mod karaoke_text;

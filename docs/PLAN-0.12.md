@@ -85,7 +85,7 @@ the results come into Beatlumen.
   and Windows (WASAPI), the microphone on Android (permission asked when
   a microphone is first opened). Samples pushed with a timestamp per
   stream; level meter.
-- [ ] Phones as wireless microphones: Opus (`bl-opus-enc`) with
+- [x] Phones as wireless microphones: Opus (`bl-opus-enc`) with
   timestamps on the common server time, through the server to the playing
   device.
 - [x] Latency calibration per microphone.

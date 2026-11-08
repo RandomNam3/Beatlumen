@@ -210,6 +210,11 @@ In short:
   stores it nor sends it anywhere. The karaoke page opens the inputs its
   singers use when a round starts and closes them when it ends or the
   page is left.
+* Phones as wireless microphones: only when the user starts it on the
+  karaoke page. The phone's singing goes as Opus packets to the Beatlumen
+  server, which hands them only to a device of the same login (an account,
+  or everyone with the server password) and keeps the last three seconds in
+  memory, never on disk. No device opens a port.
 * The system's sound libraries are used as they are (libpulse on Linux,
   loaded at run time; WASAPI on Windows; AudioRecord on Android).
 * The only stored data is a latency offset per input (by its system id) in

@@ -374,6 +374,9 @@ struct Open {
     error: Option<String>,
 }
 
+/// Inputs that are phones sending through the server (`karaoke_phone`).
+pub(crate) const PHONE_PREFIX: &str = "phone:";
+
 #[derive(Default)]
 pub(crate) struct MicState {
     devices: Vec<Device>,
@@ -393,6 +396,11 @@ impl Core {
     }
 
     fn mic_device_name(&self, device: &str) -> String {
+        if device.starts_with(PHONE_PREFIX) {
+            if let Some((_, n)) = self.phones.inputs.iter().find(|(d, _)| d == device) {
+                return n.clone();
+            }
+        }
         self.mic
             .devices
             .iter()
@@ -405,10 +413,22 @@ impl Core {
         self.mic.open.len()
     }
 
+    /// The open inputs that are phones: (input id, stream).
+    pub(crate) fn mic_phone_streams(&self) -> Vec<(String, u32)> {
+        self.mic
+            .open
+            .iter()
+            .filter(|o| o.device.starts_with(PHONE_PREFIX))
+            .map(|o| (o.device.clone(), o.stream))
+            .collect()
+    }
+
     /// Closes every microphone (the app goes away).
     pub(crate) fn close_mics(&mut self, host: &mut dyn Host) {
         for o in std::mem::take(&mut self.mic.open) {
-            host.mic_request("close", &Value::object().with("stream", o.stream).to_json());
+            if !o.device.starts_with(PHONE_PREFIX) {
+                host.mic_request("close", &Value::object().with("stream", o.stream).to_json());
+            }
             close_stream(o.stream);
         }
     }
@@ -417,8 +437,10 @@ impl Core {
         let Some(i) = self.mic.open.iter().position(|o| o.stream == stream) else {
             return false;
         };
-        self.mic.open.remove(i);
-        host.mic_request("close", &Value::object().with("stream", stream).to_json());
+        let o = self.mic.open.remove(i);
+        if !o.device.starts_with(PHONE_PREFIX) {
+            host.mic_request("close", &Value::object().with("stream", stream).to_json());
+        }
         close_stream(stream);
         true
     }
@@ -458,10 +480,11 @@ impl Core {
             // Opens an input: {device, channel (optional: one channel of
             // the device instead of all mixed)} -> {stream}.
             "mic.open" => {
-                if !host.has_mic() {
+                let device = c.str_or("device", "").to_string();
+                let phone = device.starts_with(PHONE_PREFIX);
+                if !host.has_mic() && !phone {
                     return err("not available");
                 }
-                let device = c.str_or("device", "").to_string();
                 if device.is_empty() {
                     return err("no device");
                 }
@@ -488,6 +511,17 @@ impl Core {
                 }
                 let stream = new_stream_id();
                 open_stream(stream, channel, self.mic_offset(&device));
+                // A phone's audio comes through the server, not the platform.
+                if phone {
+                    self.mic.open.push(Open {
+                        stream,
+                        device,
+                        channel: None,
+                        running: true,
+                        error: None,
+                    });
+                    return Value::object().with("stream", stream);
+                }
                 let req = Value::object()
                     .with("stream", stream)
                     .with("device", device.as_str());
@@ -616,7 +650,7 @@ impl Core {
     }
 
     pub(crate) fn mic_json(&self, host: &dyn Host) -> Value {
-        let devices: Vec<Value> = self
+        let mut devices: Vec<Value> = self
             .mic
             .devices
             .iter()
@@ -630,8 +664,24 @@ impl Core {
                     .with("offsetMs", self.mic_offset(&d.id))
             })
             .collect();
+        // Phones sending through the server.
+        for (id, name) in self.karaoke_phone_inputs(host) {
+            devices.push(
+                Value::object()
+                    .with("id", id.as_str())
+                    .with("name", name)
+                    .with("channels", 1)
+                    .with("rate", 48000)
+                    .with("default", false)
+                    .with("phone", true)
+                    .with("offsetMs", self.mic_offset(&id)),
+            );
+        }
         Value::object()
-            .with("available", host.has_mic())
+            .with(
+                "available",
+                host.has_mic() || !self.phones.inputs.is_empty(),
+            )
             .with("listed", self.mic.listed)
             .with("devices", Value::Array(devices))
             .with("streams", self.mic_streams_json())

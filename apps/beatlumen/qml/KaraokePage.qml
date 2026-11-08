@@ -150,8 +150,72 @@ Item {
         } else if (stage !== "sing") {
             closeMics()
         }
+        // Phones singing into this device come through the server.
+        if (Core.state.server === "connected")
+            Core.call("karaoke.receive", { on: visible || stage === "sing" })
     }
-    Component.onDestruction: closeMics()
+    Component.onDestruction: { closeMics(); stopSending(); Core.call("karaoke.receive", { on: false }) }
+    // Phones show up among the microphones once they send.
+    Timer {
+        interval: 2000
+        repeat: true
+        running: page.visible && page.stage === "setup"
+        onTriggered: page.listMics()
+    }
+
+    // ---- this device as a microphone for another one ----
+    readonly property bool connected: Core.state.server === "connected"
+    property var targets: []
+    property string sendTarget: ""
+    property var sending: ({})
+    property var sendStream: 0
+    function listTargets() {
+        const all = Core.call("devices.list") || []
+        targets = all.filter(d => !d.self && d.online)
+        if (!targets.some(d => d.id === sendTarget))
+            sendTarget = targets.length ? targets[0].id : ""
+    }
+    function startSending() {
+        if (!sendTarget)
+            return
+        const r = Core.call("mic.list") || {}
+        const own = (r.devices || []).filter(d => !d.phone)
+        const dev = own.find(d => d.default) || own[0]
+        if (!dev) {
+            Core.call("toast", { text: Theme.tr("No microphones found"), error: true })
+            return
+        }
+        const o = Core.call("mic.open", { device: dev.id }) || {}
+        if (!o.stream) {
+            Core.call("toast", { text: (o.error || Theme.tr("The microphone could not be opened")), error: true })
+            return
+        }
+        sendStream = o.stream
+        const s = Core.call("karaoke.send", { target: sendTarget, stream: o.stream }) || {}
+        if (s.error) {
+            Core.call("toast", { text: s.error, error: true })
+            stopSending()
+        }
+    }
+    function stopSending() {
+        Core.call("karaoke.sendStop")
+        if (sendStream)
+            Core.call("mic.close", { stream: sendStream })
+        sendStream = 0
+        sending = {}
+    }
+    Timer {
+        interval: 250
+        repeat: true
+        running: page.sendStream !== 0
+        onTriggered: {
+            page.sending = Core.call("karaoke.sending") || {}
+            const l = (Core.call("mic.levels") || {}).streams || []
+            const me = l.find(s => s.stream === page.sendStream)
+            page.sendLevel = me ? Math.max(0, Math.min(1, (me.levelDb + 60) / 60)) : 0
+        }
+    }
+    property real sendLevel: 0
 
     function start() {
         closeMics()
@@ -650,6 +714,83 @@ Item {
                     text: Theme.tr("Start singing")
                     icon.source: Theme.icon("mic")
                     onClicked: page.start()
+                }
+
+                // This device as a wireless microphone for another one.
+                SectionLabel {
+                    visible: page.connected
+                    Layout.topMargin: 16
+                    text: Theme.tr("Sing into another device")
+                }
+                Label {
+                    visible: page.connected
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textFaint
+                    font.pixelSize: 12
+                    text: Theme.tr("This device's microphone becomes a microphone of the device that plays, through the server. Nothing is recorded.")
+                }
+                RowLayout {
+                    visible: page.connected
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    spacing: 8
+                    Dropdown {
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: 320
+                        enabled: page.sendStream === 0
+                        model: page.targets.map(d => d.name)
+                        currentIndex: page.targets.findIndex(d => d.id === page.sendTarget)
+                        onActivated: (i) => page.sendTarget = page.targets[i].id
+                        onPressedChanged: if (pressed) page.listTargets()
+                        Component.onCompleted: page.listTargets()
+                        Accessible.name: Theme.tr("Device")
+                    }
+                    AccentButton {
+                        highlighted: page.sendStream !== 0
+                        enabled: page.sendStream !== 0 || !!page.sendTarget
+                        text: page.sendStream !== 0 ? Theme.tr("Stop") : Theme.tr("Sing into it")
+                        icon.source: Theme.icon(page.sendStream !== 0 ? "close" : "mic")
+                        onClicked: page.sendStream !== 0 ? page.stopSending() : page.startSending()
+                    }
+                }
+                Label {
+                    visible: page.connected && page.targets.length === 0
+                    textFormat: Text.PlainText
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    font.pixelSize: 13
+                    text: Theme.tr("No other device is online. Open Beatlumen on the device that plays.")
+                }
+                ColumnLayout {
+                    visible: page.sendStream !== 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    spacing: 4
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 8
+                        Rectangle { anchors.fill: parent; radius: 4; color: Theme.surfaceVariant }
+                        Rectangle { height: parent.height; radius: 4; color: Theme.accent; width: parent.width * page.sendLevel }
+                    }
+                    Label {
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                        color: page.sending.error ? Theme.danger : Theme.textDim
+                        text: page.sending.error ? page.sending.error
+                            : !page.sending.clock ? Theme.tr("Matching the clock with the server…")
+                            : Theme.tr("Sending; round trip %1 ms").replace("%1", page.sending.roundTripMs || 0)
+                    }
                 }
             }
         }

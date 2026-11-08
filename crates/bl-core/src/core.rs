@@ -89,6 +89,7 @@ pub(crate) enum Req {
     Lyrics(String),
     LyricsSync(String),
     Karaoke(crate::karaoke::KaraokeReq),
+    KaraokePhone(crate::karaoke_phone::PhoneReq),
     DeviceAnnounce(u64),
     DeviceList(u64),
     DeviceEvents(u64),
@@ -338,6 +339,7 @@ pub struct Core {
     pub(crate) karaoke: crate::karaoke::KaraokeState,
     pub(crate) karaoke_session: crate::karaoke_session::SessionState,
     pub(crate) karaoke_calibration: Option<crate::karaoke_calibrate::Calibration>,
+    pub(crate) phones: crate::karaoke_phone::PhoneState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
     /// What this account took out of the server's library, with how long each
@@ -555,6 +557,7 @@ impl Core {
             karaoke: Default::default(),
             karaoke_session: Default::default(),
             karaoke_calibration: None,
+            phones: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
             hidden_items: Vec::new(),
@@ -1061,6 +1064,7 @@ impl Core {
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
             Req::Karaoke(k) => self.karaoke_response(host, k, &res),
+            Req::KaraokePhone(k) => self.karaoke_phone_response(host, k, &res),
             r @ (Req::DeviceAnnounce(_)
             | Req::DeviceList(_)
             | Req::DeviceEvents(_)
@@ -2804,6 +2808,7 @@ impl Core {
         self.mic_tick(host);
         self.poll_karaoke_session(host);
         self.poll_karaoke_calibration(host);
+        self.poll_karaoke_phones(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
             self.position_saved_at = self.time;

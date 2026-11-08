@@ -38,6 +38,7 @@ pub mod labels;
 pub mod library;
 pub mod lyrics;
 pub mod lyrics_sync;
+pub mod mic_relay;
 pub mod models;
 pub mod playlists;
 pub mod presets;
@@ -176,6 +177,7 @@ pub struct State {
     pub lyrics: lyrics::Lyrics,
     pub lyrics_sync: Arc<lyrics_sync::LyricsSync>,
     pub karaoke: Arc<karaoke::Karaoke>,
+    pub mic_relay: mic_relay::MicRelay,
     pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
@@ -750,6 +752,7 @@ pub fn start(config: Config) -> Result<Server, String> {
             config.karaoke,
             config.auto_karaoke,
         )),
+        mic_relay: mic_relay::MicRelay::default(),
         user_data: userdata::UserData::default(),
         analyzer: analysis::Analyzer::new(
             data.analysis.clone(),

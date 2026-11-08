@@ -21,6 +21,8 @@ bl-vault = { path = "../bl-vault" }
 bl-offline = { path = "../bl-offline" }
 # Karaoke tracks (notes, UltraStar files).
 bl-pitch = { path = "../bl-pitch" }
+# Phones as microphones: their singing as Opus packets.
+bl-opus = { path = "../bl-opus" }
 
 # Speakers that fetch a stream from the app (not in the browser).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

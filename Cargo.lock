@@ -158,6 +158,7 @@ dependencies = [
  "bl-mt",
  "bl-net",
  "bl-offline",
+ "bl-opus",
  "bl-pitch",
  "bl-recommend",
  "bl-render",

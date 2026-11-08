@@ -159,6 +159,9 @@ impl Core {
             "karaoke.stop" => return self.karaoke_stop(),
             "karaoke.calibrate" => return self.karaoke_calibrate(host, c),
             "karaoke.calibration" => return self.karaoke_calibration_json(),
+            "karaoke.send" | "karaoke.sendStop" | "karaoke.receive" | "karaoke.sending" => {
+                return self.karaoke_phone_command(host, name, c)
+            }
             _ => {}
         }
         let id = match c.get("id").as_str() {

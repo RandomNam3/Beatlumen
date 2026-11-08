@@ -191,6 +191,9 @@ those of `bl_net::api` (`ServerInfo`, `Library`, `Track`, `Album`,
 | `GET /api/labels` | `{"names": [...], "songs": {"<id>": [indexes into names]}, "given": [...]}`: automatic labels (`genre:rock`, `decade:1990`, `tempo:slow\|medium\|fast`, `energy:low\|medium\|high`, `key:Am`, `mood:...`, the moods being rough estimates) and those given by the login |
 | `GET /api/tracks/{id}/labels` | the labels the login gave this song |
 | `PUT /api/tracks/{id}/labels` | body `{"add"?: [...], "remove"?: [...]}` → the song's labels afterwards |
+| `POST /api/mic/{device}?from={phone}` | a phone's singing for a device of the same login (karaoke): packets `[u64 LE recorded at, µs on the server's clock][u16 LE length][Opus packet]`, at most 64 KiB → `{"now": µs}`; the server keeps the last 3 s in memory, nothing on disk |
+| `GET /api/mic/{device}?after={seq}` | waits up to 2 s for the packets sent to this device: `[u64 seq][u64 recorded at][u8 length][phone's device id][u16 length][packet]` each, empty when none came |
+| `GET /api/mic/time` | `{"now": µs}`: the server's clock for matching up the devices' clocks |
 | `GET /api/tracks/{id}/karaoke` | the song's karaoke data: `{"format": "beatlumen-karaoke", "version": 1, "title", "artist", "lang", "singers", "key", "lines": [{"v", "notes": [{"t", "d", "p", "s", "k"}]}], "source": "computed"\|"imported"}` (times in seconds, `p` a MIDI note, `k` the UltraStar note type when not normal); 404 without. Computed data is only given while the song text it was made from is still the song's |
 | `PUT /api/tracks/{id}/karaoke` | body: an UltraStar TXT file (duets as `P1`/`P2`) or the JSON above, at most 1 MiB → 204; kept as imported, wins over computed data |
 | `DELETE /api/tracks/{id}/karaoke` | removes imported and computed data → 204 |

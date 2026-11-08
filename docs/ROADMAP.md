@@ -92,10 +92,10 @@ pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
   - Several inputs on a computer (USB microphones, headsets, channels of
     an audio interface), one singer each.
   - One microphone on a phone that plays the song itself.
-  - Phones as wireless microphones for the device that plays: the phone
-    records and sends the singing through the Beatlumen server with
-    timestamps on the common server time, so network delay does not
-    affect the points. No device opens a port for this.
+  - Done: phones as wireless microphones for the device that plays: the
+    phone records and sends the singing (Opus) through the Beatlumen server
+    with timestamps on the common server time (`/api/mic`), so network
+    delay does not affect the points. No device opens a port for this.
   - Microphones are only open while the karaoke mode uses them; the
     recordings are not stored or sent anywhere else.
   - Done: latency calibration per microphone (a click track heard through

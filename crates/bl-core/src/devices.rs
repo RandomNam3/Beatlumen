@@ -118,7 +118,7 @@ impl Core {
     }
 
     /// This device's id (made on first use).
-    fn device_id(&mut self) -> String {
+    pub(crate) fn device_id(&mut self) -> String {
         if self.settings.device_id.len() != 32 {
             self.settings.device_id = (0..16)
                 .map(|_| format!("{:02x}", self.rng.next_u64() & 0xff))
