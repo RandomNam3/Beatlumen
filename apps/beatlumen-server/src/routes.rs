@@ -209,6 +209,20 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 not_allowed("GET, HEAD")
             }
         }
+        // For container health checks and monitoring: no login needed, no
+        // details of the setup.
+        ["health"] => {
+            return if get {
+                let problems = state.health_problems();
+                let status = if problems.is_empty() { 200 } else { 503 };
+                let v = Value::object()
+                    .with("status", if problems.is_empty() { "ok" } else { "failing" })
+                    .with("problems", problems);
+                json(status, &v).with_header("Cache-Control", "no-store")
+            } else {
+                not_allowed("GET, HEAD")
+            }
+        }
         ["login"] => {
             return if m == "POST" {
                 login(state, req)

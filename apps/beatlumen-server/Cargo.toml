@@ -38,6 +38,11 @@ ring = "=0.17.14"
 # embedded database in pure Rust, see src/store.rs; pinned exactly.
 redb = { version = "=4.5.0", default-features = false, features = ["std"] }
 
+[target.'cfg(unix)'.dependencies]
+# Waiting for SIGTERM/SIGINT (stopping as a container's process 1); already
+# used by ring and the standard library's platform layer.
+libc = "0.2"
+
 [dev-dependencies]
 bl-core = { path = "../../crates/bl-core" }
 bl-airplay = { path = "../../crates/bl-airplay" }

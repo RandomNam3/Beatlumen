@@ -108,6 +108,8 @@ fn main() {
             });
         }
     };
+    #[cfg(unix)]
+    stop_on_signals();
     match beatlumen_server::start(cfg) {
         Ok(server) => {
             server
@@ -119,5 +121,31 @@ fn main() {
             beatlumen_server::error!("{e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Stops the server on SIGTERM and SIGINT. As process 1 of a container the
+/// kernel ignores signals that have no handler, so without this the server
+/// would only end when killed; with it the container needs no init process.
+#[cfg(unix)]
+fn stop_on_signals() {
+    // SAFETY: plain libc calls on a local signal set. The signals are blocked
+    // before any other thread starts, so all threads inherit the mask and
+    // only the waiting thread takes them.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        let _ = std::thread::Builder::new()
+            .name("signals".into())
+            .spawn(move || {
+                let mut sig = 0;
+                if libc::sigwait(&set, &mut sig) == 0 {
+                    beatlumen_server::info!("stopping (signal {sig})");
+                    std::process::exit(0);
+                }
+            });
     }
 }

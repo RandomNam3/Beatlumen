@@ -834,8 +834,9 @@ OPTIONS:
     --push-allow-private    Allow push services (UnifiedPush) in private networks and
                             over plain http, e.g. ntfy in the home network
     --verbose               Log every request and per-file scan problems
-    --health-check          Check that the server configured this way answers
-                            (exit status 0), for container health checks
+    --health-check          Check that the server configured this way answers and
+                            its data folder takes writes (exit status 0), for
+                            container health checks
     -h, --help              Print this help
     -V, --version           Print the version
 

@@ -30,8 +30,11 @@ Run from the repository root (the build context):
 
 ```sh
 docker build -f container/Containerfile -t beatlumen-server .
-podman build -f container/Containerfile -t beatlumen-server .
+podman build --format docker -f container/Containerfile -t beatlumen-server .
 ```
+
+(`--format docker` keeps the image's health check; Podman's default OCI
+format drops it.)
 
 The **web client** (`http://<server>:7878/` in a browser) is embedded when
 `dist/web` exists: build it with `./build-web.sh`, or unpack the
@@ -45,9 +48,11 @@ manifest. Either way modified files are not served (see "Web client
 integrity" in [`docs/ENCRYPTION.md`](../docs/ENCRYPTION.md)).
 
 Build argument `RUST_IMAGE` selects the Rust build image (default
-`docker.io/library/rust:1.99-alpine3.22`; it is only used for building and
-is not part of the result). When Docker Hub limits anonymous pulls, use a
-mirror: `--build-arg RUST_IMAGE=mirror.gcr.io/library/rust:1.99-alpine3.22`. The image builds for the
+`docker.io/library/rust:1.99-slim-trixie`, Debian with the official Rust
+toolchain; it is only used for building and is not part of the result:
+the server is linked statically against musl there). When Docker Hub
+limits anonymous pulls, use a mirror: `--build-arg
+RUST_IMAGE=mirror.gcr.io/library/rust:1.99-slim-trixie`. The image builds for the
 platform of the build host (x86-64, arm64, …); `docker buildx build
 --platform linux/arm64` builds for another one.
 
@@ -65,10 +70,15 @@ docker compose up -d --build   # or: podman compose up -d --build
 docker compose logs -f
 ```
 
+`podman-compose` 1.0.x (as in Debian and Ubuntu packages) leaves out
+`ipc` and `pids_limit` and runs the health check through a shell the image
+does not have, so it reports "unhealthy"; use `podman compose` with Docker
+Compose as its provider, `podman run` below or the Quadlet unit.
+
 ### docker run / podman run
 
 ```sh
-docker run -d --name beatlumen --init --restart unless-stopped \
+docker run -d --name beatlumen --restart unless-stopped \
   -p 7878:7878 \
   -v /srv/music:/music:ro,z \
   -v /srv/backgrounds:/images:ro,z \
@@ -78,6 +88,9 @@ docker run -d --name beatlumen --init --restart unless-stopped \
   -e BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/pepper \
   -v "$PWD/pepper.bin":/run/secrets/pepper:ro,z \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --security-opt seccomp=container/seccomp/beatlumen-server.json \
+  --ipc none \
+  --health-cmd '["/beatlumen-server","--health-check"]' \
   beatlumen-server
 ```
 
@@ -336,12 +349,19 @@ but stored separately from it.
 
 ## Health check
 
+`GET /api/health` answers `{"status": "ok"}` (200) while the server serves
+requests and its data folder takes writes, else 503 with `problems` (e.g.
+a full disk or a read-only `/data`). It needs no login and tells nothing
+about the setup, so monitoring can use it too.
+
 The image declares a health check (`/beatlumen-server --health-check`,
-every 30 s), which asks the server's info page on the loopback interface.
-Docker uses it directly; Podman uses it when the image is built in Docker
-format (`podman build --format docker`) or through `compose.yml` and the
-Quadlet unit, which declare it themselves. `docker ps` / `podman ps` show
-the state.
+every 30 s), which asks that address on the loopback interface. Docker
+uses it directly; Podman uses it when the image is built in Docker format
+(`podman build --format docker`) or through `compose.yml` and the Quadlet
+unit, which declare it themselves. `docker ps` / `podman ps` show the
+state. Give it in exec form (`["/beatlumen-server","--health-check"]`):
+the image has no shell, so a plain command line, which Podman runs
+through `/bin/sh -c`, always fails.
 
 ## Security
 
@@ -351,9 +371,37 @@ The examples run the container with:
   (`--cap-drop ALL`), **no privilege gain** (`no-new-privileges`);
 * **a read-only root file system** (`--read-only`): only `/data` is
   writable, the music and image folders are mounted read-only;
-* **an init process** (`--init`) that forwards stop signals, so the
-  server ends right away on `docker stop`;
+* **a seccomp allowlist** (`container/seccomp/beatlumen-server.json`):
+  only the about 90 system calls the server uses, every other one fails
+  with "not implemented". It also allows no executable memory (no
+  `mmap`/`mprotect` with `PROT_EXEC`), no new namespaces (`clone` for
+  threads only), sockets for IPv4 and IPv6 only and a handful of `ioctl`
+  and `prctl` requests;
+* **no IPC namespace sharing** (`--ipc none`): no shared memory or message
+  queues;
+* **no init process**: the server stops on SIGTERM itself (within a
+  second or two of `docker stop`) and starts no other processes;
 * a process and memory limit (compose: `pids_limit`, `mem_limit`).
+
+The image itself holds the static server binary (linked against musl, no
+C library, no shell, no package manager) and the license texts: about
+9 MB, or about 14 MB with the web client.
+
+### The seccomp profile
+
+The list comes from tracing the static binary (`strace -f`) while it
+scanned a library in all supported formats, streamed and converted songs,
+timed song texts with a speech model, served models, playlists,
+favorites, history, recommendations and its health check, plus the
+command line tools (`--health-check`, `admin-link`, `invite`, `users`).
+Calls needed on rare paths (removing folders, outgoing connections and
+DNS, UDP discovery, signals) and their `*at` forms for arm64 were added;
+`fstatfs`, `openat2` and `close_range` are for the container runtime
+between applying the profile and starting the server.
+
+When a new version needs another call, the kernel log shows it while the
+profile's `defaultAction` is set to `SCMP_ACT_LOG` (`journalctl -k |
+grep type=1326`).
 
 ### AppArmor (Ubuntu, Debian, openSUSE, …)
 
