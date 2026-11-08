@@ -353,6 +353,8 @@ fn de(s: &str) -> Option<&'static str> {
         "No trigger" => "Kein Auslöser",
         "Default background" => "Standard-Hintergrund",
         "images added" => "Bilder hinzugefügt",
+        "This image is already in the list" => "Dieses Bild ist schon in der Liste",
+        "images were already in the list" => "Bilder waren schon in der Liste",
         "Added to playlist" => "Zur Playlist hinzugefügt",
         "Colour Shift" => "Farbverschiebung",
         "Kaleidoscope" => "Kaleidoskop",

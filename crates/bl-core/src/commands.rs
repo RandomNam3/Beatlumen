@@ -794,23 +794,33 @@ impl Core {
                 self.add_backgrounds(host, sources, b("show"));
                 ok()
             }
+            // A folder stays in sync: new images join the list, deleted
+            // ones leave it.
             "backgrounds.addFolder" => {
                 #[cfg(not(target_arch = "wasm32"))]
-                let images: Vec<String> = library::list_images(&s("path"))
-                    .into_iter()
-                    .map(|p| format!("{LOCAL_PREFIX}{p}"))
-                    .collect();
-                #[cfg(target_arch = "wasm32")]
-                let images: Vec<String> = Vec::new();
-                let n = images.len();
-                self.add_backgrounds(host, images, false);
-                self.toast(format!("{n} {}", self.tr("images added")), false);
+                self.add_background_folder(host, &s("path"));
+                ok()
+            }
+            "backgrounds.removeFolder" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.remove_background_folder(host, &s("path"));
+                ok()
+            }
+            "backgrounds.sync" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.sync_background_folders_soon();
                 ok()
             }
             "backgrounds.select" => {
                 self.bg_queue.set_position(idx("pos"));
                 self.show_queue_background(host);
                 self.settings_changed();
+                ok()
+            }
+            // By sources (the selection), or one by position. The files stay.
+            "backgrounds.remove" if c.get("sources").as_array().is_some() => {
+                let sources = strs(c.get("sources")).into_iter().collect();
+                self.remove_backgrounds(host, &sources);
                 ok()
             }
             "backgrounds.remove" => {
@@ -1199,7 +1209,14 @@ impl Core {
             }
             // The UI reports whether it is on screen (battery saving).
             "app.visible" => {
+                let back = b("visible") && !self.visible;
                 self.visible = b("visible");
+                #[cfg(not(target_arch = "wasm32"))]
+                if back {
+                    self.sync_background_folders_soon();
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = back;
                 ok()
             }
             "net.metered" => {
