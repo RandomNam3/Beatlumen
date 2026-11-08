@@ -1,6 +1,6 @@
 [package]
 name = "bl-image"
-description = "PNG/JPEG image decoding and resizing"
+description = "Image decoding (JPEG, PNG, GIF, WebP, BMP, TIFF, AVIF/AV1, HEIF) and resizing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

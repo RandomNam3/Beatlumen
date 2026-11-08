@@ -15,9 +15,16 @@
   own thread; nothing runs while the app is hidden.
 - **Backgrounds from the server:** animations come as they are, still images scaled to the
   screen (up to 8192 pixels instead of 4096). The image folders list TIFF and APNG files,
-  files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
-  supported: AVIF would need an AV1 decoder of its own, HEIC an HEVC decoder, whose patents
-  stand in the way.
+  files up to 512 MB are read and uploads may be up to 256 MB. AVIF is scaled there like the
+  other formats; HEIC files go to the apps as they are, which decode them themselves.
+- **AVIF and HEIC backgrounds:** AVIF pictures (also tiled ones and ones with transparency, 8
+  to 12 bits, rotated or cropped; HDR pictures are toned down for the screen) are decoded by an
+  AV1 decoder of Beatlumen's own, written from the open AV1 specification, on every platform and
+  on the server. A 16K AVIF is read with about 60 MB of memory in a few seconds; animated AVIF
+  shows its first picture. HEIC pictures (as phones take them) are decoded by the operating
+  system where it can, because HEVC is covered by patents: on Android 9 and newer, on Windows
+  with the HEIF and HEVC extensions from the Microsoft Store, and on Linux when the system has
+  libheif. Beatlumen brings no HEVC decoder of its own.
 - **Listen together:** make a room on the Devices page and let others in with its code or
   link. Everyone hears the same song of the server at the same moment; the host decides what
   plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and
