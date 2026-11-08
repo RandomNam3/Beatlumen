@@ -27,6 +27,7 @@
   next scan.
 - **Titles that start with a number:** a tagged title with an artist stays as it is even when the
   file is named the same. "12 Millionen" by DAME no longer turns into "Millionen".
+- **Statistics:** songs without an album tag no longer show up as blank rows among the top albums.
 - **Now playing:** the favorite button fades out with the controls, and the spectrum moves with
   the title when the controls come and go (it jumped behind at 20 steps a second).
 - **To the edges on Android:** the app reaches under the status bar and the notch, and the window

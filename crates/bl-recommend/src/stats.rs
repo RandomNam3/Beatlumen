@@ -160,7 +160,8 @@ pub fn stats(
         for a in s.artists.iter().filter(|a| !a.is_empty()) {
             add(by_artist.entry(a.as_str()).or_default());
         }
-        if !s.album_id.is_empty() {
+        // Songs without an album tag are no album of their own.
+        if !s.album_id.is_empty() && !s.album.trim().is_empty() {
             add(by_album.entry(s.album_id.as_str()).or_default());
         }
         for g in s
@@ -336,6 +337,7 @@ mod tests {
                 id: "b".into(),
                 title: "Song B".into(),
                 artists: vec!["One".into(), "Two".into()],
+                album_id: "untagged".into(),
                 ..StatSong::default()
             },
         ]
@@ -369,6 +371,8 @@ mod tests {
         assert_eq!(v.get("topArtists").at(0).get("plays").as_u64(), Some(3));
         assert_eq!(v.get("topArtists").at(1).get("plays").as_u64(), Some(1));
         assert_eq!(v.get("topAlbums").at(0).str_or("title", ""), "Album");
+        // Song B has no album tag: no blank album in the list.
+        assert_eq!(v.get("topAlbums").as_array().unwrap().len(), 1);
         let genres = v.get("topGenres").as_array().unwrap();
         assert_eq!(genres.len(), 2);
     }
