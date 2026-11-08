@@ -39,6 +39,11 @@ webpki-roots = "=1.0.11"
 # Passkey signatures (ES256, EdDSA, RS256); already used by rustls.
 ring = "=0.17.14"
 
+[target.'cfg(unix)'.dependencies]
+# Waiting for SIGTERM/SIGINT (stopping as a container's process 1); already
+# used by ring and the standard library's platform layer.
+libc = "0.2"
+
 [dev-dependencies]
 bl-core = { path = "../../crates/bl-core" }
 bl-airplay = { path = "../../crates/bl-airplay" }

@@ -86,6 +86,7 @@ dependencies = [
  "bl-sources",
  "bl-upnp",
  "bl-vault",
+ "libc",
  "p256",
  "ring",
  "rustls",
