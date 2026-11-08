@@ -3958,6 +3958,28 @@ pub(crate) static DEFAULT_FILTER_INTRA_CDF: [[u16; 3]; 22] = [
 
 pub(crate) static DEFAULT_FILTER_INTRA_MODE_CDF: [u16; 6] = [8949, 12776, 17211, 29558, 32768, 0];
 
+pub(crate) static DEFAULT_INTER_TX_TYPE_SET1_CDF: [[u16; 17]; 2] = [
+    [
+        4458, 5560, 7695, 9709, 13330, 14789, 17537, 20266, 21504, 22848, 23934, 25474, 27727,
+        28915, 30631, 32768, 0,
+    ],
+    [
+        1645, 2573, 4778, 5711, 7807, 8622, 10522, 15357, 17674, 20408, 22517, 25010, 27116, 28856,
+        30749, 32768, 0,
+    ],
+];
+
+pub(crate) static DEFAULT_INTER_TX_TYPE_SET2_CDF: [u16; 13] = [
+    770, 2421, 5225, 12907, 15819, 18927, 21561, 24089, 26595, 28526, 30529, 32768, 0,
+];
+
+pub(crate) static DEFAULT_INTER_TX_TYPE_SET3_CDF: [[u16; 3]; 4] = [
+    [16384, 32768, 0],
+    [4167, 32768, 0],
+    [1998, 32768, 0],
+    [748, 32768, 0],
+];
+
 pub(crate) static DEFAULT_INTRA_FRAME_Y_MODE_CDF: [[[u16; 14]; 5]; 5] = [
     [
         [

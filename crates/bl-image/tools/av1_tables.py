@@ -138,7 +138,7 @@ def write(fname, parts):
 
 cdfs = sorted(n for n in TABLES if n.startswith('Default_') and n.endswith('_Cdf'))
 inter_only = ('New_Mv', 'Zero_Mv', 'Ref_Mv', 'Drl_', 'Is_Inter', 'Comp_', 'Skip_Mode',
-              'Single_Ref', 'Compound_', 'Interp_', 'Motion_', 'Inter_Tx', 'Inter_Intra',
+              'Single_Ref', 'Compound_', 'Interp_', 'Motion_', 'Inter_Intra',
               'Wedge', 'Use_Obmc', 'Uni_Comp', 'Y_Mode_Cdf', 'Segment_Id_Predicted')
 cdfs = [n for n in cdfs if not any(n[len('Default_'):].startswith(p) for p in inter_only)]
 parts = []
@@ -200,7 +200,8 @@ misc = ['Mi_Width_Log2', 'Mi_Height_Log2', 'Num_4x4_Blocks_Wide', 'Num_4x4_Block
         'Cos128_Lookup', 'Transform_Row_Shift', 'Cdef_Uv_Dir', 'Div_Table', 'Cdef_Pri_Taps',
         'Cdef_Sec_Taps', 'Cdef_Directions', 'Upscale_Filter', 'Sgr_Params', 'Intra_Mode_Context',
         'Coeff_Base_Ctx_Offset', 'Coeff_Base_Pos_Ctx_Offset', 'Mag_Ref_Offset_With_Tx_Class',
-        'Filter_Intra_Mode_To_Intra_Dir']
+        'Filter_Intra_Mode_To_Intra_Dir', 'Subpel_Filters', 'Tx_Type_In_Set_Inter',
+        'Tx_Type_Inter_Inv_Set1', 'Tx_Type_Inter_Inv_Set2', 'Tx_Type_Inter_Inv_Set3']
 parts = []
 emit(parts, misc)
 write('tables.rs', parts)

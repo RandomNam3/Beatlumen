@@ -17,6 +17,7 @@ mod cdf;
 mod cdf_tables;
 mod decoder;
 mod frame;
+mod intrabc;
 pub(crate) mod obu;
 mod post;
 mod predict;

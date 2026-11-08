@@ -89,16 +89,37 @@ fn get_scan(tx: usize, tx_type: u8) -> &'static [u16] {
     }
 }
 
-/// Transform set for intra blocks: 0 = DCT only, 1 = TX_SET_INTRA_1,
-/// 2 = TX_SET_INTRA_2.
-fn tx_set_intra(tx: usize, reduced: bool) -> usize {
+/// get_tx_set(): for intra blocks 0 = DCT only, 1 = TX_SET_INTRA_1,
+/// 2 = TX_SET_INTRA_2; for (intra block copy) inter blocks 0 = DCT only,
+/// 1..3 = TX_SET_INTER_1..3.
+fn tx_set(tx: usize, reduced: bool, inter: bool) -> usize {
     let sqr_up = TX_SIZE_SQR_UP[tx] as usize;
-    if sqr_up > TX_32X32 || sqr_up == TX_32X32 {
+    let sqr = TX_SIZE_SQR[tx] as usize;
+    if sqr_up > TX_32X32 {
+        return 0;
+    }
+    if inter {
+        if reduced || sqr_up == TX_32X32 {
+            3
+        } else if sqr == TX_16X16 {
+            2
+        } else {
+            1
+        }
+    } else if sqr_up == TX_32X32 {
         0
-    } else if reduced || TX_SIZE_SQR[tx] as usize == TX_16X16 {
+    } else if reduced || sqr == TX_16X16 {
         2
     } else {
         1
+    }
+}
+
+fn in_set(set: usize, inter: bool, t: u8) -> bool {
+    if inter {
+        TX_TYPE_IN_SET_INTER[set][t as usize] != 0
+    } else {
+        TX_TYPE_IN_SET_INTRA[set][t as usize] != 0
     }
 }
 
@@ -146,6 +167,12 @@ impl Decoder {
                     } else {
                         (0, 0)
                     };
+                    if b.is_inter && !b.lossless && plane == 0 {
+                        let bx = ((b.mi_col + (cx << 4)) >> sx) * 4;
+                        let by = ((b.mi_row + (cy << 4)) >> sy) * 4;
+                        self.transform_tree(t, b, bx, by, n4w * 4, n4h * 4)?;
+                        continue;
+                    }
                     let base_x = (b.mi_col >> sx) * 4;
                     let base_y = (b.mi_row >> sy) * 4;
                     let mut y = 0;
@@ -170,6 +197,40 @@ impl Decoder {
             }
         }
         Ok(())
+    }
+
+    fn transform_tree(
+        &mut self,
+        t: &mut Tile,
+        b: &mut Blk,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    ) -> Result<(), Error> {
+        if x >= self.mi_cols * 4 || y >= self.mi_rows * 4 {
+            return Ok(());
+        }
+        let (row, col) = (y >> 2, x >> 2);
+        let luma_tx = b.inter_tx[(row - b.mi_row) * 32 + col - b.mi_col] as usize;
+        if w <= TX_WIDTH[luma_tx] as usize && h <= TX_HEIGHT[luma_tx] as usize {
+            let tx = (0..19)
+                .find(|&s| TX_WIDTH[s] as usize == w && TX_HEIGHT[s] as usize == h)
+                .unwrap_or(0);
+            return self.transform_block(t, b, 0, x, y, tx, 0, 0);
+        }
+        if w > h {
+            self.transform_tree(t, b, x, y, w / 2, h)?;
+            self.transform_tree(t, b, x + w / 2, y, w / 2, h)
+        } else if w < h {
+            self.transform_tree(t, b, x, y, w, h / 2)?;
+            self.transform_tree(t, b, x, y + h / 2, w, h / 2)
+        } else {
+            self.transform_tree(t, b, x, y, w / 2, h / 2)?;
+            self.transform_tree(t, b, x + w / 2, y, w / 2, h / 2)?;
+            self.transform_tree(t, b, x, y + h / 2, w / 2, h / 2)?;
+            self.transform_tree(t, b, x + w / 2, y + h / 2, w / 2, h / 2)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -527,14 +588,24 @@ impl Decoder {
         if b.lossless || sqr_up > TX_32X32 {
             return transform::DCT_DCT;
         }
-        let set = tx_set_intra(tx, self.fh.reduced_tx_set);
+        let set = tx_set(tx, self.fh.reduced_tx_set, b.is_inter);
         if plane == 0 {
             let lx = x4 - b.mi_col;
             let ly = y4 - b.mi_row;
             return b.tx_types[ly * 32 + lx];
         }
+        if b.is_inter {
+            let lx = b.mi_col.max(x4 << self.ssx) - b.mi_col;
+            let ly = b.mi_row.max(y4 << self.ssy) - b.mi_row;
+            let t = b.tx_types[ly.min(31) * 32 + lx.min(31)];
+            return if in_set(set, true, t) {
+                t
+            } else {
+                transform::DCT_DCT
+            };
+        }
         let t = MODE_TO_TXFM[b.uv_mode as usize];
-        if TX_TYPE_IN_SET_INTRA[set][t as usize] == 0 {
+        if !in_set(set, false, t) {
             return transform::DCT_DCT;
         }
         t
@@ -830,14 +901,21 @@ impl Decoder {
     }
 
     fn transform_type(&mut self, t: &mut Tile, b: &mut Blk, x4: usize, y4: usize, tx: usize) {
-        let set = tx_set_intra(tx, self.fh.reduced_tx_set);
+        let set = tx_set(tx, self.fh.reduced_tx_set, b.is_inter);
         let q = if self.fh.segmentation_enabled {
             self.fh.qindex(true, b.segment_id, t.current_q)
         } else {
             self.fh.base_q_idx
         };
         let mut tx_type = transform::DCT_DCT;
-        if set > 0 && q > 0 {
+        if set > 0 && q > 0 && b.is_inter {
+            let sqr = TX_SIZE_SQR[tx] as usize;
+            tx_type = match set {
+                1 => TX_TYPE_INTER_INV_SET1[t.sd.symbol(&mut t.cdf.inter_tx_set1[sqr])],
+                2 => TX_TYPE_INTER_INV_SET2[t.sd.symbol(&mut t.cdf.inter_tx_set2)],
+                _ => TX_TYPE_INTER_INV_SET3[t.sd.symbol(&mut t.cdf.inter_tx_set3[sqr])],
+            };
+        } else if set > 0 && q > 0 {
             let dir = if b.use_filter_intra {
                 FILTER_INTRA_MODE_TO_INTRA_DIR[b.filter_intra_mode as usize]
             } else {

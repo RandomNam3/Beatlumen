@@ -65,6 +65,10 @@ pub(crate) struct Mi {
     pub pal_y: u8,
     pub pal_uv: u8,
     pub delta_lf: [i8; 4],
+    /// Intra block copy vector (row, column) in 1/8 samples.
+    pub mv: [i16; 2],
+    /// The MI row this entry was written for (the ring reuses entries).
+    pub row_tag: u32,
 }
 
 /// Entropy decoding state of one tile.
@@ -131,6 +135,8 @@ pub(crate) struct Blk {
     pub mv: [i32; 2],
     /// CurrentQIndex when the block was read.
     pub cur_q: i32,
+    /// InterTxSizes by 4x4 position within the block.
+    pub inter_tx: [u8; 1024],
 }
 
 impl Default for Blk {
@@ -169,6 +175,7 @@ impl Default for Blk {
             tx_types: [0; 1024],
             mv: [0; 2],
             cur_q: 0,
+            inter_tx: [0; 1024],
         }
     }
 }
@@ -238,7 +245,14 @@ impl Decoder {
         }
         let dsz = (sb4 + 3) * (sb4 + 3);
         let sb = sb4 * 4;
-        let frame = FrameBuf::new(planes, mi_cols * 4, mi_rows * 4, ssx, ssy, 2 * sb + 16);
+        // Intra block copy reads anywhere above in the tile (loop filters
+        // are off then): keep the whole frame.
+        let rows = if fh.allow_intrabc {
+            mi_rows * 4 + sb
+        } else {
+            2 * sb + 16
+        };
+        let frame = FrameBuf::new(planes, mi_cols * 4, mi_rows * 4, ssx, ssy, rows);
         let mut lr_on = [false; 3];
         for (p, on) in lr_on.iter_mut().enumerate().take(planes) {
             *on = fh.lr_type[p] != 0;
@@ -269,7 +283,13 @@ impl Decoder {
             },
             mi_cols,
             mi_rows,
-            mi: vec![Mi::default(); mi_cap * mi_cols],
+            mi: vec![
+                Mi {
+                    row_tag: u32::MAX,
+                    ..Mi::default()
+                };
+                mi_cap * mi_cols
+            ],
             mi_cap,
             pal: if screen {
                 vec![[[0; 8]; 2]; mi_cap * mi_cols]
@@ -713,6 +733,9 @@ impl Decoder {
     fn decode_block_inner(&mut self, t: &mut Tile, b: &mut Blk) -> Result<(), Error> {
         self.intra_frame_mode_info(t, b)?;
         b.cur_q = t.current_q;
+        if b.is_inter {
+            self.intrabc_mv(t, b);
+        }
         self.palette_tokens(t, b);
         self.read_block_tx_size(t, b);
         let (r, c) = (b.mi_row, b.mi_col);
@@ -742,6 +765,8 @@ impl Decoder {
                 t.delta_lf[2] as i8,
                 t.delta_lf[3] as i8,
             ],
+            mv: [b.mv[0] as i16, b.mv[1] as i16],
+            row_tag: 0,
         };
         for y in r..y_end {
             for x in c..x_end {
@@ -749,13 +774,15 @@ impl Decoder {
                 let old_uv = self.mi[i].lf_tx_uv;
                 self.mi[i] = mi;
                 self.mi[i].lf_tx_uv = old_uv;
+                self.mi[i].row_tag = y as u32;
+                self.mi[i].tx_size = b.inter_tx[(y - r) * 32 + (x - c)];
                 if !self.pal.is_empty() {
                     self.pal[i] = [b.pal_y, b.pal_u];
                 }
             }
         }
         if b.is_inter {
-            return Err(Error::Unsupported("av1: intra block copy"));
+            self.predict_intrabc(b);
         }
         self.residual(t, b)
     }
@@ -1232,8 +1259,29 @@ impl Decoder {
     // ---- transform size -------------------------------------------------
 
     fn read_block_tx_size(&mut self, t: &mut Tile, b: &mut Blk) {
-        // Intra blocks (and intra block copy blocks, which are rejected
-        // later) use one transform size.
+        let (bw4, bh4) = (b.bw4.min(32), b.bh4.min(32));
+        if self.fh.tx_mode_select && b.size > BLOCK_4X4 && b.is_inter && !b.skip && !b.lossless {
+            let max_tx = MAX_TX_SIZE_RECT[b.size] as usize;
+            let tw4 = (TX_WIDTH[max_tx] / 4) as usize;
+            let th4 = (TX_HEIGHT[max_tx] / 4) as usize;
+            let mut row = b.mi_row;
+            while row < b.mi_row + b.bh4 {
+                let mut col = b.mi_col;
+                while col < b.mi_col + b.bw4 {
+                    self.read_var_tx(t, b, row, col, max_tx, 0);
+                    col += tw4;
+                }
+                row += th4;
+            }
+            return;
+        }
+        self.read_tx_size(t, b);
+        for y in 0..bh4 {
+            b.inter_tx[y * 32..y * 32 + bw4].fill(b.tx_size as u8);
+        }
+    }
+
+    fn read_tx_size(&mut self, t: &mut Tile, b: &mut Blk) {
         if b.lossless {
             b.tx_size = TX_4X4;
             return;
@@ -1246,9 +1294,12 @@ impl Decoder {
             let max_w = TX_WIDTH[max_rect] as usize;
             let max_h = TX_HEIGHT[max_rect] as usize;
             let (r, c) = (b.mi_row, b.mi_col);
+            // get_above_tx_width / get_left_tx_height at the block edge.
             let above_w = if b.avail_u {
                 let m = self.mi_at(r - 1, c);
                 if m.is_inter {
+                    block_width(m.bsize as usize)
+                } else if m.skip && m.is_inter {
                     block_width(m.bsize as usize)
                 } else {
                     TX_WIDTH[m.tx_size as usize] as usize
