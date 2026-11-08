@@ -59,6 +59,12 @@ Item {
             }
         }
 
+        RoomPanel {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+        }
+
         EmptyState {
             visible: !page.connected
             Layout.fillWidth: true
@@ -68,12 +74,18 @@ Item {
             text: Theme.tr("Connect to a server to control your other devices from here.")
         }
         EmptyState {
-            visible: page.connected && page.devices.length === 0
+            // A guest of a room has no devices here.
+            visible: page.connected && page.devices.length === 0 && (Core.state.room || {}).guest !== true
             Layout.fillWidth: true
             Layout.topMargin: 24
             iconName: "devices"
             title: Theme.tr("No other devices yet")
             text: Theme.tr("Open Beatlumen on another device and connect it to this server.")
+        }
+
+        Item {
+            visible: !list.visible
+            Layout.fillHeight: true
         }
 
         ListView {

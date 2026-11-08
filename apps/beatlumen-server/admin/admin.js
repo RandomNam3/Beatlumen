@@ -87,6 +87,8 @@
     "Delete extension songs after": "Songs von Erweiterungen löschen nach",
     "days": "Tagen",
     "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never.": "Songs, die eine Erweiterung heruntergeladen hat, werden nach so vielen Tagen ohne Wiedergabe gelöscht, um Speicher zu sparen. Die eigenen Songs der Bibliothek bleiben immer erhalten. 0 = nie.",
+"Guests in rooms": "Gäste in Räumen",
+    "People without a login may join a room to listen together, with its code or link. They get that room's songs and nothing else, for as long as the room lasts.": "Personen ohne Anmeldung dürfen mit Code oder Link einem Raum zum gemeinsamen Hören beitreten. Sie bekommen die Songs dieses Raums und sonst nichts, solange der Raum besteht.",
     "Keep extension songs in lists": "Songs von Erweiterungen in Listen behalten",
     "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played.": "Songs, die jemand bewusst aufgenommen hat oder die in den Playlists oder Favoriten eines Kontos stehen, bleiben erhalten, egal wie lange sie nicht gespielt wurden.",
     "Songs from extensions: %1, %2 MB": "Songs von Erweiterungen: %1, %2 MB",
@@ -463,6 +465,7 @@
     onlineMetadata: { label: "Artist information from the internet", type: "switch", hint: "Looks the library's artists up, for artist pages and recommendations: their names and this server's address go to MusicBrainz and, for artist pages, to Wikimedia and ListenBrainz. Off by default." },
     extensionCleanupDays: { label: "Delete extension songs after", type: "number", unit: "days", hint: "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never." },
     extensionCleanupKeepListed: { label: "Keep extension songs in lists", type: "switch", hint: "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played." },
+    roomGuests: { label: "Guests in rooms", type: "switch", hint: "People without a login may join a room to listen together, with its code or link. They get that room's songs and nothing else, for as long as the room lasts." },
     verbose: { label: "Detailed log", type: "switch", hint: "Logs every request." },
   };
 
@@ -708,7 +711,7 @@
   }
 
   async function library() {
-    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "karaoke", "autoKaraoke", "onlineMetadata", "extensionCleanupDays", "extensionCleanupKeepListed"]);
+    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "karaoke", "autoKaraoke", "onlineMetadata", "extensionCleanupDays", "extensionCleanupKeepListed", "roomGuests"]);
     try {
       const o = await api("GET", "overview");
       if (o.extensionSongs && o.extensionSongs.songs > 0) {

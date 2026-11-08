@@ -37,6 +37,11 @@ const STATE_EVERY: f64 = 0.1;
 pub struct LaunchArgs {
     pub files: Vec<String>,
     pub server: Option<String>,
+    /// A room to join, by link or code.
+    pub room: Option<String>,
+    /// The page the browser build came from (it reaches its server without an
+    /// address, but a link to a room needs one).
+    pub origin: Option<String>,
     pub fullscreen: bool,
     pub preset: Option<String>,
     pub backgrounds: Vec<String>,
@@ -49,6 +54,8 @@ impl LaunchArgs {
         while let Some(arg) = it.next() {
             match arg.as_str() {
                 "--server" => a.server = it.next(),
+                "--room" => a.room = it.next(),
+                "--origin" => a.origin = it.next(),
                 "--background" | "--bg" => a.backgrounds.extend(it.next()),
                 "--preset" => a.preset = it.next(),
                 "--fullscreen" => a.fullscreen = true,
@@ -61,6 +68,7 @@ impl LaunchArgs {
 
     pub const USAGE: &'static str = "usage: beatlumen [options] [audio files...]\n\
         \n  --server URL        connect to a Beatlumen server\
+        \n  --room LINK         join a room to listen together\
         \n  --background PATH   add a background image (repeatable)\
         \n  --preset NAME       activate a preset\
         \n  --data DIR          settings/data directory\
@@ -94,6 +102,9 @@ pub(crate) enum Req {
     DeviceList(u64),
     DeviceEvents(u64),
     DeviceCommand,
+    /// When it was sent (this device's clock, ms).
+    ClockSample(f64),
+    Room(crate::room::RoomReq),
     AccountSettingsGet(String),
     AccountSettingsPut(String),
     LyricsSaved,
@@ -320,7 +331,7 @@ pub struct Core {
     pub(crate) blur_target: f32,
     menu_blur: f32,
     pub(crate) overlay: Overlay,
-    launch: LaunchArgs,
+    pub(crate) launch: LaunchArgs,
     launched_with_files: bool,
     pub(crate) last_dt: f64,
     pub(crate) time: f64,
@@ -342,6 +353,7 @@ pub struct Core {
     pub(crate) phones: crate::karaoke_phone::PhoneState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
+    pub(crate) room: crate::room::RoomState,
     /// What this account took out of the server's library, with how long each
     /// can still come back.
     pub(crate) hidden_items: Vec<Value>,
@@ -560,6 +572,7 @@ impl Core {
             phones: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
+            room: Default::default(),
             hidden_items: Vec::new(),
             discord: Default::default(),
             view_part: None,
@@ -586,6 +599,7 @@ impl Core {
         if host.platform() == "web" || core.settings.use_server || core.launch.server.is_some() {
             core.connect_server(host);
         }
+        core.room.pending = core.launch.room.clone();
         if !core.settings.library_folders.is_empty() && host.has_threads() {
             core.rescan_local();
         }
@@ -780,6 +794,11 @@ impl Core {
             .with("recommendRev", self.recommend.rev)
             .with("radio", self.radio_json())
             .with("deviceName", self.device_name(host))
+            .with("room", self.room_json())
+            .with(
+                "serverRoomGuests",
+                matches!(&self.server.state, ServerState::Connected(i) if i.room_guests),
+            )
             .with("offline", self.offline_json(host))
             .with("airplay", self.airplay_json())
             .with("outputs", self.outputs_json())
@@ -910,6 +929,10 @@ impl Core {
         }
         if let Req::Ext(e) = req {
             return self.ext_http(host, e, res);
+        }
+        // A room's token says nothing about the login of the app.
+        if let Req::Room(r) = req {
+            return self.room_http(host, r, &res);
         }
         let status = res.as_ref().map(|r| r.status).unwrap_or(0);
         if status == 401 && !matches!(req, Req::Login | Req::Info) {
@@ -1069,6 +1092,7 @@ impl Core {
             | Req::DeviceList(_)
             | Req::DeviceEvents(_)
             | Req::DeviceCommand) => self.devices_response(host, r, &res),
+            Req::ClockSample(sent) => self.clock_answer(host, sent, &res),
             Req::AccountSettingsGet(user) => self.account_settings_fetched(host, &user, &res),
             Req::AccountSettingsPut(user) => self.account_settings_saved(host, &user, &res),
             Req::LyricsSaved => {
@@ -1139,6 +1163,7 @@ impl Core {
             Req::Vault(..)
             | Req::WebCheck(_)
             | Req::Ext(_)
+            | Req::Room(_)
             | Req::Artist
             | Req::ArtistServer
             | Req::ArtistImage => {}
@@ -2752,6 +2777,7 @@ impl Core {
         self.poll_lyrics_sync(host);
         self.poll_karaoke(host);
         self.poll_devices(host);
+        self.poll_room(host);
         self.poll_account_sync(host);
         self.poll_favorites(host);
         self.poll_history(host);
@@ -3020,6 +3046,7 @@ impl Core {
     }
 
     pub fn shutdown(&mut self, host: &mut dyn Host) {
+        self.room_command(host, "room.leave", &Value::Null);
         self.finish_listening(host);
         self.save_history(host);
         self.save_settings(host);

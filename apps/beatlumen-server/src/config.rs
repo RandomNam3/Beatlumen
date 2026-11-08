@@ -64,6 +64,8 @@ pub struct Config {
     pub extension_cleanup_days: u32,
     /// Songs added on purpose, in a playlist or among favorites stay anyway.
     pub extension_cleanup_keep_listed: bool,
+    /// People without a login may join a room with its code or link.
+    pub room_guests: bool,
     /// Whisper model (ggml file) for timing song texts.
     pub speech_model: Option<PathBuf>,
     /// Time the song texts of the whole library in the background.
@@ -141,6 +143,7 @@ impl Default for Config {
             online_metadata: false,
             extension_cleanup_days: 90,
             extension_cleanup_keep_listed: true,
+            room_guests: true,
             admin_password_file: None,
             model_source: None,
             origins: Vec::new(),
@@ -247,6 +250,10 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "roomGuests",
+        live: true,
+    },
+    AdminSetting {
         key: "verbose",
         live: true,
     },
@@ -301,6 +308,7 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
         "onlineMetadata" => Value::from(cfg.online_metadata),
         "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
         "extensionCleanupKeepListed" => Value::from(cfg.extension_cleanup_keep_listed),
+        "roomGuests" => Value::from(cfg.room_guests),
         "verbose" => Value::from(cfg.verbose),
         _ => Value::Null,
     }
@@ -334,6 +342,7 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
     ("BEATLUMEN_KARAOKE", "karaoke"),
     ("BEATLUMEN_AUTO_KARAOKE", "autoKaraoke"),
+    ("BEATLUMEN_ROOM_GUESTS", "roomGuests"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
     ("BEATLUMEN_EXTENSION_CLEANUP_DAYS", "extensionCleanupDays"),
     (
@@ -373,6 +382,7 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--no-auto-labels" => "autoLabels",
         "--karaoke" => "karaoke",
         "--auto-karaoke" => "autoKaraoke",
+        "--no-room-guests" => "roomGuests",
         "--online-metadata" => "onlineMetadata",
         "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
@@ -646,6 +656,12 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "BEATLUMEN_EXTENSION_CLEANUP_DAYS: expected a number of days".to_string()
         })?;
     }
+    if let Some(v) = get("BEATLUMEN_ROOM_GUESTS") {
+        cfg.room_guests = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_EXTENSION_CLEANUP_KEEP_LISTED") {
         cfg.extension_cleanup_keep_listed = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -783,6 +799,8 @@ OPTIONS:
                             ggml-base.bin) for timing song texts on request
     --auto-sync-lyrics      Also time the song texts of the whole library in the
                             background (needs --speech-model)
+    --no-room-guests        People without a login cannot join a room to listen
+                            together
     --no-auto-labels        Do not work out how the library's songs sound (tempo,
                             key, energy) for labels and recommendations
     --karaoke               Compute karaoke data (the melody of the singing as
@@ -983,6 +1001,9 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                     .and_then(|d| u32::try_from(d).ok())
                     .ok_or_else(|| err("expected a number of days"))?
             }
+            "roomGuests" => {
+                cfg.room_guests = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "extensionCleanupKeepListed" => {
                 cfg.extension_cleanup_keep_listed =
                     val.as_bool().ok_or_else(|| err("expected true or false"))?
@@ -1116,6 +1137,7 @@ fn build(
             "--no-auto-labels" => cfg.auto_labels = false,
             "--karaoke" => cfg.karaoke = true,
             "--auto-karaoke" => cfg.auto_karaoke = true,
+            "--no-room-guests" => cfg.room_guests = false,
             "--online-metadata" => cfg.online_metadata = true,
             "--model-source" => cfg.model_source = Some(model_source(&v)?),
             "--days" if command == Some("invite") => days = num(flag, &v)?.clamp(1, 365),
@@ -1206,6 +1228,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             | "--no-auto-labels"
             | "--karaoke"
             | "--auto-karaoke"
+            | "--no-room-guests"
             | "--online-metadata" => items.push((flag, None)),
             _ if takes_value => {
                 let v = match inline {

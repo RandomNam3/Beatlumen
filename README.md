@@ -31,6 +31,9 @@ spielt lokale Dateien ab und streamt von deinem eigenen Beatlumen-Server.
   what they play; control them remotely, play songs on another device,
   move your music there or take theirs over, or start several devices
   together.
+- **Listen together**: a room on your server that others join with a code
+  or a link, guests without a login too. Everyone hears the same song at
+  the same moment, and the devices keep themselves in step.
 - **Song texts** over the visuals: from the file's tags, an `.lrc` or
   `.txt` file next to it, or added in the app. Synced texts (LRC, also with
   word timing) follow the song; tapping a line jumps there. With a

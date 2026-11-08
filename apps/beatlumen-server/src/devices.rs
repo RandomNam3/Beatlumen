@@ -127,6 +127,12 @@ impl Devices {
         inner.devices.get(id).map(|d| d.scope.clone())
     }
 
+    /// Tells one device of a scope.
+    pub fn notify_device(&self, scope: &str, device: &str, body: Value) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        self.push(&mut inner, scope, Some(device), body);
+    }
+
     /// Devices in a scope (for the admin overview: all of them).
     pub fn count_online(&self) -> usize {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -139,11 +145,12 @@ impl Devices {
 
     /// `/api/devices...`, `/api/events`, `/api/time` for a request whose
     /// login belongs to `scope`.
-    pub fn handle(&self, req: &Request, segs: &[&str], scope: &str) -> Response {
+    /// `rooms`: the scopes of rooms this device listens to as well.
+    pub fn handle(&self, req: &Request, segs: &[&str], scope: &str, rooms: &[String]) -> Response {
         let m = req.method.as_str();
         match (m, segs) {
             ("GET", ["time"]) => Response::json(200, &Value::object().with("now", now_ms())),
-            ("GET", ["events"]) => self.events(req, scope),
+            ("GET", ["events"]) => self.events(req, scope, rooms),
             ("GET", ["devices"]) => {
                 let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 let mut list: Vec<(&String, &Device)> = inner
@@ -280,7 +287,7 @@ impl Devices {
 
     /// Long polling: the events after `since` for this device, waiting up
     /// to 20 s for the first one. Counts as a heartbeat.
-    fn events(&self, req: &Request, scope: &str) -> Response {
+    fn events(&self, req: &Request, scope: &str, rooms: &[String]) -> Response {
         let device = req.query("device").unwrap_or("").to_string();
         let since: u64 = req
             .query("since")
@@ -308,7 +315,7 @@ impl Devices {
                 .iter()
                 .filter(|e| {
                     e.seq > since
-                        && e.scope == scope
+                        && (e.scope == scope || rooms.contains(&e.scope))
                         && !matches!(e.target.as_deref(), Some(t) if t != device)
                 })
                 .map(|e| e.body.clone().with("seq", e.seq))

@@ -161,6 +161,20 @@ impl Core {
         if let Some(r) = self.capture_transport(host, &name, c) {
             return r;
         }
+        // In a room the controls are the host's, and they go through the room.
+        if let Some(r) = self.room_transport(host, &name, c) {
+            return r;
+        }
+        if name.starts_with("room.") {
+            return self.room_command(host, &name, c);
+        }
+        // Chosen here: this device no longer keeps step with a group.
+        if matches!(
+            name.as_str(),
+            "pause" | "toggle" | "stop" | "seek" | "seekBy"
+        ) {
+            self.devices.group_anchor = None;
+        }
         match name.as_str() {
             // ---- state ----------------------------------------------------
             "state" => self.state(host),

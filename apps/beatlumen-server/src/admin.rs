@@ -940,6 +940,7 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "extensionCleanupKeepListed" => {
             cfg.extension_cleanup_keep_listed = d.extension_cleanup_keep_listed
         }
+        "roomGuests" => cfg.room_guests = d.room_guests,
         "verbose" => cfg.verbose = d.verbose,
         _ => {}
     }

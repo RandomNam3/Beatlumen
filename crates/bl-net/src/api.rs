@@ -55,6 +55,8 @@ pub struct ServerInfo {
     pub speech: bool,
     /// The server computes karaoke data.
     pub karaoke: bool,
+    /// People without a login may join a room to listen together.
+    pub room_guests: bool,
 }
 
 impl ServerInfo {
@@ -72,6 +74,7 @@ impl ServerInfo {
             .with("passkeys", self.passkeys)
             .with("speech", self.speech)
             .with("karaoke", self.karaoke)
+            .with("roomGuests", self.room_guests)
     }
     pub fn from_json(v: &Value) -> ServerInfo {
         ServerInfo {
@@ -87,6 +90,7 @@ impl ServerInfo {
             passkeys: v.bool_or("passkeys", false),
             speech: v.bool_or("speech", false),
             karaoke: v.bool_or("karaoke", false),
+            room_guests: v.bool_or("roomGuests", false),
         }
     }
 }
