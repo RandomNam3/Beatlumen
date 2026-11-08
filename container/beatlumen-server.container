@@ -6,6 +6,8 @@
 #         systemctl [--user] start beatlumen-server
 #
 # Build the image first: podman build -f container/Containerfile -t beatlumen-server .
+# Copy the seccomp profile next to this unit:
+#   cp container/seccomp/beatlumen-server.json ~/.config/containers/systemd/
 # Create the secrets: printf '%s' 'a-long-password' | podman secret create beatlumen_password -
 #                     head -c 32 /dev/urandom | podman secret create beatlumen_pepper -
 # Adjust the music and image folders below.
@@ -31,12 +33,16 @@ Environment=BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/beatlumen_pepper
 # Other settings are made in the admin interface (/admin/); a variable
 # set here is fixed there, e.g.
 # Environment=BEATLUMEN_NAME=Beatlumen Server
-RunInit=true
 ReadOnly=true
 DropCapability=ALL
 NoNewPrivileges=true
+# Only the system calls the server uses (no executable memory, no new
+# namespaces, IPv4/IPv6 sockets only). Root units: /etc/containers/systemd/.
+SeccompProfile=%h/.config/containers/systemd/beatlumen-server.json
+PodmanArgs=--ipc=none
 PidsLimit=256
-HealthCmd=/beatlumen-server --health-check
+# Exec form: the image has no shell.
+HealthCmd=["/beatlumen-server","--health-check"]
 HealthInterval=30s
 HealthStartPeriod=30s
 # With the SELinux profile from container/selinux installed:

@@ -20,8 +20,8 @@ services:
       context: ..
       dockerfile: container/Containerfile
     restart: unless-stopped
-    # Small init process as PID 1: forwards SIGTERM, reaps processes.
-    init: true
+    # No init process: the server stops on SIGTERM itself and starts no
+    # other processes.
     ports:
       # Host port : container port. Use "127.0.0.1:7878:7878" behind a
       # reverse proxy on the same machine.
@@ -59,10 +59,15 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      # Only the system calls the server uses (container/seccomp; no
+      # executable memory, no new namespaces, IPv4/IPv6 sockets only).
+      - seccomp=./seccomp/beatlumen-server.json
       # After installing the profiles from container/apparmor or
       # container/selinux (see README.md), enable the matching line:
       # - apparmor=beatlumen-server
       # - label=type:beatlumen_server.process
+    # No shared memory or message queues with other containers.
+    ipc: none
     pids_limit: 256
     # Large speech models need up to about 1.5 GB more while they work.
     mem_limit: 3g
