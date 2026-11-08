@@ -250,6 +250,7 @@ QtObject {
         "Timing the song text…": "Songtext wird synchronisiert …",
         "Waiting for the server…": "Warte auf den Server …",
         "Song texts": "Songtexte",
+        "Images": "Bilder",
         "Video": "Video",
         "Audio": "Audio",
         "Radio edit": "Radio Edit",

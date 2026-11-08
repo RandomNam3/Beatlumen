@@ -326,7 +326,11 @@ fn every_resolution_and_format() {
             if !gen(&p, w, h, frames, c.alpha, c.args) {
                 // The Linux CI has every encoder; other builds of ffmpeg may
                 // lack one (libwebp, APNG).
-                assert!(!cfg!(target_os = "linux"), "ffmpeg could not create {}", p.display());
+                assert!(
+                    !cfg!(target_os = "linux"),
+                    "ffmpeg could not create {}",
+                    p.display()
+                );
                 eprintln!("note: ffmpeg could not create {}, skipped", p.display());
                 continue;
             }

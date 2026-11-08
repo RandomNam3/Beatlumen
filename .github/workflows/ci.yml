@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install ffmpeg and ImageMagick (test fixtures and references)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick
+      - name: Install ffmpeg, ImageMagick, jpegtran and Pillow (test fixtures and references)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick libjpeg-turbo-progs python3-pil
       - name: Test
         run: cargo test --workspace --release
       - name: Server binary

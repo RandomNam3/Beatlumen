@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
+  PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
+  are read, so they never exist at full size: a 16K image needs about 16 MB of working memory
+  instead of 530 MB, on a tablet as on a PC. Each picture is decoded for the screen (with room
+  for the camera's zoom) and the graphics card's limit, and once more in finer detail when the
+  window becomes much larger. Formerly pictures were cut to 2560 pixels and 8K files failed.
+- **Animated backgrounds:** GIF, animated WebP and animated PNG play behind the visual at
+  screen size (up to about 1080p on phones and tablets, 1440p elsewhere). Frames are decoded
+  ahead on their own thread and kept when the animation is short enough, so later loops cost
+  no decoding; nothing runs while the app is hidden.
+- **Backgrounds from the server:** animations come as they are, still images scaled to the
+  screen (up to 8192 pixels instead of 4096). The image folders list TIFF and APNG files,
+  files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
+  supported: AVIF would need an AV1 decoder of its own, HEIC an HEVC decoder, whose patents
+  stand in the way.
 - **Music is stored once:** the same music file in several accounts' encrypted files takes up
   the space of one, and it stays encrypted. The server can see that two accounts hold the
   same file (`docs/ENCRYPTION.md`); other files are never put together.

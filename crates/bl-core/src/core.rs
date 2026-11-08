@@ -2493,7 +2493,11 @@ impl Core {
                         source.0,
                         source.1,
                         if animated { ", animated" } else { "" },
-                        if same.is_some() { ", decoded again" } else { "" },
+                        if same.is_some() {
+                            ", decoded again"
+                        } else {
+                            ""
+                        },
                     ));
                     self.bg_anim = match bg {
                         BgImage::Animated { player, .. } => Some(player),
