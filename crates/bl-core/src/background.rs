@@ -122,6 +122,44 @@ pub(crate) fn decode(
     Ok((BgImage::Still(img), size))
 }
 
+/// Recently made thumbnails: (path, modification time, length) and image.
+type ThumbCache = Vec<((String, u128, u64), Arc<Image>)>;
+static THUMBS: std::sync::Mutex<ThumbCache> = std::sync::Mutex::new(Vec::new());
+const THUMB_CACHE: usize = 64;
+
+/// A small picture of a local image file for lists (covering `w` x `h`),
+/// decoded with the image decoders of the core: any supported format and
+/// size (a 16K picture is scaled while it is read), first frame of
+/// animations. From any thread; the last 64 are kept.
+pub fn thumbnail(path: &str, w: u32, h: u32) -> Option<Arc<Image>> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    let key = (format!("{path}\u{0}{w}x{h}"), mtime, meta.len());
+    if let Ok(cache) = THUMBS.lock() {
+        if let Some((_, img)) = cache.iter().find(|(k, _)| *k == key) {
+            return Some(img.clone());
+        }
+    }
+    let data = std::fs::read(path).ok()?;
+    let fit = Fit::cover(w.clamp(1, 2048), h.clamp(1, 2048), 2048, 1 << 22);
+    let img = std::panic::catch_unwind(move || bl_image::decode_fit_owned(data, &fit).ok())
+        .ok()
+        .flatten()?;
+    let img = Arc::new(img);
+    if let Ok(mut cache) = THUMBS.lock() {
+        cache.retain(|(k, _)| k.0 != key.0);
+        if cache.len() >= THUMB_CACHE {
+            cache.remove(0);
+        }
+        cache.push((key, img.clone()));
+    }
+    Some(img)
+}
+
 /// A frame to show and for how long.
 type Shown = (Arc<Image>, u32);
 
@@ -360,6 +398,25 @@ mod tests {
                 assert!(s.0.abs_diff(want) <= 10, "threads {threads}: {shown:?}");
             }
         }
+    }
+
+    #[test]
+    fn thumbnails_are_small_and_kept() {
+        let dir = std::env::temp_dir().join(format!("bl-thumb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.png");
+        std::fs::write(&p, bl_image::encode_png(&Image::new(400, 300))).unwrap();
+        let path = p.to_str().unwrap();
+        let a = thumbnail(path, 320, 200).unwrap();
+        assert_eq!((a.width, a.height), (320, 240));
+        let b = thumbnail(path, 320, 200).unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "second call from the cache");
+        // Animations: the first frame.
+        std::fs::write(&p, apng()).unwrap();
+        let c = thumbnail(path, 4, 4).unwrap();
+        assert_eq!(&c.pixels[..4], &[255, 0, 0, 255]);
+        assert!(thumbnail(dir.join("missing.png").to_str().unwrap(), 8, 8).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

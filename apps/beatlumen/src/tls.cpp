@@ -335,11 +335,39 @@ public:
         return img;
     }
 };
+// image://thumb/<percent-encoded path>: thumbnails of local background
+// images decoded by the core, which reads every supported format and
+// scales very large pictures while reading them (Qt's own decoders know
+// fewer formats and refuse images above 256 MB).
+class ThumbImageProvider : public QQuickImageProvider
+{
+public:
+    ThumbImageProvider() : QQuickImageProvider(QQuickImageProvider::Image, QQmlImageProviderBase::ForceAsynchronousImageLoading) {}
+
+    QImage requestImage(const QString &id, QSize *size, const QSize &requested) override
+    {
+        const QByteArray path = QUrl::fromPercentEncoding(id.toUtf8()).toUtf8();
+        const QSize want = requested.isValid() ? requested : QSize(320, 200);
+        uint32_t w = 0, h = 0;
+        size_t len = 0;
+        uint8_t *data = bl_image_thumbnail(path.constData(), uint32_t(qMax(1, want.width())), uint32_t(qMax(1, want.height())), &w, &h, &len);
+        if (!data)
+            return {};
+        QImage img;
+        if (w > 0 && h > 0 && len >= size_t(w) * h * 4)
+            img = QImage(data, int(w), int(h), int(w) * 4, QImage::Format_RGBA8888).copy();
+        bl_bytes_free(data, len);
+        if (size && !img.isNull())
+            *size = img.size();
+        return img;
+    }
+};
 } // namespace
 
 void tls::addImageProvider(QQmlEngine *engine)
 {
     engine->addImageProvider(QStringLiteral("server"), new ServerImageProvider);
+    engine->addImageProvider(QStringLiteral("thumb"), new ThumbImageProvider);
 }
 #else
 void tls::addImageProvider(QQmlEngine *) {}
