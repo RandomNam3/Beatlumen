@@ -369,14 +369,14 @@ ScrollView {
             property string name
             anchors.centerIn: Overlay.overlay
             width: Math.min(420, (parent ? parent.width : 420) - 32)
-            title: Theme.tr("Remove the folder \"%1\"?").arg(name)
+            title: Theme.tr("Remove the folder?")
             standardButtons: Dialog.Cancel | Dialog.Ok
             onAboutToShow: Theme.nameButtons(this)
             Label {
                 textFormat: Text.PlainText
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: Theme.tr("Its images leave the list and changes in it are no longer followed. The files stay where they are.")
+                text: Theme.tr("The images from \"%1\" leave the list, and changes in the folder are no longer followed. The files stay where they are.").arg(confirmFolder.name)
             }
             onAccepted: Core.call("backgrounds.removeFolder", { path: path })
         }

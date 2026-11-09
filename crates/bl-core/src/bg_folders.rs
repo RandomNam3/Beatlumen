@@ -888,6 +888,32 @@ mod tests {
         settle(&mut core, &mut host);
         assert_eq!(listed(&mut core, &mut host), vec![file(&a), file(&c)]);
 
+        // A changed file gets a new thumbnail URL (the same URL would not
+        // load again).
+        core.server.image_provider = true;
+        let thumb = |core: &mut Core, host: &mut TestHost| {
+            let v = cmd(core, host, Value::object().with("cmd", "backgrounds.list"));
+            v.as_array().unwrap()[1].get("thumb").as_str().unwrap().to_string()
+        };
+        let before = thumb(&mut core, &mut host);
+        assert!(before.starts_with("image://thumb/") && before.contains('#'), "{before}");
+        std::fs::write(&c, b"image c, changed").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&c)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        cmd(
+            &mut core,
+            &mut host,
+            Value::object().with("cmd", "backgrounds.sync"),
+        );
+        settle(&mut core, &mut host);
+        assert_eq!(listed(&mut core, &mut host), vec![file(&a), file(&c)]);
+        assert_ne!(thumb(&mut core, &mut host), before);
+
         // Taken off the list: stays off.
         cmd(
             &mut core,

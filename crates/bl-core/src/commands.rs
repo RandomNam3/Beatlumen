@@ -1475,8 +1475,15 @@ impl Core {
                 .unwrap_or_else(|| p.to_string());
             // Thumbnails from the core's decoders (any format and size)
             // where the UI has the provider, else the file itself.
+            // A file in a synced folder carries its stamp (after a raw
+            // '#', which the provider ignores), so that its
+            // tile loads again when the file changes.
             let thumb = if self.server.image_provider {
-                format!("image://thumb/{}", bl_net::http::percent_encode(p))
+                let mut url = format!("image://thumb/{}", bl_net::http::percent_encode(p));
+                if let Some(v) = self.background_file_version(p) {
+                    url.push_str(&format!("#{v}"));
+                }
+                url
             } else {
                 crate::core::file_url(p)
             };

@@ -2617,6 +2617,24 @@ impl Core {
         }
     }
 
+    /// The size and modification time of a background image in a synced
+    /// folder, as last seen.
+    pub(crate) fn background_file_version(&self, path: &str) -> Option<String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self
+            .bg_sync
+            .folders
+            .list
+            .iter()
+            .find_map(|f| f.seen.get(path))
+            .map(|s| format!("{}-{}", s.modified, s.size));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            None
+        }
+    }
+
     fn background_folders_state(&self) -> Value {
         #[cfg(not(target_arch = "wasm32"))]
         return self.background_folders_json();
