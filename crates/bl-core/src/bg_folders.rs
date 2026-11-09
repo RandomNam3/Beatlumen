@@ -173,17 +173,31 @@ impl Folders {
 }
 
 fn trim_separator(path: &str) -> String {
+    let path = slashes(path.to_string());
     let t = path.trim_end_matches(['/', '\\']);
     if t.is_empty() || t.ends_with(':') {
-        path.to_string()
+        path.clone()
     } else {
         t.to_string()
     }
 }
 
+/// On Windows, paths use `/` throughout, as Qt gives them: a directory walk
+/// joins with `\`, so a file found in a folder and the same file picked on
+/// its own would otherwise be different strings. Verbatim paths (`\\?\`)
+/// stay as they are.
+pub fn slashes(path: String) -> String {
+    if cfg!(windows) && !path.starts_with(r"\\?\") {
+        path.replace('\\', "/")
+    } else {
+        path
+    }
+}
+
 /// Whether `path` is `dir` or lies below it.
 pub fn within(path: &str, dir: &str) -> bool {
-    let dir = dir.trim_end_matches(['/', '\\']);
+    let (path, dir) = (slashes(path.to_string()), slashes(dir.to_string()));
+    let (path, dir) = (path.as_str(), dir.trim_end_matches(['/', '\\']));
     path == dir
         || (path.len() > dir.len()
             && path.starts_with(dir)
@@ -234,7 +248,7 @@ fn list_folder(dir: &str) -> Option<Vec<(String, Stamp)>> {
     let mut out = Vec::new();
     for p in crate::library::list_images(dir) {
         if let Ok(s) = Stamp::of(&p) {
-            out.push((p, s));
+            out.push((slashes(p), s));
         }
     }
     Some(out)
@@ -443,7 +457,7 @@ impl crate::core::Core {
         if paths.is_empty() {
             return;
         }
-        self.bg_sync.queued.extend(paths);
+        self.bg_sync.queued.extend(paths.into_iter().map(slashes));
         self.bg_sync.queued_show |= show;
     }
 
@@ -658,10 +672,10 @@ mod tests {
                 std::fs::create_dir_all(parent).unwrap();
             }
             std::fs::write(&p, data).unwrap();
-            p.to_string_lossy().into_owned()
+            slashes(p.to_string_lossy().into_owned())
         }
         fn path(&self) -> String {
-            self.0.to_string_lossy().into_owned()
+            slashes(self.0.to_string_lossy().into_owned())
         }
     }
     impl Drop for Dir {
@@ -777,7 +791,7 @@ mod tests {
         // A folder holding a copy of a single image already listed.
         let out = scan(Job {
             folders: vec![Folder {
-                path: d.0.join("folder").to_string_lossy().into_owned(),
+                path: format!("{}/folder", d.path()),
                 ..Default::default()
             }],
             listed: vec![single.clone()],
@@ -838,7 +852,7 @@ mod tests {
         let a = d.file("pics/a.png", b"image a");
         let b = d.file("pics/b.png", b"image b");
         let copy = d.file("copy of a.png", b"image a");
-        let pics = d.0.join("pics").to_string_lossy().into_owned();
+        let pics = format!("{}/pics", d.path());
         let mut host = TestHost::default();
         let mut core = Core::new(&mut host, LaunchArgs::default(), "en");
         settle(&mut core, &mut host);
