@@ -338,10 +338,12 @@ Item {
         }
 
         StackLayout {
+            id: tabPages
             visible: page.ready
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: page.tab
+            SwitchMotion { stack: tabPages }
 
             // Files
             Item {
@@ -513,7 +515,7 @@ Item {
 
     // ---- menus and dialogs -------------------------------------------------
 
-    Menu {
+    AppMenu {
         id: fileMenu
         property var file: ({ recipients: [] })
         function openFor(f, anchor) {

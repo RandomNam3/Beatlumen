@@ -36,6 +36,8 @@ class Bridge : public QObject
     Q_PROPERTY(int keyboardHeight READ keyboardHeight NOTIFY safeAreaChanged)
     Q_PROPERTY(QString platform READ platform CONSTANT)
     Q_PROPERTY(bool mobile READ mobile CONSTANT)
+    // The system's battery saver is on (Android).
+    Q_PROPERTY(bool powerSaving READ powerSaving NOTIFY powerSavingChanged)
     Q_PROPERTY(QString version READ version CONSTANT)
     // File dialogs of the system can be used (Linux: the XDG desktop portal
     // answers); otherwise the app shows its own file picker.
@@ -65,6 +67,7 @@ public:
     QColor systemAccent() const;
     QString platform() const;
     bool mobile() const;
+    bool powerSaving() const { return m_powerSaving; }
     QString version() const;
     bool nativeDialogs() const { return m_nativeDialogs; }
 
@@ -85,6 +88,9 @@ public:
     // copied into the cache first).
     Q_INVOKABLE QStringList localPaths(const QList<QUrl> &urls);
     Q_INVOKABLE void setKeepScreenOn(bool on);
+    // An interface animation runs for `ms`: frames come at the full rate until
+    // then, also where they are otherwise rationed.
+    Q_INVOKABLE void smoothFrames(int ms);
     // Hides Android's status and navigation bars (immersive mode).
     Q_INVOKABLE void setSystemBarsHidden(bool hidden);
     // Dark icons in the system's bars, for a light page under them.
@@ -100,6 +106,7 @@ public:
     void log(const QString &msg);
 
 signals:
+    void powerSavingChanged();
     void stateChanged();
     void positionChanged();
     void seekPositionChanged();
@@ -139,6 +146,9 @@ private:
     bool m_glReady = false;
     bool m_glFailed = false;
     QElapsedTimer m_frameClock;
+    // Until when animations want smooth frames (on m_smoothClock, in ms).
+    QElapsedTimer m_smoothClock;
+    qint64 m_smoothUntil = 0;
     AudioOutput *m_audio = nullptr;
     bool m_keepScreenOn = false;
     int m_persistCounter = 0;

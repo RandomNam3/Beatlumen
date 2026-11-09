@@ -150,7 +150,7 @@ Item {
         onSubmitted: (t) => Core.call("playlist.create", { name: t, kind: "track", server: Core.state.server === "connected" })
     }
 
-    StackView {
+    AppStackView {
         id: stack
         onDepthChanged: if (depth === 1) page.detailClosed()
         anchors.fill: parent
@@ -262,7 +262,7 @@ Item {
                     iconName: "add"
                     tip: Theme.tr("Add music folder")
                     onClicked: addMenu.popup()
-                    Menu {
+                    AppMenu {
                         id: addMenu
                         MenuItem { text: Theme.tr("Add music folder"); icon.source: Theme.icon("create_new_folder"); onTriggered: page.addFolder() }
                         MenuItem { text: Theme.tr("Open files"); icon.source: Theme.icon("folder_open"); onTriggered: page.openFiles() }
@@ -375,9 +375,11 @@ Item {
                 }
 
                 StackLayout {
+                    id: sectionPages
                     anchors.fill: parent
                     anchors.leftMargin: sidebar.visible ? sidebar.width + 8 : 0
                     visible: page.hasContent
+                    SwitchMotion { stack: sectionPages }
                     currentIndex: (main.sectionList[main.section] || {}).page || main.section
 
                     // Songs: play/shuffle scroll away with the list.

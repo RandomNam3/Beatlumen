@@ -62,9 +62,32 @@ QtObject {
             out = Qt.tint(Qt.rgba(c.r, c.g, c.b, 1), Qt.rgba(end.r, end.g, end.b, i / 10))
         return out
     }
+    // ---- motion ------------------------------------------------------------
+    // Interface animations: short and eased, opacity and transforms only.
+    // "Reduce motion" turns them off; the photosensitive mode and the system's
+    // battery saver keep the fading and leave out sliding and growing.
+    readonly property bool animate: !reduceMotion
+    readonly property bool slide: animate && settings.photosensitive !== true && !Core.powerSaving
+    readonly property int fast: 150
+    readonly property int normal: 220
+    readonly property int slow: 300
+    readonly property int easeOut: Easing.OutCubic
+    readonly property int easeIn: Easing.InCubic
+    readonly property int easeInOut: Easing.InOutCubic
+
     // How long an animation of the interface takes.
     function ms(duration) {
         return reduceMotion ? 0 : duration
+    }
+    // The same for the shared steps, a little shorter on the battery saver.
+    function motion(duration) {
+        return !animate ? 0 : Core.powerSaving ? Math.round(duration * 0.7) : duration
+    }
+    // Frames are rationed while nothing plays (phones): an animation asks for
+    // smooth ones while it runs.
+    function smoothFrames(duration) {
+        if (animate)
+            Core.smoothFrames(duration + 60)
     }
 
     // Black or white, whichever contrasts more with `c` (WCAG luminance).

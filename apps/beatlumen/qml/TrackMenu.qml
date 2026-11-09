@@ -3,7 +3,7 @@ import QtQuick.Controls.Material
 import Beatlumen.Core
 
 // Context menu for one or more songs.
-Menu {
+AppMenu {
     id: menu
     width: 260
     property var ids: []
@@ -54,7 +54,7 @@ Menu {
         onTriggered: Core.call("enqueue", { ids: menu.ids })
     }
     // Other devices of the server login (server songs only).
-    Menu {
+    AppMenu {
         id: playOn
         title: Theme.tr("Play on")
         readonly property var targets: (menu.opened && Core.state.server === "connected")

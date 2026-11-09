@@ -63,6 +63,13 @@ ColumnLayout {
 
     ListView {
         id: list
+        // Only the first time: later updates of the row stay calm.
+        property bool appeared: false
+        onCountChanged: if (count > 0) Qt.callLater(() => list.appeared = true)
+        populate: Transition {
+            enabled: Theme.animate && !list.appeared
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motion(Theme.slow); easing.type: Theme.easeOut }
+        }
         Layout.fillWidth: true
         Layout.preferredHeight: contentItem.childrenRect.height > 0 ? contentItem.childrenRect.height + 4 : 206
         leftMargin: 12
