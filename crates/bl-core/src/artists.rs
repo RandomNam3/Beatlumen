@@ -859,7 +859,7 @@ pub(crate) mod tests {
         assert_eq!(info.get("artist").str_or("biography", ""), "A band.");
         assert_eq!(
             info.get("artist").str_or("image", ""),
-            format!("file:///test/{}", image_key("The Band"))
+            core.picture_url(&format!("/test/{}", image_key("The Band")))
         );
         run(&mut core, &mut host, 0.5);
         assert_eq!(outward(&host), 1, "asked for anew");
