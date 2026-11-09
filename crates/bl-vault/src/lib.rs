@@ -11,6 +11,8 @@
 //! Everything here runs on the user's device; the server only ever stores
 //! the outputs.
 
+#![forbid(unsafe_code)]
+
 pub mod aead;
 pub mod file;
 pub mod handoff;

@@ -13,6 +13,11 @@
 //! * `GET /api/events?device=<id>&since=<seq>`: waits up to 20 s for events
 //!   (`devices` changed, `command` for this device) after `since`.
 //! * `GET /api/time`: the server clock (milliseconds) for playing in sync.
+//!
+//! Limits: a command has at most [`MAX_COMMAND`] bytes, a device has at most
+//! [`MAX_WAITING`] commands ([`MAX_WAITING_BYTES`]) it has not fetched yet,
+//! a login at most [`MAX_SCOPE_DEVICES`] devices, and the event buffer of
+//! all logins at most [`MAX_EVENTS`] events of [`MAX_EVENT_BYTES`].
 
 use bl_json::Value;
 use bl_net::server::{Request, Response};
@@ -25,7 +30,16 @@ const ONLINE: Duration = Duration::from_secs(50);
 /// Devices not heard from for this long are forgotten.
 const FORGET: Duration = Duration::from_secs(30 * 24 * 3600);
 const MAX_DEVICES: usize = 200;
-const MAX_EVENTS: usize = 1000;
+/// Devices of one login (an account, or the server password).
+pub const MAX_SCOPE_DEVICES: usize = 50;
+pub const MAX_EVENTS: usize = 1000;
+/// The events in the buffer together (their JSON).
+pub const MAX_EVENT_BYTES: usize = 32 << 20;
+/// One command (its JSON).
+pub const MAX_COMMAND: usize = 16 * 1024;
+/// Commands for one device it has not fetched yet.
+pub const MAX_WAITING: usize = 64;
+pub const MAX_WAITING_BYTES: usize = 256 * 1024;
 const EVENT_AGE: Duration = Duration::from_secs(120);
 const WAIT: Duration = Duration::from_secs(20);
 /// Size limit of a device's reported state.
@@ -39,6 +53,8 @@ struct Device {
     remote: bool,
     state: Value,
     seen: Instant,
+    /// The events up to here it fetched (the `since` of its last poll).
+    fetched: u64,
 }
 
 struct Event {
@@ -48,12 +64,17 @@ struct Event {
     target: Option<String>,
     body: Value,
     at: Instant,
+    /// Size of `body` as JSON.
+    bytes: usize,
+    command: bool,
 }
 
 #[derive(Default)]
 struct Inner {
     devices: HashMap<String, Device>,
     events: VecDeque<Event>,
+    /// `bytes` of all events.
+    bytes: usize,
     seq: u64,
 }
 
@@ -86,20 +107,30 @@ impl Devices {
     fn push(&self, inner: &mut Inner, scope: &str, target: Option<&str>, body: Value) {
         inner.seq += 1;
         let seq = inner.seq;
+        let bytes = body.to_json().len();
+        let command = body.str_or("type", "") == "command";
+        inner.bytes += bytes;
         inner.events.push_back(Event {
             seq,
             scope: scope.to_string(),
             target: target.map(str::to_string),
             body,
             at: Instant::now(),
+            bytes,
+            command,
         });
+        // Listeners that fall behind the buffer are told they missed some.
         while inner.events.len() > MAX_EVENTS
+            || inner.bytes > MAX_EVENT_BYTES
             || inner
                 .events
                 .front()
                 .is_some_and(|e| e.at.elapsed() > EVENT_AGE)
         {
-            inner.events.pop_front();
+            match inner.events.pop_front() {
+                Some(e) => inner.bytes -= e.bytes,
+                None => break,
+            }
         }
         self.cv.notify_all();
     }
@@ -198,8 +229,27 @@ impl Devices {
             return Response::error(409, "device id in use");
         }
         inner.devices.retain(|_, d| d.seen.elapsed() < FORGET);
-        if !inner.devices.contains_key(id) && inner.devices.len() >= MAX_DEVICES {
-            return Response::error(507, "too many devices");
+        if !inner.devices.contains_key(id) {
+            // Full: the device offline the longest makes room (of this login,
+            // or of all); one login cannot take every place.
+            let in_scope = inner.devices.values().filter(|d| d.scope == scope).count();
+            let full_scope = in_scope >= MAX_SCOPE_DEVICES;
+            if full_scope || inner.devices.len() >= MAX_DEVICES {
+                let oldest = inner
+                    .devices
+                    .iter()
+                    .filter(|(_, d)| {
+                        d.seen.elapsed() >= ONLINE && (!full_scope || d.scope == scope)
+                    })
+                    .min_by_key(|(_, d)| d.seen)
+                    .map(|(k, _)| k.clone());
+                match oldest {
+                    Some(k) => {
+                        inner.devices.remove(&k);
+                    }
+                    None => return Response::error(507, "too many devices"),
+                }
+            }
         }
         let name = clip(v.str_or("name", "").trim(), 64);
         let dev = Device {
@@ -214,6 +264,8 @@ impl Devices {
             remote: v.bool_or("remote", true),
             state: v.get("state").clone(),
             seen: Instant::now(),
+            // A new device has nothing waiting.
+            fetched: inner.devices.get(id).map_or(inner.seq, |d| d.fetched),
         };
         let changed = match inner.devices.get(id) {
             None => true,
@@ -237,6 +289,9 @@ impl Devices {
     }
 
     fn command(&self, req: &Request, id: &str, scope: &str) -> Response {
+        if req.body.len() > MAX_COMMAND + 1024 {
+            return Response::error(413, "command too large");
+        }
         let v = match body(req) {
             Ok(v) => v,
             Err(r) => return r,
@@ -249,7 +304,12 @@ impl Devices {
         {
             return Response::error(400, "expected {\"command\": {\"cmd\": ...}}");
         }
-        let from = v.str_or("from", "");
+        let size = cmd.to_json().len();
+        if size > MAX_COMMAND {
+            return Response::error(413, "command too large");
+        }
+        let from = clip(v.str_or("from", ""), 64);
+        let from = from.as_str();
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let Some(d) = inner.devices.get(id).filter(|d| d.scope == scope) else {
             return Response::error(404, "no such device");
@@ -259,6 +319,15 @@ impl Devices {
         }
         if !d.remote {
             return Response::error(403, "the device does not allow remote control");
+        }
+        // What waits for the device to fetch it.
+        let (n, bytes) = inner
+            .events
+            .iter()
+            .filter(|e| e.command && e.seq > d.fetched && e.target.as_deref() == Some(id))
+            .fold((0, 0), |(n, b), e| (n + 1, b + e.bytes));
+        if n >= MAX_WAITING || bytes + size > MAX_WAITING_BYTES {
+            return Response::error(429, "too many commands are waiting for this device");
         }
         let from_name = inner
             .devices
@@ -292,9 +361,11 @@ impl Devices {
         // A new listener starts from now.
         let since = if since == u64::MAX { inner.seq } else { since };
         loop {
+            let newest = inner.seq;
             if let Some(d) = inner.devices.get_mut(&device).filter(|d| d.scope == scope) {
                 let back = d.seen.elapsed() >= ONLINE;
                 d.seen = Instant::now();
+                d.fetched = d.fetched.max(since.min(newest));
                 if back {
                     self.push(
                         &mut inner,

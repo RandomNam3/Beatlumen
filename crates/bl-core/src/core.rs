@@ -257,6 +257,8 @@ pub struct Core {
     pub(crate) resume_at: Option<f64>,
     /// Why the sound card in direct use cannot be used.
     pub(crate) direct_error: Option<String>,
+    /// Tells the user about panics caught at the core's edges.
+    panic_report: crate::panics::Reporter,
     position_saved_at: f64,
     pub(crate) rng: Rng,
     pub(crate) gfx: Option<Gfx>,
@@ -506,6 +508,7 @@ impl Core {
             settings,
             settings_dirty_at: None,
             resume_at,
+            panic_report: Default::default(),
             position_saved_at: 0.0,
             engine: Engine::new(rng.next_u64()),
             rng,
@@ -649,6 +652,28 @@ impl Core {
     /// Events since the last call (JSON array).
     pub fn take_events(&mut self) -> Value {
         Value::Array(std::mem::take(&mut self.events))
+    }
+
+    /// Shows that a panic was caught (in a job, the decoder, a listener or
+    /// a call from the UI); the app keeps running.
+    fn report_panics(&mut self, host: &mut dyn Host) {
+        if let Some(what) = self.panic_report.due(self.time) {
+            host.log(&format!("internal error ({what})"));
+            self.toast(
+                self.tr("Something went wrong inside Beatlumen. It keeps running; please report this if it happens again."),
+                true,
+            );
+        }
+    }
+
+    /// The URL the UI shows a picture with (see [`picture_url`]).
+    pub(crate) fn picture_url(&self, src: &str) -> String {
+        picture_url(src, self.server.image_provider)
+    }
+
+    /// The answer to a command whose handling failed with a panic.
+    pub fn internal_error(&self) -> Value {
+        Value::object().with("error", self.tr("Internal error"))
     }
 
     pub(crate) fn toast(&mut self, text: impl Into<String>, error: bool) {
@@ -1752,20 +1777,24 @@ impl Core {
     /// Measures a track's loudness in the background (server tracks are
     /// measured by the server).
     fn measure_loudness(&mut self, host: &mut dyn Host, id: &str) {
+        // A panic while decoding (a damaged file) ends as an error result.
         let measure =
             |src: Box<dyn bl_media::Source>, ext: Option<String>| -> Result<Loudness, String> {
-                let mut dec = bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())?;
-                let spec = dec.spec();
-                let mut meter = LoudnessMeter::new(spec.sample_rate, spec.channels);
-                let mut buf = Vec::new();
-                loop {
-                    buf.clear();
-                    let more = dec.next_chunk(&mut buf).map_err(|e| e.to_string())?;
-                    meter.push(&buf);
-                    if !more {
-                        return Ok(meter.finish());
+                crate::panics::guarded("loudness", move || {
+                    let mut dec =
+                        bl_media::open(src, ext.as_deref()).map_err(|e| e.to_string())?;
+                    let spec = dec.spec();
+                    let mut meter = LoudnessMeter::new(spec.sample_rate, spec.channels);
+                    let mut buf = Vec::new();
+                    loop {
+                        buf.clear();
+                        let more = dec.next_chunk(&mut buf).map_err(|e| e.to_string())?;
+                        meter.push(&buf);
+                        if !more {
+                            return Ok(meter.finish());
+                        }
                     }
-                }
+                })
             };
         let mailbox = self.loudness_box.clone();
         let key = id.to_string();
@@ -2111,15 +2140,18 @@ impl Core {
             }
         }
         self.analysis_status = AnalysisStatus::Working;
+        // A panic while decoding (a damaged file) ends as an error result.
         let analyze = move |src: Box<dyn bl_media::Source>,
                             ext: Option<String>,
                             cfg: bl_analysis::AnalysisConfig| {
-            decode_mono(src, ext.as_deref())
-                .and_then(|(mono, sr)| {
-                    bl_analysis::analyze(&mono, sr, &cfg, &mut |_| true)
-                        .ok_or_else(|| "cancelled".to_string())
-                })
-                .map(|a| bl_analysis::encode(&a))
+            crate::panics::guarded("analysis", move || {
+                decode_mono(src, ext.as_deref())
+                    .and_then(|(mono, sr)| {
+                        bl_analysis::analyze(&mono, sr, &cfg, &mut |_| true)
+                            .ok_or_else(|| "cancelled".to_string())
+                    })
+                    .map(|a| bl_analysis::encode(&a))
+            })
         };
         if let Some(path) = library::local_path(&track.id).map(str::to_string) {
             let mailbox = self.analysis_box.clone();
@@ -2250,13 +2282,13 @@ impl Core {
             self.ext_cover_url(&t.id)
         } else if library::is_local(&t.id) || t.id.starts_with(crate::sources::ID_PREFIX) {
             match self.covers.get(&t.id) {
-                Some(Some(path)) => file_url(path),
+                Some(Some(path)) => self.picture_url(path),
                 _ => String::new(),
             }
         } else if t.id.starts_with("mem:") {
             String::new()
         } else if let (false, Some(f)) = (self.server.is_connected(), self.offline_cover(&t.id)) {
-            file_url(f)
+            self.picture_url(f)
         } else if t.has_cover && self.server.is_connected() {
             self.server
                 .image_url(&bl_net::api::paths::track_cover(&t.id, 512))
@@ -2299,8 +2331,11 @@ impl Core {
         let mailbox = self.cover_box.clone();
         let job = move || {
             for (id, path, base) in jobs {
-                let out =
-                    cached_cover(&base).or_else(|| store_cover(&base, &local_cover_bytes(&path)?));
+                // A damaged file gives no cover instead of ending the job.
+                let out = crate::panics::catch("cover", || {
+                    cached_cover(&base).or_else(|| store_cover(&base, &local_cover_bytes(&path)?))
+                })
+                .flatten();
                 mailbox.post((id, out));
             }
         };
@@ -2313,7 +2348,10 @@ impl Core {
 
     fn poll_covers(&mut self) {
         for (id, path) in self.cover_box.take() {
-            let url = path.as_deref().map(file_url).unwrap_or_default();
+            let url = path
+                .as_deref()
+                .map(|p| self.picture_url(p))
+                .unwrap_or_default();
             self.covers.insert(id.clone(), path);
             if !url.is_empty() {
                 self.emit(
@@ -2921,6 +2959,7 @@ impl Core {
     /// frame, and from a timer while the window is hidden).
     pub fn tick(&mut self, host: &mut dyn Host) {
         self.time = host.now();
+        self.report_panics(host);
         if !self.started {
             self.started = true;
             self.load_sources(host);
@@ -3263,6 +3302,48 @@ impl Repeat {
     }
 }
 
+/// The URL the UI shows the picture at `src` with (a local path, a
+/// `file://` URL or an http(s) address; "" for none). Native apps
+/// (`provider`) get the core's image providers, `image://thumb/…` for files
+/// and `image://server/…` for the network, so pictures from music files,
+/// servers and other devices are decoded by the core's own decoders and
+/// never by the UI toolkit's. Other schemes are not shown there.
+pub(crate) fn picture_url(src: &str, provider: bool) -> String {
+    if src.is_empty() || src.starts_with("image://") {
+        return src.to_string();
+    }
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return if provider {
+            format!("image://server/{}", bl_net::http::percent_encode(src))
+        } else {
+            src.to_string()
+        };
+    }
+    let path = match src.strip_prefix("file://") {
+        Some(p) => {
+            let p = bl_net::http::percent_decode(p, false);
+            // file:///C:/… on Windows.
+            match p.strip_prefix('/') {
+                Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_string(),
+                _ => p,
+            }
+        }
+        None if src.contains("://") || src.starts_with("data:") => {
+            return if provider {
+                String::new()
+            } else {
+                src.to_string()
+            };
+        }
+        None => src.to_string(),
+    };
+    if provider {
+        format!("image://thumb/{}", bl_net::http::percent_encode(&path))
+    } else {
+        file_url(&path)
+    }
+}
+
 pub(crate) fn file_url(path: &str) -> String {
     let p = path.replace('\\', "/");
     let mut out = String::from("file://");
@@ -3318,7 +3399,8 @@ pub(crate) fn store_cover(base: &str, bytes: &[u8]) -> Option<String> {
     if ext != "img" {
         let _ = std::fs::remove_file(format!("{base}.img"));
     }
-    std::fs::write(&file, bytes).ok().map(|_| file)
+    // Written aside and renamed: the image views never see half a picture.
+    crate::host::write_private(std::path::Path::new(&file), bytes).then_some(file)
 }
 
 /// Cover art for a local file: embedded picture or a cover image next to it.
@@ -3427,6 +3509,46 @@ mod cover_cache_tests {
         assert_eq!(cached_cover(&base), Some(format!("{base}.jpg")));
         assert!(!std::path::Path::new(&format!("{base}.img")).exists());
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod picture_url_tests {
+    use super::picture_url;
+
+    #[test]
+    fn native_apps_show_every_picture_through_the_core() {
+        assert_eq!(
+            picture_url("/music/a b/#1.jpg", true),
+            "image://thumb/%2Fmusic%2Fa%20b%2F%231.jpg"
+        );
+        assert_eq!(
+            picture_url("file:///music/a%20b/c.png", true),
+            "image://thumb/%2Fmusic%2Fa%20b%2Fc.png"
+        );
+        assert_eq!(
+            picture_url("file:///C:/Music/c.png", true),
+            "image://thumb/C%3A%2FMusic%2Fc.png"
+        );
+        assert_eq!(
+            picture_url("C:\\Music\\c.png", true),
+            "image://thumb/C%3A%5CMusic%5Cc.png"
+        );
+        assert_eq!(
+            picture_url("http://192.168.1.5:8080/art?id=1", true),
+            "image://server/http%3A%2F%2F192.168.1.5%3A8080%2Fart%3Fid%3D1"
+        );
+        assert_eq!(picture_url("image://server/x", true), "image://server/x");
+        // Other schemes are not handed to the toolkit.
+        assert_eq!(picture_url("data:image/jpeg;base64,AAAA", true), "");
+        assert_eq!(picture_url("smb://nas/cover.jpg", true), "");
+        assert_eq!(picture_url("", true), "");
+    }
+
+    #[test]
+    fn the_browser_build_shows_urls_as_they_are() {
+        assert_eq!(picture_url("https://s/c.jpg", false), "https://s/c.jpg");
+        assert_eq!(picture_url("/a/b.jpg", false), "file:///a/b.jpg");
     }
 }
 

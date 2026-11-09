@@ -4,6 +4,12 @@
 //! All functions except [`bl_audio_render`] must be called from the UI
 //! thread that created the core. Strings returned by the core are UTF-8,
 //! NUL terminated and must be released with [`bl_string_free`].
+//!
+//! No panic leaves through this interface: unwinding into C++ aborts the
+//! app (undefined behaviour before Rust 1.81). Every entry point runs its
+//! body under [`guard`]; a panic is recorded, the call returns a neutral
+//! value (an error answer, silence, null) and the core shows the user an
+//! error on its next tick.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -17,7 +23,23 @@ use bl_json::Value;
 use bl_media::{pack_pcm, PcmFormat};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Runs the body of a C entry point. A panic is caught (it must not unwind
+/// into the UI), recorded for the core to report, and gives `fallback`.
+fn guard<T>(place: &str, fallback: T, f: impl FnOnce() -> T) -> T {
+    bl_core::panics::catch(place, f).unwrap_or(fallback)
+}
+
+/// Test hook: `{"cmd": "debug.panic", "in": "command" | "tick" | "audio"}`
+/// panics there, in debug builds and in the app's test mode
+/// (`BEATLUMEN_TEST_DUMP`), to check that nothing crashes.
+fn test_hooks() -> bool {
+    cfg!(debug_assertions) || std::env::var_os("BEATLUMEN_TEST_DUMP").is_some()
+}
+static PANIC_IN_TICK: AtomicBool = AtomicBool::new(false);
+static PANIC_IN_AUDIO: AtomicBool = AtomicBool::new(false);
 
 /// Callbacks into the UI layer. Unused entries may be null.
 #[repr(C)]
@@ -341,20 +363,81 @@ mod tls {
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub unsafe extern "C" fn bl_http_fetch(url: *const c_char, out_len: *mut usize) -> *mut u8 {
+    guard("http fetch", std::ptr::null_mut(), || {
+        match fetch(&cstr(url)) {
+            Some(body) => out_bytes(body, out_len),
+            None => std::ptr::null_mut(),
+        }
+    })
+}
+
+/// GET with the core's HTTP client: the body of a 200 answer (at most
+/// [`bl_core::background::MAX_FETCH`] bytes).
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch(url: &str) -> Option<Vec<u8>> {
     let opts = bl_net::client::Options {
-        max_body: 32 << 20,
+        max_body: bl_core::background::MAX_FETCH,
         ..Default::default()
     };
-    match bl_net::client::request("GET", &cstr(url), &[], &[], &opts) {
-        Ok(r) if r.status == 200 => {
-            let b = r.body.into_boxed_slice();
-            if !out_len.is_null() {
-                *out_len = b.len();
-            }
-            Box::into_raw(b) as *mut u8
-        }
-        _ => std::ptr::null_mut(),
+    match bl_net::client::request("GET", url, &[], &[], &opts) {
+        Ok(r) if r.status == 200 => Some(r.body),
+        _ => None,
     }
+}
+
+/// Hands a buffer to the UI (free with [`bl_bytes_free`]).
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn out_bytes(data: Vec<u8>, out_len: *mut usize) -> *mut u8 {
+    let b = data.into_boxed_slice();
+    if !out_len.is_null() {
+        *out_len = b.len();
+    }
+    Box::into_raw(b) as *mut u8
+}
+
+/// Hands decoded pixels to the UI (free with [`bl_bytes_free`]).
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn out_image(
+    img: &bl_image::Image,
+    out_w: *mut u32,
+    out_h: *mut u32,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if !out_w.is_null() {
+        *out_w = img.width;
+    }
+    if !out_h.is_null() {
+        *out_h = img.height;
+    }
+    out_bytes(img.pixels.clone(), out_len)
+}
+
+/// Fetches an image from `url` (http or https, through the core's HTTP
+/// client and its TLS) and decodes it with the core's image decoders into a
+/// picture covering `w` x `h` (RGBA, straight alpha, top row first). From
+/// any thread; null when it cannot be fetched or decoded. Free with
+/// [`bl_bytes_free`]. Images from servers and other devices never reach
+/// the UI toolkit's decoders.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn bl_image_fetch(
+    url: *const c_char,
+    w: u32,
+    h: u32,
+    out_w: *mut u32,
+    out_h: *mut u32,
+    out_len: *mut usize,
+) -> *mut u8 {
+    guard("image fetch", std::ptr::null_mut(), || {
+        let url = cstr(url);
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return std::ptr::null_mut();
+        }
+        match fetch(&url).and_then(|data| bl_core::background::thumbnail_of(data, w, h)) {
+            Some(img) => out_image(&img, out_w, out_h, out_len),
+            None => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// A thumbnail of the local image file `path` covering `w` x `h` (RGBA,
@@ -370,32 +453,93 @@ pub unsafe extern "C" fn bl_image_thumbnail(
     out_h: *mut u32,
     out_len: *mut usize,
 ) -> *mut u8 {
-    let Some(img) = bl_core::background::thumbnail(&cstr(path), w, h) else {
-        return std::ptr::null_mut();
-    };
-    let b = img.pixels.clone().into_boxed_slice();
-    if !out_w.is_null() {
-        *out_w = img.width;
-    }
-    if !out_h.is_null() {
-        *out_h = img.height;
-    }
-    if !out_len.is_null() {
-        *out_len = b.len();
-    }
-    Box::into_raw(b) as *mut u8
+    guard("image thumbnail", std::ptr::null_mut(), || {
+        match bl_core::background::thumbnail(&cstr(path), w, h) {
+            Some(img) => out_image(&img, out_w, out_h, out_len),
+            None => std::ptr::null_mut(),
+        }
+    })
 }
 
-/// Frees a buffer returned by [`bl_http_fetch`] or [`bl_image_thumbnail`].
+/// Allocates the buffer of an image decoded by the application: `width` x
+/// `height` straight RGBA pixels, top row first. Returns null when the size
+/// is not acceptable (then the decoder should fail).
+pub type BlImageAlloc =
+    unsafe extern "C" fn(ctx: *mut c_void, width: u32, height: u32) -> *mut u8;
+
+/// Decodes a HEIC file holding one image with a decoder of the operating
+/// system: calls `alloc` once with the image size and fills the buffer it
+/// returns. `need_w` x `need_h` is the smallest size needed (the decoder
+/// may decode at a reduced size that still covers it). Returns 1 on
+/// success. Called from any thread.
+pub type BlHeicDecode = unsafe extern "C" fn(
+    data: *const u8,
+    len: usize,
+    need_w: u32,
+    need_h: u32,
+    ctx: *mut c_void,
+    alloc: BlImageAlloc,
+) -> i32;
+
+unsafe extern "C" fn heic_alloc(ctx: *mut c_void, width: u32, height: u32) -> *mut u8 {
+    // SAFETY: `ctx` is the `Option<Image>` slot of `bl_set_heic_decoder`.
+    let slot = &mut *(ctx as *mut Option<bl_image::Image>);
+    if width == 0 || height == 0 || width as u64 * height as u64 > 1 << 28 || slot.is_some() {
+        return std::ptr::null_mut();
+    }
+    let img = slot.insert(bl_image::Image::new(width, height));
+    img.pixels.as_mut_ptr()
+}
+
+/// Registers the application's HEIC decoder (or removes it with null). HEVC
+/// is patent-encumbered, so Beatlumen has no decoder of its own: HEIC
+/// pictures are decoded by the operating system where it can.
+#[no_mangle]
+pub unsafe extern "C" fn bl_set_heic_decoder(f: Option<BlHeicDecode>) {
+    let Some(f) = f else {
+        bl_image::set_system_decoder(None);
+        return;
+    };
+    bl_image::set_system_decoder(Some(Box::new(move |data: &[u8], w: u32, h: u32| {
+        let mut slot: Option<bl_image::Image> = None;
+        // SAFETY: the decoder reads `data` and writes at most the buffer
+        // `heic_alloc` hands out, which stays alive in `slot`.
+        let ok = unsafe {
+            f(
+                data.as_ptr(),
+                data.len(),
+                w,
+                h,
+                &mut slot as *mut Option<bl_image::Image> as *mut c_void,
+                heic_alloc,
+            )
+        };
+        if ok == 1 {
+            slot
+        } else {
+            None
+        }
+    })));
+}
+
+/// Frees a buffer returned by [`bl_http_fetch`], [`bl_image_fetch`] or
+/// [`bl_image_thumbnail`].
 #[no_mangle]
 pub unsafe extern "C" fn bl_bytes_free(p: *mut u8, len: usize) {
     if !p.is_null() {
-        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(p, len)));
+        guard("free", (), || {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(p, len)))
+        });
     }
 }
 
 /// The audio source pulled by the UI's audio thread.
 static AUDIO: Mutex<Option<Arc<dyn AudioSource>>> = Mutex::new(None);
+
+/// The audio source, also when a panic poisoned the lock.
+fn audio_source() -> Option<Arc<dyn AudioSource>> {
+    AUDIO.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 fn cstr(p: *const c_char) -> String {
     if p.is_null() {
@@ -512,6 +656,7 @@ impl Host for UiHost {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if name.starts_with(file_prefix)
+                    && !name.ends_with(bl_core::host::TEMP_SUFFIX)
                     && e.file_type().map(|t| t.is_file()).unwrap_or(false)
                 {
                     out.push(if dir.is_empty() {
@@ -654,7 +799,7 @@ impl Host for UiHost {
         job();
     }
     fn audio_start(&mut self, source: Arc<dyn AudioSource>) -> Result<AudioDeviceInfo, String> {
-        *AUDIO.lock().map_err(|_| "audio lock poisoned")? = Some(source);
+        *AUDIO.lock().unwrap_or_else(|e| e.into_inner()) = Some(source);
         let rate = match self.cb.audio_start {
             // SAFETY: UI callback contract.
             Some(f) => unsafe { f(self.cb.user) },
@@ -705,7 +850,7 @@ impl Host for UiHost {
         source: Arc<dyn AudioSource>,
     ) -> Option<Arc<dyn DirectSink>> {
         self.cb.direct_open?;
-        *AUDIO.lock().ok()? = Some(source);
+        *AUDIO.lock().unwrap_or_else(|e| e.into_inner()) = Some(source);
         Some(Arc::new(UiDirect {
             cb: self.cb,
             device: CString::new(device.replace('\0', "")).unwrap_or_default(),
@@ -889,6 +1034,18 @@ pub unsafe extern "C" fn bl_core_new(
     platform: *const c_char,
     cb: BlCallbacks,
 ) -> *mut BlCore {
+    guard("start", std::ptr::null_mut(), || {
+        core_new(data_dir, args_json, language, platform, cb)
+    })
+}
+
+unsafe fn core_new(
+    data_dir: *const c_char,
+    args_json: *const c_char,
+    language: *const c_char,
+    platform: *const c_char,
+    cb: BlCallbacks,
+) -> *mut BlCore {
     let platform: &'static str = match cstr(platform).as_str() {
         "android" => "android",
         "windows" => "windows",
@@ -948,24 +1105,40 @@ pub unsafe extern "C" fn bl_core_new(
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_free(c: *mut BlCore) {
     if !c.is_null() {
-        let mut b = Box::from_raw(c);
-        let BlCore { host, core, .. } = &mut *b;
-        core.shutdown(host);
-        if let Ok(mut a) = AUDIO.lock() {
-            *a = None;
-        }
+        guard("shutdown", (), || {
+            let mut b = Box::from_raw(c);
+            let BlCore { host, core, .. } = &mut *b;
+            core.shutdown(host);
+        });
+        *AUDIO.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
-/// Executes a JSON command and returns the JSON result.
+/// Executes a JSON command and returns the JSON result. A command whose
+/// handling panics answers `{"error": …}`.
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_command(c: *mut BlCore, json: *const c_char) -> *mut c_char {
     let Some(c) = c.as_mut() else {
         return std::ptr::null_mut();
     };
-    let cmd = bl_json::parse(&cstr(json)).unwrap_or(Value::Null);
-    let r = c.core.command(&mut c.host, &cmd);
-    out_string(r.to_json())
+    let cmd = guard("command", Value::Null, || {
+        bl_json::parse(&cstr(json)).unwrap_or(Value::Null)
+    });
+    let name: String = cmd.get("cmd").as_str().unwrap_or("").chars().take(64).collect();
+    let r = guard(&format!("command {name}"), None, || {
+        if name == "debug.panic" && test_hooks() {
+            match cmd.get("in").as_str().unwrap_or("command") {
+                "tick" => PANIC_IN_TICK.store(true, Ordering::SeqCst),
+                "audio" => PANIC_IN_AUDIO.store(true, Ordering::SeqCst),
+                _ => panic!("test hook: debug.panic"),
+            }
+        }
+        Some(c.core.command(&mut c.host, &cmd))
+    })
+    .unwrap_or_else(|| {
+        guard("command", Value::Null, || c.core.internal_error())
+    });
+    guard("command", std::ptr::null_mut(), || out_string(r.to_json()))
 }
 
 /// Advances the core (network, playback, jobs) and returns the events since
@@ -975,32 +1148,42 @@ pub unsafe extern "C" fn bl_core_tick(c: *mut BlCore) -> *mut c_char {
     let Some(c) = c.as_mut() else {
         return std::ptr::null_mut();
     };
-    c.core.tick(&mut c.host);
-    out_string(c.core.take_events().to_json())
+    guard("tick", (), || {
+        if PANIC_IN_TICK.swap(false, Ordering::SeqCst) {
+            panic!("test hook: debug.panic in tick");
+        }
+        c.core.tick(&mut c.host)
+    });
+    let events = guard("tick", Value::Array(Vec::new()), || c.core.take_events());
+    guard("tick", std::ptr::null_mut(), || out_string(events.to_json()))
 }
 
 /// Playback position in seconds.
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_position(c: *mut BlCore) -> f64 {
-    c.as_ref().map(|c| c.core.position(&c.host)).unwrap_or(0.0)
+    guard("position", 0.0, || {
+        c.as_ref().map(|c| c.core.position(&c.host)).unwrap_or(0.0)
+    })
 }
 
 /// Whether audio is playing (keep the screen awake, show media controls).
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_is_playing(c: *mut BlCore) -> i32 {
-    c.as_ref().map(|c| c.core.is_playing() as i32).unwrap_or(0)
+    guard("is playing", 0, || {
+        c.as_ref().map(|c| c.core.is_playing() as i32).unwrap_or(0)
+    })
 }
 
 /// Recorded audio of other apps (interleaved 16-bit PCM, `frames` frames
 /// of `channels` channels at `rate` Hz); from any thread.
 #[no_mangle]
 pub unsafe extern "C" fn bl_capture_push(pcm: *const i16, frames: usize, channels: u32, rate: u32) {
-    if pcm.is_null() || frames == 0 || channels == 0 || frames > 1 << 20 {
+    if pcm.is_null() || frames == 0 || channels == 0 || channels > 64 || frames > 1 << 20 {
         return;
     }
     // SAFETY: the caller passes `frames * channels` samples.
     let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
-    bl_core::capture::push_pcm(s, channels, rate);
+    guard("capture", (), || bl_core::capture::push_pcm(s, channels, rate));
 }
 
 /// Recorded audio of microphone stream `stream` (interleaved 16-bit PCM,
@@ -1021,20 +1204,31 @@ pub unsafe extern "C" fn bl_mic_push(
     }
     // SAFETY: the caller passes `frames * channels` samples.
     let s = std::slice::from_raw_parts(pcm, frames * channels as usize);
-    bl_core::mic::push_pcm(stream, s, channels, rate, capture_time_us);
+    guard("microphone", (), || {
+        bl_core::mic::push_pcm(stream, s, channels, rate, capture_time_us)
+    });
 }
 
 /// The core's monotonic clock in microseconds (process wide; never 0 or
 /// less), for stamping recorded audio. From any thread.
 #[no_mangle]
 pub extern "C" fn bl_clock_us() -> i64 {
-    bl_core::mic::clock_us()
+    guard("clock", 1, bl_core::mic::clock_us)
 }
 
 /// Loads GL with `get_proc` (a context must be current). `flavor`: 0 =
 /// desktop OpenGL 3.3 core, 1 = OpenGL ES 3 / WebGL 2. Returns 0 on success.
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_gl_init(
+    c: *mut BlCore,
+    get_proc: Option<unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *const c_void>,
+    ctx: *mut c_void,
+    flavor: i32,
+) -> i32 {
+    guard("visualizer start", 3, || gl_init(c, get_proc, ctx, flavor))
+}
+
+unsafe fn gl_init(
     c: *mut BlCore,
     get_proc: Option<unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char) -> *const c_void>,
     ctx: *mut c_void,
@@ -1072,7 +1266,7 @@ pub unsafe extern "C" fn bl_core_gl_init(
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_gl_lost(c: *mut BlCore) {
     if let Some(c) = c.as_mut() {
-        c.core.gl_lost();
+        guard("visualizer", (), || c.core.gl_lost());
         c.gl = None;
     }
 }
@@ -1089,7 +1283,9 @@ pub unsafe extern "C" fn bl_core_render(
 ) {
     let Some(c) = c.as_mut() else { return };
     let Some(gl) = &c.gl else { return };
-    c.core.render(gl, &mut c.host, fbo, w, h, dpr, dt);
+    guard("visualizer", (), || {
+        c.core.render(gl, &mut c.host, fbo, w, h, dpr, dt)
+    });
 }
 
 /// Completes a request started through `BlCallbacks::http_request`.
@@ -1105,6 +1301,18 @@ pub unsafe extern "C" fn bl_core_http_complete(
     error: *const c_char,
 ) {
     let Some(c) = c.as_mut() else { return };
+    guard("http", (), || http_complete(c, id, status, headers_json, body, len, error));
+}
+
+unsafe fn http_complete(
+    c: &mut BlCore,
+    id: u64,
+    status: i32,
+    headers_json: *const c_char,
+    body: *const u8,
+    len: usize,
+    error: *const c_char,
+) {
     let res = if status <= 0 {
         Err(cstr(error))
     } else {
@@ -1129,7 +1337,7 @@ pub unsafe extern "C" fn bl_core_http_complete(
             std::slice::from_raw_parts(body, len).to_vec()
         };
         Ok(HttpResponse {
-            status: status as u16,
+            status: status.min(u16::MAX as i32) as u16,
             headers,
             body,
         })
@@ -1146,34 +1354,48 @@ pub unsafe extern "C" fn bl_core_open_data(
     len: usize,
 ) {
     let Some(c) = c.as_mut() else { return };
-    let bytes = if data.is_null() {
-        Vec::new()
-    } else {
-        std::slice::from_raw_parts(data, len).to_vec()
-    };
-    c.core.open_data(&mut c.host, cstr(name), bytes);
+    guard("open data", (), || {
+        let bytes = if data.is_null() {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(data, len).to_vec()
+        };
+        c.core.open_data(&mut c.host, cstr(name), bytes)
+    });
 }
 
 /// Saves settings (call when the app is suspended or closed).
 #[no_mangle]
 pub unsafe extern "C" fn bl_core_save(c: *mut BlCore) {
     if let Some(c) = c.as_mut() {
-        c.core.save_settings(&mut c.host);
+        guard("save", (), || c.core.save_settings(&mut c.host));
     }
 }
 
 /// Fills `out` with `frames` interleaved stereo frames. Called from the
 /// audio thread; `latency_frames` is the output's queued audio.
+/// A panic while rendering gives silence for that buffer.
 #[no_mangle]
 pub unsafe extern "C" fn bl_audio_render(out: *mut f32, frames: usize, latency_frames: u32) {
+    let Some(n) = frames.checked_mul(2) else {
+        return;
+    };
     if out.is_null() {
         return;
     }
-    let buf = std::slice::from_raw_parts_mut(out, frames * 2);
-    let src = AUDIO.lock().ok().and_then(|a| a.clone());
-    match src {
-        Some(s) => s.render(buf, latency_frames),
-        None => buf.fill(0.0),
+    let buf = std::slice::from_raw_parts_mut(out, n);
+    let rendered = guard("audio", false, || {
+        if PANIC_IN_AUDIO.swap(false, Ordering::SeqCst) {
+            panic!("test hook: debug.panic in audio");
+        }
+        match audio_source() {
+            Some(s) => s.render(buf, latency_frames),
+            None => buf.fill(0.0),
+        }
+        true
+    });
+    if !rendered {
+        buf.fill(0.0);
     }
 }
 
@@ -1196,23 +1418,38 @@ pub unsafe extern "C" fn bl_audio_render_pcm(
     if out.is_null() {
         return;
     }
-    let channels = channels.max(2) as usize;
-    let out = std::slice::from_raw_parts_mut(out, frames * channels * format.bytes());
-    STEREO.with(|stereo| {
-        let mut stereo = stereo.borrow_mut();
-        stereo.clear();
-        stereo.resize(frames * 2, 0.0);
-        let src = AUDIO.lock().ok().and_then(|a| a.clone());
-        if let Some(s) = src {
-            s.render(&mut stereo, latency_frames);
+    let channels = channels.clamp(2, 64) as usize;
+    let Some(n) = frames
+        .checked_mul(channels)
+        .and_then(|n| n.checked_mul(format.bytes()))
+    else {
+        return;
+    };
+    let out = std::slice::from_raw_parts_mut(out, n);
+    let rendered = guard("audio", false, || {
+        if PANIC_IN_AUDIO.swap(false, Ordering::SeqCst) {
+            panic!("test hook: debug.panic in audio");
         }
-        pack_pcm(&stereo, format, channels, out);
+        STEREO.with(|stereo| {
+            let mut stereo = stereo.borrow_mut();
+            stereo.clear();
+            stereo.resize(frames * 2, 0.0);
+            if let Some(s) = audio_source() {
+                s.render(&mut stereo, latency_frames);
+            }
+            pack_pcm(&stereo, format, channels, out);
+        });
+        true
     });
+    if !rendered {
+        // Signed formats: zero is silence.
+        out.fill(0);
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn bl_string_free(s: *mut c_char) {
     if !s.is_null() {
-        drop(CString::from_raw(s));
+        guard("free", (), || drop(CString::from_raw(s)));
     }
 }

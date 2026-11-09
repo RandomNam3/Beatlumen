@@ -304,7 +304,9 @@ mod ipc {
             };
             let _ = std::thread::Builder::new()
                 .name("discord".into())
-                .spawn(move || worker.run());
+                .spawn(move || {
+                    crate::panics::catch("discord", move || worker.run());
+                });
             Client {
                 app_id: app_id.to_string(),
                 cmd,

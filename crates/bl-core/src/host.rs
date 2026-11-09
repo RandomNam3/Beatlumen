@@ -91,16 +91,32 @@ pub struct DirEntry {
     pub modified: u64,
 }
 
-/// Services provided by the platform.
+/// Ending of the files [`write_private`] writes before renaming them;
+/// listings of stored files leave them out.
+pub const TEMP_SUFFIX: &str = ".tmp~";
+
 /// Writes a file readable only by the user (settings hold the server
-/// login token); replaces an existing file atomically.
+/// login token); replaces an existing file atomically. Each write goes
+/// through its own temporary file (process id and a counter in the name),
+/// so writers in other threads or another running instance of the app
+/// never write into or remove each other's file: the last rename wins and
+/// readers see either the old or the new file, never a mix.
 pub fn write_private(path: &std::path::Path, data: &[u8]) -> bool {
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let Some(name) = path.file_name() else {
+        return false;
+    };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let tmp = path.with_extension("tmp~");
-    let _ = std::fs::remove_file(&tmp);
+    let tmp = path.with_file_name(format!(
+        ".{}.{}-{}{TEMP_SUFFIX}",
+        name.to_string_lossy(),
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
@@ -112,9 +128,28 @@ pub fn write_private(path: &std::path::Path, data: &[u8]) -> bool {
         .open(&tmp)
         .and_then(|mut f| f.write_all(data).and_then(|_| f.sync_all()))
         .is_ok();
-    ok && std::fs::rename(&tmp, path).is_ok()
+    if ok && rename_over(&tmp, path) {
+        return true;
+    }
+    let _ = std::fs::remove_file(&tmp);
+    false
 }
 
+/// Renames `from` over `to`. Windows can refuse for a moment while another
+/// process has `to` open or replaces it too; that is tried again.
+fn rename_over(from: &std::path::Path, to: &std::path::Path) -> bool {
+    for attempt in 0..if cfg!(windows) { 8 } else { 1 } {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1 << attempt));
+        }
+        if std::fs::rename(from, to).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Services provided by the platform.
 pub trait Host {
     /// Monotonic time in seconds.
     fn now(&self) -> f64;
@@ -293,5 +328,65 @@ pub trait Host {
     /// `vault.secret` command ({"key", "value": base64, empty if none}).
     fn secret_load(&mut self, _key: &str) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_private;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Threads (as two app instances would) write the same file at once:
+    /// every write succeeds, the file always holds one complete version and
+    /// no temporary file stays behind.
+    #[test]
+    fn concurrent_writes_never_mix_or_fail() {
+        let dir = std::env::temp_dir().join(format!("bl-write-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let versions: Vec<Vec<u8>> = (0..8u8).map(|i| vec![b'a' + i; 64 * 1024]).collect();
+        assert!(write_private(&path, &versions[0]));
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            // A reader sees whole versions only.
+            let reader = s.spawn(|| {
+                let mut reads = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    match std::fs::read(&path) {
+                        Ok(d) => assert!(versions.contains(&d), "a mixed or partial file"),
+                        // Windows may refuse to open a file being replaced.
+                        Err(_) if cfg!(windows) => continue,
+                        Err(e) => panic!("the file is always there: {e}"),
+                    }
+                    reads += 1;
+                }
+                reads
+            });
+            let writers: Vec<_> = versions
+                .iter()
+                .map(|v| {
+                    let path = &path;
+                    s.spawn(move || {
+                        for _ in 0..40 {
+                            assert!(write_private(path, v));
+                        }
+                    })
+                })
+                .collect();
+            for w in writers {
+                w.join().unwrap();
+            }
+            stop.store(true, Ordering::Relaxed);
+            let reads: u32 = reader.join().unwrap();
+            assert!(reads > 0 || cfg!(windows));
+        });
+        assert!(versions.contains(&std::fs::read(&path).unwrap()));
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["settings.json".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

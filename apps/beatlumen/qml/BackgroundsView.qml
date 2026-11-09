@@ -110,7 +110,7 @@ ScrollView {
             Image {
                 anchors.fill: parent
                 anchors.margins: t.current ? 3 : 0
-                source: t.thumb
+                source: Covers.safe(t.thumb)
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 sourceSize: Qt.size(320, 200)

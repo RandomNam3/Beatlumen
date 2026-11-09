@@ -11,6 +11,8 @@ class QNetworkAccessManager;
 class QObject;
 class QString;
 class QByteArray;
+class QImage;
+class QSize;
 
 namespace tls {
 // Fills the tls_* callbacks when the platform supports TLS.
@@ -26,7 +28,11 @@ QQmlNetworkAccessManagerFactory *qmlNetworkFactory();
 // Network access that honours trusted fingerprints.
 QNetworkAccessManager *pinnedNetworkAccess(QObject *parent);
 #endif
-// Registers the "server" image provider (images from the music server,
-// loaded by the core's HTTP client and its TLS) on native platforms.
+// Registers the image providers on native platforms: "server" (pictures
+// from the network, fetched by the core's HTTP client and its TLS) and
+// "thumb" (local picture files); both decode with the core's decoders.
 void addImageProvider(QQmlEngine *engine);
+// Decodes one of those pictures (an image://server/… or image://thumb/…
+// URL from the core) covering `want`, from any thread; null if unreadable.
+QImage loadPicture(const QString &url, QSize want);
 } // namespace tls

@@ -59,9 +59,10 @@ pub fn made_with(lrc: &str) -> Option<(u32, String)> {
 pub fn has_word_times(lrc: &str) -> bool {
     lrc.lines().any(|l| {
         l.match_indices('<').any(|(i, _)| {
-            l[i + 1..]
-                .split_once('>')
-                .is_some_and(|(t, _)| parse_time(t).is_some())
+            // A time is short: only the next few bytes (linear time).
+            let r = &l[i + 1..];
+            let end = r.as_bytes()[..r.len().min(16)].iter().position(|&b| b == b'>');
+            end.is_some_and(|e| parse_time(&r[..e]).is_some())
         })
     })
 }
@@ -486,14 +487,27 @@ fn parse_time(s: &str) -> Option<f64> {
     (m >= 0.0 && (0.0..60.0).contains(&sec)).then_some(m * 60.0 + sec)
 }
 
+/// Most timed lines read from an LRC text.
+const MAX_LRC_LINES: usize = 5000;
+/// Longer LRC lines are cut (bytes).
+const MAX_LRC_LINE: usize = 4096;
+
 /// The lines of an LRC text with their times (word times and other tags
 /// removed, a line with several times repeated, `[offset:]` applied),
-/// sorted by time; None when fewer than two lines have times.
+/// sorted by time; None when fewer than two lines have times. At most
+/// [`MAX_LRC_LINES`] lines of up to [`MAX_LRC_LINE`] bytes are read.
 pub fn lrc_lines(text: &str) -> Option<Vec<(f64, String)>> {
     let mut offset = 0.0;
     let mut out: Vec<(f64, String)> = Vec::new();
     for line in text.lines() {
-        let mut rest = line.trim();
+        if out.len() >= MAX_LRC_LINES {
+            break;
+        }
+        let mut cut = line.len().min(MAX_LRC_LINE);
+        while !line.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let mut rest = line[..cut].trim();
         let mut times = Vec::new();
         while let Some(r) = rest.strip_prefix('[') {
             let Some(end) = r.find(']') else { break };
@@ -506,7 +520,8 @@ pub fn lrc_lines(text: &str) -> Option<Vec<(f64, String)>> {
             rest = &r[end + 1..];
         }
         let words = strip_word_times(rest);
-        out.extend(times.into_iter().map(|t| (t, words.clone())));
+        let room = MAX_LRC_LINES - out.len();
+        out.extend(times.into_iter().take(room).map(|t| (t, words.clone())));
     }
     if out.len() < 2 {
         return None;
@@ -525,7 +540,10 @@ fn strip_word_times(s: &str) -> String {
     while let Some(i) = rest.find('<') {
         out.push_str(&rest[..i]);
         let r = &rest[i + 1..];
-        match r.find('>') {
+        // A time is short: only the next few bytes are searched, so a run
+        // of '<' costs linear time.
+        let end = r.as_bytes()[..r.len().min(16)].iter().position(|&b| b == b'>');
+        match end {
             Some(end) if parse_time(&r[..end]).is_some() => rest = &r[end + 1..],
             _ => {
                 out.push('<');
@@ -574,6 +592,15 @@ mod tests {
         );
         assert_eq!(header(text), "[ti:Friends]\n");
         assert!(lrc_lines("just a text\nwith lines").is_none());
+        // Crafted texts: bounded and in linear time.
+        let t = std::time::Instant::now();
+        let many = "[00:01.00]".repeat(100_000) + &"x".repeat(100_000);
+        let l = lrc_lines(&(many.clone() + "\n" + &many)).unwrap();
+        assert!(l.len() <= MAX_LRC_LINES && l.iter().all(|x| x.1.len() <= MAX_LRC_LINE));
+        let angles = "[00:01.00]".to_string() + &"<".repeat(200_000) + ">";
+        let _ = lrc_lines(&angles);
+        assert!(!has_word_times(&angles));
+        assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
         assert_eq!(strip_word_times("a <b> c"), "a <b> c");
         let tag = creator_tag("small-q5_1");
         assert_eq!(made_with(&tag), Some((VERSION, "small-q5_1".to_string())));

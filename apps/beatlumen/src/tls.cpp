@@ -6,6 +6,7 @@
 
 #include <QCryptographicHash>
 #include <QHash>
+#include <QImage>
 #include <QMutex>
 #include <QQmlEngine>
 #include <QQmlNetworkAccessManagerFactory>
@@ -307,68 +308,93 @@ QQmlNetworkAccessManagerFactory *tls::qmlNetworkFactory()
 
 #if !defined(Q_OS_WASM)
 namespace {
+// Pixels from the core (RGBA, straight alpha), copied into a QImage; frees them.
+QImage fromCore(uint8_t *data, uint32_t w, uint32_t h, size_t len)
+{
+    if (!data)
+        return {};
+    QImage img;
+    if (w > 0 && h > 0 && w <= 16384 && h <= 16384 && len >= size_t(w) * h * 4)
+        img = QImage(data, int(w), int(h), int(w) * 4, QImage::Format_RGBA8888).copy();
+    bl_bytes_free(data, len);
+    return img;
+}
+
+// Decodes the picture behind a provider id (the percent-encoded URL or
+// path; a raw '#' only starts a suffix that makes the URL new for the
+// image cache) with the core's decoders, covering `want`.
+QImage decodeId(const QString &id, bool server, QSize want)
+{
+    const QString encoded = id.section(QLatin1Char('#'), 0, 0);
+    const QByteArray target = QUrl::fromPercentEncoding(encoded.toUtf8()).toUtf8();
+    if (target.isEmpty())
+        return {};
+    const uint32_t w = uint32_t(qBound(1, want.width(), 4096));
+    const uint32_t h = uint32_t(qBound(1, want.height(), 4096));
+    uint32_t ow = 0, oh = 0;
+    size_t len = 0;
+    uint8_t *data = server ? bl_image_fetch(target.constData(), w, h, &ow, &oh, &len)
+                           : bl_image_thumbnail(target.constData(), w, h, &ow, &oh, &len);
+    return fromCore(data, ow, oh, len);
+}
+
+// Pictures the core hands out: every image from servers, other devices,
+// music files and other programs is decoded by the core's own decoders
+// (Rust, with limits for sizes and memory), never by Qt's image plugins.
 // image://server/<percent-encoded URL>: fetched by the core's HTTP client
-// on Qt's image loading threads, so https servers (and trusted
-// certificates) work the same as for the music itself.
-class ServerImageProvider : public QQuickImageProvider
+// (https servers and trusted certificates work as for the music itself).
+// image://thumb/<percent-encoded path>: a local file (covers taken from
+// music files, artist pictures, backgrounds; very large pictures are
+// scaled while they are read).
+class CoreImageProvider : public QQuickImageProvider
 {
 public:
-    ServerImageProvider() : QQuickImageProvider(QQuickImageProvider::Image, QQmlImageProviderBase::ForceAsynchronousImageLoading) {}
-
-    QImage requestImage(const QString &id, QSize *size, const QSize &requested) override
+    CoreImageProvider(bool server, QSize fallback)
+        : QQuickImageProvider(QQuickImageProvider::Image, QQmlImageProviderBase::ForceAsynchronousImageLoading)
+        , m_server(server)
+        , m_fallback(fallback)
     {
-        QString url = QUrl::fromPercentEncoding(id.toUtf8());
-        if (!url.startsWith(QLatin1String("http")))
-            return {};
-        size_t len = 0;
-        uint8_t *data = bl_http_fetch(url.toUtf8().constData(), &len);
-        if (!data)
-            return {};
-        QImage img = QImage::fromData(reinterpret_cast<const uchar *>(data), int(len));
-        bl_bytes_free(data, len);
-        if (img.isNull())
-            return {};
-        if (size)
-            *size = img.size();
-        if (requested.isValid() && (requested.width() < img.width() || requested.height() < img.height()))
-            img = img.scaled(requested, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        return img;
     }
-};
-// image://thumb/<percent-encoded path>: thumbnails of local background
-// images decoded by the core, which reads every supported format and
-// scales very large pictures while reading them (Qt's own decoders know
-// fewer formats and refuse images above 256 MB).
-class ThumbImageProvider : public QQuickImageProvider
-{
-public:
-    ThumbImageProvider() : QQuickImageProvider(QQuickImageProvider::Image, QQmlImageProviderBase::ForceAsynchronousImageLoading) {}
 
     QImage requestImage(const QString &id, QSize *size, const QSize &requested) override
     {
-        const QByteArray path = QUrl::fromPercentEncoding(id.toUtf8()).toUtf8();
-        const QSize want = requested.isValid() ? requested : QSize(320, 200);
-        uint32_t w = 0, h = 0;
-        size_t len = 0;
-        uint8_t *data = bl_image_thumbnail(path.constData(), uint32_t(qMax(1, want.width())), uint32_t(qMax(1, want.height())), &w, &h, &len);
-        if (!data)
-            return {};
-        QImage img;
-        if (w > 0 && h > 0 && len >= size_t(w) * h * 4)
-            img = QImage(data, int(w), int(h), int(w) * 4, QImage::Format_RGBA8888).copy();
-        bl_bytes_free(data, len);
+        QSize want = requested.isValid() ? requested : m_fallback;
+        if (want.width() <= 0)
+            want.setWidth(want.height() > 0 ? want.height() : m_fallback.width());
+        if (want.height() <= 0)
+            want.setHeight(want.width());
+        const QImage img = decodeId(id, m_server, want);
         if (size && !img.isNull())
             *size = img.size();
         return img;
     }
+
+private:
+    bool m_server;
+    QSize m_fallback;
 };
 } // namespace
 
+QImage tls::loadPicture(const QString &url, QSize want)
+{
+    static const QString server = QStringLiteral("image://server/");
+    static const QString thumb = QStringLiteral("image://thumb/");
+    if (url.startsWith(server))
+        return decodeId(url.mid(server.size()), true, want);
+    if (url.startsWith(thumb))
+        return decodeId(url.mid(thumb.size()), false, want);
+    return {};
+}
+
 void tls::addImageProvider(QQmlEngine *engine)
 {
-    engine->addImageProvider(QStringLiteral("server"), new ServerImageProvider);
-    engine->addImageProvider(QStringLiteral("thumb"), new ThumbImageProvider);
+    engine->addImageProvider(QStringLiteral("server"), new CoreImageProvider(true, QSize(1024, 1024)));
+    engine->addImageProvider(QStringLiteral("thumb"), new CoreImageProvider(false, QSize(320, 200)));
 }
 #else
 void tls::addImageProvider(QQmlEngine *) {}
+QImage tls::loadPicture(const QString &, QSize)
+{
+    return {};
+}
 #endif

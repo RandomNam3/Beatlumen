@@ -15,11 +15,26 @@ pub(super) fn is_image(f: &VaultFile) -> bool {
     f.mime.starts_with("image/")
         || matches!(
             crate::jobs::extension(&f.name).as_deref(),
-            Some("jpg" | "jpeg" | "png" | "apng" | "webp" | "gif" | "bmp" | "tif" | "tiff")
+            Some(
+                "jpg"
+                    | "jpeg"
+                    | "png"
+                    | "apng"
+                    | "webp"
+                    | "gif"
+                    | "bmp"
+                    | "tif"
+                    | "tiff"
+                    | "avif"
+                    | "heic"
+                    | "heif"
+            )
         )
 }
 
-/// A small JPEG of the image, as a data: URL for the image list.
+/// A small PNG of the image, as a data: URL for the image list (made by the
+/// core's encoder from pixels its decoders read; the UI toolkit's own PNG
+/// reader shows it, no JPEG reader needed).
 pub(super) fn thumbnail(data: &[u8]) -> Option<String> {
     let img = std::panic::catch_unwind(|| bl_image::decode_max(data, THUMB_SIZE * 2).ok())
         .ok()
@@ -31,8 +46,8 @@ pub(super) fn thumbnail(data: &[u8]) -> Option<String> {
     );
     let small = bl_image::resize(&img, w, h);
     Some(format!(
-        "data:image/jpeg;base64,{}",
-        bl_net::base64_encode(&bl_image::encode_jpeg(&small, 80))
+        "data:image/png;base64,{}",
+        bl_net::base64_encode(&bl_image::encode_png(&small))
     ))
 }
 

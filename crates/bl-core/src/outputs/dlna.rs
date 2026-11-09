@@ -78,7 +78,9 @@ pub(super) fn run(renderer: Renderer, job: Job) {
         );
         std::thread::Builder::new()
             .name("bl-dlna-position".into())
-            .spawn(move || measure(&r, &s, &d, &m, &p))
+            .spawn(move || {
+                crate::panics::catch("speaker delay", || measure(&r, &s, &d, &m, &p));
+            })
             .ok()
     };
 

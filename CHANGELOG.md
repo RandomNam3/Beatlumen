@@ -24,6 +24,60 @@
   selection with check marks, "Select all" and "Remove from the list", which asks first and
   never deletes a file. The select button above the images does the same; it replaces the button
   that emptied the whole list without asking.
+- **Server: large bodies only with a login.** Without a login a request may send 64 KiB.
+  Larger bodies (4 MiB, image uploads 257 MiB) need the server password, an account or the
+  admin login, and that is checked from the request's head before any of the body is read:
+  before, anyone could make the server take in a 257 MiB upload before it answered 401. Clients
+  that send `Expect: 100-continue` get the answer before they send the body.
+- **Server behind a reverse proxy:** a new setting names the trusted proxies
+  (`--trusted-proxy`, `BEATLUMEN_TRUSTED_PROXIES`, Admin area → Network; default: the same
+  machine, `none` for no proxy). Only their `X-Forwarded-For` names the client, and each of
+  their requests counts against that client while it runs. The loopback interface is no longer
+  exempt from the 32 connections per client, which let everything behind a local proxy through
+  without a limit. The server's own health check still gets through when the limits are
+  reached, and it warns once when another address sends `X-Forwarded-For`. Wrong room codes
+  and admin logins count IPv6 clients per /64 now, as server logins did.
+- **Server keeps its places after internal errors:** a panic while reading a request or while
+  a body streamed (such as the Opus conversion for mobile data) ended the connection without
+  giving its place back, so enough of them made the server refuse everyone. Places are given
+  back now in every case, and a panicking handler answers 500. Background work (scanner,
+  sources, rooms, labels, artist pages, song text timing, the trash) logs a panic and starts
+  again after a pause instead of stopping for good; a failed extension import reports its error
+  instead of running forever.
+- **Device control and rooms with limits:** a command may be 16 KiB (it was up to 4 MiB, with
+  1000 of them buffered), a device has at most 64 commands (256 KiB) waiting that it has not
+  fetched, all events together at most 32 MiB, a login at most 50 devices (the one offline the
+  longest makes room) and 10 rooms. Room requests are at most 16 KiB and read before the rooms
+  are locked.
+- **Apps read at most 64 MiB of an answer** unless the request says otherwise (it was 1 GiB):
+  256 MiB for the server API, whose library of a large server comes in one piece, and 32 MiB
+  for the cover and song text of an offline copy. Songs and models stream into files as before.
+- **Apps hardened against crafted files and network data:**
+  - Every picture from outside is decoded by Beatlumen's own image decoders, which have size
+    and memory limits: covers in music files and next to them, covers from the server, from
+    AirPlay and DLNA senders and from other apps' playback, artist pictures and backgrounds.
+    The apps no longer ship Qt's JPEG, GIF, WebP and other image readers (only SVG, for the
+    app's own icons). Android's media notification and the desktop's media controls get
+    pictures made from the decoded pixels instead of the original files. A damaged picture
+    shows the placeholder.
+  - A bug that makes the core panic no longer ends the app: calls from the interface, worker
+    jobs, the decoder, the library scan and the network listeners catch it. The work in
+    question ends with an error (a song is skipped, a cover stays empty), audio is silent for
+    a moment, and the app says once that an internal error happened.
+  - The live stream for DLNA speakers and Chromecast checks its secret address before
+    reading anything else and takes at most eight connections; requests must arrive within
+    10 seconds and stay short. The same for the sign-in page's return to the app, which also
+    stops listening after 15 minutes. The DLNA receiver takes at most 16 connections, each
+    request within 15 seconds, and reads bodies as they arrive. AirPlay connections must send
+    their first request within 10 seconds, and a crash in one no longer uses up a place.
+  - Settings, the library and covers are written to a temporary file of their own and then
+    renamed, so two writers never mix. Changing the song text of an offline copy writes a new
+    copy instead of overwriting its header while the song plays; a cut-off write could
+    formerly make the copy look damaged, and damaged copies are removed.
+  - On desktops only one Beatlumen runs per data folder: starting it again (for example by
+    opening a song from the file manager) hands the files to the running app and brings its
+    window to the front.
+  - Rust 1.82 or newer is needed to build.
 - **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
   PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
   are read, so they never exist at full size: a 16K image needs about 16 MB of working memory
@@ -37,9 +91,16 @@
   own thread; nothing runs while the app is hidden.
 - **Backgrounds from the server:** animations come as they are, still images scaled to the
   screen (up to 8192 pixels instead of 4096). The image folders list TIFF and APNG files,
-  files up to 512 MB are read and uploads may be up to 256 MB. AVIF and HEIC are not
-  supported: AVIF would need an AV1 decoder of its own, HEIC an HEVC decoder, whose patents
-  stand in the way.
+  files up to 512 MB are read and uploads may be up to 256 MB. AVIF is scaled there like the
+  other formats; HEIC files go to the apps as they are, which decode them themselves.
+- **AVIF and HEIC backgrounds:** AVIF pictures (also tiled ones and ones with transparency, 8
+  to 12 bits, rotated or cropped; HDR pictures are toned down for the screen) are decoded by an
+  AV1 decoder of Beatlumen's own, written from the open AV1 specification, on every platform and
+  on the server. A 16K AVIF is read with about 60 MB of memory in a few seconds; animated AVIF
+  shows its first picture. HEIC pictures (as phones take them) are decoded by the operating
+  system where it can, because HEVC is covered by patents: on Android 9 and newer, on Windows
+  with the HEIF and HEVC extensions from the Microsoft Store, and on Linux when the system has
+  libheif. Beatlumen brings no HEVC decoder of its own.
 - **Listen together:** make a room on the Devices page and let others in with its code or
   link. Everyone hears the same song of the server at the same moment; the host decides what
   plays. A song starts when everybody has it (or after 8 seconds, the slow ones catch up), and
@@ -159,6 +220,19 @@
   Own models count as better than the public ones, so songs timed with those are timed again.
   The admin page uses and deletes own models as well; offering is on by default and turned off
   there, with `--no-offer-models` or with `BEATLUMEN_OFFER_MODELS=false`.
+- **Damaged and hostile files end in an error, not a crash:** song texts (LRC, TTML),
+  playlists, karaoke files (UltraStar, JSON), JSON from servers and devices, Ogg streams,
+  animations, speech models and their timing layers (`.head`), UPnP answers and AirPlay
+  messages. Sizes in a file are checked against what the file really holds before memory is
+  taken, so a speech model from a server can no longer make an app reserve gigabytes for a
+  small file. New limits: Ogg packets up to 64 MiB, JSON objects up to about a million keys
+  and arrays up to 16 million items, song texts up to 5,000 lines of 4 KiB, karaoke files up
+  to 10,000 lines and 100,000 notes, animations up to 10,000 frames (longer ones loop
+  earlier). JSON objects with many keys and long runs of `<` or `&` in TTML, XSPF and UPnP
+  answers no longer take quadratic time (400,000 keys: 76 ms instead of minutes). Song
+  texts with times like `[00:01.abé]` and timing layers whose sizes do not fit each other no
+  longer crash the app. The parsers of outside data (except images) keep overflow checks
+  in release builds, at no measurable cost.
 
 ## 0.12.0 (beta)
 

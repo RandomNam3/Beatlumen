@@ -33,7 +33,7 @@ Item {
     Image {
         id: img
         anchors.fill: parent
-        source: root.source
+        source: Covers.safe(root.source)
         sourceSize: Qt.size(Math.max(64, root.width * 2), Math.max(64, root.height * 2))
         fillMode: Image.PreserveAspectCrop
         asynchronous: true

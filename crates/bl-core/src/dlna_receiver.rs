@@ -322,7 +322,8 @@ impl Core {
         self.dlna.serial += 1;
         self.dlna.active = true;
         let meta = self.dlna.meta.clone();
-        self.dlna.cover_url = meta.art_url.clone();
+        // The control point's picture is fetched and decoded by the core.
+        self.dlna.cover_url = self.picture_url(&meta.art_url);
         let mut track = self.track_for("");
         track.id = format!("{ID_PREFIX}{}", self.dlna.serial);
         track.title = if meta.title.is_empty() {

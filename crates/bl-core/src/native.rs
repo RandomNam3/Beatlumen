@@ -105,6 +105,7 @@ impl NativeServices {
                 for e in rd.flatten() {
                     let name = e.file_name().to_string_lossy().into_owned();
                     if name.starts_with(file_prefix)
+                        && !name.ends_with(crate::host::TEMP_SUFFIX)
                         && e.file_type().map(|t| t.is_file()).unwrap_or(false)
                     {
                         out.push(if dir.is_empty() {
@@ -187,15 +188,22 @@ impl NativeServices {
         self.next_id += 1;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let opts = bl_net::client::Options::default();
-            let res =
+            let res = crate::panics::guarded("http", || {
+                // The answers of the server API, the largest being the library
+                // of a big server (~1 KiB per song) in one piece. Songs, models
+                // and offline copies stream to files instead.
+                let opts = bl_net::client::Options {
+                    max_body: 256 << 20,
+                    ..Default::default()
+                };
                 bl_net::client::request(&req.method, &req.url, &req.headers, &req.body, &opts).map(
                     |r| HttpResponse {
                         status: r.status,
                         headers: r.headers.0,
                         body: r.body,
                     },
-                );
+                )
+            });
             let _ = tx.send((id, res));
         });
         id
@@ -214,10 +222,15 @@ impl NativeServices {
         Ok(Box::new(std::io::BufReader::with_capacity(64 * 1024, s)))
     }
 
+    /// Runs a job on its own thread. A panic ends only the job: it is
+    /// recorded and the core tells the user (jobs that report a result turn
+    /// panics into error results themselves, see `panics::guarded`).
     pub fn spawn(&self, job: Box<dyn FnOnce() + Send>) {
         let _ = std::thread::Builder::new()
             .name("bl-worker".into())
-            .spawn(job);
+            .spawn(move || {
+                crate::panics::catch("job", job);
+            });
     }
 }
 

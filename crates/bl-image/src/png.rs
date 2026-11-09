@@ -148,6 +148,10 @@ pub(crate) fn parse(data: &[u8]) -> Result<Parsed, Error> {
             b"PLTE" => plte = body,
             b"tRNS" => trns = body,
             b"acTL" => actl = true,
+            // Enough frames: the last one is closed and no other opens.
+            b"fcTL" if frames.len() + usize::from(open.is_some()) >= crate::anim::MAX_FRAMES => {
+                frames.extend(open.take());
+            }
             b"fcTL" if body.len() >= 26 => {
                 if let Some(f) = open.take() {
                     frames.push(f);

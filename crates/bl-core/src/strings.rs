@@ -34,6 +34,8 @@ fn de(s: &str) -> Option<&'static str> {
         "The playlist has no songs that can be found here" => "Die Playlist enthält keine Songs, die hier zu finden sind",
         "The song's source is not available" => "Die Quelle des Songs ist nicht erreichbar",
         "Please try again in a moment" => "Bitte versuche es gleich noch einmal",
+        "Something went wrong inside Beatlumen. It keeps running; please report this if it happens again." => "In Beatlumen ist ein interner Fehler aufgetreten. Die App läuft weiter; bitte melde es, wenn es wieder passiert.",
+        "Internal error" => "Interner Fehler",
         "The address must start with https:// or http://" => "Die Adresse muss mit https:// oder http:// beginnen",
         "Signed in. You can close this window and return to Beatlumen." => "Angemeldet. Du kannst dieses Fenster schließen und zu Beatlumen zurückkehren.",
         "Could not open the browser" => "Der Browser konnte nicht geöffnet werden",

@@ -228,6 +228,141 @@ fn bad(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
 }
 
+/// Reads `n` bytes. The buffer grows (doubling, from 1 MiB) only as the
+/// data arrives, so a size a file claims allocates at most about twice
+/// what the file really holds.
+fn read_bytes(r: &mut dyn Read, n: usize) -> io::Result<Vec<u8>> {
+    let mut v: Vec<u8> = Vec::new();
+    while v.len() < n {
+        let start = v.len();
+        let end = start.saturating_mul(2).max(1 << 20).min(n);
+        v.reserve_exact(end - start);
+        v.resize(end, 0);
+        r.read_exact(&mut v[start..])?;
+    }
+    Ok(v)
+}
+
+/// What the network expects of a tensor it uses.
+#[derive(Debug, Clone, Copy)]
+enum Want {
+    /// `cols` x `rows`.
+    Dims(usize, usize),
+    /// This many values, in any shape (vectors, convolutions).
+    Count(usize),
+    /// `cols` columns and at most this many rows.
+    ColsUpTo(usize, usize),
+    /// `rows` rows and at most this many columns.
+    RowsUpTo(usize, usize),
+    /// At most this many values, in any shape.
+    CountUpTo(usize),
+}
+
+impl Want {
+    fn fits(self, cols: usize, rows: usize) -> bool {
+        let Some(count) = cols.checked_mul(rows) else {
+            return false;
+        };
+        match self {
+            Want::Dims(c, r) => cols == c && rows == r,
+            Want::Count(n) => count == n,
+            Want::ColsUpTo(c, r) => cols == c && rows <= r,
+            Want::RowsUpTo(c, r) => rows == r && cols <= c,
+            Want::CountUpTo(n) => count <= n,
+        }
+    }
+}
+
+/// Widest hidden layer of the MLPs, in multiples of the state (Whisper
+/// uses 4).
+const MLP_WIDTH: usize = 16;
+
+/// The shape the network expects of the tensor `name`, and whether it is
+/// used as f32 (vectors, convolutions, position embeddings; the rest is
+/// read row by row as stored). `None` for tensors it does not use.
+fn expected(p: &Params, name: &str) -> Option<(Want, bool)> {
+    use Want::*;
+    let (a, t) = (p.n_audio_state, p.n_text_state);
+    Some(match name {
+        "encoder.conv1.weight" => (Count(3 * p.n_mels * a), true),
+        "encoder.conv2.weight" => (Count(3 * a * a), true),
+        "encoder.conv1.bias"
+        | "encoder.conv2.bias"
+        | "encoder.ln_post.weight"
+        | "encoder.ln_post.bias" => (Count(a), true),
+        "encoder.positional_embedding" => (Dims(a, p.n_audio_ctx), true),
+        "decoder.positional_embedding" => (Dims(t, p.n_text_ctx), true),
+        "decoder.token_embedding.weight" => (Dims(t, p.n_vocab), false),
+        "decoder.ln.weight" | "decoder.ln.bias" => (Count(t), true),
+        _ => {
+            let (d, layers, rest, decoder) = match name.strip_prefix("encoder.blocks.") {
+                Some(r) => (a, p.n_audio_layer, r, false),
+                None => (
+                    t,
+                    p.n_text_layer,
+                    name.strip_prefix("decoder.blocks.")?,
+                    true,
+                ),
+            };
+            let (layer, part) = rest.split_once('.')?;
+            if layer.parse::<usize>().ok()? >= layers {
+                return None;
+            }
+            match part {
+                "attn_ln.weight" | "attn_ln.bias" | "mlp_ln.weight" | "mlp_ln.bias"
+                | "attn.query.bias" | "attn.value.bias" | "attn.out.bias" | "mlp.2.bias" => {
+                    (Count(d), true)
+                }
+                "attn.query.weight" | "attn.key.weight" | "attn.value.weight"
+                | "attn.out.weight" => (Dims(d, d), false),
+                "mlp.0.weight" => (ColsUpTo(d, MLP_WIDTH * d), false),
+                "mlp.0.bias" => (CountUpTo(MLP_WIDTH * d), true),
+                "mlp.2.weight" => (RowsUpTo(MLP_WIDTH * d, d), false),
+                "cross_attn_ln.weight"
+                | "cross_attn_ln.bias"
+                | "cross_attn.query.bias"
+                | "cross_attn.value.bias"
+                | "cross_attn.out.bias"
+                    if decoder =>
+                {
+                    (Count(d), true)
+                }
+                "cross_attn.query.weight" | "cross_attn.out.weight" if decoder => {
+                    (Dims(d, d), false)
+                }
+                // Keys and values of the audio features.
+                "cross_attn.key.weight" | "cross_attn.value.weight" if decoder => {
+                    (Dims(a, d), false)
+                }
+                _ => return None,
+            }
+        }
+    })
+}
+
+/// The MLP layers of each block fit each other (their width is free).
+fn check_mlps(p: &Params, tensors: &HashMap<String, Tensor>) -> io::Result<()> {
+    let blocks = (0..p.n_audio_layer)
+        .map(|l| format!("encoder.blocks.{l}"))
+        .chain((0..p.n_text_layer).map(|l| format!("decoder.blocks.{l}")));
+    for b in blocks {
+        let Some(w0) = tensors.get(&format!("{b}.mlp.0.weight")) else {
+            continue;
+        };
+        let width = w0.rows;
+        let bias_ok = tensors
+            .get(&format!("{b}.mlp.0.bias"))
+            .is_none_or(|t| t.cols * t.rows == width);
+        let w2_ok = tensors
+            .get(&format!("{b}.mlp.2.weight"))
+            .is_none_or(|t| t.cols == width);
+        if !bias_ok || !w2_ok {
+            return Err(bad(&format!("{b}: MLP layers do not fit")));
+        }
+    }
+    Ok(())
+}
+
 fn u32le(r: &mut dyn Read) -> io::Result<u32> {
     let mut b = [0u8; 4];
     r.read_exact(&mut b)?;
@@ -277,30 +412,40 @@ impl Model {
         if u32le(r)? != MAGIC {
             return Err(bad("not a ggml Whisper model"));
         }
+        // Limits well above every Whisper model (large: 1280 wide, 1500
+        // audio and 448 text positions, 32 layers, 128 mel bands).
         let params = Params {
             n_vocab: usize_field(r, 1 << 20)?,
-            n_audio_ctx: usize_field(r, 1 << 16)?,
-            n_audio_state: usize_field(r, 1 << 14)?,
+            n_audio_ctx: usize_field(r, 1 << 13)?,
+            n_audio_state: usize_field(r, 1 << 12)?,
             n_audio_head: usize_field(r, 256)?,
             n_audio_layer: usize_field(r, 256)?,
-            n_text_ctx: usize_field(r, 1 << 16)?,
-            n_text_state: usize_field(r, 1 << 14)?,
+            n_text_ctx: usize_field(r, 1 << 13)?,
+            n_text_state: usize_field(r, 1 << 12)?,
             n_text_head: usize_field(r, 256)?,
             n_text_layer: usize_field(r, 256)?,
             n_mels: usize_field(r, 1024)?,
         };
+        if params.n_audio_state % params.n_audio_head != 0
+            || params.n_text_state % params.n_text_head != 0
+        {
+            return Err(bad("attention heads do not divide the state"));
+        }
         let _ftype = i32le(r)?;
-        // Mel filters.
+        // Mel filters: one row of weights for each bin of the 400-point
+        // transform the spectrogram uses.
         let n_mel = usize_field(r, 1024)?;
         let n_fft = usize_field(r, 1 << 14)?;
         if n_mel != params.n_mels {
             return Err(bad("mel filter count"));
         }
-        let mut mel_filters = vec![0f32; n_mel * n_fft];
-        read_f32s(r, &mut mel_filters)?;
+        if n_fft != crate::mel::N_FFT / 2 + 1 {
+            return Err(bad("mel filter width"));
+        }
+        let mel_filters = read_f32s(r, n_mel * n_fft)?;
         // Vocabulary.
         let n = usize_field(r, 1 << 20)?;
-        let mut vocab = Vec::with_capacity(n);
+        let mut vocab = Vec::with_capacity(n.min(1 << 16));
         for _ in 0..n {
             let len = u32le(r)? as usize;
             if len > 1 << 16 {
@@ -336,15 +481,19 @@ impl Model {
                 .and_then(|c| c.checked_mul(ne[2]))
                 .filter(|&c| c <= 1 << 30)
                 .ok_or_else(|| bad("tensor too large"))?;
+            let (cols, rows) = (ne[0], ne[1] * ne[2]);
+            // A tensor the network uses must have the shape the
+            // hyperparameters give it: nothing sized from them then reaches
+            // beyond the weights.
+            let want = expected(&params, &name);
+            if want.is_some_and(|(w, _)| !w.fits(cols, rows)) {
+                return Err(bad(&format!("tensor {name} has the wrong shape")));
+            }
+            let too_large = || bad("tensor too large");
             let store = match ttype {
-                0 => {
-                    let mut data = vec![0f32; count];
-                    read_f32s(r, &mut data)?;
-                    Store::F32(data)
-                }
+                0 => Store::F32(read_f32s(r, count)?),
                 1 => {
-                    let mut raw = vec![0u8; count * 2];
-                    r.read_exact(&mut raw)?;
+                    let raw = read_bytes(r, count.checked_mul(2).ok_or_else(too_large)?)?;
                     Store::F16(
                         raw.chunks_exact(2)
                             .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -356,21 +505,20 @@ impl Model {
                     if ne[0] % QK != 0 {
                         return Err(bad("quantised row length"));
                     }
-                    let mut raw = vec![0u8; count / QK * q.block_bytes()];
-                    r.read_exact(&mut raw)?;
-                    Store::Quant(q, raw)
+                    let n = (count / QK)
+                        .checked_mul(q.block_bytes())
+                        .ok_or_else(too_large)?;
+                    Store::Quant(q, read_bytes(r, n)?)
                 }
             };
-            let t = Tensor {
-                cols: ne[0],
-                rows: ne[1] * ne[2],
-                store,
-            };
-            // Matrices stay compact; the rest is used as f32 directly.
-            let compact =
-                n_dims >= 2 && !name.contains("conv") && !name.contains("positional_embedding");
-            tensors.insert(name, if compact { t } else { t.into_f32() });
+            let t = Tensor { cols, rows, store };
+            // Matrices stay compact; what the network uses as f32 (vectors,
+            // convolutions, position embeddings) is expanded. Tensors it
+            // does not use stay as stored.
+            let f32 = want.is_some_and(|(_, f32)| f32);
+            tensors.insert(name, if f32 { t.into_f32() } else { t });
         }
+        check_mlps(&params, &tensors)?;
         Ok(Model {
             params,
             mel_filters,
@@ -397,13 +545,13 @@ impl Model {
     }
 }
 
-fn read_f32s(r: &mut dyn Read, out: &mut [f32]) -> io::Result<()> {
-    let mut raw = vec![0u8; out.len() * 4];
-    r.read_exact(&mut raw)?;
-    for (d, c) in out.iter_mut().zip(raw.chunks_exact(4)) {
-        *d = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-    }
-    Ok(())
+/// Reads `n` little-endian f32 values (see [`read_bytes`]).
+fn read_f32s(r: &mut dyn Read, n: usize) -> io::Result<Vec<f32>> {
+    let bytes = n.checked_mul(4).ok_or_else(|| bad("tensor too large"))?;
+    Ok(read_bytes(r, bytes)?
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
 }
 
 #[cfg(test)]

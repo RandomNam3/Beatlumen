@@ -22,6 +22,20 @@ use std::time::Duration;
 
 /// Most control connections at the same time.
 const MAX_CONNECTIONS: usize = 8;
+/// How long a new connection may wait before its first request; after it
+/// a sender keeps the connection for the whole session.
+const FIRST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const SESSION_READ_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A counted connection; the count goes down when it is dropped, also when
+/// the connection's thread panics.
+struct Counted(Arc<Shared>);
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.0.connections.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -261,21 +275,23 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     while !shared.stop.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                if shared.connections.load(Ordering::SeqCst) >= MAX_CONNECTIONS as u64 {
+                if shared.connections.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS as u64 {
+                    shared.connections.fetch_sub(1, Ordering::SeqCst);
                     continue;
                 }
-                shared.connections.fetch_add(1, Ordering::SeqCst);
-                let s = shared.clone();
-                let spawned = std::thread::Builder::new()
+                let counted = Counted(shared.clone());
+                let _ = std::thread::Builder::new()
                     .name("bl-airplay-rtsp".into())
                     .spawn(move || {
+                        let s = counted.0.clone();
+                        let _counted = counted;
                         let id = s.next_id.fetch_add(1, Ordering::SeqCst);
-                        Connection::new(id, peer, &s).run(stream);
-                        s.connections.fetch_sub(1, Ordering::SeqCst);
+                        // A panic (crafted requests) ends this connection
+                        // only; its place is given back by `Counted`.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            Connection::new(id, peer, &s).run(stream)
+                        }));
                     });
-                if spawned.is_err() {
-                    shared.connections.fetch_sub(1, Ordering::SeqCst);
-                }
             }
             Err(_) => std::thread::sleep(Duration::from_millis(100)),
         }
@@ -322,7 +338,7 @@ impl<'a> Connection<'a> {
 
     fn run(mut self, stream: TcpStream) {
         let _ = stream.set_nonblocking(false);
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(300)));
+        let _ = stream.set_read_timeout(Some(FIRST_REQUEST_TIMEOUT));
         let _ = stream.set_nodelay(true);
         let local = stream.local_addr().ok();
         let Ok(mut writer) = stream.try_clone() else {
@@ -331,12 +347,19 @@ impl<'a> Connection<'a> {
         if let (Ok(mut socks), Ok(c)) = (self.shared.sockets.lock(), stream.try_clone()) {
             socks.push((self.id, c));
         }
+        let timeouts = stream.try_clone().ok();
         let mut reader = BufReader::new(Channel::new(stream));
+        let mut first = true;
         while !self.shared.stop.load(Ordering::SeqCst) {
             let req = match rtsp::read_request(&mut reader) {
                 Ok(r) => r,
                 Err(_) => break,
             };
+            if std::mem::take(&mut first) {
+                if let Some(t) = &timeouts {
+                    let _ = t.set_read_timeout(Some(SESSION_READ_TIMEOUT));
+                }
+            }
             // A newer sender took over: this one is done.
             if self.recording && !self.owns_stream() {
                 break;

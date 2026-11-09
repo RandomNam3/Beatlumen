@@ -38,6 +38,7 @@ installed) or add the server in an Beatlumen app.
 | `--vault-quota-mb MB` | `10240` | Encrypted storage per account, `0` = unlimited |
 | `--registration MODE` | `invite` | `invite`: new accounts with an invitation code; `off`: no new accounts |
 | `--public-url URL` | none | The server's `https://` address as users reach it (reverse proxy); enables passkeys, with this host as WebAuthn relying party |
+| `--trusted-proxy ADDR` | `127.0.0.1/8`, `::1` | Reverse proxy (address or range like `10.0.0.0/8`, repeatable) whose `X-Forwarded-For` names the client for the limits per client and failed logins; `none`: no proxy |
 | `--android-cert SHA256` | official app | Signing certificate fingerprint of an Android app that may use passkeys for this server (repeatable); published in `/.well-known/assetlinks.json` |
 | `--push-allow-private` | off | Allow push services (UnifiedPush) in private networks and over plain http, e.g. ntfy at home |
 | `--health-check` | | Exit status 0 if a server with this configuration answers (container health checks) |
@@ -48,7 +49,8 @@ containers): `BEATLUMEN_MUSIC`, `BEATLUMEN_IMAGES` (folders separated like
 `PATH`), `BEATLUMEN_DATA`, `BEATLUMEN_BIND`, `BEATLUMEN_PASSWORD`,
 `BEATLUMEN_PASSWORD_FILE` (file with the password, for Docker/Podman
 secrets), `BEATLUMEN_WEB_DIR`, `BEATLUMEN_NAME`, `BEATLUMEN_ALLOWED_HOSTS`
-(comma separated), `BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
+(comma separated), `BEATLUMEN_TRUSTED_PROXIES` (comma separated, `none`),
+`BEATLUMEN_SOURCE_URL`, `BEATLUMEN_RESCAN_INTERVAL`,
 `BEATLUMEN_ANALYSIS_MAX_MINUTES`, `BEATLUMEN_SCAN_THREADS`,
 `BEATLUMEN_VAULT_PEPPER_FILE`, `BEATLUMEN_VAULT_QUOTA_MB`, `BEATLUMEN_REGISTRATION`,
 `BEATLUMEN_PUSH_ALLOW_PRIVATE`, `BEATLUMEN_CA_FILE` (extra root certificates, PEM, for outgoing TLS),
@@ -249,9 +251,10 @@ static web client itself is public so that it can show its login screen.
 * Password checks run one at a time. A failed login costs 300 ms, rising to
   3 s while many logins fail (from any address); after 10 failures from one
   address (IPv6: one /64) within 5 minutes logins from there are refused
-  with 429. Behind a reverse proxy on the same machine the address is taken
-  from `X-Forwarded-For` / `X-Real-IP`. Use a long password (12+ characters)
-  if the server can be reached from the internet.
+  with 429. Behind a trusted reverse proxy (`--trusted-proxy`, by default
+  one on the same machine) the address is taken from `X-Forwarded-For` /
+  `X-Real-IP`. Use a long password (12+ characters) if the server can be
+  reached from the internet.
 
 ### Accounts and encrypted files
 
@@ -349,6 +352,8 @@ within 15 minutes further attempts get 429. Sessions last 90 days.
       proxy_pass http://127.0.0.1:7878;
       proxy_set_header Host $host;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      # The client is believed only from proxies the server trusts
+      # (--trusted-proxy; by default the same machine).
       proxy_buffering off;
       client_max_body_size 50m;
   }
@@ -359,10 +364,17 @@ within 15 minutes further attempts get 429. Sessions last 90 days.
   when listening on a non-loopback address without a password). Web pages
   cannot use the server through the visitor's browser: requests for unknown
   host names (DNS rebinding) and cross-site writes are refused.
-* Limits against overload: request bodies 4 MiB (image uploads 50 MiB),
-  read as they arrive and at a minimum rate; 10 s for request headers;
-  256 connections, 32 per client address (local reverse proxies excepted);
-  images up to 32 megapixels.
+* Limits against overload: request bodies 64 KiB without a login, 4 MiB
+  with one (image uploads 257 MiB), decided from the request's head before
+  any of the body is read, then read as it arrives and at a minimum rate;
+  10 s for request headers; 256 connections, 32 per client address (IPv6:
+  per /64, the loopback interface included, behind a trusted proxy per
+  forwarded client), with a few kept for the local health check; images up
+  to 32 megapixels. Device commands are at most 16 KiB, with at most 64
+  (256 KiB) waiting per device; a login has at most 50 devices and 10 rooms.
+* A panic in a request or while a response streams ends only that
+  connection; background work (scanner, sources, rooms, labels, artist
+  pages, song text timing, trash) is logged and started again after a pause.
 * Files are only addressed by ids; request paths never reach the file system
   except for the static web client, whose path segments are validated.
 * Responses carry `X-Content-Type-Options: nosniff`,
@@ -372,8 +384,9 @@ within 15 minutes further attempts get 429. Sessions last 90 days.
   `Cross-Origin-Embedder-Policy: require-corp` and `X-Frame-Options: DENY`.
 * Keep the data folder private: it contains token digests, a salted password
   check value and uploads.
-* Request bodies are buffered in memory by the HTTP layer (up to 51 MB per
-  connection, at most 256 connections).
+* Request bodies are buffered in memory by the HTTP layer (up to 257 MiB
+  for an image upload with a login, 64 KiB without one; at most 256
+  connections).
 
 ## Building and testing
 

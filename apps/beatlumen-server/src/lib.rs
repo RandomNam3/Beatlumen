@@ -488,6 +488,8 @@ impl State {
     }
 
     fn scanner_loop(self: Arc<Self>) {
+        // Started again after a panic: that scan is over.
+        self.scan.lock().unwrap_or_else(|e| e.into_inner()).running = false;
         let mut first = true;
         loop {
             {
@@ -826,69 +828,61 @@ pub fn start(config: Config) -> Result<Server, String> {
         );
     }
 
+    // The background threads start again after a panic (`util::supervise`).
     let weak = Arc::downgrade(&state);
     let lister = state.sources.clone();
-    std::thread::Builder::new()
-        .name("sources".into())
-        .spawn(move || {
-            lister.run(move || {
-                if let Some(s) = weak.upgrade() {
-                    s.sources_changed();
-                }
-            })
+    util::supervise("sources", move || {
+        let weak = weak.clone();
+        lister.clone().run(move || {
+            if let Some(s) = weak.upgrade() {
+                s.sources_changed();
+            }
         })
-        .map_err(|e| format!("cannot start the source listing: {e}"))?;
+    })
+    .map_err(|e| format!("cannot start the source listing: {e}"))?;
 
     {
         // The trash of encrypted files, and bytes nobody refers to any more.
         let weak = Arc::downgrade(&state);
-        std::thread::Builder::new()
-            .name("vault-trash".into())
-            .spawn(move || loop {
-                let Some(state) = weak.upgrade() else {
-                    return;
-                };
-                state.vault.purge(util::now_secs());
-                drop(state);
-                std::thread::sleep(Duration::from_secs(3600));
-            })
-            .map_err(|e| format!("cannot start the trash: {e}"))?;
-    }
-    // Rooms go on between requests: see `rooms.rs`.
-    let weak = Arc::downgrade(&state);
-    std::thread::Builder::new()
-        .name("rooms".into())
-        .spawn(move || loop {
+        util::supervise("vault-trash", move || loop {
             let Some(state) = weak.upgrade() else {
                 return;
             };
-            let guests = state.config().room_guests;
-            state
-                .rooms
-                .tick(&state.devices, guests, std::time::Instant::now());
+            state.vault.purge(util::now_secs());
             drop(state);
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(Duration::from_secs(3600));
         })
-        .map_err(|e| format!("cannot start the rooms: {e}"))?;
+        .map_err(|e| format!("cannot start the trash: {e}"))?;
+    }
+    // Rooms go on between requests: see `rooms.rs`.
+    let weak = Arc::downgrade(&state);
+    util::supervise("rooms", move || loop {
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let guests = state.config().room_guests;
+        state
+            .rooms
+            .tick(&state.devices, guests, std::time::Instant::now());
+        drop(state);
+        std::thread::sleep(Duration::from_millis(500));
+    })
+    .map_err(|e| format!("cannot start the rooms: {e}"))?;
     if state.extensions.enabled() {
         // Songs from extensions nobody played for a long time.
         let weak = Arc::downgrade(&state);
-        std::thread::Builder::new()
-            .name("extension-cleanup".into())
-            .spawn(move || loop {
-                std::thread::sleep(Duration::from_secs(3600));
-                let Some(state) = weak.upgrade() else {
-                    return;
-                };
-                state.extensions.cleanup(&state, util::now_secs());
-            })
-            .map_err(|e| format!("cannot start the extension cleanup: {e}"))?;
+        util::supervise("extension-cleanup", move || loop {
+            std::thread::sleep(Duration::from_secs(3600));
+            let Some(state) = weak.upgrade() else {
+                return;
+            };
+            state.extensions.cleanup(&state, util::now_secs());
+        })
+        .map_err(|e| format!("cannot start the extension cleanup: {e}"))?;
     }
 
     let scanner = state.clone();
-    std::thread::Builder::new()
-        .name("scanner".into())
-        .spawn(move || scanner.scanner_loop())
+    util::supervise("scanner", move || scanner.clone().scanner_loop())
         .map_err(|e| format!("cannot start scanner: {e}"))?;
 
     state.admin.announce(&state.data.root, addr);
@@ -896,10 +890,21 @@ pub fn start(config: Config) -> Result<Server, String> {
     let handler_state = state.clone();
     let handler: Arc<bl_net::server::Handler> =
         Arc::new(move |req| routes::handle(&handler_state, req));
-    // Small bodies everywhere except image uploads.
+    // Small bodies without a login, larger ones (image uploads the largest)
+    // with one, checked before the body is read.
+    let limit_state = Arc::downgrade(&state);
+    let body_limit: Arc<bl_net::server::BodyLimit> =
+        Arc::new(move |req| match limit_state.upgrade() {
+            Some(s) => routes::body_limit(&s, req),
+            None => Err(bl_net::server::Response::error(503, "stopping")),
+        });
     let server_config = bl_net::server::ServerConfig {
-        max_body: 4 * 1024 * 1024,
-        large_bodies: vec![("POST", "/api/images", images::MAX_UPLOAD + 1024 * 1024)],
+        max_body: routes::MAX_BODY,
+        body_limit: Some(body_limit),
+        trusted_proxies: cfg.trusted_proxies.clone(),
+        // The health check (`--health-check`) gets through when the limits
+        // are reached.
+        probe_paths: vec![bl_net::api::paths::HEALTH, bl_net::api::paths::INFO],
         ..Default::default()
     };
     let http = std::thread::Builder::new()

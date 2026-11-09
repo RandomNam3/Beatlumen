@@ -140,7 +140,7 @@ pub fn audio_mime(ext: &str) -> &'static str {
 
 /// Image extensions served as background images.
 pub const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "apng", "bmp", "gif", "webp", "tif", "tiff",
+    "jpg", "jpeg", "png", "apng", "bmp", "gif", "webp", "tif", "tiff", "avif", "heic", "heif",
 ];
 
 pub fn image_mime(ext: &str) -> &'static str {
@@ -152,6 +152,9 @@ pub fn image_mime(ext: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "tif" | "tiff" => "image/tiff",
+        "avif" => "image/avif",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
         _ => "application/octet-stream",
     }
 }
@@ -164,6 +167,8 @@ pub fn image_format_ext(f: bl_image::Format) -> &'static str {
         bl_image::Format::Gif => "gif",
         bl_image::Format::WebP => "webp",
         bl_image::Format::Tiff => "tif",
+        bl_image::Format::Avif => "avif",
+        bl_image::Format::Heic => "heic",
     }
 }
 
@@ -179,7 +184,7 @@ pub fn static_mime(ext: &str) -> &'static str {
         "txt" => "text/plain; charset=utf-8",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => image_mime(ext),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" => image_mime(ext),
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ttf" => "font/ttf",
@@ -350,6 +355,48 @@ pub fn catch<T>(what: &str, f: impl FnOnce() -> T) -> Result<T, String> {
         crate::error!("{what} panicked: {msg}");
         format!("{what} failed (internal error)")
     })
+}
+
+/// Starts a background thread that runs `f` and, when it panics, logs that
+/// and runs it again after a pause (1 s, doubling up to a minute; back to 1 s
+/// after it ran for ten minutes). It ends when `f` returns.
+pub fn supervise(
+    name: &str,
+    f: impl Fn() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    supervise_with(
+        name,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(60),
+        f,
+    )
+}
+
+/// [`supervise`] with the first and the longest pause.
+pub fn supervise_with(
+    name: &str,
+    first: std::time::Duration,
+    longest: std::time::Duration,
+    f: impl Fn() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let what = name.to_string();
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            let mut pause = first;
+            loop {
+                let t0 = std::time::Instant::now();
+                if catch(&what, &f).is_ok() {
+                    return;
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(600) {
+                    pause = first;
+                }
+                crate::warn!("{what}: starting again in {} s", pause.as_secs_f32());
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(longest);
+            }
+        })
 }
 
 #[cfg(test)]

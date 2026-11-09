@@ -7,6 +7,11 @@
 //! decoded and composed on a premultiplied canvas of the target size: memory
 //! then depends only on the target size, at the price of small errors where
 //! partly transparent frames meet detail of earlier frames.
+//!
+//! An animation plays at most [`MAX_FRAMES`] frames with at most
+//! [`MAX_ANIMATION_PIXELS`] pixels in all; a longer one loops after the
+//! frames that fit, so a crafted file cannot keep a core busy decoding
+//! huge frames without end.
 
 use crate::scale::{self, Blend, Canvas, Dest, RowSink, Scaler};
 use crate::{gif, png, webp, Error, Fit, Format, Image};
@@ -42,6 +47,37 @@ struct FrameInfo {
 
 /// Largest animation composed at its own size (64 MiB of RGBA).
 pub const FULL_CANVAS_PIXELS: u64 = 1 << 24;
+
+/// Most frames read from an animated file (the decoders stop listing frames
+/// here, so a file of tiny frames cannot fill memory with frame headers).
+pub const MAX_FRAMES: usize = 10_000;
+
+/// Most pixels of all frames of one loop together (their rectangles, at
+/// source size): 500 frames of 4K, 2000 of 1080p or 32 of 16K.
+pub const MAX_ANIMATION_PIXELS: u64 = 1 << 32;
+
+/// How many of these frame rectangles fit in [`MAX_FRAMES`] and
+/// [`MAX_ANIMATION_PIXELS`].
+fn frames_within(rects: impl Iterator<Item = Rect>) -> usize {
+    let mut total = 0u64;
+    let mut n = 0;
+    for (_, _, w, h) in rects.take(MAX_FRAMES) {
+        total = total.saturating_add((w as u64).saturating_mul(h as u64));
+        if total > MAX_ANIMATION_PIXELS {
+            break;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// A frame rectangle moved and cut to lie inside a canvas of `cw` x `ch`
+/// (one that lies outside keeps no area).
+fn clip(rect: Rect, cw: usize, ch: usize) -> Rect {
+    let (left, top, w, h) = rect;
+    let (left, top) = (left.min(cw), top.min(ch));
+    (left, top, w.min(cw - left), h.min(ch - top))
+}
 
 type Rect = (usize, usize, usize, usize);
 
@@ -158,6 +194,11 @@ fn delay(ms: u32) -> u32 {
 }
 
 impl Animation {
+    /// [`MAX_FRAMES`]: most frames played.
+    pub const MAX_FRAMES: usize = MAX_FRAMES;
+    /// [`MAX_ANIMATION_PIXELS`]: most pixels of all frames of a loop.
+    pub const MAX_PIXELS: u64 = MAX_ANIMATION_PIXELS;
+
     /// Opens an animation scaled to `fit`; it keeps the file's bytes.
     /// Returns `None` for still images (and animations with one frame).
     pub fn new(mut data: Vec<u8>, fit: &Fit) -> Result<Option<Animation>, Error> {
@@ -173,13 +214,33 @@ impl Animation {
             Some(Format::WebP) => Kind::WebP(webp::parse(&data)?),
             _ => return Ok(None),
         };
-        let (count, size) = match &kind {
-            Kind::Gif(p) => (p.frames.len(), (p.width, p.height)),
+        let mut kind = kind;
+        let size = match &kind {
+            Kind::Gif(p) => (p.width, p.height),
             Kind::Png(p) => {
                 let (w, h) = p.size();
-                (p.frames.len(), (w as usize, h as usize))
+                (w as usize, h as usize)
             }
-            Kind::WebP(p) => (p.frames.len(), (p.width, p.height)),
+            Kind::WebP(p) => (p.width, p.height),
+        };
+        // Only the frames that fit the limits play.
+        let fits = |r: Rect| clip(r, size.0, size.1);
+        let count = match &mut kind {
+            Kind::Gif(p) => {
+                let n = frames_within(p.frames.iter().map(|f| fits(f.rect)));
+                p.frames.truncate(n);
+                n
+            }
+            Kind::Png(p) => {
+                let n = frames_within(p.frames.iter().map(|f| fits(f.rect)));
+                p.frames.truncate(n);
+                n
+            }
+            Kind::WebP(p) => {
+                let n = frames_within(p.frames.iter().map(|f| fits(f.rect)));
+                p.frames.truncate(n);
+                n
+            }
         };
         if count < 2 {
             return Ok(None);
@@ -229,7 +290,14 @@ impl Animation {
         self.next
     }
 
+    /// What the file says about frame `i`, its rectangle cut to the canvas.
     fn info(&self, i: usize) -> FrameInfo {
+        let mut info = self.stored_info(i);
+        info.rect = clip(info.rect, self.canvas_size.0, self.canvas_size.1);
+        info
+    }
+
+    fn stored_info(&self, i: usize) -> FrameInfo {
         match &self.kind {
             Kind::Gif(p) => {
                 let f = &p.frames[i];
@@ -290,7 +358,12 @@ impl Animation {
         let pending = if restart { None } else { self.pending.take() };
         let data = &self.data;
         let kind = &self.kind;
+        // A frame outside the canvas draws nothing.
+        let empty = info.rect.2 == 0 || info.rect.3 == 0;
         let decode = |sink: &mut dyn RowSink| {
+            if empty {
+                return;
+            }
             let _ = match kind {
                 Kind::Gif(p) => p.frame_rows(data, i, sink),
                 Kind::Png(p) => p.frame_rows(data, i, sink),
@@ -338,7 +411,9 @@ impl Animation {
                 match pending {
                     Some((Dispose::Background, rect)) => {
                         let u = under.take();
-                        canvas.clear_rect(cw, ch, rect, u.as_deref());
+                        if rect.2 > 0 && rect.3 > 0 {
+                            canvas.clear_rect(cw, ch, rect, u.as_deref());
+                        }
                     }
                     Some((Dispose::Previous, _)) => {
                         if let Some(s) = saved.take() {
@@ -349,14 +424,17 @@ impl Animation {
                 }
                 match info.dispose {
                     Dispose::Previous => *saved = Some(canvas.clone()),
-                    Dispose::Background => *under = Some(canvas.save_rect(cw, ch, info.rect)),
-                    Dispose::Keep => {}
+                    Dispose::Background if !empty => {
+                        *under = Some(canvas.save_rect(cw, ch, info.rect))
+                    }
+                    Dispose::Background | Dispose::Keep => {}
                 }
-                let mut s =
-                    Scaler::frame(Dest::Canvas(canvas, info.blend), (cw, ch), info.rect, None);
-                decode(&mut s);
-                s.finish();
-                drop(s);
+                if !empty {
+                    let mut s =
+                        Scaler::frame(Dest::Canvas(canvas, info.blend), (cw, ch), info.rect, None);
+                    decode(&mut s);
+                    s.finish();
+                }
                 canvas.to_image()
             }
         };
@@ -428,6 +506,71 @@ mod tests {
         frame(&mut g, 2, 2, 1, 2, 7);
         g.push(0x3b);
         g
+    }
+
+    /// A GIF with empty frames (clear code, end code) at these rectangles
+    /// (left, top, width, height, disposal).
+    fn empty_frames_gif(canvas: (u16, u16), frames: &[(u16, u16, u16, u16, u8)]) -> Vec<u8> {
+        let mut g = b"GIF89a".to_vec();
+        g.extend_from_slice(&canvas.0.to_le_bytes());
+        g.extend_from_slice(&canvas.1.to_le_bytes());
+        g.extend_from_slice(&[0x81, 0, 0]);
+        g.extend_from_slice(&[255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0]);
+        for &(l, t, w, h, dispose) in frames {
+            g.extend_from_slice(&[0x21, 0xf9, 4, dispose << 2, 5, 0, 0, 0]);
+            g.push(0x2c);
+            for v in [l, t, w, h] {
+                g.extend_from_slice(&v.to_le_bytes());
+            }
+            // No local table; min code 2; codes 4 (clear) and 5 (end).
+            g.extend_from_slice(&[0, 2, 1, 0x2c, 0]);
+        }
+        g.push(0x3b);
+        g
+    }
+
+    #[test]
+    fn frames_outside_the_canvas_draw_nothing() {
+        for dispose in [1, 2, 3] {
+            let gif = empty_frames_gif(
+                (4, 2),
+                &[
+                    (0, 0, 4, 2, 0),
+                    (60_000, 1, 9, 9, dispose),
+                    (1, 60_000, 2, 2, dispose),
+                ],
+            );
+            for fit in [Fit::full(), Fit::within(2)] {
+                let mut a = Animation::new(gif.clone(), &fit).unwrap().unwrap();
+                for _ in 0..7 {
+                    let f = a.next_frame();
+                    let (w, h) = a.size();
+                    assert_eq!(f.image.pixels.len(), w as usize * h as usize * 4);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn frame_count_and_pixels_are_limited() {
+        let frames = vec![(0, 0, 2, 2, 0); MAX_FRAMES + 5];
+        let a = Animation::new(empty_frames_gif((2, 2), &frames), &Fit::full())
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.frame_count(), MAX_FRAMES);
+        // 16384 x 16384 frames: 16 of them make 2^32 pixels.
+        let frames = vec![(0, 0, 16384, 16384, 0); 40];
+        let a = Animation::new(empty_frames_gif((16384, 16384), &frames), &Fit::within(16))
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.frame_count(), (MAX_ANIMATION_PIXELS >> 28) as usize);
+        // Exactly the limit fits, one pixel more does not.
+        let big = (0, 0, 1 << 16, 1 << 16);
+        assert_eq!(frames_within([big, (0, 0, 1, 1)].into_iter()), 1);
+        assert_eq!(
+            frames_within([(0, 0, (1 << 16) + 1, 1 << 16)].into_iter()),
+            0
+        );
     }
 
     #[test]

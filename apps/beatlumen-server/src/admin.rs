@@ -927,6 +927,7 @@ fn apply_default(cfg: &mut Config, d: &Config, key: &str) {
         "registration" => cfg.registration = d.registration,
         "vaultQuotaMb" => cfg.vault_quota_mb = d.vault_quota_mb,
         "allowedHosts" => cfg.allowed_hosts = d.allowed_hosts.clone(),
+        "trustedProxies" => cfg.trusted_proxies = d.trusted_proxies.clone(),
         "publicUrl" => cfg.public_url = d.public_url.clone(),
         "androidCerts" => cfg.android_certs = d.android_certs.clone(),
         "pushAllowPrivate" => cfg.push_allow_private = d.push_allow_private,

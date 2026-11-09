@@ -196,9 +196,7 @@ impl LyricsSync {
             return;
         }
         let me = self.clone();
-        let _ = std::thread::Builder::new()
-            .name("lyrics-sync".into())
-            .spawn(move || me.run());
+        let _ = crate::util::supervise("lyrics-sync", move || me.clone().run());
     }
 
     /// Queues a song (first in line).

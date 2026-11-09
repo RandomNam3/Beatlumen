@@ -103,6 +103,9 @@ export LINUXDEPLOY_OUTPUT_VERSION="$(sed -n 's/^project(.*VERSION \([0-9.]*\).*/
 # detection; keep Qt's choice instead.
 echo "# Qt picks its platform theme itself (light/dark mode, accent colour)." \
     > "$APPDIR/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"
+# Of Qt's image readers only SVG (the app's icons): every other picture is
+# decoded by the core (image://server, image://thumb).
+find "$APPDIR/usr/plugins/imageformats" -name '*.so' ! -name 'libqsvg.so' -delete 2>/dev/null || true
 "$TOOLS_DIR/linuxdeploy-x86_64.AppImage" --appdir "$APPDIR" --output appimage
 
 echo "==> $LDAI_OUTPUT ($(du -h "$LDAI_OUTPUT" | cut -f1))"

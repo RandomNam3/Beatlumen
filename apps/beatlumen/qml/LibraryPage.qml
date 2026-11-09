@@ -741,7 +741,7 @@ Item {
                 Image {
                     id: backdropSource
                     anchors.fill: parent
-                    source: dp.cover
+                    source: Covers.safe(dp.cover)
                     sourceSize: Qt.size(48, 48)
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true

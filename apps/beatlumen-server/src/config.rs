@@ -34,6 +34,9 @@ pub struct Config {
     /// the server answers to; protects password-less servers against DNS
     /// rebinding by web pages.
     pub allowed_hosts: Vec<String>,
+    /// Reverse proxies whose `X-Forwarded-For` names the client, for the
+    /// limits per client and failed logins (default: loopback; empty: none).
+    pub trusted_proxies: Vec<bl_net::server::IpNet>,
     /// Where users get the source code of this server (AGPL section 13).
     pub source_url: String,
     /// Longest track (minutes) analysed on the server (0 = unlimited).
@@ -123,6 +126,7 @@ impl Default for Config {
             name: "Beatlumen Server".into(),
             source_url: bl_net::api::SOURCE_URL.into(),
             allowed_hosts: Vec::new(),
+            trusted_proxies: bl_net::server::IpNet::loopback(),
             analysis_max_minutes: 20,
             scan_threads: 0,
             verbose: false,
@@ -194,6 +198,10 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
     AdminSetting {
         key: "allowedHosts",
         live: true,
+    },
+    AdminSetting {
+        key: "trustedProxies",
+        live: false,
     },
     AdminSetting {
         key: "publicUrl",
@@ -280,6 +288,12 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
         "registration" => Value::from(if cfg.registration { "invite" } else { "off" }),
         "vaultQuotaMb" => Value::from(cfg.vault_quota_mb),
         "allowedHosts" => strs(&cfg.allowed_hosts),
+        "trustedProxies" => Value::Array(
+            cfg.trusted_proxies
+                .iter()
+                .map(|n| Value::from(n.to_string()))
+                .collect(),
+        ),
         "publicUrl" => cfg.public_url.as_deref().map_or(Value::Null, Value::from),
         "androidCerts" => strs(&cfg.android_certs),
         "pushAllowPrivate" => Value::from(cfg.push_allow_private),
@@ -318,6 +332,7 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_WEB_DIR", "webDir"),
     ("BEATLUMEN_NAME", "name"),
     ("BEATLUMEN_ALLOWED_HOSTS", "allowedHosts"),
+    ("BEATLUMEN_TRUSTED_PROXIES", "trustedProxies"),
     ("BEATLUMEN_SOURCE_URL", "sourceUrl"),
     ("BEATLUMEN_RESCAN_INTERVAL", "rescanInterval"),
     ("BEATLUMEN_ANALYSIS_MAX_MINUTES", "analysisMaxMinutes"),
@@ -360,6 +375,7 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--name" => "name",
         "--source-url" => "sourceUrl",
         "--allow-host" => "allowedHosts",
+        "--trusted-proxy" => "trustedProxies",
         "--verbose" => "verbose",
         "--vault-pepper-file" => "vaultPepperFile",
         "--vault-quota-mb" => "vaultQuotaMb",
@@ -378,6 +394,25 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--extension-cleanup-days" => "extensionCleanupDays",
         _ => return None,
     })
+}
+
+/// Parses reverse proxy addresses or ranges (`127.0.0.1`, `10.0.0.0/8`);
+/// `none` alone stands for no proxy.
+pub fn trusted_proxies<'a>(
+    items: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<bl_net::server::IpNet>, String> {
+    let items: Vec<&str> = items
+        .into_iter()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if items.len() == 1 && items[0].eq_ignore_ascii_case("none") {
+        return Ok(Vec::new());
+    }
+    items
+        .into_iter()
+        .map(bl_net::server::IpNet::parse)
+        .collect()
 }
 
 /// Parses an extension given as `id=http://host:port`.
@@ -456,6 +491,10 @@ pub const ENV_VARS: &[(&str, &str)] = &[
     (
         "BEATLUMEN_ALLOWED_HOSTS",
         "extra host names, separated by commas",
+    ),
+    (
+        "BEATLUMEN_TRUSTED_PROXIES",
+        "reverse proxies (addresses or ranges) whose X-Forwarded-For counts, separated by commas; none = no proxy",
     ),
     ("BEATLUMEN_SOURCE_URL", "source code link (AGPL)"),
     (
@@ -599,6 +638,10 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             .map(|h| h.trim().to_ascii_lowercase())
             .filter(|h| !h.is_empty())
             .collect();
+    }
+    if let Some(v) = get("BEATLUMEN_TRUSTED_PROXIES") {
+        cfg.trusted_proxies = trusted_proxies(v.split([',', ' ']))
+            .map_err(|e| format!("BEATLUMEN_TRUSTED_PROXIES: {e}"))?;
     }
     if let Some(v) = get("BEATLUMEN_SOURCE_URL") {
         cfg.source_url = v;
@@ -744,6 +787,10 @@ OPTIONS:
                             the domain of a reverse proxy. IP addresses, localhost
                             and names ending in .local/.lan/.home.arpa/.internal
                             are always accepted
+    --trusted-proxy ADDR    Reverse proxy (address or range, e.g. 10.0.0.0/8) whose
+                            X-Forwarded-For names the client for the limits per
+                            client and failed logins (repeatable; `none`: no
+                            proxy) [default: 127.0.0.1/8 and ::1]
     --source-url URL        Source code of this server, shown to users. Required by
                             the AGPL when you run a modified version for others
                             [default: the official repository]
@@ -753,6 +800,7 @@ OPTIONS:
     --scan-threads N        Threads reading tags during scans [default: automatic]
     --config FILE           JSON configuration file (keys: music, images, data,
                             bind, password, webDir, rescanInterval, name, sourceUrl, allowedHosts,
+                            trustedProxies,
                             analysisMaxMinutes, scanThreads, vaultPepperFile,
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
                             androidCerts, extensions, extensionTokenFile,
@@ -810,7 +858,8 @@ ENVIRONMENT:
     BEATLUMEN_MUSIC, BEATLUMEN_IMAGES (folders separated like PATH),
     BEATLUMEN_DATA, BEATLUMEN_BIND, BEATLUMEN_PASSWORD,
     BEATLUMEN_PASSWORD_FILE, BEATLUMEN_WEB_DIR, BEATLUMEN_NAME,
-    BEATLUMEN_ALLOWED_HOSTS (comma separated), BEATLUMEN_SOURCE_URL,
+    BEATLUMEN_ALLOWED_HOSTS (comma separated), BEATLUMEN_TRUSTED_PROXIES
+    (comma separated, `none`), BEATLUMEN_SOURCE_URL,
     BEATLUMEN_RESCAN_INTERVAL, BEATLUMEN_ANALYSIS_MAX_MINUTES,
     BEATLUMEN_SCAN_THREADS, BEATLUMEN_VAULT_PEPPER_FILE,
     BEATLUMEN_VAULT_QUOTA_MB, BEATLUMEN_REGISTRATION,
@@ -913,6 +962,18 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
                             .ok_or_else(|| err("expected an array of strings"))
                     })
                     .collect::<Result<_, _>>()?
+            }
+            "trustedProxies" => {
+                let list = val
+                    .as_array()
+                    .ok_or_else(|| err("expected an array of addresses"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .ok_or_else(|| err("expected an array of addresses"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                cfg.trusted_proxies = trusted_proxies(list).map_err(|e| err(&e))?;
             }
             "extensions" => {
                 cfg.extensions = val
@@ -1073,6 +1134,7 @@ fn build(
     };
     let mut music_cli = Vec::new();
     let mut images_cli = Vec::new();
+    let mut proxies_cli: Option<Vec<String>> = None;
     let mut health_check = false;
     let mut days = crate::vault::INVITE_DAYS;
     for (flag, v) in items {
@@ -1095,6 +1157,7 @@ fn build(
             "--name" => cfg.name = v,
             "--source-url" => cfg.source_url = v,
             "--allow-host" => cfg.allowed_hosts.push(v.to_ascii_lowercase()),
+            "--trusted-proxy" => proxies_cli.get_or_insert_with(Vec::new).push(v),
             "--verbose" => cfg.verbose = true,
             "--health-check" => health_check = true,
             "--vault-pepper-file" => cfg.vault_pepper_file = Some(PathBuf::from(v)),
@@ -1125,6 +1188,11 @@ fn build(
     }
     if !images_cli.is_empty() {
         cfg.image_dirs = images_cli;
+    }
+    // Given on the command line, the proxies replace the other lists.
+    if let Some(list) = proxies_cli {
+        cfg.trusted_proxies = trusted_proxies(list.iter().map(String::as_str))
+            .map_err(|e| format!("--trusted-proxy: {e}"))?;
     }
     Ok((cfg, health_check, days))
 }
@@ -1178,6 +1246,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
                 | "--name"
                 | "--source-url"
                 | "--allow-host"
+                | "--trusted-proxy"
                 | "--config"
                 | "--analysis-max-minutes"
                 | "--scan-threads"
@@ -1289,6 +1358,7 @@ mod tests {
         assert_eq!(c.data_dir, PathBuf::from("/data"));
         assert_eq!(c.password.as_deref(), Some("geheim"));
         assert_eq!(c.allowed_hosts, vec!["music.example.org", "other.example"]);
+        assert_eq!(c.trusted_proxies, Config::default().trusted_proxies);
         assert_eq!(c.rescan_interval, 0);
         assert!(c.verbose);
         assert_eq!(c.name, Config::default().name);
@@ -1342,6 +1412,57 @@ mod tests {
         assert!(parse_args(["--bogus".to_string()]).is_err());
         assert!(parse_args(["--music".to_string()]).is_err());
         assert!(parse_args(["--rescan-interval".to_string(), "x".to_string()]).is_err());
+    }
+
+    #[test]
+    fn trusted_proxies() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        let d = Config::default().trusted_proxies;
+        assert!(
+            d.iter().any(|n| n.contains(ip("127.0.0.1")))
+                && d.iter().any(|n| n.contains(ip("::1")))
+        );
+        // Flags replace the default; `none` trusts nobody.
+        let c = run(&[
+            "--trusted-proxy",
+            "10.0.0.0/8",
+            "--trusted-proxy=192.168.1.2",
+        ]);
+        let shown = setting_value(&c, "trustedProxies");
+        assert_eq!(shown.to_json(), r#"["10.0.0.0/8","192.168.1.2"]"#);
+        assert!(!c
+            .trusted_proxies
+            .iter()
+            .any(|n| n.contains(ip("127.0.0.1"))));
+        assert!(run(&["--trusted-proxy", "none"]).trusted_proxies.is_empty());
+        assert!(parse_args(["--trusted-proxy".to_string(), "proxy.lan".to_string()]).is_err());
+        let mut c = Config::default();
+        apply_env(&mut c, |k| {
+            (k == "BEATLUMEN_TRUSTED_PROXIES").then(|| "fd00::/8, 10.1.2.3".into())
+        })
+        .unwrap();
+        assert_eq!(c.trusted_proxies.len(), 2);
+        apply_env(&mut c, |k| {
+            (k == "BEATLUMEN_TRUSTED_PROXIES").then(|| "none".into())
+        })
+        .unwrap();
+        assert!(c.trusted_proxies.is_empty());
+        assert!(apply_env(&mut c, |k| (k == "BEATLUMEN_TRUSTED_PROXIES")
+            .then(|| "10.0.0.0/40".into()))
+        .is_err());
+        let mut c = Config::default();
+        let v = bl_json::parse(r#"{"trustedProxies":["172.16.0.0/12"]}"#).unwrap();
+        apply_json(&mut c, &v, Path::new("/")).unwrap();
+        assert!(c.trusted_proxies[0].contains(ip("172.20.0.1")));
+        let v = bl_json::parse(r#"{"trustedProxies":[]}"#).unwrap();
+        apply_json(&mut c, &v, Path::new("/")).unwrap();
+        assert!(c.trusted_proxies.is_empty());
+        assert!(apply_json(
+            &mut c,
+            &bl_json::parse(r#"{"trustedProxies":"x"}"#).unwrap(),
+            Path::new("/")
+        )
+        .is_err());
     }
 
     #[test]

@@ -16,6 +16,19 @@ QtObject {
         return u !== undefined ? u : (fallback || "")
     }
 
+    // What an Image may load. Native apps show pictures only through the
+    // core's providers (decoded by its own decoders, image://server and
+    // image://thumb), the app's own files and PNGs the core made; any other
+    // URL shows the placeholder instead of reaching Qt's image readers.
+    // The browser build shows server URLs as they are.
+    readonly property bool nativeApp: Qt.platform.os !== "wasm"
+    function safe(u) {
+        if (!u || !nativeApp)
+            return u || ""
+        const s = String(u)
+        return s.startsWith("image://") || s.startsWith("qrc:") || s.startsWith("data:image/png;") ? s : ""
+    }
+
     function request(id) {
         if (urls[id] !== undefined || pending.indexOf(id) >= 0)
             return
