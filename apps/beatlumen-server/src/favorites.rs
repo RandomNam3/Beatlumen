@@ -1,10 +1,10 @@
-//! Favorite songs of a login (`favorites.json`), newest first, rewritten
-//! atomically on every change. Like playlists they stay when a song is
-//! gone from the library for a while.
+//! Favorite songs of a login, newest first: one database entry per song
+//! (`<scope>favorite/<id>`: when it was marked). Like playlists they stay
+//! when a song is gone from the library for a while.
 
+use crate::store::Part;
 use crate::util;
 use bl_json::Value;
-use std::path::PathBuf;
 use std::sync::RwLock;
 
 const MAX_ITEMS: usize = 100_000;
@@ -19,44 +19,34 @@ pub struct Favorite {
 }
 
 pub struct Favorites {
-    path: PathBuf,
+    part: Part,
     list: RwLock<Vec<Favorite>>,
 }
 
+fn failed(e: crate::store::Error) -> Failure {
+    crate::error!("cannot save favorites: {e}");
+    (500, "cannot save favorites".to_string())
+}
+
 impl Favorites {
-    pub fn load(path: PathBuf) -> Favorites {
-        let mut list: Vec<Favorite> = Vec::new();
-        if let Ok(data) = std::fs::read(&path) {
-            match bl_json::parse_bytes(&data) {
-                Ok(v) => {
-                    for f in v.get("items").as_array().into_iter().flatten() {
-                        let id = f.str_or("id", "");
-                        if util::is_id(id) && !list.iter().any(|x| x.id == id) {
-                            list.push(Favorite {
-                                id: id.to_string(),
-                                added: f.get("t").as_u64().unwrap_or(0),
-                            });
-                        }
-                    }
-                }
-                Err(e) => crate::warn!(
-                    "cannot parse {}: {e}; starting with no favorites",
-                    path.display()
-                ),
-            }
-        }
+    pub fn load(part: Part) -> Favorites {
+        let mut list: Vec<Favorite> = part
+            .list()
+            .into_iter()
+            .filter(|(id, _)| util::is_id(id))
+            .map(|(id, t)| Favorite {
+                id,
+                added: std::str::from_utf8(&t)
+                    .ok()
+                    .and_then(|t| t.parse().ok())
+                    .unwrap_or(0),
+            })
+            .collect();
+        list.sort_by_key(|f| std::cmp::Reverse(f.added));
         Favorites {
-            path,
+            part,
             list: RwLock::new(list),
         }
-    }
-
-    fn save(&self, list: &[Favorite]) -> Result<(), Failure> {
-        let v = Self::json(list);
-        util::write_atomic(&self.path, v.to_json().as_bytes()).map_err(|e| {
-            crate::error!("cannot write {}: {e}", self.path.display());
-            (500, "cannot save favorites".to_string())
-        })
     }
 
     fn json(list: &[Favorite]) -> Value {
@@ -97,6 +87,9 @@ impl Favorites {
         if list.len() >= MAX_ITEMS {
             return Err((409, "too many favorites".into()));
         }
+        self.part
+            .put(id, added.to_string().as_bytes())
+            .map_err(failed)?;
         let at = list.partition_point(|f| f.added > added);
         list.insert(
             at,
@@ -105,10 +98,6 @@ impl Favorites {
                 added,
             },
         );
-        if let Err(e) = self.save(&list) {
-            list.remove(at);
-            return Err(e);
-        }
         Ok(())
     }
 
@@ -118,11 +107,8 @@ impl Favorites {
         let Some(i) = list.iter().position(|f| f.id == id) else {
             return Ok(());
         };
-        let old = list.remove(i);
-        if let Err(e) = self.save(&list) {
-            list.insert(i, old);
-            return Err(e);
-        }
+        self.part.delete(id).map_err(failed)?;
+        list.remove(i);
         Ok(())
     }
 }
@@ -131,11 +117,11 @@ impl Favorites {
 mod tests {
     use super::*;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bl-fav-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("favorites.json")
+    fn temp(name: &str) -> Part {
+        Part::new(
+            &crate::store::temp_store(&format!("fav-{name}")),
+            "shared/favorite/",
+        )
     }
 
     const A: &str = "00000000000000aa";

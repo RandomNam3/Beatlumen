@@ -339,6 +339,7 @@ fn admin_interface() {
     .unwrap()
     {
         config::Action::Run(c) => {
+            let c = config::with_settings(*c, &server.state.store, &data);
             assert_eq!(c.name, "Cli");
             assert_eq!(c.rescan_interval, 300);
             assert_eq!(c.music_dirs, vec![musik.clone()]);
@@ -701,7 +702,12 @@ fn model_download_switches_the_model() {
         .unwrap()
         .bool_or("speech", false));
     // Settings remember it.
-    let saved = std::fs::read_to_string(config::settings_path(&data)).unwrap();
+    let saved = server
+        .state
+        .store
+        .get_json(config::SETTINGS_KEY)
+        .unwrap()
+        .to_json();
     assert!(saved.contains("ggml-base-q5_1.bin"));
     let _ = std::fs::remove_dir_all(&root);
 }

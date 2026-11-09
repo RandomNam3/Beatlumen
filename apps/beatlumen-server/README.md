@@ -110,20 +110,49 @@ segments, backslashes, `:` or control characters are rejected.
 
 ```
 beatlumen-data/
+  beatlumen.redb        the database (mode 0600 on Unix), see below
+  backup/beatlumen.redb its consistent copy for backups (within an hour of a change)
+  admin-setup.json      digests of admin setup links (from `admin-link`)
   library.json          cached library index (fast startup, incremental scans)
-  tokens.json           SHA-256 digests of login tokens (mode 0600 on Unix)
-  playlists.json        shared playlists
-  presets/<name>.hfx    shared presets
+  sound.jsonl           sound analysis of the songs (tempo, key, energy)
+  artists.json          what public databases know about the artists
+  lyrics/               imported song texts and computed timings
   uploads/              uploaded background images
+  models/               speech models
+  sources/              cached listings of the music sources
+  vault/blobs/, vault/files/   encrypted file contents (finished, uploading)
+  vault/invites/        digests of account invitations (from `invite`)
+  vault/pepper          the server secret of the account verifiers
   cache/covers/         <track id>_<size>_<stamp>.jpg cover thumbnails
   cache/analysis/       <track id>_<config key>.ocan analysis blobs,
                         <track id>.loudness.json loudness measurements
   cache/images/         <image id>_<size>_<stamp>.jpg scaled backgrounds
 ```
 
-Everything under `cache/` can be deleted at any time. Stale cache files of
-removed or changed tracks are pruned after each scan. Writes of JSON files are
-atomic (temporary file + rename).
+The database (redb, built into the server) holds the server's own data, one
+entry per thing under a key like a path:
+
+| Keys | Content |
+|---|---|
+| `settings`, `admin` | settings made in the admin interface; the admin password's verifier and sessions |
+| `auth/meta`, `auth/token/<digest>` | logins with the server password (SHA-256 digests of the tokens) |
+| `vault/user/<name>`, `vault/file/<id>`, `vault/session/<digest>`, `vault/link/<id>`, `vault/released/<hash>`, `vault/content-salt` | accounts, metadata of their encrypted files, sessions, public links, when stored bytes were last deleted |
+| `shared/…`, `acct/<name>/…` | per login (the server password's, an account's): `playlist/<id>`, `favorite/<id>`, `history/<start>/<id>`, `labels/<id>`, `hidden/<id>`, `preset/<name>`, `settings` (an account's encrypted app settings) |
+| `push/vapid`, `push/sub/<name>` | the server's push key, the devices registered for notifications |
+| `sources`, `ext/imported/…` | music sources (logins encrypted), songs kept from extensions |
+
+Every change is one transaction, written to disk before the request is
+answered; a change that fails or is cut off by a crash leaves the previous
+state. While the server runs it holds the database: commands next to it
+(`invite`, `admin-link`) write small files that the server reads, and
+`users` works only while the server is stopped. For backups see
+[`container/README.md`](../../container/README.md#backup): the copy in
+`backup/` or a stopped server.
+
+Everything under `cache/` can be deleted at any time, and so can
+`library.json`, `sound.jsonl` and `artists.json` (they are worked out
+again). Stale cache files of removed or changed tracks are pruned after each
+scan. Writes of the other files are atomic (temporary file + rename).
 
 ## Library scanning
 
@@ -253,7 +282,7 @@ static web client itself is public so that it can show its login screen.
 * Tokens are 128-bit random values from the OS (`/dev/urandom`,
   `BCryptGenRandom` on Windows). They expire after 180 days;
   `POST /api/logout` revokes one. Only their SHA-256 digests are stored
-  (`tokens.json`, readable by the server user only).
+  (in the database, readable by the server user only).
 * The password is compared in constant time. Changing the password
   invalidates all tokens.
 * Password checks run one at a time. A failed login costs 300 ms, rising to
@@ -278,7 +307,7 @@ registration off completely (also for existing codes):
 ```sh
 beatlumen-server invite --data /var/lib/beatlumen
 docker exec beatlumen /beatlumen-server invite      # container
-beatlumen-server users --data /var/lib/beatlumen    # list accounts
+beatlumen-server users --data /var/lib/beatlumen    # list accounts (server stopped)
 ```
 
 A session token from `/api/vault/login` also opens the library of a

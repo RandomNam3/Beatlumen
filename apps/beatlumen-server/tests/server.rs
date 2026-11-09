@@ -591,9 +591,18 @@ fn auth_login_logout_and_persistence() {
         .status,
         401
     );
-    // The token file stores digests only.
-    let stored = std::fs::read_to_string(data.join("tokens.json")).unwrap();
-    assert!(!stored.contains(&token) && !stored.contains("s3cret"));
+    // The database stores digests only.
+    let logins = s.server.state.store.list("auth/token/");
+    assert_eq!(logins.len(), 1);
+    assert!(logins.iter().all(|(k, _)| k != &token));
+    // Nor anywhere in the file (Windows: the running server's locks keep
+    // other handles from reading it).
+    #[cfg(unix)]
+    {
+        let file = std::fs::read(data.join(beatlumen_server::store::FILE_NAME)).unwrap();
+        let has = |needle: &[u8]| file.windows(needle.len()).any(|w| w == needle);
+        assert!(!has(token.as_bytes()) && !has(b"s3cret"));
+    }
 
     let r = s.req("POST", "/api/login", &[], br#"{"password":"s3cret pw"}"#);
     let token2 = body_json(&r).get("token").as_str().unwrap().to_string();
@@ -711,14 +720,8 @@ fn playlists_crud() {
         404
     );
 
-    // Stored atomically as JSON.
-    let stored =
-        bl_json::parse_bytes(&std::fs::read(data.join("playlists.json")).unwrap()).unwrap();
-    assert_eq!(stored.get("playlists").as_array().unwrap().len(), 2);
-    assert!(std::fs::read_dir(&data)
-        .unwrap()
-        .flatten()
-        .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
+    // One database entry per playlist.
+    assert_eq!(s.server.state.store.list("shared/playlist/").len(), 2);
 
     assert_eq!(s.req("DELETE", &path, &[], &[]).status, 204);
     assert_eq!(s.get(&path).status, 404);
@@ -755,7 +758,7 @@ fn presets_crud_and_name_sanitizing() {
     let r = s.get(&path);
     assert_eq!((r.status, r.body.as_slice()), (200, &preset[..]));
     assert_eq!(r.headers.get("content-type"), Some("application/json"));
-    assert!(data.join("presets/My Preset.hfx").is_file());
+    assert!(s.server.state.store.contains("shared/preset/My Preset"));
 
     assert_eq!(s.req("PUT", &path, &[], b"{not json").status, 400);
     assert_eq!(s.req("PUT", &path, &[], br#"{"effects":{}}"#).status, 400);

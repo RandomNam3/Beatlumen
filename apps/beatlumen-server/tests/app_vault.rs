@@ -431,7 +431,7 @@ fn push_notifications_reach_the_app() {
         s.get("vault").get("push").str_or("status", "") == "off"
     });
     std::thread::sleep(Duration::from_millis(300));
-    let subs = std::fs::read_dir(data.join("vault/push")).unwrap().count();
+    let subs = server.state.store.list("push/sub/").len();
     assert_eq!(subs, 0, "subscription removed");
     drop((a, b));
     let _ = std::fs::remove_dir_all(&data);

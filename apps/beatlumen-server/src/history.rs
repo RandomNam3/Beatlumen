@@ -1,13 +1,13 @@
-//! What a login listened to, one JSON line per play in `history.jsonl`.
+//! What a login listened to: one database entry per play
+//! (`<scope>history/<start, 16 hex digits>/<song id>`: `{ms, skip}`).
 //! Only there when the user agreed to it in the app (the apps send nothing
 //! otherwise), and only songs of this server's library; the user can delete
 //! it at any time.
 
+use crate::store::Part;
 use crate::util;
 use bl_json::Value;
 use std::collections::HashSet;
-use std::io::Write;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 /// Plays kept per login; the oldest go first.
@@ -39,6 +39,21 @@ impl Event {
             .with("skip", self.skip)
     }
 
+    /// Its key in the database: in the order of the start times.
+    fn key(&self) -> String {
+        format!("{:016x}/{}", self.t, self.id)
+    }
+
+    fn from_stored(key: &str, v: &Value, now: u64) -> Option<Event> {
+        let (t, id) = key.split_once('/')?;
+        let t = u64::from_str_radix(t, 16).ok()?;
+        Event::from_json(&v.clone().with("id", id).with("t", t), now)
+    }
+
+    fn stored(&self) -> Value {
+        Value::object().with("ms", self.ms).with("skip", self.skip)
+    }
+
     fn from_json(v: &Value, now: u64) -> Option<Event> {
         let id = v.get("id").as_str().filter(|s| util::is_id(s))?;
         let t = v.get("t").as_u64().filter(|t| *t <= now + 86_400)?;
@@ -60,43 +75,31 @@ struct Inner {
 }
 
 pub struct History {
-    path: PathBuf,
+    part: Part,
     inner: Mutex<Inner>,
 }
 
+fn failed(e: crate::store::Error) -> Failure {
+    crate::error!("cannot save the listening history: {e}");
+    (500, "cannot save the listening history".to_string())
+}
+
 impl History {
-    pub fn load(path: PathBuf) -> History {
+    pub fn load(part: Part) -> History {
         let mut inner = Inner::default();
-        if let Ok(data) = std::fs::read(&path) {
-            let now = util::now_secs();
-            for line in data.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-                if let Some(e) = bl_json::parse_bytes(line)
-                    .ok()
-                    .and_then(|v| Event::from_json(&v, now))
-                {
-                    if inner.seen.insert((e.id.clone(), e.t)) {
-                        inner.events.push(e);
-                    }
+        let now = util::now_secs();
+        for (key, v) in part.list_json() {
+            if let Some(e) = Event::from_stored(&key, &v, now) {
+                if inner.seen.insert((e.id.clone(), e.t)) {
+                    inner.events.push(e);
                 }
             }
-            inner.events.sort_by_key(|e| e.t);
         }
+        inner.events.sort_by_key(|e| e.t);
         History {
-            path,
+            part,
             inner: Mutex::new(inner),
         }
-    }
-
-    fn rewrite(&self, inner: &Inner) -> Result<(), Failure> {
-        let mut out = String::new();
-        for e in &inner.events {
-            out.push_str(&e.to_json().to_json());
-            out.push('\n');
-        }
-        util::write_atomic(&self.path, out.as_bytes()).map_err(|e| {
-            crate::error!("cannot write {}: {e}", self.path.display());
-            (500, "cannot save the listening history".to_string())
-        })
     }
 
     /// `POST /api/history` body `{events: [{id, t, ms, skip}]}`; the number
@@ -121,36 +124,38 @@ impl History {
         if fresh.is_empty() {
             return Ok(0);
         }
-        let mut lines = String::new();
-        for e in &fresh {
-            lines.push_str(&e.to_json().to_json());
-            lines.push('\n');
-        }
-        if let Some(dir) = self.path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let written = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .and_then(|mut f| f.write_all(lines.as_bytes()));
+        // The oldest go when there are too many (together with the new ones).
+        let mut all: Vec<&Event> = inner.events.iter().chain(&fresh).collect();
+        all.sort_by_key(|e| e.t);
+        let drop = if all.len() > MAX_EVENTS {
+            all.len() - MAX_EVENTS * 9 / 10
+        } else {
+            0
+        };
+        let gone: Vec<String> = all[..drop].iter().map(|e| e.key()).collect();
+        let written = self.part.store().write(|tx| {
+            for e in &fresh {
+                tx.put_json(&self.part.key(&e.key()), &e.stored())?;
+            }
+            for k in &gone {
+                tx.delete(&self.part.key(k))?;
+            }
+            Ok(())
+        });
         if let Err(e) = written {
-            crate::error!("cannot write {}: {e}", self.path.display());
             for e in &fresh {
                 inner.seen.remove(&(e.id.clone(), e.t));
             }
-            return Err((500, "cannot save the listening history".to_string()));
+            return Err(failed(e));
         }
         let n = fresh.len();
         inner.events.extend(fresh);
         inner.events.sort_by_key(|e| e.t);
-        if inner.events.len() > MAX_EVENTS {
-            let drop = inner.events.len() - MAX_EVENTS * 9 / 10;
+        if drop > 0 {
             let gone: Vec<Event> = inner.events.drain(..drop).collect();
             for e in gone {
                 inner.seen.remove(&(e.id, e.t));
             }
-            self.rewrite(&inner)?;
         }
         Ok(n)
     }
@@ -185,13 +190,9 @@ impl History {
     /// `DELETE /api/history`.
     pub fn clear(&self) -> Result<(), Failure> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                crate::error!("cannot delete {}: {e}", self.path.display());
-                return Err((500, "cannot delete the listening history".to_string()));
-            }
+        if let Err(e) = self.part.clear() {
+            crate::error!("cannot delete the listening history: {e}");
+            return Err((500, "cannot delete the listening history".to_string()));
         }
         *inner = Inner::default();
         Ok(())
@@ -202,11 +203,11 @@ impl History {
 mod tests {
     use super::*;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("bl-hist-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join("history.jsonl")
+    fn temp(name: &str) -> Part {
+        Part::new(
+            &crate::store::temp_store(&format!("hist-{name}")),
+            "shared/history/",
+        )
     }
 
     const A: &str = "00000000000000aa";
@@ -274,7 +275,7 @@ mod tests {
         h.add(&body(&[(A, 100, 1, false)])).unwrap();
         h.clear().unwrap();
         assert!(h.events().is_empty());
-        assert!(!p.exists());
+        assert!(p.list().is_empty());
         assert!(History::load(p).events().is_empty());
         // Deleted plays may come back from a device that sends new ones.
         assert_eq!(h.add(&body(&[(A, 100, 1, false)])).unwrap(), 1);

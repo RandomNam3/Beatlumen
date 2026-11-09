@@ -69,15 +69,11 @@ fn settings_follow_the_account() {
     );
     assert_eq!(a.ready().get("vault").str_or("error", ""), "");
     a.cmd(Value::object().with("cmd", "vault.dismissCode"));
-    let stored = data.join("vault").join("userdata");
     let t0 = Instant::now();
     let blob = loop {
         a.state();
-        let found = walk(&stored)
-            .into_iter()
-            .find(|p| p.ends_with("settings.bin"));
-        if let Some(p) = found {
-            break std::fs::read(p).unwrap();
+        if let Some(b) = server.state.store.get("acct/carla/settings") {
+            break b;
         }
         assert!(t0.elapsed() < Duration::from_secs(30), "settings stored");
         std::thread::sleep(Duration::from_millis(40));
@@ -143,17 +139,4 @@ fn settings_follow_the_account() {
     });
     drop((a, b, c));
     let _ = std::fs::remove_dir_all(&data);
-}
-
-fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            out.extend(walk(&p));
-        } else {
-            out.push(p);
-        }
-    }
-    out
 }

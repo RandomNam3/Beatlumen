@@ -153,24 +153,21 @@ fn account_settings(state: &State, req: &Request) -> Response {
     let Some(user) = state.vault.session_user(req) else {
         return Response::error(401, "authentication required");
     };
-    let path = state.vault.user_data_dir(&user).join("settings.bin");
+    // In the database, with the account's other data.
+    let key = format!("{}settings", crate::store::scope(&user));
     match req.method.as_str() {
-        "GET" | "HEAD" => match std::fs::read(&path) {
-            Ok(d) => Response::bytes(200, "application/octet-stream", d),
-            Err(_) => Response::error(404, "no settings yet"),
+        "GET" | "HEAD" => match state.store.get(&key) {
+            Some(d) => Response::bytes(200, "application/octet-stream", d),
+            None => Response::error(404, "no settings yet"),
         },
         "PUT" => {
             if req.body.is_empty() || req.body.len() > MAX_ACCOUNT_SETTINGS {
                 return Response::error(413, "settings too large");
             }
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Err(e) = util::write_atomic(&path, &req.body) {
+            if let Err(e) = state.store.put(&key, &req.body) {
                 crate::warn!("cannot store settings of {user}: {e}");
                 return Response::error(500, "cannot store");
             }
-            util::make_private(&path);
             state.devices.notify(
                 &format!("user:{user}"),
                 Value::object()
@@ -264,9 +261,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
-    let store = user
-        .as_deref()
-        .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
+    let store = user.as_deref().map(|u| state.user_data.get(u));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
     let favorites = store.as_ref().map_or(&state.favorites, |s| &s.favorites);

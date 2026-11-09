@@ -1,9 +1,9 @@
 //! Password login and bearer tokens.
 //!
 //! * Tokens are 128-bit random values (hex) from the OS random source.
-//! * Only SHA-256 digests of tokens are kept (in memory and in
-//!   `data/tokens.json`), so a leaked data folder does not leak usable
-//!   tokens.
+//! * Only SHA-256 digests of tokens are kept (in memory and in the
+//!   database: `auth/token/<digest>` with the time it was issued), so a
+//!   leaked data folder does not leak usable tokens.
 //! * A password from the configuration is compared in constant time
 //!   (digests of equal length); one set in the admin interface is kept only
 //!   as an Argon2id verifier.
@@ -13,13 +13,13 @@
 //! * Failed logins are delayed and limited per client address.
 
 use crate::sha256::{sha256, sha256_parts};
+use crate::store::Store;
 use crate::util::{self, ct_eq};
 use bl_json::Value;
 use bl_net::server::Request;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Failed attempts per address and window before logins are refused.
@@ -30,6 +30,10 @@ const FAILURE_DELAY: Duration = Duration::from_millis(300);
 const MAX_TOKENS: usize = 10_000;
 /// Logins expire after this time (clients then ask for the password again).
 const TOKEN_LIFETIME: u64 = 180 * 24 * 3600;
+/// The salt and the password check in the database.
+const META_KEY: &str = "auth/meta";
+/// One entry per token: `auth/token/<digest>` = when it was issued.
+const TOKENS: &str = "auth/token/";
 
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
@@ -77,7 +81,7 @@ struct TokenStore {
 
 pub struct Auth {
     secret: RwLock<Option<Secret>>,
-    path: PathBuf,
+    store: Arc<Store>,
     salt: String,
     check: RwLock<String>,
     tokens: RwLock<TokenStore>,
@@ -96,55 +100,61 @@ pub enum LoginError {
 impl Auth {
     /// Creates the authenticator and loads persisted tokens (discarded when
     /// the password changed).
-    pub fn new(secret: Option<Secret>, path: PathBuf) -> Auth {
-        let stored = std::fs::read(&path)
-            .ok()
-            .and_then(|d| bl_json::parse_bytes(&d).ok())
-            .unwrap_or_default();
+    pub fn new(secret: Option<Secret>, store: Arc<Store>) -> Auth {
+        let stored = store.get_json(META_KEY).unwrap_or_default();
         let mut salt = stored.str_or("salt", "").to_string();
         if !matches!(util::unhex(&salt), Some(s) if s.len() >= 16) {
-            salt = crate::random::hex(16)
-                .unwrap_or_else(|_| util::hex(&sha256(path.to_string_lossy().as_bytes())[..16]));
+            salt = crate::random::hex(16).unwrap_or_else(|_| {
+                util::hex(&sha256(store.path().to_string_lossy().as_bytes())[..16])
+            });
         }
         let check = secret.as_ref().map(|s| s.check(&salt)).unwrap_or_default();
-        let mut list = Vec::new();
-        if secret.is_some()
+        let same = secret.is_some()
             && ct_eq(
                 stored.str_or("passwordCheck", "").as_bytes(),
                 check.as_bytes(),
-            )
-        {
-            // "digest:issued" (older files: digest only, counted from now).
-            let now = unix_now();
-            for t in stored.get("tokens").as_array().into_iter().flatten() {
-                let Some(t) = t.as_str() else { continue };
-                let (hex, issued) = match t.split_once(':') {
-                    Some((h, i)) => (h, i.parse().unwrap_or(now)),
-                    None => (t, now),
-                };
-                if let Some(d) = util::unhex(hex).and_then(|v| <[u8; 32]>::try_from(v).ok()) {
-                    if now.saturating_sub(issued) < TOKEN_LIFETIME {
-                        list.push((d, issued));
-                    }
+            );
+        let now = unix_now();
+        let mut list = Vec::new();
+        let mut gone = Vec::new();
+        for (hex, issued) in store.list(TOKENS) {
+            let issued: Option<u64> = std::str::from_utf8(&issued)
+                .ok()
+                .and_then(|i| i.parse().ok());
+            let d = util::unhex(&hex).and_then(|v| <[u8; 32]>::try_from(v).ok());
+            match (d, issued) {
+                (Some(d), Some(i)) if same && now.saturating_sub(i) < TOKEN_LIFETIME => {
+                    list.push((d, i))
                 }
+                _ => gone.push(hex),
             }
         }
+        list.sort_by_key(|(_, issued)| *issued);
         let set: HashMap<[u8; 32], u64> = list.iter().copied().collect();
         let list: Vec<[u8; 32]> = list.into_iter().map(|(d, _)| d).collect();
-        let required = secret.is_some();
-        let auth = Auth {
+        // Expired tokens and those of another password go.
+        let meta = Value::object()
+            .with("salt", salt.as_str())
+            .with("passwordCheck", check.as_str());
+        let saved = store.write(|tx| {
+            tx.put_json(META_KEY, &meta)?;
+            for hex in &gone {
+                tx.delete(&format!("{TOKENS}{hex}"))?;
+            }
+            Ok(())
+        });
+        if let Err(e) = saved {
+            crate::warn!("cannot save the logins: {e}");
+        }
+        Auth {
             secret: RwLock::new(secret),
-            path,
+            store,
             salt,
             check: RwLock::new(check),
             tokens: RwLock::new(TokenStore { order: list, set }),
             failures: Mutex::new(HashMap::new()),
             check_lock: Mutex::new(()),
-        };
-        if required {
-            auth.save(&auth.tokens.read().unwrap_or_else(|e| e.into_inner()));
         }
-        auth
     }
 
     pub fn required(&self) -> bool {
@@ -170,7 +180,20 @@ impl Auth {
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
         g.order.clear();
         g.set.clear();
-        self.save(&g);
+        let meta = Value::object().with("salt", self.salt.as_str()).with(
+            "passwordCheck",
+            self.check
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_str(),
+        );
+        let saved = self.store.write(|tx| {
+            tx.delete_prefix(TOKENS)?;
+            tx.put_json(META_KEY, &meta)
+        });
+        if let Err(e) = saved {
+            crate::warn!("cannot save the logins: {e}");
+        }
     }
 
     /// Logins currently valid.
@@ -183,38 +206,6 @@ impl Auth {
             .values()
             .filter(|issued| now.saturating_sub(**issued) < TOKEN_LIFETIME)
             .count()
-    }
-
-    fn save(&self, store: &TokenStore) {
-        let v = Value::object()
-            .with("salt", self.salt.as_str())
-            .with(
-                "passwordCheck",
-                self.check
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .as_str(),
-            )
-            .with(
-                "tokens",
-                Value::Array(
-                    store
-                        .order
-                        .iter()
-                        .map(|d| {
-                            Value::from(format!(
-                                "{}:{}",
-                                util::hex(d),
-                                store.set.get(d).copied().unwrap_or(0)
-                            ))
-                        })
-                        .collect(),
-                ),
-            );
-        match util::write_atomic(&self.path, v.to_json_pretty().as_bytes()) {
-            Ok(()) => util::make_private(&self.path),
-            Err(e) => crate::warn!("cannot write {}: {e}", self.path.display()),
-        }
     }
 
     /// The token presented with a request (`Authorization: Bearer` or
@@ -308,14 +299,27 @@ impl Auth {
         let token = crate::random::hex(16)
             .map_err(|e| LoginError::Internal(format!("no random source: {e}")))?;
         let d = sha256(token.as_bytes());
+        let now = unix_now();
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        let oldest = (g.order.len() >= MAX_TOKENS).then(|| g.order[0]);
+        self.store
+            .write(|tx| {
+                tx.put(
+                    &format!("{TOKENS}{}", util::hex(&d)),
+                    now.to_string().as_bytes(),
+                )?;
+                if let Some(old) = oldest {
+                    tx.delete(&format!("{TOKENS}{}", util::hex(&old)))?;
+                }
+                Ok(())
+            })
+            .map_err(|e| LoginError::Internal(format!("cannot save the login: {e}")))?;
         g.order.push(d);
-        g.set.insert(d, unix_now());
-        if g.order.len() > MAX_TOKENS {
-            let old = g.order.remove(0);
+        g.set.insert(d, now);
+        if let Some(old) = oldest {
+            g.order.remove(0);
             g.set.remove(&old);
         }
-        self.save(&g);
         Ok(token)
     }
 
@@ -328,7 +332,9 @@ impl Auth {
         let mut g = self.tokens.write().unwrap_or_else(|e| e.into_inner());
         if g.set.remove(&d).is_some() {
             g.order.retain(|x| *x != d);
-            self.save(&g);
+            if let Err(e) = self.store.delete(&format!("{TOKENS}{}", util::hex(&d))) {
+                crate::warn!("cannot save the logout: {e}");
+            }
         }
     }
 }

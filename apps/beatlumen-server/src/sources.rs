@@ -5,10 +5,10 @@
 //! the server, which reads the original files with range requests, so
 //! analysis and seeking work as for local files.
 //!
-//! * `sources.json` holds the sources, readable only by the server's user.
-//!   The credentials (which the server must be able to use) are encrypted
-//!   with a key derived from the vault pepper, so the file alone, e.g. in
-//!   a backup without the pepper file, does not reveal them.
+//! * The database (`sources`) holds the sources. The credentials (which the
+//!   server must be able to use) are encrypted with a key derived from the
+//!   vault pepper, so the database alone, e.g. in a backup without the
+//!   pepper file, does not reveal them.
 //! * `sources/<id>.json` caches each source's songs, so the library is
 //!   complete at start and unchanged files of file sources are not read
 //!   again.
@@ -23,6 +23,10 @@ use bl_sources::{MusicSource, RemoteTrack, SourceConfig};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
+
+/// The list of sources in the database (their logins encrypted with a key
+/// derived from the pepper). Their listings are a cache in `<data>/sources/`.
+const LIST_KEY: &str = "sources";
 use std::time::{Duration, Instant};
 
 const MAX_SOURCES: usize = 32;
@@ -45,8 +49,8 @@ pub struct Status {
 }
 
 pub struct Sources {
-    path: PathBuf,
-    /// Encrypts the credentials in `sources.json`.
+    store: Arc<crate::store::Store>,
+    /// Encrypts the credentials in the stored list.
     key: bl_vault::Secret,
     cache_dir: PathBuf,
     list: RwLock<Vec<SourceRec>>,
@@ -202,13 +206,15 @@ pub fn entry(source: &SourceRec, t: &RemoteTrack) -> Entry {
 }
 
 impl Sources {
-    pub fn load(data: &std::path::Path, key: bl_vault::Secret) -> Sources {
-        let path = data.join("sources.json");
+    pub fn load(
+        data: &std::path::Path,
+        store: &Arc<crate::store::Store>,
+        key: bl_vault::Secret,
+    ) -> Sources {
         let cache_dir = data.join("sources");
         let mut plain = false;
-        let list: Vec<SourceRec> = std::fs::read(&path)
-            .ok()
-            .and_then(|d| bl_json::parse_bytes(&d).ok())
+        let list: Vec<SourceRec> = store
+            .get_json(LIST_KEY)
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default()
             .iter()
@@ -254,7 +260,7 @@ impl Sources {
             .map(|s| s.id.clone())
             .collect();
         let sources = Sources {
-            path,
+            store: store.clone(),
             key,
             cache_dir,
             list: RwLock::new(list),
@@ -267,7 +273,7 @@ impl Sources {
             logins: Mutex::new(HashMap::new()),
         };
         if plain {
-            // Written by hand or by an older version: encrypt the logins.
+            // Not encrypted yet: encrypt the logins.
             let _ = sources.save();
         }
         sources
@@ -294,10 +300,9 @@ impl Sources {
             );
         }
         let v = Value::Array(out);
-        util::write_atomic(&self.path, v.to_json_pretty().as_bytes())
-            .map_err(|e| format!("cannot write {}: {e}", self.path.display()))?;
-        util::make_private(&self.path);
-        Ok(())
+        self.store
+            .put_json(LIST_KEY, &v)
+            .map_err(|e| format!("cannot save the sources: {e}"))
     }
 
     pub fn get(&self, id: &str) -> Option<SourceRec> {

@@ -21,6 +21,9 @@ fn main() {
         }
         Action::Run(cfg) => *cfg,
         Action::Invite(cfg, days) => {
+            // With the admin interface's settings when the server is not
+            // running (it holds the database).
+            let cfg = beatlumen_server::stored_config(*cfg);
             if !cfg.registration {
                 eprintln!("warning: registration is off (--registration off); this code works only after turning it on");
             }
@@ -77,10 +80,25 @@ fn main() {
             }
         }
         Action::Users(cfg) => {
-            for u in beatlumen_server::vault::list_users(&cfg.data_dir) {
-                println!("{u}");
+            let path = cfg.data_dir.join(beatlumen_server::store::FILE_NAME);
+            if !path.exists() {
+                return;
             }
-            return;
+            match beatlumen_server::store::Store::open_path(&path) {
+                Ok(store) => {
+                    for u in beatlumen_server::vault::list_users(&store) {
+                        println!("{u}");
+                    }
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    eprintln!(
+                        "While the server runs, its admin interface (/admin) lists the accounts."
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
         Action::HealthCheck(cfg) => {
             std::process::exit(if beatlumen_server::health_check(&cfg) {
@@ -126,6 +144,9 @@ fn stop_on_signals() {
                 let mut sig = 0;
                 if libc::sigwait(&set, &mut sig) == 0 {
                     beatlumen_server::info!("stopping (signal {sig})");
+                    // After the transactions running now, so that the next
+                    // start need not repair the database.
+                    beatlumen_server::store::close_all();
                     std::process::exit(0);
                 }
             });

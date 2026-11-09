@@ -11,18 +11,25 @@
 //! push service in the home network), so a user cannot make the server
 //! talk to internal services.
 
+use crate::store::Store;
 use crate::util;
 use bl_json::Value;
 use bl_net::{base64_decode, base64_encode};
 use bl_vault::webpush::{self, Vapid};
 use std::collections::HashMap;
 use std::net::{IpAddr, ToSocketAddrs};
-use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 
 const MAX_SUBSCRIPTIONS: usize = 10;
 const TTL_SECS: u64 = 2 * 24 * 3600;
+/// The server's VAPID key pair in the database.
+const VAPID_KEY: &str = "push/vapid";
+
+/// Where a user's subscriptions are in the database (a JSON array).
+pub fn key(user: &str) -> String {
+    format!("push/sub/{user}")
+}
 
 #[derive(Clone)]
 struct Sub {
@@ -58,7 +65,7 @@ impl Sub {
 }
 
 struct Shared {
-    dir: PathBuf,
+    store: Arc<Store>,
     subs: Mutex<HashMap<String, Vec<Sub>>>,
     vapid: Vapid,
     subject: String,
@@ -97,20 +104,15 @@ fn private(ip: IpAddr) -> bool {
 }
 
 impl Shared {
-    fn path(&self, user: &str) -> PathBuf {
-        self.dir.join(format!("{user}.json"))
-    }
-
     fn save(&self, user: &str, subs: &[Sub]) {
-        let path = self.path(user);
-        if subs.is_empty() {
-            let _ = std::fs::remove_file(path);
-            return;
-        }
-        let v = Value::Array(subs.iter().map(Sub::to_json).collect());
-        match util::write_atomic(&path, v.to_json().as_bytes()) {
-            Ok(()) => util::make_private(&path),
-            Err(e) => crate::warn!("cannot write {}: {e}", path.display()),
+        let saved = if subs.is_empty() {
+            self.store.delete(&key(user)).map(|_| ())
+        } else {
+            let v = Value::Array(subs.iter().map(Sub::to_json).collect());
+            self.store.put_json(&key(user), &v)
+        };
+        if let Err(e) = saved {
+            crate::warn!("cannot save the push subscriptions of {user}: {e}");
         }
     }
 
@@ -209,42 +211,30 @@ impl Shared {
 }
 
 impl Push {
-    pub fn open(vault_dir: &Path, subject: &str, allow_private: bool) -> Result<Push, String> {
-        let dir = vault_dir.join("push");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        let key_path = vault_dir.join("vapid.key");
-        let vapid = match std::fs::read(&key_path)
-            .ok()
+    pub fn open(store: &Arc<Store>, subject: &str, allow_private: bool) -> Result<Push, String> {
+        let vapid = match store
+            .get(VAPID_KEY)
             .and_then(|k| Vapid::from_bytes(&k).ok())
         {
             Some(v) => v,
             None => {
                 let v = Vapid::generate().map_err(|e| e.to_string())?;
-                util::write_atomic(&key_path, &v.to_bytes())
-                    .map_err(|e| format!("cannot write {}: {e}", key_path.display()))?;
-                util::make_private(&key_path);
+                store
+                    .put(VAPID_KEY, &v.to_bytes())
+                    .map_err(|e| format!("cannot save the push key: {e}"))?;
                 v
             }
         };
         let mut subs = HashMap::new();
-        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let p = e.path();
-            let Some(user) = p.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
-                continue;
-            };
-            let list: Vec<Sub> = std::fs::read(&p)
-                .ok()
-                .and_then(|d| bl_json::parse_bytes(&d).ok())
-                .and_then(|v| {
-                    v.as_array()
-                        .map(|a| a.iter().filter_map(Sub::from_json).collect())
-                })
+        for (user, v) in store.list_json("push/sub/") {
+            let list: Vec<Sub> = v
+                .as_array()
+                .map(|a| a.iter().filter_map(Sub::from_json).collect())
                 .unwrap_or_default();
             subs.insert(user, list);
         }
         let shared = Arc::new(Shared {
-            dir,
+            store: store.clone(),
             subs: Mutex::new(subs),
             vapid,
             subject: subject.to_string(),
@@ -352,11 +342,11 @@ impl Push {
         removed
     }
 
-    /// Forgets all subscriptions of a deleted account.
+    /// Forgets all subscriptions of a deleted account (its database entry
+    /// [`key`] goes in the transaction that deletes the account).
     pub fn forget(&self, user: &str) {
         let mut all = self.shared.subs.lock().unwrap_or_else(|e| e.into_inner());
         all.remove(user);
-        let _ = std::fs::remove_file(self.shared.path(user));
     }
 
     /// Sends `payload` to all devices of `user` in the background.

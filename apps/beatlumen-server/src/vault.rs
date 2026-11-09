@@ -6,17 +6,24 @@
 //! enforces who may read and change which file. Even a server that ignores
 //! these checks can only withhold or destroy data, not read or forge it.
 //!
-//! Storage (inside the data folder):
-//! * `vault/users/<name>.json`: salt, Argon2 parameters, the verifiers
-//!   (hashes of the auth keys with the pepper) and the wrapped keys.
+//! Storage, in the database ([`crate::store`]):
+//! * `vault/user/<name>`: salt, Argon2 parameters, the verifiers (hashes of
+//!   the auth keys with the pepper), the wrapped keys and the passkeys.
+//! * `vault/file/<id>`: owner, encrypted metadata, owner signature, sealed
+//!   keys of all recipients, the trash.
+//! * `vault/session/<hash>`: sessions (hashes of their tokens).
+//! * `vault/link/<id>`: public links; `vault/released/<hash>`: when stored
+//!   bytes were last deleted; `vault/content-salt`.
+//!
+//! And as files in the data folder:
 //! * `vault/blobs/<hash>`: the stored bytes of finished files, each once;
-//!   `vault/files/<id>.blob`: an upload still running; `<id>.json`: owner,
-//!   encrypted metadata, owner signature, sealed keys of all recipients.
-//! * `vault/invites/<hash>.json`: open invitations (from the command line).
-//! * `vault/sessions.json`: hashes of session tokens.
+//!   `vault/files/<id>.blob`: an upload still running.
+//! * `vault/invites/<hash>.json`: open invitations (the command line writes
+//!   them while the server runs and holds the database).
 //! * `vault/pepper`: the server secret mixed into the verifiers (unless
-//!   kept elsewhere with `--vault-pepper-file`).
+//!   kept elsewhere with `--vault-pepper-file`, apart from the data).
 
+use crate::store::Store;
 use crate::util::{self, ct_eq};
 use bl_json::Value;
 use bl_net::server::{Request, Response};
@@ -29,7 +36,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 #[path = "vault_admin.rs"]
@@ -406,10 +413,17 @@ fn valid_blob(b: &str) -> bool {
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
+/// Where the vault's records are in the database.
+const USERS: &str = "vault/user/";
+const FILES: &str = "vault/file/";
+const SESSIONS: &str = "vault/session/";
+const RELEASED: &str = "vault/released/";
+const LINKS: &str = "vault/link/";
+const CONTENT_SALT: &str = "vault/content-salt";
+
 pub struct Vault {
-    users_dir: PathBuf,
-    /// Per-user playlists and presets (`userdata/<hash of the name>/`).
-    userdata_dir: PathBuf,
+    store: Arc<Store>,
+    /// Uploads still running (`<id>.blob`).
     files_dir: PathBuf,
     /// The stored bytes, by their hash: the same bytes are kept once.
     blobs_dir: PathBuf,
@@ -419,7 +433,6 @@ pub struct Vault {
     /// from server to server, so a list of known files is of no use elsewhere.
     content_salt: Vec<u8>,
     invites_dir: PathBuf,
-    sessions_path: PathBuf,
     pepper: Vec<u8>,
     /// Bytes per user (0 = unlimited).
     quota: std::sync::atomic::AtomicU64,
@@ -433,8 +446,7 @@ pub struct Vault {
     /// Passkeys: the relying party (None without `--public-url`).
     pub rp: Option<crate::webauthn::RelyingParty>,
     challenges: Mutex<HashMap<String, Challenge>>,
-    /// Public links (`links/<id>.json`).
-    links_dir: PathBuf,
+    /// Public links.
     links: RwLock<HashMap<String, links::Link>>,
     /// Download permissions from link password proofs: token -> (link, issued).
     link_tokens: Mutex<HashMap<String, (String, Instant)>>,
@@ -474,34 +486,40 @@ pub fn create_invite(data: &Path, days: u64) -> Result<String, String> {
     Ok(code)
 }
 
-/// Registered user names (command line).
-pub fn list_users(data: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(data.join("vault").join("users"))
+/// Registered user names, sorted (command line: the database must not be
+/// open in a running server).
+pub fn list_users(store: &Store) -> Vec<String> {
+    store
+        .list(USERS)
         .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            e.file_name()
-                .to_str()?
-                .strip_suffix(".json")
-                .map(str::to_string)
-        })
-        .collect();
-    names.sort();
-    names
+        .map(|(name, _)| name)
+        .collect()
 }
 
 fn read_json(path: &Path) -> Option<Value> {
     bl_json::parse_bytes(&std::fs::read(path).ok()?).ok()
 }
 
-fn save_json(path: &Path, v: &Value) -> Result<(), Failure> {
-    util::write_atomic(path, v.to_json().as_bytes()).map_err(|e| {
-        crate::warn!("cannot write {}: {e}", path.display());
-        (500, "cannot save".to_string())
-    })?;
-    util::make_private(path);
-    Ok(())
+fn saved(e: crate::store::Error) -> Failure {
+    crate::warn!("cannot save to the database: {e}");
+    (500, "cannot save".to_string())
+}
+
+fn user_key(name: &str) -> String {
+    format!("{USERS}{name}")
+}
+
+fn file_key(id: &str) -> String {
+    format!("{FILES}{id}")
+}
+
+fn session_key(d: &[u8; 32]) -> String {
+    format!("{SESSIONS}{}", util::hex(d))
+}
+
+/// "issued:generation:user"
+fn session_value(s: &Session) -> String {
+    format!("{}:{}:{}", s.issued, s.generation, s.user)
 }
 
 fn load_pepper(file: Option<&Path>, default: &Path) -> Result<Vec<u8>, String> {
@@ -533,6 +551,7 @@ impl Vault {
 
     pub fn open(
         data: &Path,
+        store: &Arc<Store>,
         pepper_file: Option<&Path>,
         quota: u64,
         open_registration: bool,
@@ -540,85 +559,58 @@ impl Vault {
         rp: Option<crate::webauthn::RelyingParty>,
     ) -> Result<Vault, String> {
         let dir = data.join("vault");
-        let users_dir = dir.join("users");
         let files_dir = dir.join("files");
-        for d in [&users_dir, &files_dir] {
+        let blobs_dir = dir.join("blobs");
+        for d in [&files_dir, &blobs_dir] {
             std::fs::create_dir_all(d)
                 .map_err(|e| format!("cannot create {}: {e}", d.display()))?;
         }
         let pepper = load_pepper(pepper_file, &dir.join("pepper"))?;
 
         let mut users = HashMap::new();
-        for e in std::fs::read_dir(&users_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "json") {
-                match read_json(&p)
-                    .ok_or((0, "unreadable".into()))
-                    .and_then(|v| User::from_json(&v))
-                {
-                    Ok(u) => {
-                        users.insert(u.name.clone(), u);
-                    }
-                    Err((_, m)) => crate::warn!("ignoring {}: {m}", p.display()),
+        for (name, v) in store.list_json(USERS) {
+            match User::from_json(&v) {
+                Ok(u) if u.name == name => {
+                    users.insert(u.name.clone(), u);
                 }
+                Ok(_) => crate::warn!("ignoring the account {name}: wrong name"),
+                Err((_, m)) => crate::warn!("ignoring the account {name}: {m}"),
             }
         }
 
-        let blobs_dir = dir.join("blobs");
-        std::fs::create_dir_all(&blobs_dir)
-            .map_err(|e| format!("cannot create {}: {e}", blobs_dir.display()))?;
-        let released: HashMap<String, u64> = read_json(&dir.join("released.json"))
-            .and_then(|v| {
-                v.as_object().map(|o| {
-                    o.iter()
-                        .filter_map(|(k, t)| Some((k.to_string(), t.as_u64()?)))
-                        .collect()
-                })
-            })
-            .unwrap_or_default();
-        let salt_path = dir.join("content-salt");
-        let content_salt = match std::fs::read(&salt_path) {
-            Ok(s) if s.len() == 32 => s,
+        let released: HashMap<String, u64> = store
+            .list(RELEASED)
+            .into_iter()
+            .filter_map(|(blob, t)| Some((blob, std::str::from_utf8(&t).ok()?.parse().ok()?)))
+            .collect();
+        let content_salt = match store.get(CONTENT_SALT) {
+            Some(s) if s.len() == 32 => s,
             _ => {
                 let mut s = vec![0u8; 32];
                 crate::random::fill(&mut s).map_err(|e| e.to_string())?;
-                util::write_atomic(&salt_path, &s)
-                    .map_err(|e| format!("cannot write {}: {e}", salt_path.display()))?;
-                util::make_private(&salt_path);
+                store
+                    .put(CONTENT_SALT, &s)
+                    .map_err(|e| format!("cannot save the content salt: {e}"))?;
                 s
             }
         };
 
         let now = util::now_secs();
         let mut files = HashMap::new();
-        for e in std::fs::read_dir(&files_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            let p = e.path();
-            if !p.extension().is_some_and(|x| x == "json") {
-                continue;
-            }
-            let rec = read_json(&p)
-                .ok_or((0, "unreadable".into()))
-                .and_then(|v| FileRec::from_json(&v));
-            let mut rec = match rec {
-                Ok(r) if p.file_stem().is_some_and(|s| *s == *r.id) => r,
+        let mut dropped = Vec::new();
+        for (id, v) in store.list_json(FILES) {
+            let mut rec = match FileRec::from_json(&v) {
+                Ok(r) if r.id == id => r,
                 Ok(_) => {
-                    crate::warn!("ignoring {}: wrong name", p.display());
+                    crate::warn!("ignoring the file {id}: wrong id");
                     continue;
                 }
                 Err((_, m)) => {
-                    crate::warn!("ignoring {}: {m}", p.display());
+                    crate::warn!("ignoring the file {id}: {m}");
                     continue;
                 }
             };
-            let blob = p.with_extension("blob");
+            let blob = files_dir.join(format!("{id}.blob"));
             rec.received = if rec.blob.is_some() {
                 rec.size
             } else {
@@ -627,44 +619,61 @@ impl Vault {
             let stale = !rec.complete() && now.saturating_sub(rec.created) > PENDING_LIFETIME;
             if rec.received > rec.size || stale || !users.contains_key(&rec.owner) {
                 let _ = std::fs::remove_file(&blob);
-                let _ = std::fs::remove_file(&p);
+                dropped.push(id);
                 continue;
             }
             files.insert(rec.id.clone(), rec);
         }
 
-        let sessions_path = dir.join("sessions.json");
         let mut sessions = HashMap::new();
-        for s in read_json(&sessions_path)
-            .and_then(|v| v.get("sessions").as_array().cloned())
-            .into_iter()
-            .flatten()
-        {
-            // "digest:issued:generation:user"
-            let Some(parts) = s.as_str().map(|s| s.splitn(4, ':').collect::<Vec<_>>()) else {
-                continue;
+        let mut ended = Vec::new();
+        for (hex, v) in store.list(SESSIONS) {
+            // "issued:generation:user"
+            let v = String::from_utf8_lossy(&v).into_owned();
+            let parts: Vec<&str> = v.splitn(3, ':').collect();
+            let parsed = match (util::unhex(&hex), &parts[..]) {
+                (Some(d), [issued, generation, user]) => {
+                    match (
+                        <[u8; 32]>::try_from(d),
+                        issued.parse::<u64>(),
+                        generation.parse::<u64>(),
+                    ) {
+                        (Ok(d), Ok(issued), Ok(generation)) => Some((d, issued, generation, *user)),
+                        _ => None,
+                    }
+                }
+                _ => None,
             };
-            let [d, issued, generation, user] = parts[..] else {
-                continue;
-            };
-            let (Some(d), Ok(issued), Ok(generation)) = (
-                util::unhex(d).and_then(|d| <[u8; 32]>::try_from(d).ok()),
-                issued.parse::<u64>(),
-                generation.parse::<u64>(),
-            ) else {
-                continue;
-            };
-            if now.saturating_sub(issued) < SESSION_LIFETIME && users.contains_key(user) {
-                sessions.insert(
-                    d,
-                    Session {
-                        user: user.to_string(),
-                        issued,
-                        generation,
-                        fresh_until: 0,
-                    },
-                );
+            match parsed {
+                Some((d, issued, generation, user))
+                    if now.saturating_sub(issued) < SESSION_LIFETIME
+                        && users.contains_key(user) =>
+                {
+                    sessions.insert(
+                        d,
+                        Session {
+                            user: user.to_string(),
+                            issued,
+                            generation,
+                            fresh_until: 0,
+                        },
+                    );
+                }
+                _ => ended.push(hex),
             }
+        }
+        let links = links::load(store, &users);
+        let cleaned = store.write(|tx| {
+            for id in &dropped {
+                tx.delete(&file_key(id))?;
+            }
+            for hex in &ended {
+                tx.delete(&format!("{SESSIONS}{hex}"))?;
+            }
+            Ok(())
+        });
+        if let Err(e) = cleaned {
+            crate::warn!("cannot clean up the vault: {e}");
         }
         if !users.is_empty() {
             crate::info!(
@@ -674,18 +683,15 @@ impl Vault {
             );
         }
         Ok(Vault {
-            links: RwLock::new(links::load(&dir.join("links"))),
-            links_dir: dir.join("links"),
+            store: store.clone(),
+            links: RwLock::new(links),
             link_tokens: Mutex::new(HashMap::new()),
             link_failures: Mutex::new(HashMap::new()),
-            userdata_dir: dir.join("userdata"),
-            users_dir,
             files_dir,
             blobs_dir,
             released: Mutex::new(released),
             content_salt,
             invites_dir: invites_dir(data),
-            sessions_path,
             pepper,
             quota: quota.into(),
             open_registration: open_registration.into(),
@@ -699,23 +705,30 @@ impl Vault {
         })
     }
 
-    fn save_sessions(&self, s: &HashMap<[u8; 32], Session>) {
-        let list: Vec<Value> = s
-            .iter()
-            .map(|(d, s)| {
-                Value::from(format!(
-                    "{}:{}:{}:{}",
-                    util::hex(d),
-                    s.issued,
-                    s.generation,
-                    s.user
-                ))
-            })
+    /// The names of the accounts, sorted.
+    pub fn user_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .users
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
             .collect();
-        let _ = save_json(
-            &self.sessions_path,
-            &Value::object().with("sessions", Value::Array(list)),
-        );
+        names.sort();
+        names
+    }
+
+    /// Stores a session (or its renewal).
+    fn save_session(&self, d: &[u8; 32], s: &Session) {
+        if let Err(e) = self.store.put(&session_key(d), session_value(s).as_bytes()) {
+            crate::warn!("cannot save a session: {e}");
+        }
+    }
+
+    fn save_user(&self, user: &User) -> Result<(), Failure> {
+        self.store
+            .put_json(&user_key(&user.name), &user.to_json())
+            .map_err(saved)
     }
 
     fn new_session(&self, user: &User) -> Result<String, Failure> {
@@ -727,36 +740,39 @@ impl Vault {
     fn new_session_with(&self, user: &User, fresh: bool) -> Result<String, Failure> {
         let token = crate::random::hex(16).map_err(|e| (500, format!("no random source: {e}")))?;
         let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-        if s.len() >= MAX_SESSIONS {
-            if let Some(oldest) = s.iter().min_by_key(|(_, v)| v.issued).map(|(k, _)| *k) {
-                s.remove(&oldest);
-            }
-        }
-        s.insert(
-            crate::sha256::sha256(token.as_bytes()),
-            Session {
-                user: user.name.clone(),
-                issued: util::now_secs(),
-                generation: user.generation,
-                fresh_until: if fresh {
-                    util::now_secs() + FRESH_SESSION
-                } else {
-                    0
-                },
+        let oldest = if s.len() >= MAX_SESSIONS {
+            s.iter().min_by_key(|(_, v)| v.issued).map(|(k, _)| *k)
+        } else {
+            None
+        };
+        let d = crate::sha256::sha256(token.as_bytes());
+        let session = Session {
+            user: user.name.clone(),
+            issued: util::now_secs(),
+            generation: user.generation,
+            fresh_until: if fresh {
+                util::now_secs() + FRESH_SESSION
+            } else {
+                0
             },
-        );
-        self.save_sessions(&s);
+        };
+        self.store
+            .write(|tx| {
+                if let Some(old) = &oldest {
+                    tx.delete(&session_key(old))?;
+                }
+                tx.put(&session_key(&d), session_value(&session).as_bytes())
+            })
+            .map_err(saved)?;
+        if let Some(old) = oldest {
+            s.remove(&old);
+        }
+        s.insert(d, session);
         Ok(token)
     }
 
     /// The user a request is logged in as. Sessions in use are renewed
     /// (daily), so they end after `SESSION_LIFETIME` without use.
-    /// Where a user's own playlists and presets are stored.
-    pub fn user_data_dir(&self, user: &str) -> PathBuf {
-        let h = util::hex(&crate::sha256::sha256(user.as_bytes()));
-        self.userdata_dir.join(&h[..32])
-    }
-
     pub fn session_user(&self, req: &Request) -> Option<String> {
         let t = crate::auth::Auth::request_token(req)?;
         let d = crate::sha256::sha256(t.as_bytes());
@@ -775,7 +791,7 @@ impl Vault {
             let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
             if let Some(e) = s.get_mut(&d) {
                 e.issued = now;
-                self.save_sessions(&s);
+                self.save_session(&d, e);
             }
         }
         Some(user)
@@ -797,8 +813,11 @@ impl Vault {
     fn end_session(&self, req: &Request) {
         if let Some(t) = crate::auth::Auth::request_token(req) {
             let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-            if s.remove(&crate::sha256::sha256(t.as_bytes())).is_some() {
-                self.save_sessions(&s);
+            let d = crate::sha256::sha256(t.as_bytes());
+            if s.remove(&d).is_some() {
+                if let Err(e) = self.store.delete(&session_key(&d)) {
+                    crate::warn!("cannot save the end of a session: {e}");
+                }
             }
         }
     }
@@ -1199,7 +1218,7 @@ impl Vault {
             last_used: now,
             master,
         });
-        save_json(&self.users_dir.join(format!("{me}.json")), &user.to_json())?;
+        self.save_user(&user)?;
         users.insert(me.to_string(), user);
         drop(users);
         crate::info!("vault: {me} added a passkey");
@@ -1257,10 +1276,7 @@ impl Vault {
                     p.count = count;
                     p.last_used = user.passkeys[i].last_used;
                 }
-                let _ = save_json(
-                    &self.users_dir.join(format!("{}.json", u.name)),
-                    &u.to_json(),
-                );
+                let _ = self.save_user(u);
             }
         }
         let token = self.new_session_with(&user, true)?;
@@ -1300,7 +1316,7 @@ impl Vault {
         }
         user.passkeys.retain(|p| p.id != cred);
         let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
-        save_json(&self.users_dir.join(format!("{me}.json")), &user.to_json())?;
+        self.save_user(&user)?;
         users.insert(me.to_string(), user);
         Ok(Response::new(204))
     }
@@ -1417,10 +1433,14 @@ impl Vault {
         if std::fs::remove_file(&invite).is_err() {
             return fail(403, "invalid or expired invitation");
         }
-        save_json(
-            &self.users_dir.join(format!("{name}.json")),
-            &user.to_json(),
-        )?;
+        // Nothing of an earlier account of this name may be left.
+        self.store
+            .write(|tx| {
+                tx.delete_prefix(&crate::store::scope(&name))?;
+                tx.delete(&crate::push::key(&name))?;
+                tx.put_json(&user_key(&name), &user.to_json())
+            })
+            .map_err(saved)?;
         users.insert(name.clone(), user.clone());
         drop(users);
         crate::info!("vault: user {name} registered");
@@ -1518,7 +1538,7 @@ impl Vault {
             user.master_by_recovery = bytes(rc, "masterByRecovery", Some(WRAPPED_MASTER_LEN))?;
         }
         let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
-        save_json(&self.users_dir.join(format!("{me}.json")), &user.to_json())?;
+        self.save_user(&user)?;
         users.insert(me.to_string(), user.clone());
         drop(users);
         crate::info!(
@@ -1559,42 +1579,105 @@ impl Vault {
         Ok(Response::new(204))
     }
 
-    /// Removes an account with its files, links, data and sessions.
+    /// Removes an account with its files, links, data and sessions: one
+    /// transaction in the database, so that nothing of it is left half.
     fn remove_account(&self, me: &str) -> Result<(), Failure> {
-        {
-            let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
-            let ids: Vec<String> = files.keys().cloned().collect();
-            for id in ids {
-                let f = files.get_mut(&id).expect("listed");
-                if f.owner == me {
-                    if let Some(blob) = f.blob.clone() {
-                        self.note_released(&blob, util::now_secs());
-                    }
-                    self.remove_file(&id);
-                    files.remove(&id);
-                } else if f.keys.remove(me).is_some() {
-                    f.trash.remove(me);
-                    let _ = save_json(&self.files_dir.join(format!("{id}.json")), &f.to_json());
-                }
-            }
-        }
+        let now = util::now_secs();
+        // Lock order: files, sessions, users, links, released.
+        let mut files = self.files.write().unwrap_or_else(|e| e.into_inner());
+        let owned: Vec<String> = files
+            .values()
+            .filter(|f| f.owner == me)
+            .map(|f| f.id.clone())
+            .collect();
+        let blobs: Vec<String> = owned
+            .iter()
+            .filter_map(|id| files.get(id).and_then(|f| f.blob.clone()))
+            .collect();
+        // Files shared with the account lose its key.
+        let shared: Vec<FileRec> = files
+            .values()
+            .filter(|f| f.owner != me && f.keys.contains_key(me))
+            .map(|f| {
+                let mut f = f.clone();
+                f.keys.remove(me);
+                f.trash.remove(me);
+                f
+            })
+            .collect();
+        let ended: Vec<[u8; 32]> = self
+            .sessions
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, s)| s.user == me)
+            .map(|(d, _)| *d)
+            .collect();
+        let links = self.links_of(me);
         let mut users = self.users.write().unwrap_or_else(|e| e.into_inner());
-        std::fs::remove_file(self.users_dir.join(format!("{me}.json")))
-            .map_err(|_| (500, "cannot delete".to_string()))?;
-        let _ = std::fs::remove_dir_all(self.user_data_dir(me));
+        self.store
+            .write(|tx| {
+                tx.delete(&user_key(me))?;
+                tx.delete_prefix(&crate::store::scope(me))?;
+                tx.delete(&crate::push::key(me))?;
+                for id in &owned {
+                    tx.delete(&file_key(id))?;
+                }
+                for f in &shared {
+                    tx.put_json(&file_key(&f.id), &f.to_json())?;
+                }
+                for b in &blobs {
+                    tx.put(&format!("{RELEASED}{b}"), now.to_string().as_bytes())?;
+                }
+                for d in &ended {
+                    tx.delete(&session_key(d))?;
+                }
+                for id in &links {
+                    tx.delete(&Self::link_key(id))?;
+                }
+                Ok(())
+            })
+            .map_err(|e| {
+                crate::warn!("cannot delete the account {me}: {e}");
+                (500, "cannot delete".to_string())
+            })?;
+        // The database is done; now memory and the files of running uploads.
+        for id in &owned {
+            let _ = std::fs::remove_file(self.files_dir.join(format!("{id}.blob")));
+            files.remove(id);
+        }
+        for f in shared {
+            files.insert(f.id.clone(), f);
+        }
         users.remove(me);
         drop(users);
-        self.drop_links(|_, owner| owner == me);
-        let mut s = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-        s.retain(|_, s| s.user != me);
-        self.save_sessions(&s);
+        self.sessions
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, s| s.user != me);
+        {
+            let mut l = self.links.write().unwrap_or_else(|e| e.into_inner());
+            for id in &links {
+                l.remove(id);
+            }
+        }
+        {
+            let mut r = self.released.lock().unwrap_or_else(|e| e.into_inner());
+            for b in blobs {
+                r.insert(b, now);
+            }
+        }
+        drop(files);
         self.push.forget(me);
         Ok(())
     }
 
+    /// Removes a file's record and the bytes of a running upload.
     fn remove_file(&self, id: &str) {
         let _ = std::fs::remove_file(self.files_dir.join(format!("{id}.blob")));
-        let _ = std::fs::remove_file(self.files_dir.join(format!("{id}.json")));
+        if let Err(e) = self.store.delete(&file_key(id)) {
+            crate::warn!("cannot remove the file {id}: {e}");
+        }
     }
 
     /// Where a file's bytes are.
@@ -1647,19 +1730,13 @@ impl Vault {
     /// Someone deleted a file with these bytes: they stay for `KEEP_DAYS` more.
     fn note_released(&self, blob: &str, now: u64) {
         let mut r = self.released.lock().unwrap_or_else(|e| e.into_inner());
-        r.insert(blob.to_string(), now);
-        self.save_released(&r);
-    }
-
-    fn save_released(&self, r: &HashMap<String, u64>) {
-        let Some(dir) = self.blobs_dir.parent() else {
-            return;
-        };
-        let mut o = Value::object();
-        for (k, t) in r {
-            o = o.with(k, *t);
+        if let Err(e) = self
+            .store
+            .put(&format!("{RELEASED}{blob}"), now.to_string().as_bytes())
+        {
+            crate::warn!("cannot save a deletion: {e}");
         }
-        let _ = save_json(&dir.join("released.json"), &o);
+        r.insert(blob.to_string(), now);
     }
 
     /// What the trash holds longer than `TRASH_DAYS` goes, and bytes nobody
@@ -1698,7 +1775,8 @@ impl Vault {
         self.drop_links(|file, _| gone.iter().any(|g| g == file));
 
         let mut released = self.released.lock().unwrap_or_else(|e| e.into_inner());
-        let before = released.clone();
+        let mut put: Vec<(String, u64)> = Vec::new();
+        let mut gone: Vec<String> = Vec::new();
         for e in std::fs::read_dir(&self.blobs_dir)
             .into_iter()
             .flatten()
@@ -1713,23 +1791,56 @@ impl Vault {
             match released.get(&name) {
                 Some(t) if now.saturating_sub(*t) >= KEEP_DAYS * DAY => {
                     if std::fs::remove_file(e.path()).is_ok() {
-                        released.remove(&name);
+                        gone.push(name);
                     }
                 }
                 Some(_) => {}
-                // Nobody knows since when (a crash): counts from now.
-                None => {
-                    released.insert(name, now);
-                }
+                // Nobody knows since when (a crash, or a server before
+                // 0.13.0): counts from now.
+                None => put.push((name, now)),
             }
         }
-        if *released != before {
-            self.save_released(&released);
+        // Records of bytes that are gone anyway.
+        let names: std::collections::HashSet<String> = std::fs::read_dir(&self.blobs_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        let missing: Vec<String> = released
+            .keys()
+            .filter(|b| !names.contains(*b) && !gone.contains(*b))
+            .cloned()
+            .collect();
+        gone.extend(missing);
+        if put.is_empty() && gone.is_empty() {
+            return;
+        }
+        let written = self.store.write(|tx| {
+            for (b, t) in &put {
+                tx.put(&format!("{RELEASED}{b}"), t.to_string().as_bytes())?;
+            }
+            for b in &gone {
+                tx.delete(&format!("{RELEASED}{b}"))?;
+            }
+            Ok(())
+        });
+        if let Err(e) = written {
+            crate::warn!("cannot save the stored bytes' times: {e}");
+            return;
+        }
+        for (b, t) in put {
+            released.insert(b, t);
+        }
+        for b in gone {
+            released.remove(&b);
         }
     }
 
     fn save_file(&self, f: &FileRec) -> Result<(), Failure> {
-        save_json(&self.files_dir.join(format!("{}.json", f.id)), &f.to_json())
+        self.store
+            .put_json(&file_key(&f.id), &f.to_json())
+            .map_err(saved)
     }
 
     fn meta_and_signature(v: &Value) -> Result<(Vec<u8>, Vec<u8>), Failure> {

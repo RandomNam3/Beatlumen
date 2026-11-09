@@ -429,8 +429,16 @@ fn zero_days_means_never() {
     assert!(file.is_file());
 }
 
+/// Puts an entry into the list of kept imports, as a server before would have.
+fn keep_import(dir: &Path, key: &str, entry: &str) {
+    let store = beatlumen_server::store::Store::open(&dir.join("data")).unwrap();
+    store
+        .put(&format!("ext/imported/{key}"), entry.as_bytes())
+        .unwrap();
+}
+
 #[test]
-fn the_old_list_of_imports_is_read_and_gets_the_full_time() {
+fn a_kept_import_without_times_gets_the_full_time() {
     let dir = folder("old-list");
     let imports = dir
         .join("data")
@@ -440,11 +448,7 @@ fn the_old_list_of_imports_is_read_and_gets_the_full_time() {
     std::fs::create_dir_all(&imports).unwrap();
     let file = imports.join("a.wav");
     std::fs::write(&file, common::wav(1)).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":"tube/a.wav"}"#,
-    )
-    .unwrap();
+    keep_import(&dir, "tube/s:1", r#"{"path":"tube/a.wav"}"#);
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let now = beatlumen_server::util::now_secs();
@@ -460,12 +464,11 @@ fn a_list_entry_pointing_out_of_the_folder_deletes_nothing() {
     let dir = folder("escape");
     let outside = dir.join("music").join("precious.wav");
     std::fs::write(&outside, common::wav(1)).unwrap();
-    std::fs::create_dir_all(dir.join("data").join("extensions")).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":{"path":"../../../music/precious.wav","added":1,"played":1}}"#,
-    )
-    .unwrap();
+    keep_import(
+        &dir,
+        "tube/s:1",
+        r#"{"path":"../../../music/precious.wav","added":1,"played":1}"#,
+    );
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let later = beatlumen_server::util::now_secs() + 1000 * DAY;
@@ -487,11 +490,11 @@ fn a_link_among_the_imports_is_left_alone() {
         .join("tube");
     std::fs::create_dir_all(&imports).unwrap();
     std::os::unix::fs::symlink(&outside, imports.join("a.wav")).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":{"path":"tube/a.wav","added":1,"played":1}}"#,
-    )
-    .unwrap();
+    keep_import(
+        &dir,
+        "tube/s:1",
+        r#"{"path":"tube/a.wav","added":1,"played":1}"#,
+    );
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let later = beatlumen_server::util::now_secs() + 1000 * DAY;

@@ -1,10 +1,12 @@
-//! Shared playlists (track and background image playlists), stored in
-//! `data/playlists.json` and rewritten atomically on every change.
+//! Playlists of a login (track and background image playlists): one
+//! database entry per playlist (`<scope>playlist/<id>`), with its place in the
+//! list (`pos`).
 
+use crate::store::Part;
 use crate::util;
 use bl_json::Value;
 use bl_net::api::{Playlist, PlaylistKind};
-use std::path::PathBuf;
+use std::collections::HashMap;
 use std::sync::RwLock;
 
 const MAX_PLAYLISTS: usize = 10_000;
@@ -13,9 +15,22 @@ const MAX_NAME: usize = 200;
 
 pub type Failure = (u16, String);
 
+#[derive(Default)]
+struct Inner {
+    list: Vec<Playlist>,
+    /// Place of each playlist in the list (kept in the database).
+    pos: HashMap<String, u64>,
+    next: u64,
+}
+
 pub struct Playlists {
-    path: PathBuf,
-    list: RwLock<Vec<Playlist>>,
+    part: Part,
+    list: RwLock<Inner>,
+}
+
+fn failed(e: crate::store::Error) -> Failure {
+    crate::error!("cannot save playlists: {e}");
+    (500, "cannot save playlists".to_string())
 }
 
 fn bad(msg: &str) -> Failure {
@@ -61,40 +76,38 @@ fn parse_items(v: &Value) -> Result<Option<Vec<String>>, Failure> {
 }
 
 impl Playlists {
-    pub fn load(path: PathBuf) -> Playlists {
-        let mut list = Vec::new();
-        if let Ok(data) = std::fs::read(&path) {
-            match bl_json::parse_bytes(&data) {
-                Ok(v) => {
-                    let arr = v.as_array().or_else(|| v.get("playlists").as_array());
-                    for p in arr.into_iter().flatten() {
-                        let p = Playlist::from_json(p);
-                        if util::is_id(&p.id) && !list.iter().any(|q: &Playlist| q.id == p.id) {
-                            list.push(p);
-                        }
-                    }
-                }
-                Err(e) => crate::warn!(
-                    "cannot parse {}: {e}; starting with no playlists",
-                    path.display()
-                ),
-            }
-        }
+    pub fn load(part: Part) -> Playlists {
+        let mut found: Vec<(u64, Playlist)> = part
+            .list_json()
+            .into_iter()
+            .map(|(id, v)| {
+                (
+                    v.get("pos").as_u64().unwrap_or(0),
+                    Playlist::from_json(&v),
+                    id,
+                )
+            })
+            .filter(|(_, p, id)| util::is_id(&p.id) && p.id == *id)
+            .map(|(pos, p, _)| (pos, p))
+            .collect();
+        found.sort_by_key(|(pos, _)| *pos);
+        let next = found.last().map_or(0, |(pos, _)| pos + 1);
+        let inner = Inner {
+            pos: found.iter().map(|(pos, p)| (p.id.clone(), *pos)).collect(),
+            list: found.into_iter().map(|(_, p)| p).collect(),
+            next,
+        };
         Playlists {
-            path,
-            list: RwLock::new(list),
+            part,
+            list: RwLock::new(inner),
         }
     }
 
-    fn save(&self, list: &[Playlist]) -> Result<(), Failure> {
-        let v = Value::object().with(
-            "playlists",
-            Value::Array(list.iter().map(Playlist::to_json).collect()),
-        );
-        util::write_atomic(&self.path, v.to_json_pretty().as_bytes()).map_err(|e| {
-            crate::error!("cannot write {}: {e}", self.path.display());
-            (500, "cannot save playlists".to_string())
-        })
+    fn save(&self, inner: &Inner, p: &Playlist) -> Result<(), Failure> {
+        let pos = inner.pos.get(&p.id).copied().unwrap_or(inner.next);
+        self.part
+            .put_json(&p.id, &p.to_json().with("pos", pos))
+            .map_err(failed)
     }
 
     pub fn list_json(&self) -> Value {
@@ -102,6 +115,7 @@ impl Playlists {
             self.list
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
+                .list
                 .iter()
                 .map(Playlist::to_json)
                 .collect(),
@@ -113,6 +127,7 @@ impl Playlists {
         self.list
             .read()
             .unwrap_or_else(|e| e.into_inner())
+            .list
             .iter()
             .filter(|p| p.kind == PlaylistKind::Track)
             .map(|p| p.items.clone())
@@ -123,6 +138,7 @@ impl Playlists {
         self.list
             .read()
             .unwrap_or_else(|e| e.into_inner())
+            .list
             .iter()
             .find(|p| p.id == id)
             .cloned()
@@ -149,15 +165,15 @@ impl Playlists {
             items,
             modified: util::now_secs(),
         };
-        let mut list = self.list.write().unwrap_or_else(|e| e.into_inner());
-        if list.len() >= MAX_PLAYLISTS {
+        let mut inner = self.list.write().unwrap_or_else(|e| e.into_inner());
+        if inner.list.len() >= MAX_PLAYLISTS {
             return Err((409, "too many playlists".into()));
         }
-        list.push(p.clone());
-        if let Err(e) = self.save(&list) {
-            list.pop();
-            return Err(e);
-        }
+        self.save(&inner, &p)?;
+        let pos = inner.next;
+        inner.pos.insert(p.id.clone(), pos);
+        inner.next += 1;
+        inner.list.push(p.clone());
         Ok(p)
     }
 
@@ -169,37 +185,35 @@ impl Playlists {
         }
         let name = parse_name(v.get("name"))?;
         let items = parse_items(v.get("items"))?;
-        let mut list = self.list.write().unwrap_or_else(|e| e.into_inner());
-        let i = list
+        let mut inner = self.list.write().unwrap_or_else(|e| e.into_inner());
+        let i = inner
+            .list
             .iter()
             .position(|p| p.id == id)
             .ok_or((404, "playlist not found".to_string()))?;
-        let old = list[i].clone();
+        let mut p = inner.list[i].clone();
         if let Some(n) = name {
-            list[i].name = n;
+            p.name = n;
         }
         if let Some(it) = items {
-            list[i].items = it;
+            p.items = it;
         }
-        list[i].modified = util::now_secs();
-        if let Err(e) = self.save(&list) {
-            list[i] = old;
-            return Err(e);
-        }
-        Ok(list[i].clone())
+        p.modified = util::now_secs();
+        self.save(&inner, &p)?;
+        inner.list[i] = p.clone();
+        Ok(p)
     }
 
     pub fn delete(&self, id: &str) -> Result<(), Failure> {
-        let mut list = self.list.write().unwrap_or_else(|e| e.into_inner());
-        let i = list
+        let mut inner = self.list.write().unwrap_or_else(|e| e.into_inner());
+        let i = inner
+            .list
             .iter()
             .position(|p| p.id == id)
             .ok_or((404, "playlist not found".to_string()))?;
-        let old = list.remove(i);
-        if let Err(e) = self.save(&list) {
-            list.insert(i, old);
-            return Err(e);
-        }
+        self.part.delete(id).map_err(failed)?;
+        inner.list.remove(i);
+        inner.pos.remove(id);
         Ok(())
     }
 }

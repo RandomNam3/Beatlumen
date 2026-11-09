@@ -3,50 +3,36 @@
 //! an extension goes away); for this account it is in the trash for a while,
 //! and hidden after that as well.
 
-use bl_json::Value;
+use crate::store::Part;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::RwLock;
 
+/// One database entry per track (`<scope>hidden/<id>`: when it was removed).
 pub struct Hidden {
-    path: PathBuf,
+    part: Part,
     /// Track id and when it was removed.
     list: RwLock<HashMap<String, u64>>,
 }
 
 impl Hidden {
-    pub fn load(path: PathBuf) -> Hidden {
-        let mut list = HashMap::new();
-        if let Some(o) = std::fs::read(&path)
-            .ok()
-            .and_then(|d| bl_json::parse_bytes(&d).ok())
-        {
-            for (id, at) in o.as_object().into_iter().flat_map(|m| m.iter()) {
-                if let Some(at) = at.as_u64() {
-                    list.insert(id.to_string(), at);
-                }
-            }
-        }
+    pub fn load(part: Part) -> Hidden {
+        let list = part
+            .list()
+            .into_iter()
+            .filter_map(|(id, at)| Some((id, std::str::from_utf8(&at).ok()?.parse().ok()?)))
+            .collect();
         Hidden {
-            path,
+            part,
             list: RwLock::new(list),
-        }
-    }
-
-    fn save(&self, list: &HashMap<String, u64>) {
-        let mut o = Value::object();
-        for (id, at) in list {
-            o = o.with(id, *at);
-        }
-        if let Err(e) = crate::util::write_atomic(&self.path, o.to_json().as_bytes()) {
-            crate::warn!("cannot write {}: {e}", self.path.display());
         }
     }
 
     pub fn add(&self, id: &str, now: u64) {
         let mut l = self.list.write().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = self.part.put(id, now.to_string().as_bytes()) {
+            crate::warn!("cannot save a removed song: {e}");
+        }
         l.insert(id.to_string(), now);
-        self.save(&l);
     }
 
     /// Whether it was hidden.
@@ -54,7 +40,9 @@ impl Hidden {
         let mut l = self.list.write().unwrap_or_else(|e| e.into_inner());
         let had = l.remove(id).is_some();
         if had {
-            self.save(&l);
+            if let Err(e) = self.part.delete(id) {
+                crate::warn!("cannot save a restored song: {e}");
+            }
         }
         had
     }

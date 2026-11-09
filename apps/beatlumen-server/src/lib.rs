@@ -11,6 +11,8 @@
 //! * [`auth`], [`playlists`], [`presets`], [`images`], [`covers`],
 //!   [`analysis`], [`web`]: the individual services.
 //! * [`vault`]: user accounts and end-to-end encrypted files.
+//! * [`store`]: the database with the server's own data (accounts, logins,
+//!   settings, playlists, ...); caches and file contents stay files.
 //! * [`util`], [`log`], [`sha256`], [`random`]: helpers.
 //!
 //! [`start`] binds the listener, loads the cached index, starts the scanner
@@ -50,6 +52,7 @@ pub mod rooms;
 pub mod routes;
 pub mod sha256;
 pub mod sources;
+pub mod store;
 pub mod tls;
 pub mod userdata;
 pub mod util;
@@ -72,18 +75,15 @@ const MAX_THUMBNAILS: usize = 2;
 /// Songs converted to Opus at the same time (for mobile data).
 pub(crate) const MAX_TRANSCODES: usize = 16;
 
-/// Locations inside the data folder.
+/// Locations inside the data folder (the database is `store::FILE_NAME`).
 pub struct DataPaths {
     pub root: PathBuf,
+    /// The library index (a cache: the scan builds it again).
     pub library: PathBuf,
-    pub tokens: PathBuf,
-    pub playlists: PathBuf,
-    pub favorites: PathBuf,
-    pub history: PathBuf,
+    /// Sound analysis of the songs (a cache).
     pub sound: PathBuf,
+    /// What public databases know about the artists (a cache).
     pub artists: PathBuf,
-    pub labels: PathBuf,
-    pub presets: PathBuf,
     pub uploads: PathBuf,
     pub covers: PathBuf,
     pub analysis: PathBuf,
@@ -99,14 +99,8 @@ impl DataPaths {
         let cache = root.join("cache");
         DataPaths {
             library: root.join("library.json"),
-            tokens: root.join("tokens.json"),
-            playlists: root.join("playlists.json"),
-            favorites: root.join("favorites.json"),
-            history: root.join("history.jsonl"),
             sound: root.join("sound.jsonl"),
             artists: root.join("artists.json"),
-            labels: root.join("labels.json"),
-            presets: root.join("presets"),
             uploads: root.join("uploads"),
             covers: cache.join("covers"),
             analysis: cache.join("analysis"),
@@ -120,7 +114,6 @@ impl DataPaths {
     fn create(&self) -> std::io::Result<()> {
         for d in [
             &self.root,
-            &self.presets,
             &self.uploads,
             &self.covers,
             &self.analysis,
@@ -161,6 +154,8 @@ pub struct State {
     /// Absolute music folder paths (index = root index in track ids).
     pub roots: Vec<PathBuf>,
     pub data: DataPaths,
+    /// The database with the server's own data.
+    pub store: Arc<store::Store>,
     library: RwLock<Arc<Index>>,
     cache_dirty: AtomicBool,
     scan: Mutex<ScanFlags>,
@@ -244,8 +239,17 @@ impl State {
             std::thread::sleep(Duration::from_millis(500));
             me.save_cache();
             info!("restarting");
+            // The next process opens the database (on Windows it starts
+            // before this one ends).
+            if let Err(e) = me.store.close() {
+                warn!("cannot close the database: {e}");
+            }
             if let Some(h) = me.restart_handler.get() {
                 h();
+            }
+            // Still here: the restart failed.
+            if let Err(e) = me.store.reopen() {
+                error!("{e}");
             }
         });
         true
@@ -289,13 +293,17 @@ impl State {
     }
 
     /// What keeps the server from working, empty when it is healthy: its
-    /// data folder must take writes (not full, not mounted read-only).
+    /// data folder must take writes (not full, not mounted read-only), and
+    /// its database a write transaction.
     pub fn health_problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
         let probe = self.data.root.join(".health");
         let written = std::fs::write(&probe, b"ok").and_then(|_| std::fs::remove_file(&probe));
         if let Err(e) = written {
             problems.push(format!("the data folder takes no writes: {e}"));
+        }
+        if let Err(e) = self.store.check() {
+            problems.push(format!("the database takes no write transaction: {e}"));
         }
         problems
     }
@@ -412,7 +420,7 @@ impl State {
         if account.is_empty() {
             f(&self.hidden)
         } else {
-            f(&self.user_data.get(self.vault.user_data_dir(account)).hidden)
+            f(&self.user_data.get(account).hidden)
         }
     }
 
@@ -424,8 +432,8 @@ impl State {
             out.extend(favorites.ids().into_iter().map(|f| f.id));
         };
         take(&self.playlists, &self.favorites);
-        for user in vault::list_users(&self.data.root) {
-            let store = self.user_data.get(self.vault.user_data_dir(&user));
+        for user in self.vault.user_names() {
+            let store = self.user_data.get(&user);
             take(&store.playlists, &store.favorites);
         }
         out
@@ -640,6 +648,22 @@ pub fn restart_process() {
     }
 }
 
+/// `config` with the admin interface's settings from the database, when it
+/// exists and no server has it open (for commands next to a server).
+pub fn stored_config(config: Config) -> Config {
+    let path = config.data_dir.join(store::FILE_NAME);
+    if !path.exists() {
+        return config;
+    }
+    match store::Store::open_path(&path) {
+        Ok(s) => {
+            let data = absolute(&config.data_dir);
+            config::with_settings(config, &s, &data)
+        }
+        Err(_) => config,
+    }
+}
+
 /// Starts the server: prepares the data folder, loads the cached library,
 /// binds the listener and starts the scanner and HTTP threads.
 pub fn start(config: Config) -> Result<Server, String> {
@@ -647,8 +671,22 @@ pub fn start(config: Config) -> Result<Server, String> {
     let data = DataPaths::new(absolute(&config.data_dir));
     data.create()
         .map_err(|e| format!("cannot create data folder {}: {e}", data.root.display()))?;
+    let store = store::Store::open(&data.root)?;
+    // The admin interface's settings (the environment and the command line
+    // still win).
+    let config = config::with_settings(config, &store, &data.root);
+    log::set_verbose(config.verbose);
+    let legacy = store::legacy_files(&data.root);
+    if !legacy.is_empty() {
+        warn!(
+            "{} holds data of a server before 0.13.0 ({}), which is not read: accounts, logins, playlists, favorites, history, presets, settings and the admin password start anew in {} (see the CHANGELOG). The old files can be deleted.",
+            data.root.display(),
+            legacy.join(", "),
+            store::FILE_NAME
+        );
+    }
     let mut roots: Vec<PathBuf> = config.music_dirs.iter().map(|p| absolute(p)).collect();
-    let extensions = extensions::Extensions::new(&config, &data.root)?;
+    let extensions = extensions::Extensions::new(&config, &data.root, &store)?;
     if extensions.enabled() {
         // Songs imported through extensions form one more music folder.
         roots.push(extensions.imports.clone());
@@ -684,23 +722,21 @@ pub fn start(config: Config) -> Result<Server, String> {
         )?),
         None => None,
     };
-    let push = push::Push::open(
-        &data.root.join("vault"),
-        &config.source_url,
-        config.push_allow_private,
-    )?;
+    let push = push::Push::open(&store, &config.source_url, config.push_allow_private)?;
     let vault = vault::Vault::open(
         &data.root,
+        &store,
         config.vault_pepper_file.as_deref(),
         config.vault_quota_mb.saturating_mul(1024 * 1024),
         config.registration,
         push,
         rp,
     )?;
-    let admin = admin::Admin::open(&data.root, config.admin_password_file.as_deref())?;
+    let admin = admin::Admin::open(&store, &data.root, config.admin_password_file.as_deref())?;
     // The songs of remote sources from their cached listings.
     let sources = Arc::new(sources::Sources::load(
         &data.root,
+        &store,
         vault.server_key("beatlumen source logins v1"),
     ));
     let index = if sources.entries().is_empty() {
@@ -741,8 +777,10 @@ pub fn start(config: Config) -> Result<Server, String> {
                 models.own_models(true);
             });
     }
+    // What the shared server password's logins keep.
+    let shared = userdata::UserStore::open(&store, &store::scope(""));
     let state = Arc::new(State {
-        auth: auth::Auth::new(secret, data.tokens.clone()),
+        auth: auth::Auth::new(secret, store.clone()),
         started: Instant::now(),
         restart_pending: AtomicBool::new(false),
         restart_handler: OnceLock::new(),
@@ -750,10 +788,10 @@ pub fn start(config: Config) -> Result<Server, String> {
         models,
         devices: devices::Devices::default(),
         rooms: Default::default(),
-        playlists: playlists::Playlists::load(data.playlists.clone()),
-        favorites: favorites::Favorites::load(data.favorites.clone()),
-        hidden: hidden::Hidden::load(data.root.join("hidden.json")),
-        history: history::History::load(data.history.clone()),
+        playlists: shared.playlists,
+        favorites: shared.favorites,
+        hidden: shared.hidden,
+        history: shared.history,
         sound: Arc::new(labels::SoundIndex::new(
             data.sound.clone(),
             sources.clone(),
@@ -763,9 +801,9 @@ pub fn start(config: Config) -> Result<Server, String> {
             data.artists.clone(),
             config.online_metadata,
         )),
-        labels: labels::SongLabels::load(data.labels.clone()),
+        labels: shared.labels,
         recommend: recommend::Cache::default(),
-        presets: presets::Presets::new(data.presets.clone()),
+        presets: shared.presets,
         images: images::Images::new(
             image_dirs.clone(),
             data.uploads.clone(),
@@ -783,7 +821,7 @@ pub fn start(config: Config) -> Result<Server, String> {
             config.auto_karaoke,
         )),
         mic_relay: mic_relay::MicRelay::default(),
-        user_data: userdata::UserData::default(),
+        user_data: userdata::UserData::new(store.clone()),
         analyzer: analysis::Analyzer::new(
             data.analysis.clone(),
             config.analysis_max_minutes,
@@ -802,6 +840,7 @@ pub fn start(config: Config) -> Result<Server, String> {
         scan_cv: Condvar::new(),
         roots,
         data,
+        store,
         web,
         vault,
         extensions,
@@ -858,6 +897,21 @@ pub fn start(config: Config) -> Result<Server, String> {
     })
     .map_err(|e| format!("cannot start the source listing: {e}"))?;
 
+    {
+        // A consistent copy of the database for backups of the running
+        // server, within an hour of a change.
+        let weak = Arc::downgrade(&state);
+        std::thread::Builder::new()
+            .name("db-backup".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(3600));
+                let Some(state) = weak.upgrade() else {
+                    return;
+                };
+                state.store.backup_if_changed(&state.data.root);
+            })
+            .map_err(|e| format!("cannot start the database copy: {e}"))?;
+    }
     {
         // The trash of encrypted files, and bytes nobody refers to any more.
         let weak = Arc::downgrade(&state);
