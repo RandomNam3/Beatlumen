@@ -9,7 +9,17 @@ mod common;
 
 use bl_json::Value;
 use common::App;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+/// The microphone streams and the song clock they are placed on are one
+/// per process (as in the app, which has one core). Tests that use them
+/// take turns: run at the same time, two players moved the one song clock
+/// back and forth, and held notes broke off (seen on the Windows runner).
+fn mic_turn() -> MutexGuard<'static, ()> {
+    static MIC: Mutex<()> = Mutex::new(());
+    MIC.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 const ULTRASTAR: &str = "#TITLE:Sine Song\n#ARTIST:Someone\n#BPM:300\n#GAP:500\n\
     : 0 4 60 Hel\n: 4 4 62 lo\n- 10\n: 12 8 64 world\nE\n";
@@ -308,6 +318,7 @@ fn computed_on_the_device() {
 #[test]
 fn singers_are_scored_against_the_notes() {
     use bl_core::mic;
+    let _mic = mic_turn();
     let mut app = App::new("karaoke-round");
     let dir = app.dir.join("music");
     std::fs::create_dir_all(&dir).unwrap();
@@ -461,6 +472,7 @@ fn singers_are_scored_against_the_notes() {
 #[ignore]
 fn text_is_scored_with_the_head() {
     use bl_core::mic;
+    let _mic = mic_turn();
     let (Ok(model), Ok(vocals), Ok(lrc)) = (
         std::env::var("BL_HEAD_MODEL"),
         std::env::var("BL_KARAOKE_VOCALS"),
@@ -665,6 +677,7 @@ fn text_is_scored_with_the_head() {
 #[test]
 fn calibration_finds_the_microphone_latency() {
     use bl_core::mic;
+    let _mic = mic_turn();
     let mut app = App::new("karaoke-calibrate");
     app.host.mic = Some(Default::default());
     app.cmd(Value::object().with("cmd", "mic.devices").with(
