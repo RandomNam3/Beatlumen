@@ -114,9 +114,6 @@ ScrollView {
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 sourceSize: Qt.size(320, 200)
-                // The core keeps thumbnails of local files (and makes them
-                // anew when a file changes); Qt's cache would show the old one.
-                cache: !t.thumb.startsWith("image://")
                 opacity: t.selecting && !t.selected ? 0.6 : 1
             }
             Icon { anchors.centerIn: parent; visible: t.thumb === ""; name: "wallpaper"; color: Theme.textFaint }
@@ -273,7 +270,7 @@ ScrollView {
                     IconButton {
                         iconName: "close"
                         tip: Theme.tr("Remove folder")
-                        onClicked: { confirmFolder.path = modelData.path; confirmFolder.name = modelData.name; confirmFolder.open() }
+                        onClicked: confirmFolder.ask(modelData.path, modelData.name)
                     }
                 }
             }
@@ -366,17 +363,23 @@ ScrollView {
         AppDialog {
             id: confirmFolder
             property string path
-            property string name
+            // The text is set when the dialog opens: bound to the folder
+            // name, it made a binding loop for the dialog's height.
+            function ask(p, name) {
+                path = p
+                folderText.text = Theme.tr("The images from \"%1\" leave the list, and changes in the folder are no longer followed. The files stay where they are.").arg(name)
+                open()
+            }
             anchors.centerIn: Overlay.overlay
             width: Math.min(420, (parent ? parent.width : 420) - 32)
             title: Theme.tr("Remove the folder?")
             standardButtons: Dialog.Cancel | Dialog.Ok
             onAboutToShow: Theme.nameButtons(this)
             Label {
+                id: folderText
                 textFormat: Text.PlainText
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: Theme.tr("The images from \"%1\" leave the list, and changes in the folder are no longer followed. The files stay where they are.").arg(confirmFolder.name)
             }
             onAccepted: Core.call("backgrounds.removeFolder", { path: path })
         }

@@ -793,7 +793,7 @@ impl Core {
                 let sources: Vec<String> = strs(c.get("sources"))
                     .into_iter()
                     .map(|p| {
-                        if p.contains(':') && !p.starts_with('/') && !p[1..].starts_with(":\\") {
+                        if p.contains(':') && !is_plain_path(&p) {
                             p
                         } else {
                             format!("{LOCAL_PREFIX}{p}")
@@ -1751,5 +1751,30 @@ mod tests {
         assert!(in_folder("C:\\Music\\a.mp3", "C:/Music/"));
         assert!(!in_folder("C:/Music2/a.mp3", "C:/Music"));
         assert!(in_folder("/a.mp3", "/"));
+    }
+}
+
+/// Whether a source the UI hands over is a file path: absolute on Unix, or
+/// with a drive letter on Windows, where Qt writes `C:/…` and others
+/// `C:\…`. Anything else with a colon is a URL or a source id.
+fn is_plain_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with('/')
+        || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'/' | b'\\'))
+}
+
+#[cfg(test)]
+mod plain_path_tests {
+    #[test]
+    fn drive_letters_with_either_separator() {
+        use super::is_plain_path;
+        assert!(is_plain_path("/home/a.png"));
+        assert!(is_plain_path("C:/Users/a.png"));
+        assert!(is_plain_path("c:\\Users\\a.png"));
+        assert!(!is_plain_path("srv:123"));
+        assert!(!is_plain_path("https://example.org/a.png"));
+        assert!(!is_plain_path("cover:abc"));
+        assert!(!is_plain_path("ä:/x"));
+        assert!(!is_plain_path("C:"));
     }
 }
