@@ -74,12 +74,15 @@ dependencies = [
  "bl-fx",
  "bl-image",
  "bl-json",
+ "bl-karaoke",
  "bl-media",
  "bl-meta",
  "bl-net",
  "bl-offline",
  "bl-opus-enc",
+ "bl-pitch",
  "bl-recommend",
+ "bl-sep",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -110,7 +113,9 @@ dependencies = [
  "bl-asr",
  "bl-hyph",
  "bl-json",
+ "bl-media",
  "bl-mt",
+ "bl-pitch",
 ]
 
 [[package]]
@@ -148,13 +153,17 @@ dependencies = [
  "bl-gl",
  "bl-image",
  "bl-json",
+ "bl-karaoke",
  "bl-media",
  "bl-meta",
  "bl-mt",
  "bl-net",
  "bl-offline",
+ "bl-opus",
+ "bl-pitch",
  "bl-recommend",
  "bl-render",
+ "bl-sep",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -203,6 +212,17 @@ version = "0.12.0"
 [[package]]
 name = "bl-json"
 version = "0.12.0"
+
+[[package]]
+name = "bl-karaoke"
+version = "0.12.0"
+dependencies = [
+ "bl-asr",
+ "bl-json",
+ "bl-media",
+ "bl-pitch",
+ "bl-sep",
+]
 
 [[package]]
 name = "bl-media"

@@ -197,6 +197,64 @@ impl Head {
         Ok((x, n))
     }
 
+    /// As [`features`](Self::features), with the encoder run on only the
+    /// frames the audio needs instead of 30 s: a few seconds cost a fraction,
+    /// cheap enough to score sung lines while a song plays.
+    fn features_short(&self, m: &Model, samples: &[f32]) -> std::io::Result<(Vec<f32>, usize)> {
+        let p = m.params;
+        let dim = p.n_audio_state;
+        let mel = log_mel(samples, &m.mel_filters, p.n_mels, m.mel_bins);
+        // Two mel frames to an encoder frame, and room for the convolutions.
+        let need = (samples.len() / bl_asr::mel::HOP + 4 * (REACH + 2))
+            .next_multiple_of(2)
+            .min(bl_asr::mel::WINDOW_FRAMES)
+            .min(mel.frames);
+        let mut win = vec![0f32; p.n_mels * need];
+        for c in 0..p.n_mels {
+            win[c * need..(c + 1) * need]
+                .copy_from_slice(&mel.data[c * mel.frames..c * mel.frames + need]);
+        }
+        let mut enc = encode(m, &win)?;
+        let all = enc.len() / dim;
+        let n = (((samples.len() as f64 / SAMPLE_RATE as f64) / FRAME) as usize).clamp(1, all);
+        let used = (n + REACH).min(all);
+        enc.truncate(used * dim);
+        layer_norm(&mut enc, dim, &self.norm.w, &self.norm.b);
+        let mut x = window_rows(&enc, dim, used, &self.a);
+        gelu_exact(&mut x);
+        let mut x = window_rows(&x, self.hidden, used, &self.b);
+        gelu_exact(&mut x);
+        x.truncate(n * self.hidden);
+        Ok((x, n))
+    }
+
+    /// How well a sung line fits its text: the mean probability the head
+    /// gives each of the text's letters on their best path through the
+    /// audio (16 kHz mono, the line with a little room around it, at most
+    /// 30 s), 0..1. Singing the words gives high values, other words or
+    /// humming low ones. `None` when the text is not spelled in the head's
+    /// letters or the audio is too short for it.
+    pub fn sung_score(&self, m: &Model, samples: &[f32], lang: &str, text: &str) -> Option<f32> {
+        if !self.fits(text) {
+            return None;
+        }
+        let samples = &samples[..samples.len().min(SAMPLE_RATE as usize * 30)];
+        let (f, n) = self.features_short(m, samples).ok()?;
+        let lp = self.log_probs(&f, n, lang);
+        let target = self.vocab.target(&self.vocab.words(text));
+        if target.tokens.is_empty() {
+            return None;
+        }
+        let spans = token_spans(&lp, &target.tokens, 0).ok()?;
+        let letters: Vec<f32> = spans
+            .iter()
+            .zip(&target.owners)
+            .filter(|(_, o)| o.is_some())
+            .map(|(s, _)| s.score)
+            .collect();
+        (!letters.is_empty()).then(|| letters.iter().sum::<f32>() / letters.len() as f32)
+    }
+
     fn log_probs(&self, features: &[f32], n: usize, lang: &str) -> LogProbs {
         let l = self.out.get(lang).unwrap_or(&self.out["any"]);
         let logits = linear(features, n, &l.w, Some(&l.b));

@@ -33,10 +33,12 @@ pub mod favorites;
 pub mod hidden;
 pub mod history;
 pub mod images;
+pub mod karaoke;
 pub mod labels;
 pub mod library;
 pub mod lyrics;
 pub mod lyrics_sync;
+pub mod mic_relay;
 pub mod models;
 pub mod playlists;
 pub mod presets;
@@ -88,6 +90,8 @@ pub struct DataPaths {
     pub image_cache: PathBuf,
     /// Imported song texts.
     pub lyrics: PathBuf,
+    /// Karaoke data (computed and imported).
+    pub karaoke: PathBuf,
 }
 
 impl DataPaths {
@@ -108,6 +112,7 @@ impl DataPaths {
             analysis: cache.join("analysis"),
             image_cache: cache.join("images"),
             lyrics: root.join("lyrics"),
+            karaoke: root.join("karaoke"),
             root,
         }
     }
@@ -173,6 +178,8 @@ pub struct State {
     pub images: images::Images,
     pub lyrics: lyrics::Lyrics,
     pub lyrics_sync: Arc<lyrics_sync::LyricsSync>,
+    pub karaoke: Arc<karaoke::Karaoke>,
+    pub mic_relay: mic_relay::MicRelay,
     pub user_data: userdata::UserData,
     pub analyzer: analysis::Analyzer,
     pub thumbs: util::Semaphore,
@@ -202,6 +209,7 @@ impl State {
         self.analyzer.set_max_minutes(cfg.analysis_max_minutes);
         self.lyrics_sync
             .configure(cfg.speech_model.clone(), cfg.auto_sync_lyrics);
+        self.karaoke.configure(cfg.karaoke, cfg.auto_karaoke);
         self.sound.set_enabled(cfg.auto_labels);
         self.artists.set_enabled(cfg.online_metadata);
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(cfg);
@@ -306,6 +314,7 @@ impl State {
             web_integrity: self.web.integrity.status.to_string(),
             passkeys: self.vault.rp.is_some(),
             speech: self.lyrics_sync.available(),
+            karaoke: self.karaoke.available(),
             room_guests: self.config().room_guests,
         }
     }
@@ -388,6 +397,7 @@ impl State {
             stats.skipped,
             if idx.revision != old_rev { format!(", revision {}", idx.revision) } else { String::new() }
         );
+        self.karaoke.library_changed();
         self.prune_caches(&idx);
     }
 
@@ -767,6 +777,12 @@ pub fn start(config: Config) -> Result<Server, String> {
             config.auto_sync_lyrics,
             data.lyrics.clone(),
         )),
+        karaoke: Arc::new(karaoke::Karaoke::new(
+            data.karaoke.clone(),
+            config.karaoke,
+            config.auto_karaoke,
+        )),
+        mic_relay: mic_relay::MicRelay::default(),
         user_data: userdata::UserData::default(),
         analyzer: analysis::Analyzer::new(
             data.analysis.clone(),
@@ -793,6 +809,7 @@ pub fn start(config: Config) -> Result<Server, String> {
     });
     state.extensions.attach(&state);
     state.lyrics_sync.attach(&state);
+    state.karaoke.attach(&state);
     state.sound.attach(&state);
     state.artists.attach(&state);
 

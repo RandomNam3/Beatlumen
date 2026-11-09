@@ -229,6 +229,8 @@ the push options need a restart, which the admin interface does itself.
 | `BEATLUMEN_MODEL_SOURCE` | huggingface.co (whisper.cpp) | Mirror of the speech model files offered in the admin interface |
 | `BEATLUMEN_AUTO_SYNC_LYRICS` | `false` | `true`: time the song texts of the whole library in the background (needs the model) |
 | `BEATLUMEN_AUTO_LABELS` | `true` | `false`: do not work out how the library's songs sound (labels, recommendations) |
+| `BEATLUMEN_KARAOKE` | `false` | `true`: compute karaoke data on request (downloads the vocal separation model) |
+| `BEATLUMEN_AUTO_KARAOKE` | `false` | `true`: compute the karaoke data of the whole library in the background |
 | `BEATLUMEN_ROOM_GUESTS` | `true` | `false`: people without a login cannot join a room to listen together |
 | `BEATLUMEN_OFFER_MODELS` | `true` | `false`: do not offer the speech models in `/data/models` to the apps |
 | `BEATLUMEN_ONLINE_METADATA` | `false` | `true`: look the library's artists up in public databases for artist pages and recommendations; their names go to MusicBrainz, Wikimedia and ListenBrainz |
@@ -272,6 +274,8 @@ environment variables:
 | `--model-source URL` | Mirror of the speech model files |
 | `--auto-sync-lyrics` | Time the song texts of the whole library in the background |
 | `--no-auto-labels` | Do not work out how the library's songs sound (labels, recommendations) |
+| `--karaoke` | Compute karaoke data on request (downloads the vocal separation model, 36 MB, from zenodo.org) |
+| `--auto-karaoke` | Also compute the karaoke data of the whole library in the background |
 | `--no-room-guests` | People without a login cannot join a room to listen together |
 | `--no-offer-models` | Do not offer the speech models in `/data/models` to the apps |
 | `--online-metadata` | Look the library's artists up in public databases for artist pages and recommendations (off by default) |

@@ -506,6 +506,13 @@ ApplicationWindow {
                         onOpenCollection: (ext, id) => win.showCollection(ext, id)
                     }
                 }
+                Loader {
+                    active: win.page === 8 || item !== null
+                    sourceComponent: KaraokePage {
+                        onImportFile: dialogs.openKaraoke()
+                        onExportFile: dialogs.exportKaraoke()
+                    }
+                }
             }
         }
         // On top, to see a press before the items below take it, without taking it.

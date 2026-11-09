@@ -97,6 +97,8 @@ pub(crate) enum Req {
     Loudness(String),
     Lyrics(String),
     LyricsSync(String),
+    Karaoke(crate::karaoke::KaraokeReq),
+    KaraokePhone(crate::karaoke_phone::PhoneReq),
     DeviceAnnounce(u64),
     DeviceList(u64),
     DeviceEvents(u64),
@@ -371,6 +373,10 @@ pub struct Core {
     pub(crate) sources: crate::sources::SourcesState,
     pub(crate) share: crate::share::ShareState,
     pub(crate) speech: crate::speech::SpeechState,
+    pub(crate) karaoke: crate::karaoke::KaraokeState,
+    pub(crate) karaoke_session: crate::karaoke_session::SessionState,
+    pub(crate) karaoke_calibration: Option<crate::karaoke_calibrate::Calibration>,
+    pub(crate) phones: crate::karaoke_phone::PhoneState,
     pub(crate) translate: crate::translate::TranslateState,
     pub(crate) vault: crate::vault::Vault,
     pub(crate) room: crate::room::RoomState,
@@ -596,6 +602,10 @@ impl Core {
             sources: Default::default(),
             share: Default::default(),
             speech: Default::default(),
+            karaoke: Default::default(),
+            karaoke_session: Default::default(),
+            karaoke_calibration: None,
+            phones: Default::default(),
             translate: Default::default(),
             vault: Default::default(),
             room: Default::default(),
@@ -833,6 +843,7 @@ impl Core {
             .with("analysisRev", self.revs.analysis)
             .with("settingsRev", self.revs.settings)
             .with("lyricsRev", self.revs.lyrics)
+            .with("karaokeRev", self.karaoke_rev())
             .with("devicesRev", self.revs.devices)
             .with("favoritesRev", self.revs.favorites)
             .with("historyRev", self.revs.history)
@@ -1134,6 +1145,8 @@ impl Core {
             }
             Req::Lyrics(id) => self.lyrics_response(host, id, &res),
             Req::LyricsSync(id) => self.lyrics_sync_response(host, id, &res),
+            Req::Karaoke(k) => self.karaoke_response(host, k, &res),
+            Req::KaraokePhone(k) => self.karaoke_phone_response(host, k, &res),
             r @ (Req::DeviceAnnounce(_)
             | Req::DeviceList(_)
             | Req::DeviceEvents(_)
@@ -2734,6 +2747,18 @@ impl Core {
             self.vault_upload_paths(host, paths);
             return;
         }
+        // Karaoke data for the current track (UltraStar text or JSON).
+        if std::mem::take(&mut self.karaoke.expect_import) {
+            if let Some(p) = paths
+                .iter()
+                .find(|p| matches!(extension(p).unwrap_or_default().as_str(), "txt" | "json"))
+            {
+                if let Ok(d) = host.fs_read(p) {
+                    self.karaoke_import_bytes(host, &d);
+                }
+                return;
+            }
+        }
         // A song text for the current track: picked for that, or an .lrc file.
         let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
         if let Some(p) = paths.iter().find(|p| {
@@ -2783,6 +2808,15 @@ impl Core {
     pub fn open_data(&mut self, host: &mut dyn Host, name: String, data: Vec<u8>) {
         if std::mem::take(&mut self.vault.expect_upload) {
             self.vault_upload_data(host, name, data);
+            return;
+        }
+        if std::mem::take(&mut self.karaoke.expect_import)
+            && matches!(
+                extension(&name).unwrap_or_default().as_str(),
+                "txt" | "json"
+            )
+        {
+            self.karaoke_import_bytes(host, &data);
             return;
         }
         let expect_lyrics = std::mem::take(&mut self.lyrics.expect_import);
@@ -2903,6 +2937,7 @@ impl Core {
         self.poll_loudness(host);
         self.poll_lyrics();
         self.poll_lyrics_sync(host);
+        self.poll_karaoke(host);
         self.poll_devices(host);
         self.poll_room(host);
         self.poll_account_sync(host);
@@ -2959,6 +2994,9 @@ impl Core {
         self.track_listening(host);
         self.poll_discord(host);
         self.mic_tick(host);
+        self.poll_karaoke_session(host);
+        self.poll_karaoke_calibration(host);
+        self.poll_karaoke_phones(host);
         // The position survives the app being closed while playing.
         if self.player.state() == PlayState::Playing && self.time - self.position_saved_at > 30.0 {
             self.position_saved_at = self.time;

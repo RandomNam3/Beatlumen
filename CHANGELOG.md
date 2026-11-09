@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
+  microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
+  drawn as the song plays, the points at the end. Microphones are only open during a round.
+- **Phones as wireless microphones:** on the karaoke page a phone (or any other device logged in
+  to the same server) sings into the device that plays. Its singing goes as Opus packets through the
+  Beatlumen server, each stamped with the server's clock when it was recorded, so points go by when
+  it was sung, not by when it arrived. No device opens a port, and the server keeps nothing.
+- **Microphone delay measured:** the karaoke page plays a few clicks; the microphone hears them
+  through the speakers (or the singer claps or sings "ta" on each), and the delay found is kept as
+  the input's latency offset.
+- **Singing in the song quieter or off** during karaoke: the singing is separated from the music
+  once per song (`bl-sep`) and taken out on the way to the speakers, sample by sample at the song's
+  position, also after seeking (formats that do not seek to the exact sample are matched up again).
+- **Points for the text:** each sung line is scored against the known line by the small CTC head
+  on the speech model's encoder, on its own thread one line after the other (about 0.1 s a line
+  with the base model on four cores). It uses the picked speech model when it has a head (also
+  one of the server's own models), else the smallest one in the models folder that has one;
+  without any there are no text points and the other points count for all 10 000.
+- **Points for the pitch:** each singer's live pitch against the notes of their voice, the octave
+  does not count. The tolerance depends on the difficulty (2, 1 or half a semitone), golden notes
+  count double, rap notes count when the singer is heard, and a long note held on pitch earns a
+  bonus. Consonants and breaths within a note are no misses (up to 40 % of it). Each line gets a
+  rating as it ends.
+- **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
+  text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
+  computes it on request or for the whole library in the background (`--karaoke`,
+  `--auto-karaoke`; turning it on downloads the vocal separation model, 36 MB; new songs right
+  after a scan; also in the hardened container) and keeps it like song texts (`GET/PUT/DELETE
+  /api/tracks/<id>/karaoke`). The app computes it itself where the server does not, keeps it in a
+  song's offline copy, and imports and exports UltraStar text files (duets included). Computed
+  notes are dropped when the song text changes; imported ones stay. For a song text with line
+  times only, each line's syllables are put on the time it is sung.
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable

@@ -301,6 +301,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
         return state.rooms.create(state, req, &scope);
     }
+    // Phones as microphones: only to the devices of the same login.
+    if matches!(segs, ["mic", _]) {
+        let scope = user
+            .as_deref()
+            .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
+        return state
+            .mic_relay
+            .handle(req, segs, &scope, &|id| state.devices.scope_of(id));
+    }
     match segs {
         ["logout"] => match m {
             "POST" => {
@@ -353,6 +362,45 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 },
                 "DELETE" => {
                     state.lyrics.delete(e);
+                    Response::new(204)
+                }
+                _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
+        ["tracks", id, "karaoke", "compute"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            if !state.karaoke.available() {
+                return Response::error(501, "karaoke data is not computed on this server");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &state.karaoke.status_json(&e.track.id)),
+                "POST" => json(202, &state.karaoke.request(&e.track.id)),
+                _ => not_allowed("GET, HEAD, POST"),
+            }
+        }
+        ["tracks", id, "karaoke"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            match m {
+                "GET" | "HEAD" => {
+                    let lyrics = state.lyrics.get(e);
+                    let text = lyrics.as_ref().and_then(|v| v.get("text").as_str());
+                    match state.karaoke.get(&e.track.id, text) {
+                        Some(v) => json(200, &v).with_header("Cache-Control", "private, no-cache"),
+                        None => Response::error(404, "no karaoke data"),
+                    }
+                }
+                "PUT" => match state.karaoke.put(e, &req.body) {
+                    Ok(()) => Response::new(204),
+                    Err(err) => fail(err),
+                },
+                "DELETE" => {
+                    state.karaoke.delete(&e.track.id);
                     Response::new(204)
                 }
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),

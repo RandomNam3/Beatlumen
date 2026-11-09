@@ -82,31 +82,38 @@ them, is in [`PLAN-0.10.md`](PLAN-0.10.md).
 Singing along with the song text and getting points for the text and the
 pitch. Plan and order in [`PLAN-0.12.md`](PLAN-0.12.md).
 
-- **Song data:** the melody of the singing (pitch of the separated vocals,
-  own pYIN tracker), one note per syllable from the syllable times, voices
-  per line, key and tempo. Kept like song texts (on the server per song,
-  offline in the song's container), computed on the server in the
-  background or on the device. Import and export as UltraStar text files.
+- Done: **song data:** the melody of the singing (pitch of the separated
+  vocals, own pYIN tracker), one note per syllable from the syllable times,
+  voices per line and key (`crates/bl-pitch`, `crates/bl-karaoke`). Kept
+  like song texts (on the server per song, `GET/PUT/DELETE
+  /api/tracks/<id>/karaoke`; offline in the song's container), computed on
+  the server (`--karaoke`, `--auto-karaoke`) or on the device. Import and
+  export as UltraStar text files. Next: tempo (beat grid) for the export.
 - **Microphones:**
   - Several inputs on a computer (USB microphones, headsets, channels of
     an audio interface), one singer each.
   - One microphone on a phone that plays the song itself.
-  - Phones as wireless microphones for the device that plays: the phone
-    records and sends the singing through the Beatlumen server with
-    timestamps on the common server time, so network delay does not
-    affect the points. No device opens a port for this.
+  - Done: phones as wireless microphones for the device that plays: the
+    phone records and sends the singing (Opus) through the Beatlumen server
+    with timestamps on the common server time (`/api/mic`), so network
+    delay does not affect the points. No device opens a port for this.
   - Microphones are only open while the karaoke mode uses them; the
     recordings are not stored or sent anywhere else.
-  - Latency calibration per microphone (clap or sing a test note).
+  - Done: latency calibration per microphone (a click track heard through
+    the speakers, or clapped or sung along).
 - **Points:**
-  - Pitch: the live pitch of each microphone against the song's notes,
-    octave ignored, tolerance by difficulty.
-  - Text: each sung line scored against the known line with the CTC
-    aligner (how well the sung sounds fit the text), cheap enough for
-    phones.
-- **Playback:** the singing can be turned down with the separation.
-- **Screen:** its own page: pick a song, assign microphones to singers or
-  voices, the text with note bars and each singer's live pitch, results.
+  - Done: pitch: the live pitch of each microphone against the song's
+    notes, octave ignored, tolerance by difficulty (2, 1 or half a
+    semitone), a bonus for held long notes (`bl_pitch::score`).
+  - Done: text: each sung line scored against the known line with the
+    CTC head on the speech model's encoder (`Head::sung_score`; the song's
+    own vocals score 0.27-0.34 in the median, another line's words 0.10;
+    0.12 s a line with the base head on four cores).
+- Done: **playback:** the singing can be turned down or off with the
+  separation (taken out in the player at the track's position).
+- Done: **screen:** its own page (`KaraokePage.qml`): pick a song, assign
+  microphones to singers or voices, the text with note bars and each
+  singer's live pitch, results.
 
 ## Offline
 - Done: server songs kept on the device ("Keep offline" in the song menu),

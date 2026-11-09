@@ -28,6 +28,10 @@ bl-vault = { path = "../../crates/bl-vault" }
 bl-align = { path = "../../crates/bl-align" }
 bl-asr = { path = "../../crates/bl-asr", features = ["gpu"] }
 bl-sources = { path = "../../crates/bl-sources" }
+# Karaoke data: separated vocals, melody, notes.
+bl-karaoke = { path = "../../crates/bl-karaoke" }
+bl-pitch = { path = "../../crates/bl-pitch" }
+bl-sep = { path = "../../crates/bl-sep" }
 bl-opus-enc = { path = "../../crates/bl-opus-enc" }
 # TLS for outgoing connections (push services); pinned exactly.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }

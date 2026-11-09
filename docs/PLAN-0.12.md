@@ -76,31 +76,31 @@ the results come into Beatlumen.
 - [ ] Live pitch for microphones (YIN, 30–50 ms window, octave guard).
 - [ ] Notes: one per syllable (syllable times from `bl-asr`/`bl-hyph`),
   extra notes for melismas, optional beat grid from `bl-analysis`.
-- [ ] Karaoke track (lines, syllables, notes, voices, key); UltraStar
+- [x] Karaoke track (lines, syllables, notes, voices, key); UltraStar
   text import and export (duets as voices).
-- [ ] Stored like song texts: `GET/PUT/DELETE /api/tracks/<id>/karaoke`
+- [x] Stored like song texts: `GET/PUT/DELETE /api/tracks/<id>/karaoke`
   on the server, in the offline container on the device; computed in the
-  server's background jobs or on the device.
+  server's background jobs or on the device (`crates/bl-karaoke`).
 
 ## Phase 4: microphones
 
-- [ ] Microphone input in the apps: several sources on Linux
+- [x] Microphone input in the apps: several sources on Linux
   (PulseAudio/PipeWire, loaded at run time like the system audio capture)
   and Windows (WASAPI), the microphone on Android (permission asked when
   a microphone is first opened). Samples pushed with a timestamp per
   stream; level meter.
-- [ ] Phones as wireless microphones: Opus (`bl-opus-enc`) with
+- [x] Phones as wireless microphones: Opus (`bl-opus-enc`) with
   timestamps on the common server time, through the server to the playing
   device.
-- [ ] Latency calibration per microphone.
-- [ ] `SECURITY.md`: microphone access, only while the karaoke mode uses
+- [x] Latency calibration per microphone.
+- [x] `SECURITY.md`: microphone access, only while the karaoke mode uses
   it, recordings neither stored nor sent anywhere else.
 
 ## Phase 5: karaoke mode
 
-- [ ] Points for pitch (per note, octave ignored, tolerance by difficulty)
-  and text (CTC score of the sung line against the known line).
-- [ ] Page in the app: song, microphones per singer or voice, text with
+- [x] Points for pitch (per note, octave ignored, tolerance by difficulty)
+  and text (CTC head score of the sung line against the known line).
+- [x] Page in the app: song, microphones per singer or voice, text with
   note bars and live pitch, results; the singing turned down with
   `bl-sep` on request.
 
