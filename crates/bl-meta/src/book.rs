@@ -28,6 +28,11 @@ impl Entry {
         };
         now.saturating_sub(self.fetched) < lasts
     }
+
+    /// The whole page is known, not only the genres.
+    pub fn has_page(&self) -> bool {
+        self.artist.as_ref().is_some_and(|a| a.complete)
+    }
 }
 
 /// Artists by name, in the spelling that makes the same name meet.
