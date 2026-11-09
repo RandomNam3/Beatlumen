@@ -62,9 +62,32 @@ QtObject {
             out = Qt.tint(Qt.rgba(c.r, c.g, c.b, 1), Qt.rgba(end.r, end.g, end.b, i / 10))
         return out
     }
+    // ---- motion ------------------------------------------------------------
+    // Interface animations: short and eased, opacity and transforms only.
+    // "Reduce motion" turns them off; the photosensitive mode and the system's
+    // battery saver keep the fading and leave out sliding and growing.
+    readonly property bool animate: !reduceMotion
+    readonly property bool slide: animate && settings.photosensitive !== true && !Core.powerSaving
+    readonly property int fast: 150
+    readonly property int normal: 220
+    readonly property int slow: 300
+    readonly property int easeOut: Easing.OutCubic
+    readonly property int easeIn: Easing.InCubic
+    readonly property int easeInOut: Easing.InOutCubic
+
     // How long an animation of the interface takes.
     function ms(duration) {
         return reduceMotion ? 0 : duration
+    }
+    // The same for the shared steps, a little shorter on the battery saver.
+    function motion(duration) {
+        return !animate ? 0 : Core.powerSaving ? Math.round(duration * 0.7) : duration
+    }
+    // Frames are rationed while nothing plays (phones): an animation asks for
+    // smooth ones while it runs.
+    function smoothFrames(duration) {
+        if (animate)
+            Core.smoothFrames(duration + 60)
     }
 
     // Black or white, whichever contrasts more with `c` (WCAG luminance).
@@ -181,6 +204,76 @@ QtObject {
     }
 
     readonly property var de: ({
+        "Sing into another device": "In ein anderes Gerät singen",
+        "This device's microphone becomes a microphone of the device that plays, through the server. Nothing is recorded.": "Das Mikrofon dieses Geräts wird über den Server zu einem Mikrofon des Geräts, das spielt. Nichts wird aufgenommen.",
+        "Device": "Gerät",
+        "Sing into it": "Hineinsingen",
+        "No other device is online. Open Beatlumen on the device that plays.": "Kein anderes Gerät ist online. Öffne Beatlumen auf dem Gerät, das spielt.",
+        "Matching the clock with the server…": "Uhr wird mit dem Server abgeglichen …",
+        "Sending; round trip %1 ms": "Sendet; Umlaufzeit %1 ms",
+        "Measure the microphone's delay": "Verzögerung des Mikrofons messen",
+        "Clicks are playing: hold the microphone near the speaker, or clap or sing \"ta\" on each click.": "Klicks werden abgespielt: Halte das Mikrofon in die Nähe des Lautsprechers oder klatsche oder singe „ta“ bei jedem Klick.",
+        "Delay of the microphone: %1 ms (%2 clicks heard)": "Verzögerung des Mikrofons: %1 ms (%2 Klicks gehört)",
+        "Not enough clicks heard. Turn the sound up or hold the microphone closer to the speaker.": "Zu wenige Klicks gehört. Mach den Ton lauter oder halte das Mikrofon näher an den Lautsprecher.",
+        "Singing in the song": "Gesang im Song",
+        "As recorded": "Wie im Song",
+        "Quieter": "Leiser",
+        "Separating the singing from the music…": "Gesang wird von der Musik getrennt …",
+        "Text": "Text",
+        "Without points for the text: they need a speech model with a CTC head on this device.": "Ohne Punkte für den Text: Dafür braucht es auf diesem Gerät ein Sprachmodell mit CTC-Kopf.",
+        "Add singer": "Sänger:in hinzufügen",
+        "Another song": "Anderer Song",
+        "Choose a song": "Song wählen",
+        "Choose a song to sing.": "Wähle einen Song zum Singen.",
+        "Compute again": "Neu berechnen",
+        "Computed from the singing": "Aus dem Gesang berechnet",
+        "Compute notes": "Noten berechnen",
+        "Computing on the server…": "Wird auf dem Server berechnet …",
+        "Computing on this device…": "Wird auf diesem Gerät berechnet …",
+        "Difficulty": "Schwierigkeit",
+        "Downloading the separation model…": "Trennmodell wird geladen …",
+        "Duet": "Duett",
+        "Easy": "Leicht",
+        "Easy: within two semitones, medium: one, hard: half a semitone. The octave does not count; holding a long note on pitch earns a bonus.": "Leicht: bis zwei Halbtöne daneben, mittel: einer, schwer: ein halber. Die Oktave zählt nicht; ein lang gehaltener Ton auf der richtigen Höhe bringt einen Bonus.",
+        "End": "Beenden",
+        "Export as UltraStar file…": "Als UltraStar-Datei exportieren …",
+        "Good": "Gut",
+        "Great": "Super",
+        "Hard": "Schwer",
+        "Held notes": "Gehaltene Töne",
+        "Import an UltraStar file for this song.": "Importiere eine UltraStar-Datei für diesen Song.",
+        "Imported": "Importiert",
+        "Import UltraStar file…": "UltraStar-Datei importieren …",
+        "in the offline copy": "in der Offline-Kopie",
+        "Karaoke": "Karaoke",
+        "Karaoke data needs a song text with times. Time the song text first, or import an UltraStar file.": "Karaoke-Daten brauchen einen synchronisierten Songtext. Synchronisiere zuerst den Songtext oder importiere eine UltraStar-Datei.",
+        "Key": "Tonart",
+        "Medium": "Mittel",
+        "Microphone": "Mikrofon",
+        "Microphones are not available here": "Mikrofone sind hier nicht verfügbar",
+        "No karaoke data yet": "Noch keine Karaoke-Daten",
+        "notes": "Noten",
+        "Notes": "Noten",
+        "Okay": "Okay",
+        "on pitch": "getroffen",
+        "Perfect": "Perfekt",
+        "Ready to sing": "Bereit zum Singen",
+        "Remove karaoke data": "Karaoke-Daten entfernen",
+        "Results": "Ergebnis",
+        "saved on the server": "auf dem Server gespeichert",
+        "saved on this device": "auf diesem Gerät gespeichert",
+        "Search for a song": "Song suchen",
+        "Sing again": "Nochmal singen",
+        "Singer": "Sänger:in",
+        "Singers": "Sänger:innen",
+        "Songs with a timed song text can be sung. Their notes are computed from the singing in the song.": "Songs mit synchronisiertem Songtext können gesungen werden. Ihre Noten werden aus dem Gesang im Song berechnet.",
+        "Start singing": "Singen",
+        "The microphone could not be opened": "Das Mikrofon konnte nicht geöffnet werden",
+        "The notes can be computed from the singing in the song (the vocals are separated from the music first; the first time downloads the separation model, 36 MB).": "Die Noten können aus dem Gesang im Song berechnet werden (dazu wird der Gesang zuerst von der Musik getrennt; beim ersten Mal wird das Trennmodell geladen, 36 MB).",
+        "Voice 1": "Stimme 1",
+        "Voice 2": "Stimme 2",
+        "Waiting…": "Wartet …",
+        "Weak": "Schwach",
         "Now playing": "Wiedergabe",
         "Microphone test": "Mikrofontest",
         "Microphones": "Mikrofone",

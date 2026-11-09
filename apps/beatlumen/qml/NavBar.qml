@@ -31,6 +31,7 @@ Rectangle {
     ]
     readonly property var moreItems: [
         { icon: "bar_chart", label: Theme.tr("Statistics"), page: 6 },
+        { icon: "mic", label: Theme.tr("Karaoke"), page: 8 },
         { icon: "devices", label: Theme.tr("Devices"), page: 4 },
         { icon: "settings", label: Theme.tr("Settings"), page: 3 }
     ].filter(i => i.page !== 4 || Core.state.server === "connected")
@@ -119,7 +120,7 @@ Rectangle {
                 else
                     moreMenu.popup(moreButton, moreButton.width - moreMenu.width, -moreMenu.implicitHeight)
             }
-            Menu {
+            AppMenu {
                 id: moreMenu
                 Repeater {
                     model: nav.moreItems.concat([{ icon: "info", label: Theme.tr("Help"), page: -1 }])

@@ -309,7 +309,7 @@ the document (`{"items": {key: {value, t}}}`, `t` = time of the change)
 with AES-256-GCM under `HKDF(master key, "beatlumen settings v1")`, the
 associated data being `"beatlumen settings v1\0" || user`, and stores it
 with `PUT /api/vault/settings`; the server keeps only this ciphertext
-(`userdata/<hash>/settings.bin`, at most 256 KB) and tells the account's
+(in its database, `acct/<name>/settings`, at most 256 KB) and tells the account's
 other devices through the event channel that it changed. Each device
 merges per setting: the newer change wins; values a device never changed
 are older than the account's. Device-specific settings (audio, receivers,

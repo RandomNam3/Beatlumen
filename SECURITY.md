@@ -18,7 +18,8 @@ issue.
   rather than large third-party libraries; Qt is the only external runtime.
   Cryptography is the exception: the end-to-end encryption uses the audited
   RustCrypto and dalek crates, pinned to exact versions, instead of an own
-  implementation.
+  implementation. The server also uses rustls for TLS and redb (pure Rust,
+  no C code) as its embedded database, both pinned exactly.
 * **No connections except the configured ones.** The apps contact only
   the server the user entered; the server connects only to remote sources
   its admin configures and to the push services the users' devices
@@ -43,9 +44,18 @@ issue.
 
 ## Server (`beatlumen-server`)
 
-* Optional password; logins issue random tokens (stored as SHA-256 digests,
-  file mode 0600) that expire after 180 days. Password checks are
+* Optional password; logins issue random tokens (stored as SHA-256 digests
+  in the server's database, file mode 0600) that expire after 180 days. Password checks are
   constant-time, serialized and rate limited per address and globally.
+* What it stores: its own data (account verifiers and wrapped keys, the
+  metadata of encrypted files, sessions and login digests, the admin
+  password's verifier, settings, playlists, favorites, history, labels,
+  presets, push subscriptions, music sources with encrypted logins) is in
+  one database file, `beatlumen.redb` (redb, pure Rust inside the server,
+  file mode 0600), changed only in transactions. Encrypted file contents,
+  song texts, uploads and caches are files in the data folder. The copy for
+  backups (`backup/beatlumen.redb`) holds the same and is protected the
+  same way; the account pepper stays out of both.
 * Requests: bodies are read as they arrive with per-route limits, slow
   clients are disconnected, connections are limited per address,
   ambiguous request framing (`Content-Length` + `Transfer-Encoding`) is
@@ -92,8 +102,9 @@ issue.
 * The listening history is kept on the device (`history.json`) and can be
   deleted in the settings.
 * It only goes to the server after the user agreed in the settings. Then the
-  server's admin could read it (`userdata/<hash>/history.jsonl`, or
-  `history.jsonl` for the shared server password). Only songs of the
+  server's admin could read it (in the server's database `beatlumen.redb`,
+  `acct/<name>/history/`, or `shared/history/` for the shared server
+  password). Only songs of the
   server's library and only plays from the moment of agreeing are sent;
   deleting the history in the app also deletes it on the server.
 
@@ -310,8 +321,15 @@ input ends in an error, not in a crash or an endless loop:
   setting. Leaving the microphone check in the settings closes the inputs
   it opened, quitting the app closes all.
 * The audio stays on the device: the core keeps the last few seconds of
-  each input in memory (for levels and, later, scoring the singing) and
-  neither stores it nor sends it anywhere.
+  each input in memory (for levels and scoring the singing) and neither
+  stores it nor sends it anywhere. The karaoke page opens the inputs its
+  singers use when a round starts and closes them when it ends or the
+  page is left.
+* Phones as wireless microphones: only when the user starts it on the
+  karaoke page. The phone's singing goes as Opus packets to the Beatlumen
+  server, which hands them only to a device of the same login (an account,
+  or everyone with the server password) and keeps the last three seconds in
+  memory, never on disk. No device opens a port.
 * The system's sound libraries are used as they are (libpulse on Linux,
   loaded at run time; WASAPI on Windows; AudioRecord on Android).
 * The only stored data is a latency offset per input (by its system id) in

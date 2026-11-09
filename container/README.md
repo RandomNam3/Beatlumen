@@ -158,7 +158,7 @@ can connect from.
 |---|---|---|
 | `/music` | read-only | Music library, scanned recursively. Several folders: mount them below `/music` (e.g. `/music/nas`, `/music/local`) or set `BEATLUMEN_MUSIC` |
 | `/images` | read-only | Background images |
-| `/data` | read-write | Library cache, analyses, covers, playlists, presets, uploads, login tokens, accounts and their encrypted files (keep it: a backup of this volume and the pepper keeps everything) |
+| `/data` | read-write | The database `beatlumen.redb` (accounts, logins, settings, playlists, favorites, history, presets) with its copy for backups, the accounts' encrypted files, uploads, song texts, the library cache, analyses and covers (keep it: a backup of this volume and the pepper keeps everything, see [Backup](#backup)) |
 | `/run/secrets/…` | read-only | Password file and pepper (optional) |
 
 The container user is `10001:10001`. The music and image folders only need
@@ -197,9 +197,9 @@ addresses: open it with the address you reach the server by. Without a
 browser, `BEATLUMEN_ADMIN_PASSWORD_FILE` (a secret like the server
 password) sets the admin password.
 
-Settings made there are kept in `/data/settings.json`. Settings given by
-environment variables or command line parameters stay fixed and are shown
-read-only; `compose.yml` therefore passes only the values set in `.env`.
+Settings made there are kept in the database (`/data/beatlumen.redb`).
+Settings given by environment variables or command line parameters stay
+fixed and are shown read-only; `compose.yml` therefore passes only the values set in `.env`.
 Most changes apply at once; folders, extensions, the public address and
 the push options need a restart, which the admin interface does itself.
 
@@ -229,6 +229,8 @@ the push options need a restart, which the admin interface does itself.
 | `BEATLUMEN_MODEL_SOURCE` | huggingface.co (whisper.cpp) | Mirror of the speech model files offered in the admin interface |
 | `BEATLUMEN_AUTO_SYNC_LYRICS` | `false` | `true`: time the song texts of the whole library in the background (needs the model) |
 | `BEATLUMEN_AUTO_LABELS` | `true` | `false`: do not work out how the library's songs sound (labels, recommendations) |
+| `BEATLUMEN_KARAOKE` | `false` | `true`: compute karaoke data on request (downloads the vocal separation model) |
+| `BEATLUMEN_AUTO_KARAOKE` | `false` | `true`: compute the karaoke data of the whole library in the background |
 | `BEATLUMEN_ROOM_GUESTS` | `true` | `false`: people without a login cannot join a room to listen together |
 | `BEATLUMEN_OFFER_MODELS` | `true` | `false`: do not offer the speech models in `/data/models` to the apps |
 | `BEATLUMEN_ONLINE_METADATA` | `false` | `true`: look the library's artists up in public databases for artist pages and recommendations; their names go to MusicBrainz, Wikimedia and ListenBrainz |
@@ -272,6 +274,8 @@ environment variables:
 | `--model-source URL` | Mirror of the speech model files |
 | `--auto-sync-lyrics` | Time the song texts of the whole library in the background |
 | `--no-auto-labels` | Do not work out how the library's songs sound (labels, recommendations) |
+| `--karaoke` | Compute karaoke data on request (downloads the vocal separation model, 36 MB, from zenodo.org) |
+| `--auto-karaoke` | Also compute the karaoke data of the whole library in the background |
 | `--no-room-guests` | People without a login cannot join a room to listen together |
 | `--no-offer-models` | Do not offer the speech models in `/data/models` to the apps |
 | `--online-metadata` | Look the library's artists up in public databases for artist pages and recommendations (off by default) |
@@ -296,7 +300,7 @@ start, after a change and with every rescan), analyses them and plays them
 for the apps with seeking; the files stay where they are. Plays are
 reported back to Subsonic and Jellyfin.
 
-The logins are kept in `/data/sources.json`, encrypted with a key derived
+The logins are kept in the database, encrypted with a key derived
 from the vault pepper: with `BEATLUMEN_VAULT_PEPPER_FILE` outside the data
 folder, a backup of `/data` alone does not reveal them. Listings are
 cached in `/data/sources/`, so the library is complete right after a
@@ -363,18 +367,20 @@ are created in the apps with an invitation code from the admin:
 ```sh
 docker exec beatlumen /beatlumen-server invite            # one account, 7 days
 docker exec beatlumen /beatlumen-server invite --days 1
-docker exec beatlumen /beatlumen-server users             # list accounts
 ```
 
 (Compose: `docker compose exec server /beatlumen-server invite`.) The
-pepper (`pepper.bin`) belongs in the backup next to the `/data` volume, but
-stored separately from it.
+admin interface lists the accounts; `beatlumen-server users` does so only
+while the server is stopped, since a running server holds its database.
+The pepper (`pepper.bin`) belongs in the backup next to the `/data` volume,
+but stored separately from it.
 
 ## Health check
 
 `GET /api/health` answers `{"status": "ok"}` (200) while the server serves
-requests and its data folder takes writes, else 503 with `problems` (e.g.
-a full disk or a read-only `/data`). It needs no login and tells nothing
+requests, its data folder takes writes and its database a write
+transaction, else 503 with `problems` (e.g. a full disk or a read-only
+`/data`). It needs no login and tells nothing
 about the setup, so monitoring can use it too.
 
 The image declares a health check (`/beatlumen-server --health-check`,
@@ -420,6 +426,9 @@ favorites, history, recommendations and its health check, plus the
 command line tools (`--health-check`, `admin-link`, `invite`, `users`).
 Calls needed on rare paths (removing folders, outgoing connections and
 DNS, UDP discovery, signals) and their `*at` forms for arm64 were added;
+`flock` is the database's whole-file lock (`beatlumen.redb`): next to its
+byte-range locks (`fcntl`) for older redb versions, and in their place on
+file systems without byte-range locks (some network and FUSE ones);
 `fstatfs`, `openat2` and `close_range` are for the container runtime
 between applying the profile and starting the server.
 
@@ -467,6 +476,38 @@ in the Quadlet unit, `SecurityLabelType=beatlumen_server.process`. Denials:
 `sudo ausearch -m avc -ts recent`. Remove with
 `sudo semodule -r beatlumen_server`.
 
+## Backup
+
+Everything the server keeps is in the `/data` volume, plus the pepper when
+it is a secret of its own (`pepper.bin`, keep it apart from the volume
+backup). Most of `/data` are plain files that can be copied at any time.
+The database `beatlumen.redb` is the exception: a file copy taken while
+the server writes to it can be torn. Two ways to a consistent backup:
+
+* **While the server runs:** within an hour of a change the server writes
+  a consistent copy of its database to `/data/backup/beatlumen.redb`
+  (through a read transaction, then renamed into place). Back up the volume
+  as usual (restic, borg, rsync, a snapshot); in a restore use
+  `backup/beatlumen.redb` as `beatlumen.redb`. It is at most an hour behind.
+* **The very last state:** stop the container, copy the volume (or just
+  `beatlumen.redb`) out of it, start it again. `docker cp` / `podman cp`
+  also read from a stopped container, so no other image is needed:
+
+  ```sh
+  docker stop beatlumen                      # Compose: docker compose stop server
+  docker cp beatlumen:/data ./beatlumen-backup
+  docker start beatlumen
+  ```
+
+  (Compose names the container `<project>-server-1`, see
+  `docker compose ps`; Quadlet: `beatlumen-server`.)
+
+To restore, stop the server, put the files back into the volume (owned by
+`10001:10001`), and replace `beatlumen.redb` with `backup/beatlumen.redb`
+if the backup was taken while the server ran. The server repairs a
+database that was not closed properly when it opens it, and refuses one
+written by a newer server version.
+
 ## Updating
 
 ```sh
@@ -475,3 +516,9 @@ docker compose up -d --build     # or: podman compose up -d --build
 ```
 
 The data volume is kept; the library is rescanned on start.
+
+**From 0.12.0:** the server keeps its data in a database since 0.13.0 and
+does not take over the 0.12.0 files. Accounts with their encrypted files,
+logins, playlists, favorites, the listening history, presets, music
+sources, the admin password and the settings of the admin interface are set
+up again (see the CHANGELOG). Music, images, song texts and caches stay.

@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+- **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
+  microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
+  drawn as the song plays, the points at the end. Microphones are only open during a round.
+- **Phones as wireless microphones:** on the karaoke page a phone (or any other device logged in
+  to the same server) sings into the device that plays. Its singing goes as Opus packets through the
+  Beatlumen server, each stamped with the server's clock when it was recorded, so points go by when
+  it was sung, not by when it arrived. No device opens a port, and the server keeps nothing.
+- **Microphone delay measured:** the karaoke page plays a few clicks; the microphone hears them
+  through the speakers (or the singer claps or sings "ta" on each), and the delay found is kept as
+  the input's latency offset.
+- **Singing in the song quieter or off** during karaoke: the singing is separated from the music
+  once per song (`bl-sep`) and taken out on the way to the speakers, sample by sample at the song's
+  position, also after seeking (formats that do not seek to the exact sample are matched up again).
+- **Points for the text:** each sung line is scored against the known line by the small CTC head
+  on the speech model's encoder, on its own thread one line after the other (about 0.1 s a line
+  with the base model on four cores). It uses the picked speech model when it has a head (also
+  one of the server's own models), else the smallest one in the models folder that has one;
+  without any there are no text points and the other points count for all 10 000.
+- **Points for the pitch:** each singer's live pitch against the notes of their voice, the octave
+  does not count. The tolerance depends on the difficulty (2, 1 or half a semitone), golden notes
+  count double, rap notes count when the singer is heard, and a long note held on pitch earns a
+  bonus. Consonants and breaths within a note are no misses (up to 40 % of it). Each line gets a
+  rating as it ends.
+- **Karaoke data per song:** the melody of the singing as one note per syllable of the timed song
+  text, with the key, from the vocals separated from the music (`crates/bl-karaoke`). The server
+  computes it on request or for the whole library in the background (`--karaoke`,
+  `--auto-karaoke`; turning it on downloads the vocal separation model, 36 MB; new songs right
+  after a scan; also in the hardened container) and keeps it like song texts (`GET/PUT/DELETE
+  /api/tracks/<id>/karaoke`). The app computes it itself where the server does not, keeps it in a
+  song's offline copy, and imports and exports UltraStar text files (duets included). Computed
+  notes are dropped when the song text changes; imported ones stay. For a song text with line
+  times only, each line's syllables are put on the time it is sung.
+- **Artist and album information stays:** an artist page asked for once is shown at once
+  from then on, also after 30 days: it is asked for anew in the background when it is opened,
+  in the language of whoever opened it. Before, looking through the library replaced an old
+  page with the genres alone, so the page had to load again, and the server showed nothing
+  until it had asked anew. A picture that did not change is not fetched again, and a page stays
+  when the services find nobody the next time. Albums, playlists and rows of suggestions from
+  extensions are kept on the server's disk: they appear at once, also after a restart, and are
+  asked for anew in the background (albums after an hour, suggestions after 15 minutes). Their
+  pictures stay until nobody looked at them for 30 days instead of 7.
+- **Smooth transitions:** pages, tabs (e.g. Effects → Backgrounds), settings categories and
+  library sections come in with a short fade and slide (about 0.2 s), pushed pages slide in from
+  the side, menus and dialogs grow and fade, bottom sheets slide up, the page panel fades over the
+  visual, and the rows of the start page fade in when it first fills. All share one set of
+  durations and curves and only move opacity and transforms, so nothing is laid out again.
+  "Reduce motion" turns them off; the photosensitive mode and the system's battery saver keep
+  the fading and leave out sliding and growing (shorter on the battery saver). While an
+  animation runs, phones briefly draw at the full frame rate even where frames are otherwise
+  rationed (paused, a page over the visual).
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable
@@ -78,6 +128,32 @@
     opening a song from the file manager) hands the files to the running app and brings its
     window to the front.
   - Rust 1.82 or newer is needed to build.
+- **Server data in a database; after an update from 0.12.0 it is set up again:** the
+  server keeps its own data in one database file in the data folder, `beatlumen.redb`
+  (redb, pure Rust and built into the server; no database server). Every change is one
+  transaction: it is stored whole or not at all, also when the server or the computer stops
+  in the middle, and deleting an account takes everything of it in one step. A play, a
+  favorite or a login writes only its own entry, not a whole file. The 0.12.0 files
+  (`tokens.json`, `admin.json`, `settings.json`, `playlists.json`, `favorites.json`,
+  `history.jsonl`, `labels.json`, `hidden.json`, `sources.json`, `presets/`,
+  `vault/users/`, `vault/files/*.json`, `vault/userdata/`, ...) are **not** taken over, and
+  the server says so in its log while they are there. After the update set up again:
+  the **admin password** (the server logs a new setup link) and the **settings** made in the
+  admin interface; **accounts** and **their encrypted files** (shared ones and public links
+  included), the **logins** of the apps with the server password, **playlists**,
+  **favorites**, the **listening history**, given **labels**, **presets** and **music
+  sources**. Settings from the environment or the command line apply as before. What stays:
+  the music, the images, song texts (imported and timed ones), the library index, the sound
+  analysis, artist information, covers and other caches, speech models and the pepper. The
+  stored bytes of 0.12.0's encrypted files (`vault/blobs/`) belong to nobody any more and are
+  deleted 30 days after the first start of the new server; to keep them, back up the data
+  folder before the update. The old files themselves are left alone and can be deleted.
+- **Backups of a running server:** within an hour of a change the server writes a consistent
+  copy of its database to `backup/beatlumen.redb` in the data folder, so a backup of the
+  data folder taken while it runs holds a complete database (at most an hour old). For a
+  copy of the very last state stop the server first. See the container README.
+- **Health check:** `/api/health` and `--health-check` also report a database that does not
+  take a write transaction.
 - **Background images up to 16K:** JPEG, PNG, WebP, GIF and BMP, and now TIFF and animated
   PNG too, in every size from 720p to 16K (15360 × 8640). Large pictures are scaled while they
   are read, so they never exist at full size: a 16K image needs about 16 MB of working memory

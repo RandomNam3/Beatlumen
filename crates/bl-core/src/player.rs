@@ -331,6 +331,79 @@ pub struct Output {
     load: AtomicU64,
     /// Held while the card is opened or closed.
     opening: Mutex<()>,
+    /// The current track's singing to take out (karaoke).
+    vocal_cut: Mutex<Option<Arc<VocalCut>>>,
+}
+
+/// The separated singing of a track, taken out on its way to the output
+/// (karaoke: "vocals quieter"), sample by sample at the track's position.
+pub(crate) struct VocalCut {
+    /// The load (`Player::serial`) it belongs to.
+    pub serial: u64,
+    /// Output rate of the samples.
+    pub rate: u32,
+    /// Stereo, interleaved, from the track's start (full scale 32768).
+    pub samples: Arc<Vec<i16>>,
+    /// How much of the singing is taken out (0..1, as f32 bits).
+    pub amount: AtomicU32,
+}
+
+/// Frames of the track compared with the singing to find where a seek
+/// really landed, and how far off it may be.
+const ALIGN_FRAMES: usize = 8192;
+const ALIGN_REACH: i64 = 600;
+
+impl VocalCut {
+    /// How far (frames) the track's audio `mix` (mono, from output frame
+    /// `pos`) is off the singing: the shift that leaves the least behind
+    /// when the singing is taken out. `None` while the singing is too quiet
+    /// there to tell.
+    fn offset(&self, pos: u64, mix: &[f32]) -> Option<i64> {
+        // The singing (mono) from `pos - ALIGN_REACH` on.
+        let first = pos as i64 - ALIGN_REACH;
+        let v: Vec<f32> = (first..first + mix.len() as i64 + 2 * ALIGN_REACH)
+            .map(|i| {
+                let k = i as usize * 2;
+                match (i >= 0).then(|| self.samples.get(k..k + 2)).flatten() {
+                    Some(s) => (s[0] as f32 + s[1] as f32) / 65536.0,
+                    None => 0.0,
+                }
+            })
+            .collect();
+        let mid = &v[ALIGN_REACH as usize..][..mix.len()];
+        let energy = mid.iter().map(|x| x * x).sum::<f32>() / mix.len().max(1) as f32;
+        if energy < 1e-5 {
+            return None;
+        }
+        // Least left over: the largest 2 m·v - v² over the window.
+        let (mut best, mut at) = (f32::MIN, 0i64);
+        for lag in 0..=(2 * ALIGN_REACH) as usize {
+            let w = &v[lag..lag + mix.len()];
+            let s: f32 = mix.iter().zip(w).map(|(m, x)| 2.0 * m * x - x * x).sum();
+            if s > best {
+                best = s;
+                at = lag as i64 - ALIGN_REACH;
+            }
+        }
+        Some(at)
+    }
+
+    /// Takes the singing out of `buf` (stereo at `rate`), which starts at
+    /// output frame `pos` of track load `serial`.
+    fn apply(&self, serial: u64, rate: u32, pos: u64, buf: &mut [f32]) {
+        let amount = f32::from_bits(self.amount.load(Ordering::Relaxed));
+        if serial != self.serial || rate != self.rate || amount <= 0.0 {
+            return;
+        }
+        let g = amount / 32768.0;
+        let start = pos as usize * 2;
+        let Some(v) = self.samples.get(start..) else {
+            return;
+        };
+        for (s, v) in buf.iter_mut().zip(v) {
+            *s -= *v as f32 * g;
+        }
+    }
 }
 
 impl Output {
@@ -374,6 +447,7 @@ impl Output {
             direct_on: AtomicBool::new(false),
             load: AtomicU64::new(0),
             opening: Mutex::new(()),
+            vocal_cut: Mutex::new(None),
         }
     }
 
@@ -1001,6 +1075,17 @@ impl Player {
         self.device_rate
     }
 
+    /// Takes the singing of the current track out (or no longer, `None`).
+    pub(crate) fn set_vocal_cut(&self, cut: Option<Arc<VocalCut>>) {
+        if let Ok(mut c) = self.output.vocal_cut.lock() {
+            *c = cut;
+        }
+    }
+
+    pub(crate) fn vocal_cut(&self) -> Option<Arc<VocalCut>> {
+        self.output.vocal_cut.lock().ok().and_then(|c| c.clone())
+    }
+
     pub(crate) fn output(&self) -> Arc<Output> {
         self.output.clone()
     }
@@ -1095,6 +1180,7 @@ impl Player {
             }
             output.paused.store(!autoplay, Ordering::Relaxed);
             let load = output.next_load();
+            let serial = self.serial;
             std::thread::Builder::new()
                 .name("bl-decoder".into())
                 .spawn(move || {
@@ -1103,7 +1189,7 @@ impl Player {
                     let errors = etx.clone();
                     let out = output.clone();
                     if crate::panics::catch("decoder", || {
-                        decoder_thread(opener, output, load, crx, etx)
+                        decoder_thread(opener, output, load, serial, crx, etx)
                     })
                     .is_none()
                     {
@@ -1497,6 +1583,7 @@ fn decoder_thread(
     opener: Opener,
     output: Arc<Output>,
     load: u64,
+    serial: u64,
     commands: std::sync::mpsc::Receiver<Command>,
     events: std::sync::mpsc::Sender<ThreadEvent>,
 ) {
@@ -1532,6 +1619,12 @@ fn decoder_thread(
     let mut fade: Option<FadeOut> = None;
     // Samples of the current track decoded ahead (after skipped silence).
     let mut pending: Vec<f32> = Vec::new();
+    // Output frame of the first track that the next samples start at (for
+    // taking its singing out), and after a seek the track's audio to find
+    // where it really landed (seeks are not exact to the sample in every
+    // format): (its first frame, mono samples).
+    let mut pos: u64 = 0;
+    let mut align: Option<(u64, Vec<f32>)> = None;
     loop {
         // Commands (blocking briefly when there is nothing to decode).
         loop {
@@ -1557,6 +1650,8 @@ fn decoder_thread(
                 }
                 Command::Seek(s, i) if i == index => {
                     let actual = pipeline.seek(s).unwrap_or(s);
+                    pos = (actual.max(0.0) * out_rate as f64).round() as u64;
+                    align = Some((pos, Vec::new()));
                     fade = None;
                     pending.clear();
                     silent_run = 0;
@@ -1677,7 +1772,27 @@ fn decoder_thread(
             } else {
                 t
             };
+            if index == 0 {
+                let cut = output.vocal_cut.lock().ok().and_then(|c| c.clone());
+                if let Some(c) = cut.filter(|c| c.serial == serial && c.rate == out_rate) {
+                    if let Some((from, mix)) = &mut align {
+                        mix.extend(buf.chunks_exact(2).map(|f| 0.5 * (f[0] + f[1])));
+                        if mix.len() >= ALIGN_FRAMES {
+                            match c.offset(*from, &mix[..ALIGN_FRAMES]) {
+                                Some(off) => {
+                                    pos = pos.saturating_add_signed(off);
+                                    align = None;
+                                }
+                                // Quiet singing: try the next stretch.
+                                None => *from += std::mem::take(mix).len() as u64,
+                            }
+                        }
+                    }
+                    c.apply(serial, out_rate, pos, &mut buf);
+                }
+            }
         }
+        pos += (buf.len() / 2) as u64;
         output.push(&buf);
     }
 }
@@ -1870,7 +1985,7 @@ mod tests {
         ctx.send(Command::Next(Some(opener(96000, 4800)))).unwrap();
         let thread_output = output.clone();
         let thread = std::thread::spawn(move || {
-            decoder_thread(opener(44100, 4410), thread_output, 0, crx, etx)
+            decoder_thread(opener(44100, 4410), thread_output, 0, 0, crx, etx)
         });
         match wait_for(&erx) {
             ThreadEvent::Loaded(info) => {
@@ -1912,6 +2027,62 @@ mod tests {
     }
 
     #[test]
+    fn the_singing_is_taken_out_at_the_tracks_position() {
+        // The "singing" is the whole track: taking it out leaves silence,
+        // also after a seek.
+        let frames = 4410;
+        let samples: Vec<i16> = (0..frames)
+            .flat_map(|i| {
+                let v =
+                    ((i as f64 * 440.0 * std::f64::consts::TAU / 44100.0).sin() * 16000.0) as i16;
+                [v, v]
+            })
+            .collect();
+        for seek in [None, Some(0.05)] {
+            let output = Arc::new(Output::new());
+            output.sample_rate.store(44100, Ordering::Relaxed);
+            *output.vocal_cut.lock().unwrap() = Some(Arc::new(VocalCut {
+                serial: 7,
+                rate: 44100,
+                samples: Arc::new(samples.clone()),
+                amount: AtomicU32::new(1.0f32.to_bits()),
+            }));
+            let (ctx, crx) = std::sync::mpsc::channel();
+            let (etx, erx) = std::sync::mpsc::channel();
+            if let Some(s) = seek {
+                ctx.send(Command::Seek(s, 0)).unwrap();
+            }
+            let thread_output = output.clone();
+            let thread = std::thread::spawn(move || {
+                decoder_thread(opener(44100, frames), thread_output, 0, 7, crx, etx)
+            });
+            loop {
+                if matches!(wait_for(&erx), ThreadEvent::Eof) {
+                    break;
+                }
+            }
+            let ring = output.ring.lock().unwrap().samples.clone();
+            assert!(ring.len() >= 2 * 2000, "{}", ring.len());
+            let loudest = ring.iter().fold(0f32, |m, v| m.max(v.abs()));
+            assert!(loudest < 1e-4, "left over: {loudest} (seek {seek:?})");
+            ctx.send(Command::Stop).unwrap();
+            thread.join().unwrap();
+        }
+        // Another load is left alone.
+        let mut buf = vec![0.5f32; 8];
+        let cut = VocalCut {
+            serial: 1,
+            rate: 48000,
+            samples: Arc::new(vec![16384; 8]),
+            amount: AtomicU32::new(0.5f32.to_bits()),
+        };
+        cut.apply(2, 48000, 0, &mut buf);
+        assert_eq!(buf, [0.5; 8]);
+        cut.apply(1, 48000, 0, &mut buf);
+        assert_eq!(buf, [0.25; 8]);
+    }
+
+    #[test]
     fn a_busy_card_is_reported_as_such_and_not_as_a_broken_track() {
         let card = Arc::new(FakeCard {
             refuse: true,
@@ -1920,7 +2091,7 @@ mod tests {
         let output = direct_output(card);
         let (_ctx, crx) = std::sync::mpsc::channel();
         let (etx, erx) = std::sync::mpsc::channel();
-        decoder_thread(opener(44100, 441), output, 0, crx, etx);
+        decoder_thread(opener(44100, 441), output, 0, 0, crx, etx);
         assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(e) if e == "busy"));
     }
 
@@ -1933,7 +2104,7 @@ mod tests {
         let (_ctx, crx) = std::sync::mpsc::channel();
         let (etx, erx) = std::sync::mpsc::channel();
         // The slow one comes back from the network after the next has the card.
-        decoder_thread(opener(44100, 441), output.clone(), old, crx, etx);
+        decoder_thread(opener(44100, 441), output.clone(), old, 0, crx, etx);
         assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(_)));
         assert!(card.opened.lock().unwrap().is_empty());
         assert_ne!(output.sample_rate.load(Ordering::Relaxed), 44100);
@@ -1942,7 +2113,7 @@ mod tests {
         let (etx, erx) = std::sync::mpsc::channel();
         let thread_output = output.clone();
         let thread = std::thread::spawn(move || {
-            decoder_thread(opener(96000, 480), thread_output, new, crx, etx)
+            decoder_thread(opener(96000, 480), thread_output, new, 0, crx, etx)
         });
         assert!(matches!(wait_for(&erx), ThreadEvent::Loaded(_)));
         assert_eq!(
@@ -1955,7 +2126,7 @@ mod tests {
         output.next_load();
         let (_ctx, crx) = std::sync::mpsc::channel();
         let (etx, erx) = std::sync::mpsc::channel();
-        decoder_thread(opener(44100, 441), output.clone(), new, crx, etx);
+        decoder_thread(opener(44100, 441), output.clone(), new, 0, crx, etx);
         assert!(matches!(wait_for(&erx), ThreadEvent::DeviceFailed(_)));
         assert_eq!(card.opened.lock().unwrap().len(), 1);
     }

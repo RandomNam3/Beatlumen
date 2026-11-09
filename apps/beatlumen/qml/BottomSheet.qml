@@ -30,13 +30,16 @@ Popup {
 
     Overlay.modal: Rectangle {
         color: Qt.rgba(0, 0, 0, Theme.dark ? 0.5 : 0.3)
-        Behavior on opacity { NumberAnimation { duration: Theme.ms(150) } }
+        Behavior on opacity { NumberAnimation { duration: Theme.motion(Theme.fast) } }
     }
+    onAboutToShow: Theme.smoothFrames(Theme.normal)
     enter: Transition {
-        NumberAnimation { property: "reveal"; from: 0; to: 1; duration: Theme.ms(220); easing.type: Easing.OutCubic }
+        NumberAnimation { property: "opacity"; from: Theme.slide ? 1 : 0; to: 1; duration: Theme.motion(Theme.normal); easing.type: Theme.easeOut }
+        NumberAnimation { property: "reveal"; from: Theme.slide ? 0 : 1; to: 1; duration: Theme.motion(Theme.normal); easing.type: Easing.OutCubic }
     }
     exit: Transition {
-        NumberAnimation { property: "reveal"; from: 1; to: 0; duration: Theme.ms(160); easing.type: Easing.InCubic }
+        NumberAnimation { property: "opacity"; from: 1; to: Theme.slide ? 1 : 0; duration: Theme.motion(Theme.fast); easing.type: Theme.easeIn }
+        NumberAnimation { property: "reveal"; from: 1; to: Theme.slide ? 0 : 1; duration: Theme.motion(Theme.fast); easing.type: Easing.InCubic }
     }
     background: Rectangle {
         color: Theme.surfaceStrong

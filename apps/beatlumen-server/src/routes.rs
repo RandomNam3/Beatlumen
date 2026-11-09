@@ -153,24 +153,21 @@ fn account_settings(state: &State, req: &Request) -> Response {
     let Some(user) = state.vault.session_user(req) else {
         return Response::error(401, "authentication required");
     };
-    let path = state.vault.user_data_dir(&user).join("settings.bin");
+    // In the database, with the account's other data.
+    let key = format!("{}settings", crate::store::scope(&user));
     match req.method.as_str() {
-        "GET" | "HEAD" => match std::fs::read(&path) {
-            Ok(d) => Response::bytes(200, "application/octet-stream", d),
-            Err(_) => Response::error(404, "no settings yet"),
+        "GET" | "HEAD" => match state.store.get(&key) {
+            Some(d) => Response::bytes(200, "application/octet-stream", d),
+            None => Response::error(404, "no settings yet"),
         },
         "PUT" => {
             if req.body.is_empty() || req.body.len() > MAX_ACCOUNT_SETTINGS {
                 return Response::error(413, "settings too large");
             }
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Err(e) = util::write_atomic(&path, &req.body) {
+            if let Err(e) = state.store.put(&key, &req.body) {
                 crate::warn!("cannot store settings of {user}: {e}");
                 return Response::error(500, "cannot store");
             }
-            util::make_private(&path);
             state.devices.notify(
                 &format!("user:{user}"),
                 Value::object()
@@ -264,9 +261,7 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
         return Response::error(401, "authentication required")
             .with_header("WWW-Authenticate", "Bearer realm=\"Beatlumen\"");
     }
-    let store = user
-        .as_deref()
-        .map(|u| state.user_data.get(state.vault.user_data_dir(u)));
+    let store = user.as_deref().map(|u| state.user_data.get(u));
     let playlists = store.as_ref().map_or(&state.playlists, |s| &s.playlists);
     let presets = store.as_ref().map_or(&state.presets, |s| &s.presets);
     let favorites = store.as_ref().map_or(&state.favorites, |s| &s.favorites);
@@ -300,6 +295,15 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
             .as_deref()
             .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
         return state.rooms.create(state, req, &scope);
+    }
+    // Phones as microphones: only to the devices of the same login.
+    if matches!(segs, ["mic", _]) {
+        let scope = user
+            .as_deref()
+            .map_or_else(|| "shared".to_string(), |u| format!("user:{u}"));
+        return state
+            .mic_relay
+            .handle(req, segs, &scope, &|id| state.devices.scope_of(id));
     }
     match segs {
         ["logout"] => match m {
@@ -353,6 +357,45 @@ fn api(state: &State, req: &Request, segs: &[&str]) -> Response {
                 },
                 "DELETE" => {
                     state.lyrics.delete(e);
+                    Response::new(204)
+                }
+                _ => not_allowed("GET, HEAD, PUT, DELETE"),
+            }
+        }
+        ["tracks", id, "karaoke", "compute"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            if !state.karaoke.available() {
+                return Response::error(501, "karaoke data is not computed on this server");
+            }
+            match m {
+                "GET" | "HEAD" => json(200, &state.karaoke.status_json(&e.track.id)),
+                "POST" => json(202, &state.karaoke.request(&e.track.id)),
+                _ => not_allowed("GET, HEAD, POST"),
+            }
+        }
+        ["tracks", id, "karaoke"] => {
+            let idx = state.library();
+            let Some(e) = util::is_id(id).then(|| idx.track(id)).flatten() else {
+                return Response::error(404, "track not found");
+            };
+            match m {
+                "GET" | "HEAD" => {
+                    let lyrics = state.lyrics.get(e);
+                    let text = lyrics.as_ref().and_then(|v| v.get("text").as_str());
+                    match state.karaoke.get(&e.track.id, text) {
+                        Some(v) => json(200, &v).with_header("Cache-Control", "private, no-cache"),
+                        None => Response::error(404, "no karaoke data"),
+                    }
+                }
+                "PUT" => match state.karaoke.put(e, &req.body) {
+                    Ok(()) => Response::new(204),
+                    Err(err) => fail(err),
+                },
+                "DELETE" => {
+                    state.karaoke.delete(&e.track.id);
                     Response::new(204)
                 }
                 _ => not_allowed("GET, HEAD, PUT, DELETE"),

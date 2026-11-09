@@ -17,6 +17,21 @@ Item {
 
     // Shown category ("" = all) and the search.
     property string category: "look"
+    onCategoryChanged: {
+        sv.ScrollBar.vertical.position = 0
+        if (!Theme.animate)
+            return
+        categoryIn.stop()
+        sectionsColumn.opacity = 0
+        categoryShift.y = Theme.slide ? 12 : 0
+        Theme.smoothFrames(Theme.normal)
+        categoryIn.start()
+    }
+    ParallelAnimation {
+        id: categoryIn
+        NumberAnimation { target: sectionsColumn; property: "opacity"; to: 1; duration: Theme.motion(Theme.normal); easing.type: Theme.easeOut }
+        NumberAnimation { target: categoryShift; property: "y"; to: 0; duration: Theme.motion(Theme.normal); easing.type: Theme.easeOut }
+    }
     readonly property bool wide: width >= 720
     readonly property var categories: [
         { id: "look", label: Theme.tr("Display") },
@@ -103,6 +118,7 @@ Item {
         ColumnLayout {
             id: sectionsColumn
             width: Math.min(sv.availableWidth, 720)
+            transform: Translate { id: categoryShift }
             spacing: 8
             PageHeader { Layout.fillWidth: true; title: Theme.tr("Settings") }
 

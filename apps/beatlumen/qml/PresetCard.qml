@@ -73,7 +73,7 @@ AbstractButton {
             color: "white"
         }
     }
-    Menu {
+    AppMenu {
         id: menu
         MenuItem { text: Theme.tr("Delete"); icon.source: Theme.icon("delete"); onTriggered: card.deleteRequested() }
     }

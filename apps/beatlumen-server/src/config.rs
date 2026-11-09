@@ -2,10 +2,11 @@
 //! configuration file.
 //!
 //! Precedence (lowest to highest): built-in defaults, the `--config` file,
-//! the settings made in the admin interface (`<data>/settings.json`, see
-//! [`ADMIN_SETTINGS`]), `BEATLUMEN_*` environment variables (see
-//! [`ENV_VARS`]), command line flags. Settings fixed by the environment or
-//! the command line are read-only in the admin interface ([`Config::origins`]).
+//! the settings made in the admin interface (in the database, see
+//! [`ADMIN_SETTINGS`] and [`with_settings`]), `BEATLUMEN_*` environment
+//! variables (see [`ENV_VARS`]), command line flags. Settings fixed by the
+//! environment or the command line are read-only in the admin interface
+//! ([`Config::origins`]).
 //! Repeatable flags (`--music`, `--images`) given on the command line replace
 //! the lists from the configuration file. Relative paths in the
 //! configuration file are resolved against the file's directory.
@@ -76,6 +77,10 @@ pub struct Config {
     /// Work out how the library's songs sound in the background (labels and
     /// recommendations).
     pub auto_labels: bool,
+    /// Compute karaoke data on request (downloads the vocal separation model).
+    pub karaoke: bool,
+    /// Compute the karaoke data of the whole library in the background.
+    pub auto_karaoke: bool,
     /// Offer the speech models in the models folder to the apps (signed-in
     /// users download them from this server).
     pub offer_models: bool,
@@ -141,6 +146,8 @@ impl Default for Config {
             speech_model: None,
             auto_sync_lyrics: false,
             auto_labels: true,
+            karaoke: false,
+            auto_karaoke: false,
             offer_models: true,
             online_metadata: false,
             extension_cleanup_days: 90,
@@ -155,7 +162,7 @@ impl Default for Config {
 
 /// A setting the admin interface manages.
 pub struct AdminSetting {
-    /// Key in `settings.json` (as in the `--config` file).
+    /// Key in the stored settings (as in the `--config` file).
     pub key: &'static str,
     /// Takes effect without a restart.
     pub live: bool,
@@ -244,6 +251,14 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
         live: true,
     },
     AdminSetting {
+        key: "karaoke",
+        live: true,
+    },
+    AdminSetting {
+        key: "autoKaraoke",
+        live: true,
+    },
+    AdminSetting {
         key: "offerModels",
         live: true,
     },
@@ -261,9 +276,42 @@ pub const ADMIN_SETTINGS: &[AdminSetting] = &[
     },
 ];
 
-/// Where the admin interface keeps its settings.
-pub fn settings_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("settings.json")
+/// Where the admin interface keeps its settings in the database: one JSON
+/// object with the keys of [`ADMIN_SETTINGS`].
+pub const SETTINGS_KEY: &str = "settings";
+
+/// `cfg` with the settings made in the admin interface, except those the
+/// environment or the command line set ([`Config::origins`]). Paths in them
+/// are relative to the data folder `data`.
+pub fn with_settings(cfg: Config, store: &crate::store::Store, data: &Path) -> Config {
+    let Some(stored) = store.get_json(SETTINGS_KEY) else {
+        return cfg;
+    };
+    let Some(obj) = stored.as_object() else {
+        crate::warn!("ignoring the stored settings: not a JSON object");
+        return cfg;
+    };
+    let mut take = Value::object();
+    for (key, val) in obj.iter() {
+        let admin = ADMIN_SETTINGS.iter().any(|s| s.key == key);
+        let fixed = cfg.origins.iter().any(|(k, _)| k == key);
+        if admin && !fixed {
+            take.set(key, val.clone());
+        }
+    }
+    let mut next = cfg.clone();
+    match apply_json(&mut next, &take, data) {
+        Ok(()) => {
+            if next.name.trim().is_empty() {
+                next.name = Config::default().name;
+            }
+            next
+        }
+        Err(e) => {
+            crate::warn!("ignoring the stored settings: {e}");
+            cfg
+        }
+    }
 }
 
 /// The value of a setting as the admin interface shows it.
@@ -311,6 +359,8 @@ pub fn setting_value(cfg: &Config, key: &str) -> Value {
             .map_or(Value::Null, |p| Value::from(p.display().to_string())),
         "autoSyncLyrics" => Value::from(cfg.auto_sync_lyrics),
         "autoLabels" => Value::from(cfg.auto_labels),
+        "karaoke" => Value::from(cfg.karaoke),
+        "autoKaraoke" => Value::from(cfg.auto_karaoke),
         "offerModels" => Value::from(cfg.offer_models),
         "onlineMetadata" => Value::from(cfg.online_metadata),
         "extensionCleanupDays" => Value::from(cfg.extension_cleanup_days),
@@ -348,6 +398,8 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("BEATLUMEN_SPEECH_MODEL", "speechModel"),
     ("BEATLUMEN_AUTO_SYNC_LYRICS", "autoSyncLyrics"),
     ("BEATLUMEN_AUTO_LABELS", "autoLabels"),
+    ("BEATLUMEN_KARAOKE", "karaoke"),
+    ("BEATLUMEN_AUTO_KARAOKE", "autoKaraoke"),
     ("BEATLUMEN_ROOM_GUESTS", "roomGuests"),
     ("BEATLUMEN_OFFER_MODELS", "offerModels"),
     ("BEATLUMEN_ONLINE_METADATA", "onlineMetadata"),
@@ -388,6 +440,8 @@ fn flag_key(flag: &str) -> Option<&'static str> {
         "--speech-model" => "speechModel",
         "--auto-sync-lyrics" => "autoSyncLyrics",
         "--no-auto-labels" => "autoLabels",
+        "--karaoke" => "karaoke",
+        "--auto-karaoke" => "autoKaraoke",
         "--no-room-guests" => "roomGuests",
         "--no-offer-models" => "offerModels",
         "--online-metadata" => "onlineMetadata",
@@ -559,6 +613,14 @@ pub const ENV_VARS: &[(&str, &str)] = &[
         "false: do not work out how the library's songs sound (labels, recommendations)",
     ),
     (
+        "BEATLUMEN_KARAOKE",
+        "true: compute karaoke data on request (downloads the vocal separation model)",
+    ),
+    (
+        "BEATLUMEN_AUTO_KARAOKE",
+        "true: compute the karaoke data of the whole library in the background",
+    ),
+    (
         "BEATLUMEN_OFFER_MODELS",
         "false: do not offer the speech models to the apps",
     ),
@@ -722,6 +784,18 @@ pub fn apply_env(cfg: &mut Config, get: impl Fn(&str) -> Option<String>) -> Resu
             "1" | "true" | "yes" | "on"
         );
     }
+    if let Some(v) = get("BEATLUMEN_KARAOKE") {
+        cfg.karaoke = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    if let Some(v) = get("BEATLUMEN_AUTO_KARAOKE") {
+        cfg.auto_karaoke = matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
     if let Some(v) = get("BEATLUMEN_OFFER_MODELS") {
         cfg.offer_models = matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -805,8 +879,8 @@ OPTIONS:
                             vaultQuotaMb, registration, pushAllowPrivate, publicUrl,
                             androidCerts, extensions, extensionTokenFile,
                             extensionCleanupDays, extensionCleanupKeepListed, speechModel,
-                            autoSyncLyrics, autoLabels, offerModels, onlineMetadata,
-                            verbose)
+                            autoSyncLyrics, autoLabels, karaoke, autoKaraoke,
+                            offerModels, onlineMetadata, verbose)
     --vault-pepper-file FILE
                             Secret mixed into the account verifiers, at least 32
                             bytes; keep it outside the data folder (e.g. a
@@ -834,6 +908,11 @@ OPTIONS:
                             the apps (offered to signed-in users by default)
     --no-auto-labels        Do not work out how the library's songs sound (tempo,
                             key, energy) for labels and recommendations
+    --karaoke               Compute karaoke data (the melody of the singing as
+                            notes) on request; downloads the vocal separation
+                            model (Open-Unmix, 36 MB, from zenodo.org)
+    --auto-karaoke          Also compute the karaoke data of the whole library in
+                            the background (implies --karaoke)
     --online-metadata       Look the library's artists up in public databases, for
                             artist pages and recommendations: their names go to
                             MusicBrainz, Wikimedia and ListenBrainz
@@ -877,8 +956,8 @@ ADMIN INTERFACE:
     server logs a one-time link that sets the admin password (valid for a
     day); `beatlumen-server admin-link` creates a new one (valid for an
     hour), also to reset a forgotten password. Settings made there are kept
-    in <data>/settings.json; settings given by environment variables or the
-    command line are fixed and shown read-only.
+    in the database <data>/beatlumen.redb; settings given by environment
+    variables or the command line are fixed and shown read-only.
 
 ACCOUNTS:
     Users with an account store end-to-end encrypted files on the server and
@@ -1029,6 +1108,12 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
             "autoLabels" => {
                 cfg.auto_labels = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
+            "karaoke" => {
+                cfg.karaoke = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
+            "autoKaraoke" => {
+                cfg.auto_karaoke = val.as_bool().ok_or_else(|| err("expected true or false"))?
+            }
             "offerModels" => {
                 cfg.offer_models = val.as_bool().ok_or_else(|| err("expected true or false"))?
             }
@@ -1104,14 +1189,10 @@ pub fn apply_json(cfg: &mut Config, v: &Value, base: &Path) -> Result<(), String
 
 type Items = [(String, Option<String>)];
 
-/// The configuration from defaults, the `--config` file, the admin
-/// interface's settings (`admin`: document and data folder), the
-/// environment and the command line `items`.
-fn build(
-    items: &Items,
-    command: Option<&str>,
-    admin: Option<(&Value, &Path)>,
-) -> Result<(Config, bool, u64), String> {
+/// The configuration from defaults, the `--config` file, the environment
+/// and the command line `items` (the admin interface's settings come in
+/// at start, see [`with_settings`]).
+fn build(items: &Items, command: Option<&str>) -> Result<(Config, bool, u64), String> {
     let mut cfg = Config::default();
     if let Some((_, Some(path))) = items.iter().rev().find(|(f, _)| f == "--config") {
         let p = PathBuf::from(path);
@@ -1121,9 +1202,6 @@ fn build(
             .map_err(|e| format!("invalid config file {}: {e}", p.display()))?;
         let base = p.parent().map(Path::to_path_buf).unwrap_or_default();
         apply_json(&mut cfg, &v, &base)?;
-    }
-    if let Some((v, data)) = admin {
-        apply_json(&mut cfg, v, data)?;
     }
     apply_env(&mut cfg, |k| std::env::var(k).ok())?;
 
@@ -1174,6 +1252,8 @@ fn build(
             "--speech-model" => cfg.speech_model = Some(PathBuf::from(v)),
             "--auto-sync-lyrics" => cfg.auto_sync_lyrics = true,
             "--no-auto-labels" => cfg.auto_labels = false,
+            "--karaoke" => cfg.karaoke = true,
+            "--auto-karaoke" => cfg.auto_karaoke = true,
             "--no-room-guests" => cfg.room_guests = false,
             "--no-offer-models" => cfg.offer_models = false,
             "--online-metadata" => cfg.online_metadata = true,
@@ -1270,6 +1350,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
             | "--push-allow-private"
             | "--auto-sync-lyrics"
             | "--no-auto-labels"
+            | "--karaoke"
+            | "--auto-karaoke"
             | "--no-room-guests"
             | "--no-offer-models"
             | "--online-metadata" => items.push((flag, None)),
@@ -1284,26 +1366,9 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Action, Str
         }
     }
 
-    let (cfg, health_check, days) = build(&items, command.as_deref(), None)?;
-    // The admin interface's settings live in the data folder, which only
-    // the first pass knows.
-    let admin_file = settings_path(&cfg.data_dir);
-    let (mut cfg, health_check, days) = match std::fs::read(&admin_file) {
-        Ok(text) => match bl_json::parse_bytes(&text) {
-            Ok(v) => match build(&items, command.as_deref(), Some((&v, &cfg.data_dir))) {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::warn!("ignoring {}: {e}", admin_file.display());
-                    (cfg, health_check, days)
-                }
-            },
-            Err(e) => {
-                crate::warn!("ignoring {}: {e}", admin_file.display());
-                (cfg, health_check, days)
-            }
-        },
-        Err(_) => (cfg, health_check, days),
-    };
+    // The admin interface's settings are in the database, which the server
+    // opens (`with_settings`): a command running next to it cannot.
+    let (mut cfg, health_check, days) = build(&items, command.as_deref())?;
     if cfg.name.trim().is_empty() {
         cfg.name = Config::default().name;
     }
@@ -1376,6 +1441,42 @@ mod tests {
             Action::Run(c) => *c,
             a => panic!("unexpected {a:?}"),
         }
+    }
+
+    #[test]
+    fn stored_settings_under_the_environment_and_the_command_line() {
+        let store = crate::store::temp_store("settings");
+        let data = std::env::temp_dir().join("bl-settings-data");
+        // Nothing stored: as given.
+        let c = run(&["--name", "Cli"]);
+        assert_eq!(with_settings(c.clone(), &store, &data), c);
+        store
+            .put_json(
+                SETTINGS_KEY,
+                &Value::object()
+                    .with("name", "Wohnzimmer")
+                    .with("rescanInterval", 300u64)
+                    .with("music", vec!["musik"])
+                    // Not a setting of the admin interface: left alone.
+                    .with("bind", "0.0.0.0:1"),
+            )
+            .unwrap();
+        let c = with_settings(run(&["--name", "Cli"]), &store, &data);
+        assert_eq!(c.name, "Cli");
+        assert_eq!(c.rescan_interval, 300);
+        assert_eq!(c.music_dirs, vec![data.join("musik")]);
+        assert_eq!(c.bind, Config::default().bind);
+        // A value that does not fit: the stored settings are left out.
+        store
+            .put_json(
+                SETTINGS_KEY,
+                &Value::object().with("rescanInterval", "often"),
+            )
+            .unwrap();
+        assert_eq!(
+            with_settings(run(&[]), &store, &data).rescan_interval,
+            Config::default().rescan_interval
+        );
     }
 
     #[test]

@@ -380,7 +380,7 @@ Item {
             onClicked: textMenu.popup(menuButton, menuButton.width - textMenu.width, -textMenu.implicitHeight)
         }
     }
-    Menu {
+    AppMenu {
         id: textMenu
         width: 320
         MenuItem {

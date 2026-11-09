@@ -44,6 +44,10 @@ overflow-checks = true
 [profile.release.package.bl-net]
 overflow-checks = true
 
+# The server's database: small amounts of data, so size over speed.
+[profile.release.package.redb]
+opt-level = "s"
+
 [profile.release-small]
 inherits = "release"
 opt-level = "s"

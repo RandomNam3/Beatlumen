@@ -123,10 +123,11 @@ impl Vault {
 
     pub fn admin_delete_link(&self, id: &str) -> Result<(), Failure> {
         let mut links = self.links.write().unwrap_or_else(|e| e.into_inner());
-        if links.remove(id).is_none() {
+        if !links.contains_key(id) {
             return Err((404, "no such link".into()));
         }
-        let _ = std::fs::remove_file(self.link_path(id));
+        self.forget_link(id);
+        links.remove(id);
         Ok(())
     }
 }

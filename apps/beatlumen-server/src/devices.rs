@@ -152,6 +152,12 @@ impl Devices {
         self.push(&mut inner, scope, None, body);
     }
 
+    /// The scope of a known device.
+    pub fn scope_of(&self, id: &str) -> Option<String> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.devices.get(id).map(|d| d.scope.clone())
+    }
+
     /// Tells one device of a scope.
     pub fn notify_device(&self, scope: &str, device: &str, body: Value) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());

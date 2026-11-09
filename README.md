@@ -162,8 +162,9 @@ crates/bl-cast          Google Cast sender (Cast v2)
 ```
 
 Apart from the cryptography of the encrypted files (audited RustCrypto
-crates in `bl-vault`, pinned versions), the Rust crates use no third-party
-crates. See `docs/ROADMAP.md` for planned features (lyrics, devices, music
+crates in `bl-vault`, pinned versions), TLS for the server's outgoing
+connections (rustls) and the server's embedded database (redb, pure Rust),
+all pinned to exact versions, the Rust crates use no third-party crates. See `docs/ROADMAP.md` for planned features (lyrics, devices, music
 sources).
 
 ## Security

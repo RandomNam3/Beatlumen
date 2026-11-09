@@ -82,7 +82,7 @@ Item {
         }
     }
 
-    StackView {
+    AppStackView {
         id: stack
         anchors.fill: parent
         initialItem: mainView
@@ -105,9 +105,11 @@ Item {
                 TabButton { text: Theme.tr("Backgrounds") }
             }
             StackLayout {
+                id: tabPages
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 currentIndex: tabs.currentIndex
+                SwitchMotion { stack: tabPages }
 
                 // ---- effects --------------------------------------------------
                 ScrollView {

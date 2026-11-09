@@ -1,5 +1,6 @@
 //! The health check: `/api/health` without a login, and `--health-check`
-//! (containers) fails when the data folder takes no writes.
+//! (containers) fails when the data folder takes no writes (and the
+//! database no write transaction, which runs with every check).
 
 use beatlumen_server::Config;
 
@@ -62,6 +63,18 @@ fn health_reports_a_data_folder_without_writes() {
         std::fs::set_permissions(&data, std::fs::Permissions::from_mode(mode)).unwrap();
         assert_eq!(get().status, 200);
     }
+    // A database that takes no write transaction (here: closed).
+    server.state.store.close().unwrap();
+    let r = get();
+    assert_eq!(r.status, 503);
+    let v = bl_json::parse_bytes(&r.body).unwrap();
+    let problems = v.get("problems").as_array().cloned().unwrap_or_default();
+    assert!(problems
+        .iter()
+        .any(|p| p.as_str().unwrap_or("").contains("database")));
+    assert!(!beatlumen_server::health_check(&check));
+    server.state.store.reopen().unwrap();
+    assert_eq!(get().status, 200);
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

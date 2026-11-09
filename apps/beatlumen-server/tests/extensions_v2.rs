@@ -198,6 +198,74 @@ fn a_collection_comes_in_pages_and_holds_only_songs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Waits until `done` holds, at most ten seconds.
+fn wait_until(what: &str, done: impl Fn() -> bool) {
+    let t0 = Instant::now();
+    while !done() {
+        assert!(t0.elapsed() < Duration::from_secs(10), "{what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn albums_and_suggestions_stay_on_disk_and_are_renewed_in_the_background() {
+    let dir = folder("stored");
+    let asked = Arc::new(Asked::default());
+    let ext = extension(2, None, asked.clone());
+    let first = server(&dir, &ext, |_| {});
+    let base = format!("http://{}", first.addr);
+    json(&get(&base, "/api/extensions/tube/collections/a:1"));
+    json(&get(&base, "/api/extensions/tube/shelves"));
+    assert_eq!(asked.collection.load(Ordering::Relaxed), 1);
+    assert_eq!(asked.shelves.load(Ordering::Relaxed), 1);
+
+    // After a restart they are there at once: the extension is not asked.
+    let s = server(&dir, &ext, |_| {});
+    let base = format!("http://{}", s.addr);
+    let album = json(&get(&base, "/api/extensions/tube/collections/a:1"));
+    assert_eq!(album.str_or("title", ""), "Record");
+    assert_eq!(album.get("items").as_array().unwrap().len(), 2);
+    let rows = json(&get(&base, "/api/extensions/tube/shelves"));
+    assert_eq!(rows.get("shelves").as_array().unwrap().len(), 1);
+    assert_eq!(asked.collection.load(Ordering::Relaxed), 1);
+    assert_eq!(asked.shelves.load(Ordering::Relaxed), 1);
+
+    // From long ago: shown all the same, and asked for anew in the background.
+    let stored = dir.join("data/cache/extension-answers");
+    let files: Vec<PathBuf> = std::fs::read_dir(&stored)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(files.len(), 2, "the album and the rows");
+    let fetched = |f: &Path| {
+        bl_json::parse_bytes(&std::fs::read(f).unwrap())
+            .unwrap()
+            .get("fetched")
+            .as_u64()
+            .unwrap()
+    };
+    for f in &files {
+        let mut v = bl_json::parse_bytes(&std::fs::read(f).unwrap()).unwrap();
+        v.set("fetched", Value::from(1u64));
+        std::fs::write(f, v.to_json()).unwrap();
+    }
+    let album = json(&get(&base, "/api/extensions/tube/collections/a:1"));
+    assert_eq!(album.str_or("title", ""), "Record");
+    wait_until("asked for anew", || {
+        asked.collection.load(Ordering::Relaxed) == 2
+    });
+    wait_until("kept with its new time", || {
+        files.iter().any(|f| fetched(f) > DAY)
+    });
+    // Only once while that is under way, and the new answer counts from now.
+    json(&get(&base, "/api/extensions/tube/collections/a:1"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(asked.collection.load(Ordering::Relaxed), 2);
+    drop(first);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_radio_is_asked_every_time() {
     let dir = folder("radio");
@@ -429,8 +497,16 @@ fn zero_days_means_never() {
     assert!(file.is_file());
 }
 
+/// Puts an entry into the list of kept imports, as a server before would have.
+fn keep_import(dir: &Path, key: &str, entry: &str) {
+    let store = beatlumen_server::store::Store::open(&dir.join("data")).unwrap();
+    store
+        .put(&format!("ext/imported/{key}"), entry.as_bytes())
+        .unwrap();
+}
+
 #[test]
-fn the_old_list_of_imports_is_read_and_gets_the_full_time() {
+fn a_kept_import_without_times_gets_the_full_time() {
     let dir = folder("old-list");
     let imports = dir
         .join("data")
@@ -440,11 +516,7 @@ fn the_old_list_of_imports_is_read_and_gets_the_full_time() {
     std::fs::create_dir_all(&imports).unwrap();
     let file = imports.join("a.wav");
     std::fs::write(&file, common::wav(1)).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":"tube/a.wav"}"#,
-    )
-    .unwrap();
+    keep_import(&dir, "tube/s:1", r#"{"path":"tube/a.wav"}"#);
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let now = beatlumen_server::util::now_secs();
@@ -460,12 +532,11 @@ fn a_list_entry_pointing_out_of_the_folder_deletes_nothing() {
     let dir = folder("escape");
     let outside = dir.join("music").join("precious.wav");
     std::fs::write(&outside, common::wav(1)).unwrap();
-    std::fs::create_dir_all(dir.join("data").join("extensions")).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":{"path":"../../../music/precious.wav","added":1,"played":1}}"#,
-    )
-    .unwrap();
+    keep_import(
+        &dir,
+        "tube/s:1",
+        r#"{"path":"../../../music/precious.wav","added":1,"played":1}"#,
+    );
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let later = beatlumen_server::util::now_secs() + 1000 * DAY;
@@ -487,11 +558,11 @@ fn a_link_among_the_imports_is_left_alone() {
         .join("tube");
     std::fs::create_dir_all(&imports).unwrap();
     std::os::unix::fs::symlink(&outside, imports.join("a.wav")).unwrap();
-    std::fs::write(
-        dir.join("data").join("extensions").join("imported.json"),
-        r#"{"tube/s:1":{"path":"tube/a.wav","added":1,"played":1}}"#,
-    )
-    .unwrap();
+    keep_import(
+        &dir,
+        "tube/s:1",
+        r#"{"path":"tube/a.wav","added":1,"played":1}"#,
+    );
     let ext = extension(2, None, Arc::new(Asked::default()));
     let s = server(&dir, &ext, |_| {});
     let later = beatlumen_server::util::now_secs() + 1000 * DAY;

@@ -72,6 +72,7 @@
     "vault": "Verschlüsselte Dateien",
     "models": "Sprachmodelle",
     "imports": "Importe",
+    "database": "Datenbank",
     "The server has no password: everyone in the network can use the library.": "Der Server hat kein Passwort: Jeder im Netzwerk kann die Bibliothek nutzen.",
     "The server password is short.": "Das Server-Passwort ist kurz.",
     "No music folders are set up.": "Es sind keine Musikordner eingerichtet.",
@@ -120,6 +121,13 @@
     "Remove": "Entfernen",
     "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped.": "Synchronisiert die Songtexte aller Songs im Hintergrund, mit der Hälfte der Prozessorkerne. Songs, die schon mit demselben oder einem besseren Modell erkannt wurden, werden übersprungen.",
     "Time the whole library": "Ganze Bibliothek synchronisieren",
+    "Karaoke data": "Karaoke-Daten",
+    "Computes the melody of the singing as notes on the timed song text when an app asks for it, from the vocals separated from the music. Turning it on downloads the vocal separation model (Open-Unmix, 36 MB) from zenodo.org.": "Berechnet die Melodie des Gesangs als Noten auf dem synchronisierten Songtext, wenn eine App danach fragt, aus dem von der Musik getrennten Gesang. Beim Einschalten wird das Trennmodell (Open-Unmix, 36 MB) von zenodo.org geladen.",
+    "Karaoke data for the whole library": "Karaoke-Daten für die ganze Bibliothek",
+    "Computes the karaoke data of all songs with a timed song text in the background, on half of the processor cores.": "Berechnet die Karaoke-Daten aller Songs mit synchronisiertem Songtext im Hintergrund, mit der Hälfte der Prozessorkerne.",
+    "Karaoke data: %1 computed, %2 imported": "Karaoke-Daten: %1 berechnet, %2 importiert",
+    "Vocal separation model: downloading": "Trennmodell: wird geladen",
+    "Vocal separation model: download failed": "Trennmodell: Laden fehlgeschlagen",
     "Detailed log": "Ausführliches Protokoll",
     "Logs every request.": "Protokolliert jede Anfrage.",
     "Set by %1": "Festgelegt durch %1",
@@ -461,6 +469,8 @@
     autoSyncLyrics: { label: "Time the whole library", type: "switch", hint: "Times the song texts of all songs in the background, on half of the processor cores. Songs already done by the same or a better model are skipped." },
     offerModels: { label: "Offer models to the apps", type: "switch", hint: "Signed-in apps can download the speech models of this server from it, also own ones in the models folder. They check each file against its checksum." },
     autoLabels: { label: "Labels from the sound", type: "switch", hint: "Works out tempo, key and energy of the songs in the music folders, one song at a time on half of one core, for labels and recommendations. Songs of music sources only get labels from their tags." },
+    karaoke: { label: "Karaoke data", type: "switch", hint: "Computes the melody of the singing as notes on the timed song text when an app asks for it, from the vocals separated from the music. Turning it on downloads the vocal separation model (Open-Unmix, 36 MB) from zenodo.org." },
+    autoKaraoke: { label: "Karaoke data for the whole library", type: "switch", hint: "Computes the karaoke data of all songs with a timed song text in the background, on half of the processor cores." },
     onlineMetadata: { label: "Artist information from the internet", type: "switch", hint: "Looks the library's artists up, for artist pages and recommendations: their names and this server's address go to MusicBrainz and, for artist pages, to Wikimedia and ListenBrainz. Off by default." },
     extensionCleanupDays: { label: "Delete extension songs after", type: "number", unit: "days", hint: "Songs an extension downloaded are deleted after this many days without being played, to save storage. The library's own songs are never touched. 0 = never." },
     extensionCleanupKeepListed: { label: "Keep extension songs in lists", type: "switch", hint: "Songs someone added on purpose, or that are in anyone's playlist or favorites, stay however long ago they were played." },
@@ -710,7 +720,7 @@
   }
 
   async function library() {
-    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "onlineMetadata", "extensionCleanupDays", "extensionCleanupKeepListed", "roomGuests"]);
+    await withSettings(["music", "images", "rescanInterval", "scanThreads", "analysisMaxMinutes", "autoLabels", "karaoke", "autoKaraoke", "onlineMetadata", "extensionCleanupDays", "extensionCleanupKeepListed", "roomGuests"]);
     try {
       const o = await api("GET", "overview");
       if (o.extensionSongs && o.extensionSongs.songs > 0) {
@@ -718,6 +728,14 @@
       }
       if (o.sound && o.sound.total > 0) {
         main.append(h("p", { class: "hint" }, t("Sound analysis: %1 of %2 songs").replace("%1", o.sound.done).replace("%2", o.sound.total)));
+      }
+      const k = o.karaoke;
+      if (k && k.enabled) {
+        main.append(h("p", { class: "hint" }, t("Karaoke data: %1 computed, %2 imported").replace("%1", k.computed).replace("%2", k.imported)));
+        if (k.model && k.model.state === "failed")
+          main.append(h("p", { class: "hint" }, t("Vocal separation model: download failed") + " (" + (k.model.error || "") + ")"));
+        else if (k.model)
+          main.append(h("p", { class: "hint" }, t("Vocal separation model: downloading")));
       }
     } catch (e) { /* the page works without it */ }
     main.append(h("div", { class: "actions" }, h("button", { class: "btn", onclick: async () => {

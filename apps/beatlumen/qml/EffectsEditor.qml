@@ -23,7 +23,7 @@ Item {
         onSubmitted: (t) => Core.call("preset.save", { name: t, server: Core.state.server === "connected" })
     }
 
-    StackView {
+    AppStackView {
         id: stack
         anchors.fill: parent
         initialItem: listView
@@ -48,7 +48,7 @@ Item {
                     onClicked: Core.state.presetOrigin === "builtin" ? saveAs.open() : Core.call("preset.save")
                 }
                 IconButton { iconName: "more_vert"; tip: Theme.tr("More"); onClicked: moreMenu.popup() }
-                Menu {
+                AppMenu {
                     id: moreMenu
                     MenuItem { text: Theme.tr("Save style as…"); onTriggered: saveAs.open() }
                 }
@@ -61,9 +61,11 @@ Item {
                 TabButton { text: Theme.tr("Analysis") }
             }
             StackLayout {
+                id: tabPages
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 currentIndex: tabs.currentIndex
+                SwitchMotion { stack: tabPages }
                 ListView {
                     clip: true
                     model: ed.effects
@@ -98,7 +100,7 @@ Item {
                                 tip: Theme.tr("More")
                                 iconColor: Theme.textDim
                                 onClicked: effectMenu.popup(m)
-                                Menu {
+                                AppMenu {
                                     id: effectMenu
                                     MenuItem { text: Theme.tr("Duplicate"); onTriggered: Core.call("effect.duplicate", { id: modelData.id }) }
                                     MenuItem { text: Theme.tr("Move up"); onTriggered: Core.call("effect.moveUp", { id: modelData.id }) }
@@ -108,7 +110,7 @@ Item {
                             }
                         }
                     }
-                    Menu {
+                    AppMenu {
                         id: addMenu
                         Repeater {
                             model: ed.types

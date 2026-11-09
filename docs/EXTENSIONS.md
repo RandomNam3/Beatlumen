@@ -109,7 +109,8 @@ Rows of suggestions for the start page.
 ```
 
 At most 20 rows, each with at most `limit` entries; empty rows are left out.
-The server keeps the answer for 15 minutes.
+The server keeps the answer on disk and shows it at once, also after a restart;
+when it is older than 15 minutes, it asks again in the background.
 
 ### `GET /collection/<id>?limit=<1-50>&after=<position>` (version 2, `collections`)
 
@@ -122,7 +123,9 @@ The songs of a collection, a page at a time (`after` only for later pages).
 
 `next` is left out on the last page. It is opaque to the server: up to 2048
 printable ASCII characters without spaces. The apps fetch up to 500 songs.
-Only songs count here. The server keeps answers for 15 minutes.
+Only songs count here. The server keeps each page on disk and shows it at once,
+also after a restart; when it is older than an hour, it asks again in the
+background. Pages nobody opened for 30 days are deleted.
 
 ### `GET /radio/<id>?limit=<1-50>` (version 2, `radio`)
 
@@ -140,7 +143,7 @@ the answer may differ every time. Not kept by the server.
 The item's picture (JPEG or PNG, at most 4 MiB). With `?full=1` the server
 asks for the largest picture (embedded as cover); without it a thumbnail is
 enough. The server decodes and re-encodes pictures, so only clean JPEG data
-reaches the apps.
+reaches the apps. It keeps them until nobody looked at them for 30 days.
 
 ### `GET /item/<id>`
 

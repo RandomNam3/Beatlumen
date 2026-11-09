@@ -74,17 +74,21 @@ dependencies = [
  "bl-fx",
  "bl-image",
  "bl-json",
+ "bl-karaoke",
  "bl-media",
  "bl-meta",
  "bl-net",
  "bl-offline",
  "bl-opus-enc",
+ "bl-pitch",
  "bl-recommend",
+ "bl-sep",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
  "libc",
  "p256",
+ "redb",
  "ring",
  "rustls",
  "webpki-roots",
@@ -110,7 +114,9 @@ dependencies = [
  "bl-asr",
  "bl-hyph",
  "bl-json",
+ "bl-media",
  "bl-mt",
+ "bl-pitch",
 ]
 
 [[package]]
@@ -148,13 +154,17 @@ dependencies = [
  "bl-gl",
  "bl-image",
  "bl-json",
+ "bl-karaoke",
  "bl-media",
  "bl-meta",
  "bl-mt",
  "bl-net",
  "bl-offline",
+ "bl-opus",
+ "bl-pitch",
  "bl-recommend",
  "bl-render",
+ "bl-sep",
  "bl-sources",
  "bl-upnp",
  "bl-vault",
@@ -203,6 +213,17 @@ version = "0.12.0"
 [[package]]
 name = "bl-json"
 version = "0.12.0"
+
+[[package]]
+name = "bl-karaoke"
+version = "0.12.0"
+dependencies = [
+ "bl-asr",
+ "bl-json",
+ "bl-media",
+ "bl-pitch",
+ "bl-sep",
+]
 
 [[package]]
 name = "bl-media"
@@ -792,6 +813,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "redb"
+version = "4.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b317ef681e18f6091efbfab532eaf924a135c492d9d0299d0fbfae07e92a39b"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
