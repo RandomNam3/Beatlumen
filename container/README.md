@@ -99,9 +99,13 @@ kept as a Podman secret:
 
 ```sh
 printf '%s' 'a-long-password' | podman secret create beatlumen_password -
-podman run ... --secret beatlumen_password,uid=10001,mode=0400 \
-  -e BEATLUMEN_PASSWORD_FILE=/run/secrets/beatlumen_password ...
+podman run ... --secret beatlumen_password,uid=10001,mode=0400,target=/secrets/beatlumen_password \
+  -e BEATLUMEN_PASSWORD_FILE=/secrets/beatlumen_password ...
 ```
+
+The target outside `/run/secrets` matters with `--read-only`: Podman mounts
+`/run/secrets` itself and cannot add a secret's file to it in a read-only
+container ("make mountpoint … read-only file system").
 
 ### Podman Quadlet (systemd)
 
@@ -159,7 +163,7 @@ can connect from.
 | `/music` | read-only | Music library, scanned recursively. Several folders: mount them below `/music` (e.g. `/music/nas`, `/music/local`) or set `BEATLUMEN_MUSIC` |
 | `/images` | read-only | Background images |
 | `/data` | read-write | The database `beatlumen.redb` (accounts, logins, settings, playlists, favorites, history, presets) with its copy for backups, the accounts' encrypted files, uploads, song texts, the library cache, analyses and covers (keep it: a backup of this volume and the pepper keeps everything, see [Backup](#backup)) |
-| `/run/secrets/…` | read-only | Password file and pepper (optional) |
+| `/run/secrets/…`, `/secrets/…` | read-only | Password file and pepper (optional; Podman secrets go to `/secrets`) |
 
 The container user is `10001:10001`. The music and image folders only need
 to be readable for it (world-readable files are). `/data` is a named volume
@@ -441,7 +445,7 @@ grep type=1326`).
 `apparmor/beatlumen-server` is stricter than the runtimes' default profile:
 TCP and UDP sockets only (listening, remote sources, DNS; no raw or packet
 sockets), no capabilities, read access to `/music`, `/images`,
-`/run/secrets`, name resolution files and the image's documentation, write
+`/run/secrets`, `/secrets`, name resolution files and the image's documentation, write
 access to `/data` only, no mounts, no ptrace.
 
 ```sh

@@ -56,6 +56,9 @@ HEIC, animations), and song texts timed by the speech model's timing layer.
   the fading and leave out sliding and growing (shorter on the battery saver). While an
   animation runs, phones briefly draw at the full frame rate even where frames are otherwise
   rationed (paused, a page over the visual).
+- **Podman secrets with a read-only container:** the Quadlet unit's password and pepper did
+  not start (Podman mounts `/run/secrets` itself and cannot add files to it when the container
+  is read-only). The unit and the README put them into `/secrets` now.
 - **Server container, stricter and smaller:** the image holds only the static server (musl, no C
   library, no shell) and the license texts, about 9 MB; it is built without Alpine (the Debian Rust
   image compiles it). A seccomp profile allows only the system calls the server uses: no executable

@@ -26,10 +26,12 @@ PublishPort=7878:7878/tcp
 Volume=%h/Music:/music:ro,z
 Volume=%h/Pictures/Backgrounds:/images:ro,z
 Volume=beatlumen-data:/data:Z
-Secret=beatlumen_password,mode=0400,uid=10001
-Environment=BEATLUMEN_PASSWORD_FILE=/run/secrets/beatlumen_password
-Secret=beatlumen_pepper,mode=0400,uid=10001
-Environment=BEATLUMEN_VAULT_PEPPER_FILE=/run/secrets/beatlumen_pepper
+# The secrets go to /secrets: Podman mounts /run/secrets itself, and with
+# ReadOnly=true it cannot add files to it.
+Secret=beatlumen_password,mode=0400,uid=10001,target=/secrets/beatlumen_password
+Environment=BEATLUMEN_PASSWORD_FILE=/secrets/beatlumen_password
+Secret=beatlumen_pepper,mode=0400,uid=10001,target=/secrets/beatlumen_pepper
+Environment=BEATLUMEN_VAULT_PEPPER_FILE=/secrets/beatlumen_pepper
 # Other settings are made in the admin interface (/admin/); a variable
 # set here is fixed there, e.g.
 # Environment=BEATLUMEN_NAME=Beatlumen Server

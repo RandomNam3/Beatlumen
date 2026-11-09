@@ -53,6 +53,8 @@ profile beatlumen-server flags=(attach_disconnected,mediate_deleted) {
   /models/** r,
   /run/secrets/ r,
   /run/secrets/* r,
+  /secrets/ r,
+  /secrets/* r,
   /usr/share/doc/beatlumen/** r,
   # Name resolution and certificate authorities (provided by the runtime
   # or mounted) for connections to remote sources.
