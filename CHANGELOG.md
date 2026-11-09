@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 (beta)
+
+Karaoke with points and phones as microphones, listening together, server data
+in a database, protection against crafted files, backgrounds up to 16K (AVIF,
+HEIC, animations), and song texts timed by the speech model's timing layer.
 
 - **Karaoke page** (under *More*): pick a song, compute or import its notes, give each singer a
   microphone (and a voice in duets) and sing. The note bars, the text and each singer's pitch are
