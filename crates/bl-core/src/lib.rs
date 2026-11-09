@@ -10,6 +10,8 @@ mod account_sync;
 mod airplay;
 mod artists;
 pub mod background;
+#[cfg(not(target_arch = "wasm32"))]
+mod bg_folders;
 pub mod capture;
 mod clock;
 mod commands;

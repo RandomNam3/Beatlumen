@@ -793,7 +793,7 @@ impl Core {
                 let sources: Vec<String> = strs(c.get("sources"))
                     .into_iter()
                     .map(|p| {
-                        if p.contains(':') && !p.starts_with('/') && !p[1..].starts_with(":\\") {
+                        if p.contains(':') && !is_plain_path(&p) {
                             p
                         } else {
                             format!("{LOCAL_PREFIX}{p}")
@@ -803,23 +803,33 @@ impl Core {
                 self.add_backgrounds(host, sources, b("show"));
                 ok()
             }
+            // A folder stays in sync: new images join the list, deleted
+            // ones leave it.
             "backgrounds.addFolder" => {
                 #[cfg(not(target_arch = "wasm32"))]
-                let images: Vec<String> = library::list_images(&s("path"))
-                    .into_iter()
-                    .map(|p| format!("{LOCAL_PREFIX}{p}"))
-                    .collect();
-                #[cfg(target_arch = "wasm32")]
-                let images: Vec<String> = Vec::new();
-                let n = images.len();
-                self.add_backgrounds(host, images, false);
-                self.toast(format!("{n} {}", self.tr("images added")), false);
+                self.add_background_folder(host, &s("path"));
+                ok()
+            }
+            "backgrounds.removeFolder" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.remove_background_folder(host, &s("path"));
+                ok()
+            }
+            "backgrounds.sync" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.sync_background_folders_soon();
                 ok()
             }
             "backgrounds.select" => {
                 self.bg_queue.set_position(idx("pos"));
                 self.show_queue_background(host);
                 self.settings_changed();
+                ok()
+            }
+            // By sources (the selection), or one by position. The files stay.
+            "backgrounds.remove" if c.get("sources").as_array().is_some() => {
+                let sources = strs(c.get("sources")).into_iter().collect();
+                self.remove_backgrounds(host, &sources);
                 ok()
             }
             "backgrounds.remove" => {
@@ -1208,7 +1218,14 @@ impl Core {
             }
             // The UI reports whether it is on screen (battery saving).
             "app.visible" => {
+                let back = b("visible") && !self.visible;
                 self.visible = b("visible");
+                #[cfg(not(target_arch = "wasm32"))]
+                if back {
+                    self.sync_background_folders_soon();
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = back;
                 ok()
             }
             "net.metered" => {
@@ -1467,8 +1484,15 @@ impl Core {
                 .unwrap_or_else(|| p.to_string());
             // Thumbnails from the core's decoders (any format and size)
             // where the UI has the provider, else the file itself.
+            // A file in a synced folder carries its stamp (after a raw
+            // '#', which the provider ignores), so that its
+            // tile loads again when the file changes.
             let thumb = if self.server.image_provider {
-                format!("image://thumb/{}", bl_net::http::percent_encode(p))
+                let mut url = format!("image://thumb/{}", bl_net::http::percent_encode(p));
+                if let Some(v) = self.background_file_version(p) {
+                    url.push_str(&format!("#{v}"));
+                }
+                url
             } else {
                 crate::core::file_url(p)
             };
@@ -1727,5 +1751,30 @@ mod tests {
         assert!(in_folder("C:\\Music\\a.mp3", "C:/Music/"));
         assert!(!in_folder("C:/Music2/a.mp3", "C:/Music"));
         assert!(in_folder("/a.mp3", "/"));
+    }
+}
+
+/// Whether a source the UI hands over is a file path: absolute on Unix, or
+/// with a drive letter on Windows, where Qt writes `C:/…` and others
+/// `C:\…`. Anything else with a colon is a URL or a source id.
+fn is_plain_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with('/')
+        || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'/' | b'\\'))
+}
+
+#[cfg(test)]
+mod plain_path_tests {
+    #[test]
+    fn drive_letters_with_either_separator() {
+        use super::is_plain_path;
+        assert!(is_plain_path("/home/a.png"));
+        assert!(is_plain_path("C:/Users/a.png"));
+        assert!(is_plain_path("c:\\Users\\a.png"));
+        assert!(!is_plain_path("srv:123"));
+        assert!(!is_plain_path("https://example.org/a.png"));
+        assert!(!is_plain_path("cover:abc"));
+        assert!(!is_plain_path("ä:/x"));
+        assert!(!is_plain_path("C:"));
     }
 }

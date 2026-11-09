@@ -61,6 +61,19 @@
   timeout. `GET /api/health` (no login) reports whether the server works and its data folder takes
   writes; `--health-check` and the image's health check use it. The Quadlet unit's health check
   works now (it ran through a shell the image does not have).
+- **Background folders stay in sync:** a folder added to the backgrounds is followed. New
+  images in it join the list, deleted ones leave it, and a changed image is shown anew. The app
+  looks on return (Android), when the list is opened, and every 20 seconds while it is on screen.
+  Images taken off the list stay off. The synced folders are listed below the images; removing
+  one takes its images off the list, and the files stay where they are.
+- **No background twice:** an image already in the list is not added again, also when it is a
+  copy with another name or comes both from a folder and on its own. Files are compared by
+  content, and only when their sizes match. A picked duplicate becomes the current background
+  instead, with a note.
+- **Selecting backgrounds:** a long press no longer removes an image at once. It starts a
+  selection with check marks, "Select all" and "Remove from the list", which asks first and
+  never deletes a file. The select button above the images does the same; it replaces the button
+  that emptied the whole list without asking.
 - **Server: large bodies only with a login.** Without a login a request may send 64 KiB.
   Larger bodies (4 MiB, image uploads 257 MiB) need the server password, an account or the
   admin login, and that is checked from the request's head before any of the body is read:

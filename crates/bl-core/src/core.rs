@@ -289,6 +289,9 @@ pub struct Core {
     pub(crate) account_sync: crate::account_sync::SyncState,
     pub(crate) queue: Queue,
     pub(crate) bg_queue: Queue,
+    /// Synced background folders and the duplicate check.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) bg_sync: crate::bg_folders::Sync,
     pub(crate) library: LibraryState,
     pub(crate) analysis: Option<Arc<TrackAnalysis>>,
     pub(crate) analysis_key: String,
@@ -479,6 +482,12 @@ impl Core {
             settings.background_shuffle,
             &mut rng,
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        let bg_sync = crate::bg_folders::Sync::new(
+            host.storage_read(crate::bg_folders::STORAGE_KEY)
+                .map(|d| crate::bg_folders::Folders::parse(&d))
+                .unwrap_or_default(),
+        );
         let mut library = LibraryState::default();
         if let Some(d) = host.storage_read("library-local.json") {
             library.load_local_cache(&d);
@@ -530,6 +539,8 @@ impl Core {
             account_sync: Default::default(),
             queue,
             bg_queue,
+            #[cfg(not(target_arch = "wasm32"))]
+            bg_sync,
             library,
             analysis: None,
             analysis_key: String::new(),
@@ -824,6 +835,7 @@ impl Core {
             .with("backgroundIndex", self.bg_queue.position())
             .with("backgroundCount", self.bg_queue.len())
             .with("backgroundShuffle", self.bg_queue.shuffle)
+            .with("backgroundFolders", self.background_folders_state())
             .with("underruns", self.player.underruns())
             .with("scanning", scan.0)
             .with("scanFound", scan.1)
@@ -2523,21 +2535,124 @@ impl Core {
         }
     }
 
+    /// Adds backgrounds; the first becomes the current one with
+    /// `make_current` (or when there is none). Local images are first
+    /// checked for duplicates by content (on a worker thread); other
+    /// sources are added once each.
     pub(crate) fn add_backgrounds(
         &mut self,
         host: &mut dyn Host,
         sources: Vec<String>,
         make_current: bool,
     ) {
-        if sources.is_empty() {
+        #[cfg(not(target_arch = "wasm32"))]
+        let sources = {
+            let (local, other): (Vec<String>, Vec<String>) = sources
+                .into_iter()
+                .partition(|s| s.starts_with(LOCAL_PREFIX));
+            let local: Vec<String> = local
+                .into_iter()
+                .map(|s| s[LOCAL_PREFIX.len()..].to_string())
+                .collect();
+            let show = make_current && !local.is_empty() && other.is_empty();
+            self.queue_local_backgrounds(local, show);
+            other
+        };
+        let Some(first) = sources.first().cloned() else {
+            return;
+        };
+        let known = sources
+            .iter()
+            .filter(|s| self.bg_queue.items.contains(s))
+            .count();
+        self.push_backgrounds(host, sources, make_current.then_some(first));
+        if known == 1 {
+            self.toast(self.tr("This image is already in the list"), false);
+        } else if known > 1 {
+            self.toast(
+                format!("{known} {}", self.tr("images were already in the list")),
+                false,
+            );
+        }
+    }
+
+    /// Appends the sources the list does not hold yet; `show` (listed after
+    /// that) becomes the current one, as does the first new one when there
+    /// is none.
+    pub(crate) fn push_backgrounds(
+        &mut self,
+        host: &mut dyn Host,
+        sources: Vec<String>,
+        show: Option<String>,
+    ) {
+        let mut new = Vec::new();
+        for s in sources {
+            if !self.bg_queue.items.contains(&s) && !new.contains(&s) {
+                new.push(s);
+            }
+        }
+        if new.is_empty() && show.is_none() {
             return;
         }
-        let first = self.bg_queue.push(sources, &mut self.rng);
-        if make_current || self.bg_queue.current().is_none() {
-            self.bg_queue.set_current(first);
+        let first = (!new.is_empty()).then(|| self.bg_queue.push(new, &mut self.rng));
+        let shown = show.and_then(|s| self.bg_queue.items.iter().position(|i| *i == s));
+        if let Some(i) = shown.or(first.filter(|_| self.bg_queue.current().is_none())) {
+            self.bg_queue.set_current(i);
         }
         self.show_queue_background(host);
         self.settings_changed();
+    }
+
+    /// Takes the given sources off the background list.
+    pub(crate) fn remove_backgrounds(
+        &mut self,
+        host: &mut dyn Host,
+        sources: &std::collections::HashSet<String>,
+    ) {
+        let mut pos = 0;
+        let mut any = false;
+        while pos < self.bg_queue.len() {
+            let hit = self
+                .bg_queue
+                .ordered()
+                .nth(pos)
+                .is_some_and(|(_, s)| sources.contains(s));
+            if hit {
+                self.bg_queue.remove_at(pos);
+                any = true;
+            } else {
+                pos += 1;
+            }
+        }
+        if any {
+            self.show_queue_background(host);
+            self.settings_changed();
+        }
+    }
+
+    /// The size and modification time of a background image in a synced
+    /// folder, as last seen.
+    pub(crate) fn background_file_version(&self, path: &str) -> Option<String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self
+            .bg_sync
+            .folders
+            .list
+            .iter()
+            .find_map(|f| f.seen.get(path))
+            .map(|s| format!("{}-{}", s.modified, s.size));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            None
+        }
+    }
+
+    fn background_folders_state(&self) -> Value {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.background_folders_json();
+        #[cfg(target_arch = "wasm32")]
+        Value::Array(Vec::new())
     }
 
     fn poll_images(&mut self, host: &mut dyn Host, gl: &Gl) {
@@ -2662,6 +2777,12 @@ impl Core {
             return;
         }
         self.bg_grow_since = None;
+        self.reload_background(host);
+    }
+
+    /// Decodes the shown background again (it keeps its texture until the
+    /// new decode arrives).
+    pub(crate) fn reload_background(&mut self, host: &mut dyn Host) {
         if let Some(source) = self.bg_source.clone() {
             self.bg_refresh = true;
             self.bg_source = None;
@@ -2921,6 +3042,8 @@ impl Core {
             self.handle_http(host, id, res);
         }
         self.poll_vault(host);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_background_folders(host);
         if let Some((name, items)) = self.pending_playlist_items.clone() {
             if let Some(mut pl) = self
                 .server_playlists
