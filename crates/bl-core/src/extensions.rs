@@ -10,6 +10,7 @@ use crate::host::{Host, HttpResponse};
 use bl_json::Value;
 use bl_net::api::Track;
 use std::collections::{HashMap, VecDeque};
+mod playback;
 
 /// Track id prefix of songs still being imported (followed by the job id).
 pub(crate) const ID_PREFIX: &str = "ext:";
@@ -44,6 +45,7 @@ const POLL: f64 = 1.5;
 
 #[derive(Clone, Debug)]
 pub(crate) enum ExtReq {
+    Playback(String, u64),
     List,
     Search(u64, String),
     /// A waiting song (its id) is imported because it starts.
@@ -91,6 +93,7 @@ struct ExtInfo {
     shelves: bool,
     collections: bool,
     radio: bool,
+    playback: bool,
 }
 
 /// The collection being looked at.
@@ -109,6 +112,7 @@ struct Collection {
 
 #[derive(Default)]
 pub(crate) struct ExtState {
+    feedback: playback::Feedback,
     list: Vec<ExtInfo>,
     query: String,
     serial: u64,
@@ -147,6 +151,7 @@ fn safe_id(s: &str) -> bool {
 impl Core {
     /// Asks the connected server for its extensions.
     pub(crate) fn extensions_refresh(&mut self, host: &mut dyn Host) {
+        self.ext.feedback = playback::Feedback::default();
         let id = self.server.get(host, "/api/extensions");
         self.requests.insert(id, Req::Ext(ExtReq::List));
     }
@@ -771,6 +776,11 @@ impl Core {
             Err(e) => e.clone(),
         };
         match req {
+            ExtReq::Playback(session, seq) => {
+                self.ext
+                    .feedback
+                    .complete(&session, seq, json.is_some(), self.time)
+            }
             ExtReq::List => {
                 self.ext.list = json
                     .as_ref()
@@ -785,6 +795,7 @@ impl Core {
                         shelves: e.bool_or("shelves", false),
                         collections: e.bool_or("collections", false),
                         radio: e.bool_or("radio", false),
+                        playback: e.bool_or("playback", false),
                     })
                     .collect();
                 self.ext.shelves_at = None;

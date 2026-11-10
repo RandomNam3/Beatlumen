@@ -3115,6 +3115,7 @@ impl Core {
         }
         self.sync_preload(host);
         self.track_listening(host);
+        self.extensions_playback_tick(host);
         self.poll_discord(host);
         self.mic_tick(host);
         self.poll_karaoke_session(host);

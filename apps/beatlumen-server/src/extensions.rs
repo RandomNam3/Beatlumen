@@ -68,6 +68,7 @@ struct Manifest {
     shelves: bool,
     collections: bool,
     radio: bool,
+    playback: bool,
 }
 
 /// What an extension says about itself; other protocol versions are refused.
@@ -90,6 +91,7 @@ fn parse_manifest(v: &Value, id: &str) -> Option<Manifest> {
         shelves: can("shelves"),
         collections: can("collections"),
         radio: can("radio"),
+        playback: can("playback"),
     })
 }
 
@@ -858,6 +860,7 @@ impl Extensions {
         let m = req.method.as_str();
         let get = m == "GET" || m == "HEAD";
         match segs {
+            ["playback"] if m == "POST" => self.playback(state, req),
             [] if get => {
                 let list: Vec<Value> = self
                     .exts
@@ -871,7 +874,8 @@ impl Extensions {
                                 .with("search", man.search)
                                 .with("shelves", man.shelves)
                                 .with("collections", man.collections)
-                                .with("radio", man.radio),
+                                .with("radio", man.radio)
+                                .with("playback", man.playback),
                         )
                     })
                     .collect();
@@ -944,6 +948,91 @@ impl Extensions {
             .unwrap_or_else(|e| e.into_inner())
             .get(id)
             .cloned()
+    }
+
+    /// Actual player observations; importing or reading audio never calls this.
+    fn playback(&self, state: &State, req: &Request) -> Response {
+        let Ok(v) = bl_json::parse_bytes(&req.body) else {
+            return Response::error(400, "expected JSON");
+        };
+        let session = v.str_or("session", "");
+        let event = v.str_or("state", "");
+        let position = v.f64_or("position", -1.0);
+        if !(16..=128).contains(&session.len())
+            || !session
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+            || !matches!(
+                event,
+                "start" | "playing" | "paused" | "waiting" | "seeking" | "ended"
+            )
+            || !position.is_finite()
+            || !(0.0..=86400.0).contains(&position)
+            || v.get("seq").as_u64().is_none()
+            || v.get("observed_at").as_u64().is_none()
+        {
+            return Response::error(400, "invalid playback observation");
+        }
+        let account = state.account_of(req);
+        let track = v.str_or("track", "");
+        let key = if let Some(job) = track.strip_prefix("ext:").and_then(|j| self.job(j)) {
+            if !job
+                .holders
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|(a, _)| a == &account)
+            {
+                return Response::error(404, "import not found");
+            }
+            Some(job.key.clone())
+        } else {
+            let idx = state.library();
+            idx.track(track).and_then(|entry| {
+                self.imported
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .find(|(_, i)| i.path == entry.abs && i.seen_by(&account))
+                    .map(|(key, _)| key.clone())
+            })
+        };
+        let Some((ext, item)) = key.as_deref().and_then(|k| k.split_once('/')) else {
+            return Response::json(200, &Value::object().with("ignored", true));
+        };
+        let Some(e) = self.ext(ext).filter(|e| self.can(e, |m| m.playback)) else {
+            return Response::json(200, &Value::object().with("ignored", true));
+        };
+        // Scope play ids to this login without exposing account identifiers.
+        let key = ring::hmac::Key::new(
+            ring::hmac::HMAC_SHA256,
+            self.token.as_deref().unwrap_or("").as_bytes(),
+        );
+        let scoped =
+            util::hex(ring::hmac::sign(&key, format!("{account}\0{session}").as_bytes()).as_ref());
+        let body = Value::object()
+            .with("id", item)
+            .with("session", scoped)
+            .with("state", event)
+            .with("seq", v.get("seq").clone())
+            .with("position", position)
+            .with("observed_at", v.get("observed_at").clone())
+            .with("online", v.get("online").as_bool().unwrap_or(true))
+            .to_json();
+        let mut headers = self.headers();
+        headers.push(("Content-Type".into(), "application/json".into()));
+        match client::request(
+            "POST",
+            &format!("{}/playback", e.url),
+            &headers,
+            body.as_bytes(),
+            &opts(10),
+        ) {
+            Ok(r) if (200..300).contains(&r.status) => {
+                Response::json(200, &Value::object().with("ok", true))
+            }
+            _ => Response::error(502, "extension did not accept playback observation"),
+        }
     }
 
     fn search(&self, state: &State, e: &Ext, req: &Request) -> Response {
@@ -1648,6 +1737,7 @@ mod tests {
         assert_eq!(m.name, "Old");
         assert!(m.search);
         assert!(!m.radio, "capabilities belong to protocol 2");
+        assert!(!m.playback);
     }
 
     #[test]
@@ -1663,6 +1753,19 @@ mod tests {
     fn other_protocols_are_refused() {
         assert!(manifest(r#"{"protocol":3,"search":true}"#).is_none());
         assert!(manifest(r#"{"search":true}"#).is_none());
+    }
+    #[test]
+    fn playback_feedback_is_explicitly_opted_in() {
+        assert!(
+            !manifest(r#"{"protocol":2,"capabilities":["search"]}"#)
+                .unwrap()
+                .playback
+        );
+        assert!(
+            manifest(r#"{"protocol":2,"capabilities":["search","playback"]}"#)
+                .unwrap()
+                .playback
+        );
     }
 
     #[test]

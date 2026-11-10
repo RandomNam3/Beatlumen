@@ -56,7 +56,8 @@ Versions 1 and 2. Version 2 adds everything marked as such; an extension that
 stays at version 1 keeps working and only searches.
 
 The server sends `GET` requests with `Authorization: Bearer <token>` (when
-configured) and expects JSON (UTF-8) unless noted. Errors: any non-200
+configured) and expects JSON (UTF-8) unless noted. Optional playback feedback
+uses `POST`. Errors: any non-200
 status, optionally with `{"error": "message"}`. Strings are cut to 300
 characters, control characters removed.
 
@@ -77,7 +78,7 @@ wherever they mention the extension; nothing about a particular service is
 built into them.
 
 `capabilities` (version 2) says which of the requests below the extension
-answers: `search`, `shelves`, `collections`, `radio`. Unknown words are
+answers: `search`, `shelves`, `collections`, `radio`, `playback`. Unknown words are
 ignored, and the server does not ask for what is not listed. Version 1 has
 `"search": true` instead.
 
@@ -169,9 +170,49 @@ to the listener while it is still arriving, so it does not need to be
 complete before the first byte). A length is not required (chunked is
 fine).
 
+### `POST /playback` (version 2, optional `playback`)
+
+Actual player observations for extensions whose provider needs playback reporting:
+
+```json
+{"id":"song-1","session":"opaque-per-play-id","seq":0,"state":"start",
+ "position":0.0,"observed_at":1794300000000,"online":true}
+```
+
+`session` identifies one play, including pause/resume and seeks. Replaying a song
+creates a new session. `seq` starts at 0 and increases. `state` is `start`,
+`playing`, `paused`, `waiting`, `seeking` or `ended`; `position` is seconds, and
+`observed_at` is the observation's Unix time in milliseconds. Delayed retries
+keep their original timestamps and sequence. A receiver must acknowledge
+duplicate observations without counting them twice. A successful response is
+any 2xx JSON response, for example `{"ok":true}`.
+
+The app sends observations while its decoder plays, about every five seconds
+and on state changes. Pauses, buffering and seek jumps are not listened duration.
+The extension decides how to turn these observations into its provider's reports;
+it must not extrapolate listening after observations stop. The app retries a
+failed delivery after five seconds, in order, with a bounded queue in memory.
+This is separate from personal history sync. Both the app and server need this
+addition; older versions continue to import and play without feedback. Local
+encrypted copies replayed independently of the server do not report through it.
+
+Imports, downloads, `GET /audio`, ranges and analysis never create observations.
+The server resolves the imported library track or active import back to its
+configured extension and original item id. It checks the account's import
+ownership and scopes session ids to that login. Account identifiers and app
+credentials are not forwarded. The configured extension bearer token is used
+as for other requests. Extensions without `playback` are never called; a
+callback failure does not stop playback.
+
 ## Server API (for the apps)
 
 Every endpoint needs a logged-in user (the server password or an account).
+
+`POST /api/extensions/playback` accepts the observation above with `track`
+(a library track id or `ext:<job>`) instead of `id`. It maps and forwards only
+known imports. Unrelated library tracks receive `{"ignored":true}` without
+calling an extension. The extension list includes `playback: true` for sources
+that opt in. Merely importing a file never produces feedback.
 
 | Request | Answer |
 | --- | --- |
