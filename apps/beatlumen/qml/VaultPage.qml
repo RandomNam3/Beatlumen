@@ -26,7 +26,9 @@ Item {
     readonly property bool connected: Core.state.server === "connected" || Core.state.server === "login"
     property var files: []
     property var contacts: []
-    property int form: 0      // locked: 0 unlock, 1 create account, 2 forgot password
+    property int form: 0      // locked: 0 sign in, 1 create account, 2 forgot password
+    // From an invitation link.
+    property string inviteCode: ""
     property int tab: 0       // unlocked: 0 files, 1 people, 2 account
 
     function reload() {
@@ -149,7 +151,7 @@ Item {
                     Layout.rightMargin: 12
                     spacing: 6
                     Repeater {
-                        model: [Theme.tr("Unlock"), Theme.tr("Create account"), Theme.tr("Forgot password")]
+                        model: [Theme.tr("Sign in"), Theme.tr("Create account"), Theme.tr("Forgot password")]
                         AccentButton {
                             required property string modelData
                             required property int index
@@ -169,8 +171,8 @@ Item {
                     Layout.rightMargin: 16
                     wrapMode: Text.WordWrap
                     color: Theme.textDim
-                    text: page.form === 0 ? Theme.tr("Your password unlocks the keys on this device; it never leaves it.")
-                        : page.form === 1 ? Theme.tr("You need an invitation code from the server's admin. Choose a long password: nobody, not even the admin, can reset it without your recovery code.")
+                    text: page.form === 0 ? Theme.tr("Your account signs you in to this server and unlocks your encrypted files. The password never leaves this device.")
+                        : page.form === 1 ? Theme.tr("1. Enter the invitation code you got from the server's admin (or open the invitation link). 2. Choose a user name and a long password. 3. Write down the recovery code shown afterwards: without it nobody, not even the admin, can reset a forgotten password.")
                         : Theme.tr("Enter the recovery code you wrote down when creating the account, and choose a new password.")
                 }
                 InputField {
@@ -181,6 +183,7 @@ Item {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     placeholderText: Theme.tr("Invitation code")
+                    text: page.inviteCode
                     inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
                 }
                 InputField {
@@ -237,7 +240,7 @@ Item {
                     Layout.leftMargin: 16
                     highlighted: true
                     icon.source: Theme.icon(page.form === 0 ? "lock_open" : "key")
-                    text: page.form === 0 ? Theme.tr("Unlock") : page.form === 1 ? Theme.tr("Create account") : Theme.tr("Recover account")
+                    text: page.form === 0 ? Theme.tr("Sign in") : page.form === 1 ? Theme.tr("Create account") : Theme.tr("Recover account")
                     enabled: user.text.length > 0 && password.text.length > 0
                              && (page.form === 0 || repeat.text === password.text)
                              && (page.form !== 1 || invite.text.length > 0)

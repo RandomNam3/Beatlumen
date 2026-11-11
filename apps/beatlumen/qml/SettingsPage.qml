@@ -9,6 +9,8 @@ Item {
     signal addFolder()
     signal login()
     signal openVault()
+    // The account page: 0 sign in, 1 create account (with an invitation code).
+    signal openAccount(int form, string invite)
     readonly property var settings: Core.state.settings || ({})
     readonly property var ui: settings.ui || ({})
     readonly property string server: Core.state.server || "disabled"
@@ -737,7 +739,7 @@ Item {
                 objectName: "section"
                 Layout.fillWidth: true
                 spacing: 6
-                visible: page.shows("server", ["Check", "Checking the web app…", "Connect", "Connected to", "Connecting…", "Connection failed", "Disconnect", "Log in", "Log out", "Login required", "Not connected", "Outside your home network, use https:// or a VPN.", "Server", "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:", "Trust this certificate", "Warning: the web app on the server was modified.", "Warning: this address is outside your home network and the connection is not encrypted. Use https:// or a VPN.", "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)", "Web app on the server: not checked yet", "Web app on the server: unchanged official release"])
+                visible: page.shows("server", ["Check", "Checking the web app…", "Connect", "Connected to", "Connecting…", "Connection failed", "Disconnect", "Log in", "Sign in", "Create account", "With the server password", "Log out", "Login required", "Not connected", "Outside your home network, use https:// or a VPN.", "Server", "The server's certificate is not trusted by this device. Only trust it if this fingerprint (SHA-256) matches the certificate of your server:", "Trust this certificate", "Warning: the web app on the server was modified.", "Warning: this address is outside your home network and the connection is not encrypted. Use https:// or a VPN.", "Web app on the server: files match its manifest, but this app cannot check the release signature (unofficial build)", "Web app on the server: not checked yet", "Web app on the server: unchanged official release"])
                 SectionLabel { text: Theme.tr("Server") }
                 Label {
                     textFormat: Text.PlainText
@@ -773,9 +775,24 @@ Item {
                     Layout.leftMargin: 8
                     Layout.rightMargin: 8
                     spacing: 4
-                    Button { visible: page.server === "login"; text: Theme.tr("Log in"); icon.source: Theme.icon("login"); onClicked: page.login() }
+                    // A server that wants a login: an account signs in to it (and
+                    // unlocks the encrypted files); its shared password is the
+                    // way without an account.
+                    AccentButton { visible: page.server === "login"; highlighted: true; text: Theme.tr("Sign in"); icon.source: Theme.icon("login"); onClicked: page.openAccount(0, "") }
+                    Button { visible: page.server === "login"; text: Theme.tr("Create account"); icon.source: Theme.icon("person"); onClicked: page.openAccount(1, "") }
+                    Button { visible: page.server === "login"; flat: true; text: Theme.tr("With the server password"); icon.source: Theme.icon("key"); onClicked: page.login() }
                     Button { visible: page.server === "connected" && page.settings.serverToken !== ""; text: Theme.tr("Log out"); flat: true; icon.source: Theme.icon("logout"); onClicked: Core.call("server.logout") }
                     Button { visible: Core.platform !== "web" && page.server !== "disabled"; text: Theme.tr("Disconnect"); flat: true; icon.source: Theme.icon("cloud_off"); onClicked: Core.call("server.disconnect") }
+                }
+                Label {
+                    textFormat: Text.PlainText
+                    visible: page.server === "login"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    wrapMode: Text.WordWrap
+                    color: Theme.textDim
+                    text: Theme.tr("Sign in with your user name and password. New here? Create an account with the invitation code from the server's admin. Without an account the server's shared password works too, but without your own playlists and encrypted files.")
                 }
                 // Self-signed certificate (home server): show its fingerprint so
                 // the user can compare it before trusting it.
@@ -938,10 +955,10 @@ Item {
                 Layout.fillWidth: true
                 spacing: 6
                 visible: page.shows("server", ["Account", "Appearance and playback options follow your account (end-to-end encrypted).", "Encrypted files", "Unlock or create account", "Unlocked as", "Store and share end-to-end encrypted files; the server cannot read them."])
-                SectionLabel { text: Theme.tr("Account"); visible: page.server === "connected" || page.server === "login" }
+                SectionLabel { text: Theme.tr("Account"); visible: page.server === "connected" }
                 ColumnLayout {
                     readonly property var v: Core.state.vault || ({})
-                    visible: page.server === "connected" || page.server === "login"
+                    visible: page.server === "connected"
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16

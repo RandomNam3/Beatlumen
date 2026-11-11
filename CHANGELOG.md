@@ -13,6 +13,16 @@
   server can read them. It said before only who gets the song, which read as if both were
   encrypted.
 
+- **Signing in with an account:** a server that wants a login now offers *Sign in* with
+  user name and password first, and *Create account* next to it; the server's shared
+  password is the way without an account. Before, *Log in* asked only for the shared
+  password, and the account was a separate step further down.
+- **Invitation links:** the admin area shows a link next to each new invitation code
+  (`https://server/#invite=CODE`, with the public address when it is set). Opened in the
+  browser, or pasted into the app as the server address, it connects and opens account
+  creation with the code filled in; the browser removes it from the address bar. The steps
+  of account creation are spelled out, including the recovery code.
+
 ## 0.13.0 (beta)
 
 Karaoke with points and phones as microphones, listening together, server data

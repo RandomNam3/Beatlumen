@@ -40,6 +40,10 @@ pub struct LaunchArgs {
     pub server: Option<String>,
     /// A room to join, by link or code.
     pub room: Option<String>,
+    /// An account invitation code (from an invitation link), waiting for the
+    /// account page to take it (`account.inviteTaken`); also set when an
+    /// invitation link is entered as the server address.
+    pub invite: Option<String>,
     /// The page the browser build came from (it reaches its server without an
     /// address, but a link to a room needs one).
     pub origin: Option<String>,
@@ -56,6 +60,7 @@ impl LaunchArgs {
             match arg.as_str() {
                 "--server" => a.server = it.next(),
                 "--room" => a.room = it.next(),
+                "--invite" => a.invite = it.next().filter(|c| crate::server::valid_invite(c)),
                 "--origin" => a.origin = it.next(),
                 "--background" | "--bg" => a.backgrounds.extend(it.next()),
                 "--preset" => a.preset = it.next(),
@@ -70,6 +75,7 @@ impl LaunchArgs {
     pub const USAGE: &'static str = "usage: beatlumen [options] [audio files...]\n\
         \n  --server URL        connect to a Beatlumen server\
         \n  --room LINK         join a room to listen together\
+        \n  --invite CODE       open account creation with this invitation code\
         \n  --background PATH   add a background image (repeatable)\
         \n  --preset NAME       activate a preset\
         \n  --data DIR          settings/data directory\
@@ -822,6 +828,7 @@ impl Core {
             .with("server", server_state)
             .with("serverName", server_name)
             .with("serverError", server_error)
+            .with("invite", self.launch.invite.clone().map_or(Value::Null, Value::from))
             .with("serverUrl", self.server.base.as_str())
             .with("sourceUrl", source_url)
             .with("serverUntrustedCertificate", untrusted_cert)

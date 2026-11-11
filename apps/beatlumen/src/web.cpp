@@ -29,6 +29,15 @@ EM_JS(char *, bl_js_origin, (), {
     return stringToNewUTF8(location.origin);
 });
 
+// An invitation link (#invite=CODE): the code, taken out of the address bar
+// so that it does not stay in the history or a bookmark.
+EM_JS(char *, bl_js_invite, (), {
+    const m = /(?:^#|[#&?])invite=([0-9A-Fa-f-]{4,64})/.exec(location.hash + location.search);
+    if (m && history.replaceState)
+        history.replaceState(null, '', location.pathname);
+    return stringToNewUTF8(m ? m[1] : "");
+});
+
 EM_JS(char *, bl_js_room, (), {
     return stringToNewUTF8(new URLSearchParams(location.search).get("room") || "");
 });
@@ -159,8 +168,12 @@ QStringList pageArguments()
     QStringList args{QStringLiteral("--origin"), QString::fromUtf8(origin)};
     if (*room)
         args << QStringLiteral("--room") << QString::fromUtf8(room);
+    char *invite = bl_js_invite();
+    if (*invite)
+        args << QStringLiteral("--invite") << QString::fromUtf8(invite);
     free(origin);
     free(room);
+    free(invite);
     return args;
 }
 

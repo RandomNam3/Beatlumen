@@ -122,3 +122,57 @@ impl ServerClient {
         paths::track_analysis(id, &bl_net::http::percent_encode(cfg_json))
     }
 }
+
+/// Whether `code` looks like an account invitation code (groups of hex
+/// digits joined by dashes, as the server makes them).
+pub fn valid_invite(code: &str) -> bool {
+    (4..=64).contains(&code.len())
+        && code.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+        && code.bytes().any(|b| b.is_ascii_hexdigit())
+}
+
+/// Splits an invitation link (`https://server/#invite=CODE`, also with
+/// `?invite=`) into the server address and the code; other addresses come
+/// back unchanged with no code.
+pub fn split_invite(url: &str) -> (String, Option<String>) {
+    for key in ["#invite=", "?invite=", "&invite="] {
+        if let Some(at) = url.find(key) {
+            let code: String = url[at + key.len()..]
+                .chars()
+                .take_while(|c| *c != '&' && *c != '#')
+                .collect();
+            let code = code.trim().to_ascii_lowercase();
+            if valid_invite(&code) {
+                let base = url[..at].split(['?', '#']).next().unwrap_or("").to_string();
+                return (base, Some(code));
+            }
+        }
+    }
+    (url.to_string(), None)
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+
+    #[test]
+    fn invitation_links_give_server_and_code() {
+        assert_eq!(
+            split_invite("https://music.example.org/#invite=1a2b-3c4d-5e6f-7a8b-9c0d-1e2f"),
+            ("https://music.example.org/".to_string(), Some("1a2b-3c4d-5e6f-7a8b-9c0d-1e2f".to_string()))
+        );
+        assert_eq!(
+            split_invite("http://192.168.1.10:7878?invite=ABCD-ef01"),
+            ("http://192.168.1.10:7878".to_string(), Some("abcd-ef01".to_string()))
+        );
+        assert_eq!(
+            split_invite("https://h/?room=x&invite=abcd-0123"),
+            ("https://h/".to_string(), Some("abcd-0123".to_string()))
+        );
+        // Not an invitation: unchanged.
+        assert_eq!(split_invite("https://music.example.org"), ("https://music.example.org".to_string(), None));
+        assert_eq!(split_invite("https://h/#invite=<script>"), ("https://h/#invite=<script>".to_string(), None));
+        assert!(!valid_invite("----"));
+        assert!(!valid_invite(""));
+    }
+}

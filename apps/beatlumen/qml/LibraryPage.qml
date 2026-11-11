@@ -35,9 +35,16 @@ Item {
     function reloadPlaylists() {
         playlists = (Core.call("playlists.list") || []).filter(p => p.kind === "track")
     }
-    function openVault() {
+    // form: 0 sign in, 1 create account, 2 forgot password (locked only).
+    function openVault(form, invite) {
         if (!(stack.currentItem instanceof VaultPage))
             stack.push(vaultView)
+        const v = stack.currentItem
+        if (form !== undefined && v instanceof VaultPage) {
+            v.form = form
+            if (invite)
+                v.inviteCode = invite
+        }
     }
     property var folders: null
     function back() {

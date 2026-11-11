@@ -1138,7 +1138,13 @@ impl Core {
 
             // ---- server ------------------------------------------------------
             "server.connect" => {
-                let url = s("url").trim().trim_end_matches('/').to_string();
+                // An invitation link (`https://server/#invite=CODE`) connects
+                // to its server and opens account creation with the code.
+                let (url, invite) = crate::server::split_invite(s("url").trim());
+                if invite.is_some() {
+                    self.launch.invite = invite;
+                }
+                let url = url.trim_end_matches('/').to_string();
                 let url = if !url.is_empty() && !url.contains("://") {
                     format!("http://{url}")
                 } else {
@@ -1155,6 +1161,11 @@ impl Core {
                 self.settings.use_server = !self.server.base.is_empty();
                 self.settings_changed();
                 self.connect_server(host);
+                ok()
+            }
+            // The account page took the invitation code.
+            "account.inviteTaken" => {
+                self.launch.invite = None;
                 ok()
             }
             // Trusts the server's (self-signed) certificate with this

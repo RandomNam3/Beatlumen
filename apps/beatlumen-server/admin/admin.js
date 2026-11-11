@@ -142,6 +142,9 @@
     "7 days": "7 Tage",
     "30 days": "30 Tage",
     "Invitation code": "Einladungscode",
+    "Invitation link": "Einladungslink",
+    "Copy link": "Link kopieren",
+    "Or send this link: it opens account creation with the code, in the browser or pasted into the app as the server address.": "Oder schick diesen Link: Er öffnet die Kontoerstellung mit dem Code, im Browser oder in der App als Server-Adresse eingefügt.",
     "Give this code to the new user. It is shown only now.": "Gib diesen Code der neuen Person. Er wird nur jetzt angezeigt.",
     "Copy": "Kopieren",
     "Copied": "Kopiert",
@@ -934,9 +937,24 @@
       try {
         const r = await api("POST", "invites", { days: parseInt(days.value, 10) });
         const code = h("div", { class: "secret", "aria-label": t("Invitation code") }, r.code);
+        // The link opens account creation with the code: in the browser (web
+        // client of this server) or pasted into the app as the server address.
+        // The public address when it is set (the admin page may be open
+        // under another one, such as localhost).
+        let base = location.origin;
+        try {
+          const st = await api("GET", "settings");
+          const pub = (st.settings || []).find((x) => x.key === "publicUrl");
+          if (pub && typeof pub.value === "string" && /^https?:\/\//.test(pub.value)) base = pub.value.replace(/\/+$/, "");
+        } catch (_) { /* the page's own address */ }
+        const link = base + "/#invite=" + encodeURIComponent(r.code);
+        const copy = async (text) => { try { await navigator.clipboard.writeText(text); toast(t("Copied")); } catch (_) { /* no clipboard */ } };
         const d = h("dialog", {}, h("h3", {}, t("Invitation code")), h("p", { class: "hint" }, t("Give this code to the new user. It is shown only now.")), code,
+          h("p", { class: "hint" }, t("Or send this link: it opens account creation with the code, in the browser or pasted into the app as the server address.")),
+          h("div", { class: "secret", "aria-label": t("Invitation link") }, link),
           h("div", { class: "actions" },
-            h("button", { class: "btn", onclick: async () => { try { await navigator.clipboard.writeText(r.code); toast(t("Copied")); } catch (_) { /* no clipboard */ } } }, t("Copy")),
+            h("button", { class: "btn", onclick: () => copy(r.code) }, t("Copy")),
+            h("button", { class: "btn", onclick: () => copy(link) }, t("Copy link")),
             h("button", { class: "btn primary", onclick: () => d.close() }, t("Close"))));
         d.addEventListener("close", () => d.remove());
         document.body.append(d);

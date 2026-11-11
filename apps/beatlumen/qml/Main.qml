@@ -460,6 +460,7 @@ ApplicationWindow {
                         onAddFolder: win.addFolder()
                         onLogin: loginPrompt.open()
                         onOpenVault: { win.page = 0; Qt.callLater(() => library.item && library.item.openVault()) }
+                        onOpenAccount: (form, invite) => win.openAccount(form, invite)
                     }
                 }
                 Loader {
@@ -677,6 +678,18 @@ ApplicationWindow {
             Accessible.announce(Theme.tr("Now playing") + ": " + currentTitle)
     }
     ExtensionTarget { }
+    // The account page, e.g. to sign in or to create an account.
+    function openAccount(form, invite) {
+        win.page = 0
+        Qt.callLater(() => library.item && library.item.openVault(form, invite))
+    }
+    // An invitation link (opened in the browser, or entered as the server
+    // address): account creation with its code.
+    readonly property string pendingInvite: Core.state.invite || ""
+    onPendingInviteChanged: if (pendingInvite !== "") {
+        openAccount(1, pendingInvite)
+        Core.call("account.inviteTaken")
+    }
     HelpDialog {
         id: help
         onStartTour: win.startTour()
