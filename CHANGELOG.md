@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.13.1 (beta)
+
+Signing in with an account and invitation links, sound in the web client, songs
+from extensions that play at the first tap, and sign-in behind a reverse proxy.
 
 - **Source extensions can opt into playback feedback** (`playback`, protocol 2): actual
   player progress, pause, seek and end observations go back through the server,
