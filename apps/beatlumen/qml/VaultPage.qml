@@ -67,10 +67,12 @@ Item {
 
         PageHeader {
             Layout.fillWidth: true
-            title: Theme.tr("Vault")
+            // Before signing in this is the account page (sign in, create an
+            // account); afterwards the vault of encrypted files.
+            title: page.ready ? Theme.tr("Vault") : Theme.tr("Account")
             subtitle: page.ready ? (page.vault.user + " · " + page.size(page.vault.used || 0)
                                     + (page.vault.quota > 0 ? " / " + page.size(page.vault.quota) : ""))
-                                 : Theme.tr("Only you and the people you share with can read them")
+                                 : (Core.state.serverName || Core.state.serverUrl || "")
             back: page.back
             onBackClicked: page.backClicked()
             IconButton {

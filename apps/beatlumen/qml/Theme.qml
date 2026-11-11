@@ -441,7 +441,6 @@ QtObject {
         "Nobody else has an account on this server yet.": "Noch niemand sonst hat ein Konto auf diesem Server.",
         "Not connected to a server": "Nicht mit einem Server verbunden",
         "Not verified": "Nicht überprüft",
-        "Only you and the people you share with can read them": "Nur du und die Personen, mit denen du teilst, können sie lesen",
         "People": "Personen",
         "Recover account": "Konto wiederherstellen",
         "Recovery code": "Wiederherstellungscode",
