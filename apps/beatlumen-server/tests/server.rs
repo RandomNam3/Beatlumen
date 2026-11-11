@@ -1734,6 +1734,43 @@ fn foreign_hosts_and_cross_site_writes_are_refused() {
         raw_status(&srv, "POST", "/api/playlists", &[("Host", &host)]),
         403
     );
+    // Behind a reverse proxy (here: loopback, trusted by default) that
+    // rewrites Host: its X-Forwarded-Host names the origin.
+    assert_ne!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[
+                ("Host", "127.0.0.1:7878"),
+                ("Origin", "https://music.example.org"),
+                ("X-Forwarded-Host", "music.example.org")
+            ]
+        ),
+        403
+    );
+    assert_eq!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[("Host", "127.0.0.1:7878"), ("Origin", "https://music.example.org")]
+        ),
+        403
+    );
+    assert_eq!(
+        raw_status(
+            &srv,
+            "POST",
+            "/api/playlists",
+            &[
+                ("Host", "127.0.0.1:7878"),
+                ("Origin", "https://evil.example"),
+                ("X-Forwarded-Host", "music.example.org")
+            ]
+        ),
+        403
+    );
 }
 
 #[test]

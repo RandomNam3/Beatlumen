@@ -93,13 +93,40 @@ fn check_origin(state: &State, req: &Request) -> Result<(), Response> {
             .is_some_and(|v| v.eq_ignore_ascii_case("cross-site"));
         let foreign_origin = req.header("origin").is_some_and(|o| {
             let o = o.split_once("://").map_or(o, |(_, rest)| rest);
-            o == "null" || !o.eq_ignore_ascii_case(host)
+            o == "null" || !own_origin(state, req, host, o)
         });
         if cross_site || foreign_origin {
             return Err(Response::error(403, "cross-site request refused"));
         }
     }
     Ok(())
+}
+
+/// Whether a request's `Origin` (scheme removed) is this server: its `Host`;
+/// behind a trusted reverse proxy, which often rewrites `Host` (nginx's
+/// default sends `127.0.0.1:7878`, or drops a non-standard port), the
+/// `X-Forwarded-Host` it passes on; or the configured public address.
+fn own_origin(state: &State, req: &Request, host: &str, origin: &str) -> bool {
+    if origin.eq_ignore_ascii_case(host) {
+        return true;
+    }
+    let cfg = state.config();
+    let from_proxy = req
+        .remote
+        .map(|a| a.ip().to_canonical())
+        .is_some_and(|peer| cfg.trusted_proxies.iter().any(|n| n.contains(peer)));
+    if from_proxy
+        && req
+            .header("x-forwarded-host")
+            .and_then(|h| h.split(',').next())
+            .is_some_and(|h| origin.eq_ignore_ascii_case(h.trim()))
+    {
+        return true;
+    }
+    cfg.public_url.as_deref().is_some_and(|u| {
+        let u = u.split_once("://").map_or(u, |(_, rest)| rest);
+        origin.eq_ignore_ascii_case(u.trim_end_matches('/'))
+    })
 }
 
 fn finish_headers(resp: &mut Response, is_api: bool) {
