@@ -97,6 +97,20 @@ fn extension_search_import_and_stream() {
     assert_eq!(pic.status, 200);
     assert_eq!(pic.headers.get("content-type"), Some("image/jpeg"));
     assert!(pic.body.starts_with(&[0xff, 0xd8]));
+    // The extension's picture is kept, so another size comes from it.
+    let images = data.join("cache").join("extension-images");
+    let originals = || {
+        std::fs::read_dir(&images)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "orig"))
+            .count()
+    };
+    assert_eq!(originals(), 1);
+    let big = get(&base, &format!("{image}?size=200"));
+    assert_eq!(big.status, 200);
+    assert!(big.body.starts_with(&[0xff, 0xd8]));
+    assert_eq!(originals(), 1);
 
     // Import into the library; play it while it is written.
     let t0 = Instant::now();

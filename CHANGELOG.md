@@ -6,6 +6,10 @@
   pictures of extension songs stayed placeholders. Their addresses had no host, so Qt looked
   for them among its own resources instead of asking the server; they now carry the page's
   address, and the browser keeps them (the server allows an hour, extension pictures a day).
+- **Pictures of extension songs kept on the server for 30 days**, also for songs nobody
+  downloaded: besides the thumbnails, the server now keeps the picture the extension sent,
+  so another size (search, album page, background) needs no second trip to the extension
+  and the service behind it. Both go 30 days after their last use.
 - **Signing in in the web client:** it opened the old password-only prompt; it opens
   signing in with an account now, and the account page offers the server's shared password
   for those without one.

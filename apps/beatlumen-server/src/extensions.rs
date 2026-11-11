@@ -1375,9 +1375,25 @@ impl Extensions {
             return Response::file(&cache, "image/jpeg", None)
                 .with_header("Cache-Control", "private, max-age=86400");
         }
-        let data = match self.fetch_image(e, item) {
-            Ok(d) => d,
-            Err(msg) => return Response::error(502, &msg),
+        // The extension's picture is kept as it came (30 days after its last
+        // use, like the thumbnails), so another size needs no second trip to
+        // the extension and the service behind it.
+        let original = self.images.join(format!("{key:016x}.orig"));
+        let cached = std::fs::read(&original)
+            .ok()
+            .filter(|d| !d.is_empty() && d.len() <= MAX_IMAGE);
+        let data = match cached {
+            Some(d) => {
+                touch(&original);
+                d
+            }
+            None => match self.fetch_image(e, item) {
+                Ok(d) => {
+                    let _ = util::write_atomic(&original, &d);
+                    d
+                }
+                Err(msg) => return Response::error(502, &msg),
+            },
         };
         match crate::covers::make_thumbnail(&data, size) {
             Ok(jpeg) => {
@@ -1385,7 +1401,11 @@ impl Extensions {
                 Response::bytes(200, "image/jpeg", jpeg)
                     .with_header("Cache-Control", "private, max-age=86400")
             }
-            Err(msg) => Response::error(502, &format!("cannot decode the picture: {msg}")),
+            Err(msg) => {
+                // Not kept: the next request asks the extension again.
+                let _ = std::fs::remove_file(&original);
+                Response::error(502, &format!("cannot decode the picture: {msg}"))
+            }
         }
     }
 
