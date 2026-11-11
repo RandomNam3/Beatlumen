@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.13.2 (beta)
+
+Pictures in the web client, signing in with an account there, and pictures of
+extension songs kept on the server.
 
 - **Pictures in the web client:** covers, artist pictures, backgrounds from the server and
   pictures of extension songs stayed placeholders. Their addresses had no host, so Qt looked
