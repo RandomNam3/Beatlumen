@@ -1710,9 +1710,9 @@ impl Core {
             // Still being imported: the server streams what it has so far.
             let url = self.ext_stream_url(id)?;
             let headers = self.server.headers();
-            return Some(Box::new(move || {
-                Ok((http_stream(&url, &headers)?, Some("opus".to_string())))
-            }));
+            let codec = self.track_for(id).codec;
+            let hint = if codec.is_empty() { "opus".to_string() } else { codec };
+            return Some(Box::new(move || Ok((http_stream(&url, &headers)?, Some(hint)))));
         }
         if !host.has_threads() || host.audio_is_push() {
             return None;

@@ -5,8 +5,8 @@
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use crate::tags::{self, id3};
-use crate::util::{be16, be32, bitrate_kbps, frames_to_ms, mul_div, read_up_to, stream_len};
-use crate::window::Window;
+use crate::util::{be16, be32, bitrate_kbps, frames_to_ms, mul_div, read_up_to, stream_len, stream_len_opt};
+use crate::window::{Window, OPEN_END};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Source, Tags};
 
 /// A parsed MPEG audio frame header.
@@ -307,12 +307,16 @@ struct Mp3Adapter {
 }
 
 pub(crate) fn open(mut src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
-    let file_len = stream_len(&mut src)?;
+    let file_len = stream_len_opt(&mut src)?;
     src.seek(SeekFrom::Start(0))?;
     let audio_start = id3::skip_id3v2(&mut src)?;
-    let end = tags::read_end_tags(&mut src, file_len, None)?;
-    let layout = scan_layout(&mut src, audio_start, end.audio_end)?;
-    let win = Window::new(src, 0, end.audio_end)?;
+    // Without a length yet (still arriving) there are no end tags to hide.
+    let audio_end = match file_len {
+        Some(len) => tags::read_end_tags(&mut src, len, None)?.audio_end,
+        None => OPEN_END,
+    };
+    let layout = scan_layout(&mut src, audio_start, audio_end)?;
+    let win = Window::new(src, 0, audio_end)?;
     let dec =
         bl_mp3::Mp3Decoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
     let spec = AudioSpec {
@@ -327,7 +331,10 @@ pub(crate) fn open(mut src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> 
             layout.header.channels
         },
     };
-    let total = dec.total_frames().or(Some(layout.total_frames()));
+    // Estimating from the size needs the size (a Xing/VBRI header has it).
+    let total = dec
+        .total_frames()
+        .or(file_len.map(|_| layout.total_frames()));
     Ok(Box::new(Mp3Adapter {
         dec,
         codec: codec_name(layout.header.layer),

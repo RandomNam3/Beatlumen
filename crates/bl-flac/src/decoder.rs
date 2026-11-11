@@ -3,6 +3,9 @@
 
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
+/// `stream_len` of a stream whose length is not known yet.
+const UNKNOWN_LEN: u64 = u64::MAX;
+
 use crate::frame::{parse_header, FrameDecoder, FrameError, FrameHeader, MAX_HEADER_LEN};
 use crate::metadata::{parse_seek_table, MetadataBlock, SeekPoint, StreamInfo};
 use crate::Error;
@@ -145,7 +148,13 @@ impl<R: Read + Seek> FlacDecoder<R> {
         }
         let info = info.ok_or(Error::InvalidData("missing STREAMINFO"))?;
         let first_frame_offset = reader.stream_position()?;
-        let stream_len = reader.seek(SeekFrom::End(0))?.max(first_frame_offset);
+        // A stream still being written (an import playing while it arrives)
+        // has no length yet: UNKNOWN_LEN, and seeking decodes forward.
+        let stream_len = match reader.seek(SeekFrom::End(0)) {
+            Ok(n) => n.max(first_frame_offset),
+            Err(e) if e.kind() == std::io::ErrorKind::Unsupported => UNKNOWN_LEN,
+            Err(e) => return Err(e.into()),
+        };
         reader.seek(SeekFrom::Start(first_frame_offset))?;
 
         let max_frame = info.max_frame_size as usize;
@@ -299,7 +308,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
         self.tail_done = false;
         if let Some(total) = self.total_frames() {
             if frame >= total {
-                self.reposition(self.stream_len)?;
+                if self.stream_len != UNKNOWN_LEN {
+                    self.reposition(self.stream_len)?;
+                }
                 self.position = total;
                 self.tail_done = true;
                 return Ok(total);
@@ -338,7 +349,9 @@ impl<R: Read + Seek> FlacDecoder<R> {
             64 * 1024
         };
         let mut step = 0u32;
-        while hi_off - lo_off > threshold {
+        // Without a known end there is nothing to bisect: decode forward
+        // from the closest seek point.
+        while hi_off != UNKNOWN_LEN && hi_off - lo_off > threshold {
             let mid = match hi_sample {
                 Some(hs) if step & 1 == 0 && hs > lo_sample => {
                     let span = (hi_off - lo_off) as u128;

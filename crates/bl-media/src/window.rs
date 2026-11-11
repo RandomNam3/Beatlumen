@@ -10,8 +10,13 @@ pub(crate) struct Window<R> {
     pos: u64,
 }
 
+/// `end` of a window whose stream has no known length yet: it reads to the
+/// stream's end, and seeking from the end is not possible.
+pub(crate) const OPEN_END: u64 = u64::MAX;
+
 impl<R: Read + Seek> Window<R> {
-    /// Creates a view of `[start, end)` of `inner`, positioned at `start`.
+    /// Creates a view of `[start, end)` of `inner`, positioned at `start`
+    /// (`end` may be [`OPEN_END`]).
     pub fn new(mut inner: R, start: u64, end: u64) -> io::Result<Self> {
         let end = end.max(start);
         inner.seek(SeekFrom::Start(start))?;
@@ -41,6 +46,12 @@ impl<R: Read + Seek> Seek for Window<R> {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         let target: i128 = match to {
             SeekFrom::Start(n) => self.start as i128 + n as i128,
+            SeekFrom::End(_) if self.end == OPEN_END => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "length not known yet",
+                ));
+            }
             SeekFrom::End(k) => self.end as i128 + k as i128,
             SeekFrom::Current(k) => self.pos as i128 + k as i128,
         };
@@ -76,5 +87,17 @@ mod tests {
         assert_eq!(w.read(&mut b).unwrap(), 2);
         assert_eq!(&b[..2], &[18, 19]);
         assert!(w.seek(SeekFrom::Current(-20)).is_err());
+    }
+
+    #[test]
+    fn open_end_reads_to_the_end_and_cannot_seek_from_it() {
+        let data: Vec<u8> = (0..50).collect();
+        let mut w = Window::new(Cursor::new(data), 10, OPEN_END).unwrap();
+        let mut buf = Vec::new();
+        w.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, (10..50).collect::<Vec<u8>>());
+        let e = w.seek(SeekFrom::End(0)).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(w.seek(SeekFrom::Start(5)).unwrap(), 5);
     }
 }

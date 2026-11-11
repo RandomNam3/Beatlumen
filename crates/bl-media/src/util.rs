@@ -58,6 +58,17 @@ pub(crate) fn stream_len<R: Seek + ?Sized>(r: &mut R) -> io::Result<u64> {
     Ok(len)
 }
 
+/// Total length of a stream, or `None` while it is not known yet: a song
+/// still arriving over the network (an import that plays while it is
+/// written) answers `SeekFrom::End` with `ErrorKind::Unsupported`.
+pub(crate) fn stream_len_opt<R: Seek + ?Sized>(r: &mut R) -> io::Result<Option<u64>> {
+    match stream_len(r) {
+        Ok(n) => Ok(Some(n)),
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Positions a buffered reader at `target` without discarding its buffer
 /// when the target is close to the current position (`cur`).
 pub(crate) fn seek_buffered<R: Read + Seek>(

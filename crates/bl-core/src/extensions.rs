@@ -860,7 +860,9 @@ impl Core {
                     duration_ms: Some(v.f64_or("duration", 0.0))
                         .filter(|d| *d > 0.0)
                         .map_or(known.duration_ms, |d| (d * 1000.0) as u64),
-                    codec: "opus".into(),
+                    // What the server says it sends (QBZ Light: FLAC); the
+                    // player's format hint for the stream.
+                    codec: codec_of_mime(v.str_or("mime", "")).into(),
                     has_cover: known.has_cover,
                     ..Default::default()
                 };
@@ -1213,5 +1215,30 @@ mod tests {
             !crate::library::is_server_id(&id),
             "not a song of the server"
         );
+    }
+}
+
+/// Codec name (a file extension bl-media knows) for an import's MIME type;
+/// Opus (Ogg) when unknown, as the server converts WebM Opus to Ogg.
+pub(crate) fn codec_of_mime(mime: &str) -> &'static str {
+    match mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "audio/flac" | "audio/x-flac" => "flac",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
+        "audio/aac" | "audio/aacp" => "aac",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+        _ => "opus",
+    }
+}
+
+#[cfg(test)]
+mod codec_tests {
+    #[test]
+    fn mime_types_name_the_codec() {
+        assert_eq!(super::codec_of_mime("audio/flac"), "flac");
+        assert_eq!(super::codec_of_mime("audio/mpeg"), "mp3");
+        assert_eq!(super::codec_of_mime("audio/mp4; codecs=mp4a.40.2"), "m4a");
+        assert_eq!(super::codec_of_mime("audio/ogg"), "opus");
+        assert_eq!(super::codec_of_mime(""), "opus");
     }
 }

@@ -5,8 +5,8 @@
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
 use crate::tags::{self, id3, vorbis_comment};
-use crate::util::{bitrate_kbps, frames_to_ms, invalid, read_up_to, read_vec, stream_len};
-use crate::window::Window;
+use crate::util::{bitrate_kbps, frames_to_ms, invalid, read_up_to, read_vec, stream_len, stream_len_opt};
+use crate::window::{Window, OPEN_END};
 use crate::{AudioSpec, Decoder, Error, MediaInfo, Source, Tags};
 
 /// Decoded STREAMINFO fields.
@@ -114,9 +114,12 @@ struct FlacAdapter {
 }
 
 pub(crate) fn open(mut src: Box<dyn Source>) -> Result<Box<dyn Decoder>, Error> {
-    let file_len = stream_len(&mut src)?;
-    let end = tags::read_end_tags(&mut src, file_len, None)?;
-    let win = Window::new(src, 0, end.audio_end)?;
+    // Without a length yet (still arriving) there are no end tags to hide.
+    let audio_end = match stream_len_opt(&mut src)? {
+        Some(file_len) => tags::read_end_tags(&mut src, file_len, None)?.audio_end,
+        None => OPEN_END,
+    };
+    let win = Window::new(src, 0, audio_end)?;
     let dec =
         bl_flac::FlacDecoder::new(BufReader::with_capacity(64 * 1024, win)).map_err(Error::from)?;
     let spec = AudioSpec {
