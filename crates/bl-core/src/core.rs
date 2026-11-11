@@ -1223,6 +1223,11 @@ impl Core {
                     let animate = self.bg_source.is_some();
                     self.decode_background_async(host, source, r.body, animate);
                 }
+                // A song without a cover is no error: the default background.
+                _ if source.starts_with("cover:") => {
+                    self.bg_pending = None;
+                    self.load_background(host, DEFAULT_BG);
+                }
                 _ => {
                     self.toast(self.tr("Could not load background image"), true);
                     self.bg_pending = None;
@@ -2482,6 +2487,20 @@ impl Core {
                     host.spawn(job);
                 } else {
                     job();
+                }
+            } else if track_id.starts_with(crate::extensions::ID_PREFIX)
+                || track_id.starts_with(crate::extensions::ITEM_PREFIX)
+            {
+                // A song from an extension: its picture comes through the
+                // extension (the server has no library cover for it yet).
+                let path = self.ext_cover_url(&track_id);
+                if path.starts_with("/api/") && self.server.is_connected() {
+                    let path = if path.contains('?') { path } else { format!("{path}?size=1024") };
+                    let rid = self.server.get(host, &path);
+                    self.requests.insert(rid, Req::BgImage(source.to_string()));
+                } else {
+                    self.bg_pending = None;
+                    self.load_background(host, DEFAULT_BG);
                 }
             } else if self.server.is_connected() {
                 let rid = self

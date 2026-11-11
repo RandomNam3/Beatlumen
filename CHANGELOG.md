@@ -34,6 +34,10 @@
   imported has no known length yet, and opening it failed with "io error: length not known
   yet" (QBZ Light delivers FLAC); a second tap worked once the import had finished. Such
   streams open now, and the player gets the real format from the server.
+- **Cover as background with songs from extensions:** it asked the server for a library cover
+  the song does not have yet and showed "Could not load background image" twice per song.
+  It uses the extension's picture now, and a song without a cover gets the default
+  background without a message.
 - **Sign-in behind a reverse proxy:** a proxy that rewrites the `Host` header (nginx's
   default, or one that drops a non-standard port) made browser sign-ins and other writes
   fail with 403. A trusted proxy's `X-Forwarded-Host` and the public address now count as
