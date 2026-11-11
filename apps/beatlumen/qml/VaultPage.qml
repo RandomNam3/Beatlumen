@@ -258,6 +258,24 @@ Item {
                         repeat.clear()
                     }
                 }
+                // Without an account: the server's shared password (a server
+                // that wants a login; the account page is where it asks).
+                Button {
+                    visible: page.form === 0 && Core.state.server === "login"
+                    Layout.leftMargin: 16
+                    flat: true
+                    text: Theme.tr("With the server password")
+                    icon.source: Theme.icon("key")
+                    onClicked: serverPassword.open()
+                }
+                TextPrompt {
+                    id: serverPassword
+                    title: Theme.tr("Log in")
+                    placeholder: Theme.tr("Password")
+                    password: true
+                    acceptText: Theme.tr("Log in")
+                    onSubmitted: (t) => Core.call("server.login", { password: t })
+                }
                 // Passkeys, password managers and browser extensions work on
                 // the server's sign-in page; the result comes back sealed.
                 ColumnLayout {

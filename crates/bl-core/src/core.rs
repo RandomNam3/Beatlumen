@@ -641,6 +641,15 @@ impl Core {
         core.engine.set_adaptive(core.settings.adaptive);
         // Native apps load server images through the core's HTTP client.
         core.server.image_provider = host.platform() != "web";
+        if host.platform() == "web" {
+            core.server.page_origin = core
+                .launch
+                .origin
+                .as_deref()
+                .unwrap_or("")
+                .trim_end_matches('/')
+                .to_string();
+        }
         core.refresh_preset_list(host);
         let wanted = core
             .launch

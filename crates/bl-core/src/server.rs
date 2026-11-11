@@ -20,6 +20,10 @@ pub struct ServerClient {
     /// Images are loaded by the UI's "server" image provider (native apps:
     /// through this crate's HTTP client and its TLS), not by Qt's network.
     pub image_provider: bool,
+    /// The browser build's page origin (`https://host`): its image URLs must
+    /// be absolute, since Qt resolves a bare path against its own resources
+    /// (`qrc:/api/…`) instead of the page.
+    pub page_origin: String,
 }
 
 impl ServerClient {
@@ -29,6 +33,7 @@ impl ServerClient {
             token: token.to_string(),
             state: ServerState::Disabled,
             image_provider: false,
+            page_origin: String::new(),
         }
     }
 
@@ -37,6 +42,8 @@ impl ServerClient {
         let u = self.media_url(path);
         if self.image_provider {
             format!("image://server/{}", bl_net::http::percent_encode(&u))
+        } else if u.starts_with('/') {
+            format!("{}{u}", self.page_origin)
         } else {
             u
         }
@@ -149,6 +156,25 @@ pub fn split_invite(url: &str) -> (String, Option<String>) {
         }
     }
     (url.to_string(), None)
+}
+
+#[cfg(test)]
+mod image_url_tests {
+    use super::*;
+
+    #[test]
+    fn browser_image_urls_are_absolute() {
+        let mut s = ServerClient::new("", "tok");
+        s.page_origin = "https://music.example.org".into();
+        assert_eq!(
+            s.image_url("/api/tracks/a/cover?size=512"),
+            "https://music.example.org/api/tracks/a/cover?size=512&token=tok"
+        );
+        // Native apps: through the image provider.
+        let mut n = ServerClient::new("https://music.example.org", "tok");
+        n.image_provider = true;
+        assert!(n.image_url("/api/x").starts_with("image://server/https%3A"));
+    }
 }
 
 #[cfg(test)]

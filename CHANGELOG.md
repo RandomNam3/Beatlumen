@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Pictures in the web client:** covers, artist pictures, backgrounds from the server and
+  pictures of extension songs stayed placeholders. Their addresses had no host, so Qt looked
+  for them among its own resources instead of asking the server; they now carry the page's
+  address, and the browser keeps them (the server allows an hour, extension pictures a day).
+- **Signing in in the web client:** it opened the old password-only prompt; it opens
+  signing in with an account now, and the account page offers the server's shared password
+  for those without one.
+
 ## 0.13.1 (beta)
 
 Signing in with an account and invitation links, sound in the web client, songs

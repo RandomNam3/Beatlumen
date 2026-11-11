@@ -678,6 +678,8 @@ ApplicationWindow {
             Accessible.announce(Theme.tr("Now playing") + ": " + currentTitle)
     }
     ExtensionTarget { }
+    // The web client opened its sign-in once.
+    property bool webSignInShown: false
     // The account page, e.g. to sign in or to create an account.
     function openAccount(form, invite) {
         win.page = 0
@@ -860,10 +862,14 @@ ApplicationWindow {
     Connections {
         target: Core
         function onStateChanged() {
-            // The web client always talks to its own server: ask for the
-            // password right away.
-            if (Core.platform === "web" && Core.state.server === "login" && !loginPrompt.opened)
-                loginPrompt.open()
+            // The web client always talks to its own server: open signing in
+            // with an account right away, once (an invitation link opens
+            // account creation instead; the shared password is in Settings).
+            if (Core.platform === "web" && Core.state.server === "login" && !win.webSignInShown
+                    && !Core.state.invite) {
+                win.webSignInShown = true
+                win.openAccount(0, "")
+            }
             const cap = Core.state.capture || {}
             if (cap.running === true && cap.access !== true && !captureAccess.asked && !captureAccessCheck.running)
                 captureAccessCheck.start()
