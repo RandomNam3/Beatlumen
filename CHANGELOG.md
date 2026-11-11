@@ -23,6 +23,22 @@
   creation with the code filled in; the browser removes it from the address bar. The steps
   of account creation are spelled out, including the recovery code.
 
+- **Web client plays sound:** browsers keep Web Audio switched off until the page is
+  touched, and the app's switch-on listened to events that Qt's canvas never let through.
+  It now listens before Qt does, on every touch, click and key, and again when playback
+  starts. Without a secure page (`https://` or `localhost`) the browser offers no audio
+  worklet; the console says so instead of failing silently.
+- **Start page:** tapping a song in a suggestion row ("Für dich", "Zum Entdecken") did
+  nothing (since 0.12.0); it plays again.
+- **Songs from extensions play at the first tap:** a FLAC or MP3 song that is still being
+  imported has no known length yet, and opening it failed with "io error: length not known
+  yet" (QBZ Light delivers FLAC); a second tap worked once the import had finished. Such
+  streams open now, and the player gets the real format from the server.
+- **Sign-in behind a reverse proxy:** a proxy that rewrites the `Host` header (nginx's
+  default, or one that drops a non-standard port) made browser sign-ins and other writes
+  fail with 403. A trusted proxy's `X-Forwarded-Host` and the public address now count as
+  the server's own origin.
+
 ## 0.13.0 (beta)
 
 Karaoke with points and phones as microphones, listening together, server data

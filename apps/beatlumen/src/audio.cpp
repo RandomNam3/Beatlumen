@@ -487,7 +487,11 @@ void AudioOutput::setSuspended(bool suspended)
 
 EM_JS(void, bl_js_audio_init, (), {
     if (Module.blAudio) return;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { console.error('Beatlumen: this browser has no Web Audio'); return; }
+    const ctx = new AC({ sampleRate: 48000 });
+    // AudioWorklet exists on secure pages only (https:// or localhost).
+    if (!ctx.audioWorklet) { console.error('Beatlumen: no AudioWorklet here; open the page over https://'); return; }
     const code = `class P extends AudioWorkletProcessor {
         constructor() { super(); this.q = []; this.off = 0; this.queued = 0; this.paused = false; this.gain = 0.25; this.target = 0.25;
             this.port.onmessage = (e) => { const m = e.data;
@@ -512,10 +516,16 @@ EM_JS(void, bl_js_audio_init, (), {
         Module.blAudio.node = node;
         for (const m of Module.blAudio.pending) node.port.postMessage(m);
         Module.blAudio.pending = [];
-    });
-    const resume = () => { if (ctx.state !== 'running') ctx.resume(); };
-    window.addEventListener('pointerdown', resume);
-    window.addEventListener('keydown', resume);
+    }).catch((e) => console.error('Beatlumen: audio worklet', e));
+    // Browsers start the context suspended until the user interacts. Qt's
+    // canvas stops the propagation of pointer and key events, so listen in
+    // the capture phase, and on every event that counts as interaction
+    // (touch: pointerup/touchend, not pointerdown). They stay: Safari and iOS
+    // can suspend the context again later.
+    const resume = () => { if (ctx.state !== 'running') ctx.resume().catch(() => {}); };
+    Module.blAudio.resume = resume;
+    for (const t of ['pointerdown', 'pointerup', 'touchend', 'keydown', 'click'])
+        window.addEventListener(t, resume, { capture: true });
 });
 
 EM_JS(void, bl_js_audio_post, (int kind, const float *ptr, int count, int flag), {
@@ -525,6 +535,8 @@ EM_JS(void, bl_js_audio_post, (int kind, const float *ptr, int count, int flag),
     else if (kind === 1) { m = { t: 'clear' }; a.queued = 0; }
     else if (kind === 3) { m = { t: 'gain', v: HEAPF32[ptr >> 2] }; }
     else { m = { t: 'pause', v: !!flag }; }
+    // Playing (the tap on play was a moment ago): make sure the context runs.
+    if ((kind === 0 || (kind === 2 && !flag)) && a.ctx.state !== 'running' && a.resume) a.resume();
     if (a.node) a.node.port.postMessage(m, kind === 0 ? [m.d.buffer] : []); else a.pending.push(m);
 });
 

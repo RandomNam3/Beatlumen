@@ -362,11 +362,13 @@ Item {
             Repeater {
                 model: page.suggestions.slice(0, 1)
                 delegate: Shelf {
+                    id: suggestion
                     required property var modelData
                     Layout.fillWidth: true
                     title: page.shelfTitle(modelData)
                     items: modelData.items
-                    delegate: SongCard { row: modelData.items; note: page.reasonText(modelData) }
+                    // The shelf's songs: inside the card, modelData is the song.
+                    delegate: SongCard { row: suggestion.items; note: page.reasonText(modelData) }
                 }
             }
 
@@ -434,11 +436,13 @@ Item {
             Repeater {
                 model: page.suggestions.slice(1)
                 delegate: Shelf {
+                    id: moreSuggestion
                     required property var modelData
                     Layout.fillWidth: true
                     title: page.shelfTitle(modelData)
                     items: modelData.items
-                    delegate: SongCard { row: modelData.items; note: page.reasonText(modelData) }
+                    // The shelf's songs: inside the card, modelData is the song.
+                    delegate: SongCard { row: moreSuggestion.items; note: page.reasonText(modelData) }
                 }
             }
 
