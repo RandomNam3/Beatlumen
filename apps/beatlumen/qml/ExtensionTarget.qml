@@ -4,7 +4,9 @@ import QtQuick.Layouts
 import Beatlumen.Core
 
 // The first song of an extension: where do its songs go? In the library on
-// the server or in the user's encrypted files; remembered afterwards.
+// the server (an ordinary file the server can read and analyse, shown in the
+// user's library only) or in the user's encrypted files (end-to-end, the
+// server cannot read them); remembered afterwards, changed in the settings.
 AppDialog {
     id: target
     readonly property bool asking: (Core.state.extensions || {}).asking === true
@@ -27,7 +29,7 @@ AppDialog {
     modal: true
     anchors.centerIn: Overlay.overlay
     width: Math.min(460, (parent ? parent.width : 460) - 32)
-    title: Theme.tr("Where to save songs?")
+    title: Theme.tr("Where should the song stay?")
     standardButtons: Dialog.Cancel
     onAboutToShow: Theme.nameButtons(this)
     ColumnLayout {
@@ -38,7 +40,7 @@ AppDialog {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.textDim
-            text: Theme.tr("It plays right away while the server stores it.")
+            text: Theme.tr("It plays right away. A copy stays in one of two places, chosen once:")
         }
         component Choice: ItemDelegate {
             id: ch
@@ -59,15 +61,15 @@ AppDialog {
             }
         }
         Choice {
-            heading: Theme.tr("Library on the server")
-            detail: target.vaultReady ? Theme.tr("In your library on this server. Others only get it if they add it themselves.")
+            heading: target.vaultReady ? Theme.tr("Library on the server (recommended)") : Theme.tr("Library on the server")
+            detail: target.vaultReady ? Theme.tr("A normal, unencrypted music file on the server, shown only in your library. The server can read it, so it can analyse it for the visuals, song texts and karaoke.")
                                       : Theme.tr("Without an account it lands in the library everyone on this server shares.")
             iconName: "library_music"
             onClicked: target.choose("library")
         }
         Choice {
             heading: Theme.tr("My encrypted files")
-            detail: target.vaultReady ? Theme.tr("Only you (and whoever you share it with) can play it.")
+            detail: target.vaultReady ? Theme.tr("Encrypted on this device: not even the server can read it. Only you and whoever you share it with can play it.")
                                       : Theme.tr("Unlock your account first (Settings → Account).")
             iconName: "lock"
             enabled: target.vaultReady

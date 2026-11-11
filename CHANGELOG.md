@@ -1,11 +1,19 @@
 # Changelog
 
-## 0.13.0 (beta)
+## Unreleased
 
-- Source extensions can opt into playback feedback (`playback`, protocol 2): actual
+- **Source extensions can opt into playback feedback** (`playback`, protocol 2): actual
   player progress, pause, seek and end observations go back through the server,
   including songs already imported into the library. Imports and downloads do not
   count as plays. Existing extensions and older apps keep working.
+- **"Where should the song stay?"** The question at the first song of an extension says
+  plainly what each place means: the library on the server holds a normal, unencrypted file
+  that only shows in your library and that the server analyses for visuals, song texts and
+  karaoke (recommended); your encrypted files are encrypted on the device, so not even the
+  server can read them. It said before only who gets the song, which read as if both were
+  encrypted.
+
+## 0.13.0 (beta)
 
 Karaoke with points and phones as microphones, listening together, server data
 in a database, protection against crafted files, backgrounds up to 16K (AVIF,
